@@ -1,5 +1,5 @@
 /**
- * Parity of the opt-in complexity pack (rules/opt-in/complexity/) with lizard 1.24.0. The corpus under
+ * Parity of the complexity pack (packs/complexity/) with lizard 1.24.0. The corpus under
  * test/fixtures/complexity/<language>/ is scored by lizard once, by hand (scripts/record-lizard-complexity.mjs), into
  * lizard-1.24.0.tsv; lizard is never a test or runtime dependency. Each rule must report exactly the in-scope functions
  * lizard scores above 6, with lizard's number in the message, apart from the deviations listed here; a measuring variant

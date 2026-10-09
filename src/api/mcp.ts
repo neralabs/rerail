@@ -6,6 +6,7 @@ import { physicalPath } from "../checkout-control.js";
 import { duplicateJsonKeyError } from "../json-duplicate-keys.js";
 import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../repository-model.js";
 import { repositoryIdentityLocation } from "../repository-identity.js";
+import { recordedCheckoutsVersion } from "../repository-registry.js";
 import { allowedHost, type PublicHosts } from "./http.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { operationInputShape } from "./operations.js";
@@ -62,17 +63,25 @@ const invalidParams = (id: unknown, message: string): Response =>
 /** One answer for every unusable caller path, so the endpoint doesn't reveal which paths exist. */
 const INVALID_CALLER = `${CALLER_CWD_HEADER} must be the URI-encoded absolute path of an existing folder`;
 
-/** Checkout root of each caller folder already resolved; a bridge sends the same folder on every request. */
+/**
+ * Checkout root of each caller folder already resolved; a bridge sends the same folder on every request. Forgotten
+ * whenever the recorded checkouts change, so a folder that became a recorded checkout of its own resolves to it.
+ */
 const callerCheckouts = new Map<string, string>();
 const CALLER_CACHE_LIMIT = 1_024;
+let callerCacheVersion: string | undefined;
 
 /**
  * The calling agent from {@link CALLER_CWD_HEADER}: the URI-encoded real path of the folder its bridge started in,
  * resolved to the checkout that folder is in and the folder inside it. No header is an agent with no checkout, which
  * must name its target. Returns the reason when the header is unusable.
  */
-export function callerFromHeader(header: string | null): ApiCaller | string {
+export function callerFromHeader(header: string | null, recordedVersion?: string): ApiCaller | string {
   if (header === null) return { kind: "agent", checkout: undefined, folder: "" };
+  if (recordedVersion !== undefined && recordedVersion !== callerCacheVersion) {
+    callerCheckouts.clear();
+    callerCacheVersion = recordedVersion;
+  }
   let real: string;
   try {
     const cwd = decodeURIComponent(header);
@@ -126,7 +135,8 @@ export function createRerailMcpHandler(
     const text = await request.clone().text();
     const duplicate = duplicateJsonKeyError(text, "request body");
     if (duplicate !== undefined) return invalidParams(requestId(text), duplicate);
-    const caller = callerFromHeader(request.headers.get(CALLER_CWD_HEADER));
+    const header = request.headers.get(CALLER_CWD_HEADER);
+    const caller = callerFromHeader(header, header === null ? undefined : recordedCheckoutsVersion(stores.database()));
     if (typeof caller === "string") return invalidParams(requestId(text), caller);
     const server = createRerailMcpServer(stores, operations, info, caller);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });

@@ -33,9 +33,13 @@ function within(root: string, candidate: string): boolean {
 
 /**
  * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
- * is confirmed once with Git, so a lookup costs a map access per file once its folders are known.
+ * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
+ * `recordedVersion` is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
+ * became a checkout) then owns its files from the next lookup, without a restart.
  */
 export class CheckoutOwners {
+  readonly #recordedVersion: (() => string) | undefined;
+  #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
   /** Lexical folder → its physical root when it holds `.git` and Git confirms it as a top level. */
@@ -44,6 +48,11 @@ export class CheckoutOwners {
   readonly #submodules = new Map<string, boolean>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
+
+  /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
+  constructor(recordedVersion?: () => string) {
+    this.#recordedVersion = recordedVersion;
+  }
 
   /** A recorded checkout outside Git owns the files below it that no Git checkout owns. */
   addPlainRoot(root: string): void {
@@ -55,6 +64,7 @@ export class CheckoutOwners {
    * differ (a symlink into another checkout) or when the real path leaves the owner (a symlink escaping it).
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
+    this.#revalidate();
     const lexical = resolve(absolute);
     const real = physicalPath(lexical);
     const root = this.#rootOf(lexical, real);
@@ -68,6 +78,7 @@ export class CheckoutOwners {
    * gitlink in that checkout's index. Git runs only in the enclosing checkout, once per root.
    */
   isDeclaredSubmodule(root: string): boolean {
+    this.#revalidate();
     let declared = this.#submodules.get(root);
     if (declared === undefined) {
       const enclosing = this.ownerOf(dirname(root));
@@ -99,6 +110,17 @@ export class CheckoutOwners {
     // Only folders are remembered: the path itself is a checkout root only when it holds `.git`.
     const own = holdsGitEntry(path) ? this.#confirm(path) : undefined;
     return own ?? this.#gitRoot(dirname(path)) ?? this.#plainRoot(real);
+  }
+
+  /** Forget every cached answer when the recorded checkouts changed since the last lookup. */
+  #revalidate(): void {
+    if (this.#recordedVersion === undefined) return;
+    const version = this.#recordedVersion();
+    if (version === this.#version) return;
+    this.#version = version;
+    this.#roots.clear();
+    this.#confirmed.clear();
+    this.#submodules.clear();
   }
 
   #plainRoot(real: string): string | undefined {

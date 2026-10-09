@@ -2,8 +2,23 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeRemoteAddress, readCloneId, readRemoteAddress, resolveCloneId } from "../src/repository-identity.js";
+
+/** When set, the next `mkdirSync` of a `.rerail` folder loses a race: another process creates it first. */
+const race = vi.hoisted(() => ({ armed: false }));
+vi.mock("node:fs", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  const mkdirSync = ((path: Parameters<typeof fs.mkdirSync>[0], options?: Parameters<typeof fs.mkdirSync>[1]) => {
+    if (race.armed && String(path).endsWith(".rerail")) {
+      race.armed = false;
+      fs.mkdirSync(path, options);
+      throw Object.assign(new Error(`EEXIST: file already exists, mkdir '${String(path)}'`), { code: "EEXIST" });
+    }
+    return fs.mkdirSync(path, options);
+  }) as typeof fs.mkdirSync;
+  return { ...fs, mkdirSync, default: { ...fs, mkdirSync } };
+});
 
 describe("normalizeRemoteAddress", () => {
   it("gives the ssh, https and differently cased addresses of one repository the same key", () => {
@@ -95,6 +110,14 @@ describe("clone identity files", () => {
     symlinkSync(outside, join(linkedDirectory, ".rerail"));
     expect(() => resolveCloneId(linkedDirectory)).toThrow(/not a directory/u);
     expect(readdirSync(outside)).toEqual(["secret"]);
+  });
+
+  it("creates its identity when another process creates .rerail at the same moment", () => {
+    const root = folder();
+    race.armed = true;
+    const { cloneId } = resolveCloneId(root);
+    expect(race.armed).toBe(false);
+    expect(resolveCloneId(root).cloneId).toBe(cloneId);
   });
 
   it("creates a well-formed id once and reads the same id back", () => {

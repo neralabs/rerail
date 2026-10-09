@@ -1,4 +1,4 @@
-"""Runs every call site of the workspace (rerail-fixtures/python/calls/generate.py traces it)."""
+"""Runs every call site of the workspace (fixtures/python/calls/generate.py traces it)."""
 import pkg
 from pkg import aliases, asyncs, decorators, dynamic, models, nested, util
 from pkg.util import helper as h

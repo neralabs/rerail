@@ -1,35 +1,53 @@
+import type { CodeRuleSourceLanguage } from "./code-rule.js";
 import {
+  LANGUAGE_REGISTRY,
+  CODE_RULE_AST_LANGUAGES,
+  CODE_RULE_LANGUAGE_FAMILIES,
+  CODE_RULE_LANGUAGE_IDS,
+  CODE_RULE_PLANNED_LANGUAGES,
   CODE_RULE_SEMANTIC_CAPABILITIES,
   CODE_RULE_SUPPRESSIONS,
-  codeRuleLanguageImplements as semanticLanguageImplements,
-  codeRuleLanguageSuppressions as semanticLanguageSuppressions,
-} from "./code-rule-languages-semantic.js";
-import type { CodeRuleSemanticCapability, CodeRuleSuppression } from "./code-rule-languages-semantic.js";
+} from "./code-rule-language-registry.generated.js";
 
-export { CODE_RULE_SEMANTIC_CAPABILITIES, CODE_RULE_SUPPRESSIONS };
-export type { CodeRuleSemanticCapability, CodeRuleSuppression };
+/**
+ * The languages the host knows, all read from the language registry (`languages/*.json`, docs/language-packs.md)
+ * through its generated module. The engine generates its own tables from the same files. Nothing here names a
+ * language: a language is added to the registry, never to this file.
+ */
 
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade"] as const;
+export { LANGUAGE_REGISTRY, CODE_RULE_AST_LANGUAGES, CODE_RULE_LANGUAGE_FAMILIES, CODE_RULE_LANGUAGE_IDS, CODE_RULE_PLANNED_LANGUAGES, CODE_RULE_SEMANTIC_CAPABILITIES, CODE_RULE_SUPPRESSIONS };
+
+/** Every language a rule may name. */
+export type CodeRuleLanguageId = (typeof CODE_RULE_LANGUAGE_IDS)[number];
+/** A language the engine reads. */
 export type CodeRuleAstLanguage = (typeof CODE_RULE_AST_LANGUAGES)[number];
-export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade"] as const;
+/** A language a rule may name that the engine does not read yet. */
+export type CodeRulePlannedLanguage = (typeof CODE_RULE_PLANNED_LANGUAGES)[number];
 export type CodeRuleLanguageFamily = (typeof CODE_RULE_LANGUAGE_FAMILIES)[number];
+export type CodeRuleSemanticCapability = (typeof CODE_RULE_SEMANTIC_CAPABILITIES)[number];
+export type CodeRuleSuppression = (typeof CODE_RULE_SUPPRESSIONS)[number];
+/** Whether a language reads a capability: `refused` rules are invalid, `not-supported-yet` rules are kept inactive. */
+export type CodeRuleCapabilitySupport = "supported" | "refused" | "not-supported-yet";
 
-export type CodeRuleDialectLabel = "python" | "typescript" | "tsx" | "javascript" | "php" | "blade";
+type RegistryEntry = (typeof LANGUAGE_REGISTRY)[number];
+type SupportedEntry = Extract<RegistryEntry, { status: "supported" }>;
+export type CodeRuleDialectLabel = SupportedEntry["dialects"][number]["label"];
 
-type CodeRuleDialect = {
+interface CodeRuleDialect {
   label: CodeRuleDialectLabel;
-  extensions: readonly string[];
+  suffixes: readonly string[];
   family: CodeRuleLanguageFamily;
-};
+}
 
-export const CODE_RULE_DIALECTS: Readonly<Record<CodeRuleDialectLabel, CodeRuleDialect>> = {
-  python: { label: "python", extensions: [".py", ".pyi"], family: "python" },
-  typescript: { label: "typescript", extensions: [".ts", ".mts", ".cts"], family: "ecma" },
-  tsx: { label: "tsx", extensions: [".tsx"], family: "ecma" },
-  javascript: { label: "javascript", extensions: [".js", ".jsx", ".mjs", ".cjs"], family: "ecma" },
-  php: { label: "php", extensions: [".php"], family: "php" },
-  blade: { label: "blade", extensions: [".blade.php"], family: "blade" },
-};
+const SUPPORTED: readonly SupportedEntry[] = LANGUAGE_REGISTRY.filter((entry): entry is SupportedEntry => entry.status === "supported");
+const ENTRIES = Object.fromEntries(LANGUAGE_REGISTRY.map(entry => [entry.id, entry])) as Readonly<Record<CodeRuleLanguageId, RegistryEntry>>;
+
+/** Each supported dialect: its file label, the file suffixes that select it, and the family it is read with. */
+export const CODE_RULE_DIALECTS = Object.fromEntries(
+  SUPPORTED.flatMap(entry =>
+    entry.dialects.map((dialect): [CodeRuleDialectLabel, CodeRuleDialect] => [dialect.label, { label: dialect.label, suffixes: dialect.suffixes, family: entry.family }]),
+  ),
+) as Readonly<Record<CodeRuleDialectLabel, CodeRuleDialect>>;
 
 /**
  * The language `languages` maps a path's basename to: its longest listed suffix (`.blade.php` before `.php`),
@@ -48,26 +66,54 @@ export function languageOfPath<T>(languages: ReadonlyMap<string, T>, path: strin
   return found?.language;
 }
 
-const CODE_RULE_LANGUAGES: Readonly<Record<CodeRuleAstLanguage, { dialects: readonly CodeRuleDialectLabel[]; family: CodeRuleLanguageFamily }>> = {
-  python: { dialects: ["python"], family: "python" },
-  typescript: { dialects: ["typescript", "tsx", "javascript"], family: "ecma" },
-  javascript: { dialects: ["javascript"], family: "ecma" },
-  php: { dialects: ["php"], family: "php" },
-  blade: { dialects: ["blade"], family: "blade" },
+export const isCodeRuleAstLanguage = (language: string): language is CodeRuleAstLanguage => ENTRIES[language as CodeRuleLanguageId]?.status === "supported";
+export const isCodeRulePlannedLanguage = (language: string): language is CodeRulePlannedLanguage => ENTRIES[language as CodeRuleLanguageId]?.status === "planned";
+export const codeRuleLanguageFamily = (language: CodeRuleAstLanguage): CodeRuleLanguageFamily => ENTRIES[language].family as CodeRuleLanguageFamily;
+/** The dialects a language's rules run on, the first being the one its own text is read in. */
+export const codeRuleLanguageDialects = (language: CodeRuleAstLanguage): readonly CodeRuleDialectLabel[] => {
+  const entry = ENTRIES[language] as SupportedEntry;
+  return "runsOn" in entry ? entry.runsOn : entry.dialects.map(dialect => dialect.label);
 };
-
-
-export const codeRuleLanguageFamily = (language: CodeRuleAstLanguage): CodeRuleLanguageFamily => CODE_RULE_LANGUAGES[language].family;
-export const codeRuleLanguageDialects = (language: CodeRuleAstLanguage): readonly CodeRuleDialectLabel[] => CODE_RULE_LANGUAGES[language].dialects;
 export const codeRuleDialectFamily = (dialect: CodeRuleDialectLabel): CodeRuleLanguageFamily => CODE_RULE_DIALECTS[dialect].family;
-/** Each dialect extension and the dialect it selects, for `languageOfPath`. */
+/** Each supported dialect suffix and the dialect it selects, for `languageOfPath`. Planned languages route nothing. */
 export const CODE_RULE_DIALECT_SUFFIXES: ReadonlyMap<string, CodeRuleDialectLabel> = new Map(
-  (Object.values(CODE_RULE_DIALECTS) as CodeRuleDialect[]).flatMap(dialect => dialect.extensions.map(extension => [extension, dialect.label] as const)),
+  Object.values(CODE_RULE_DIALECTS).flatMap(dialect => dialect.suffixes.map(suffix => [suffix, dialect.label] as const)),
 );
 /** The dialect a path routes to, as the host's walk and the native repository index route it (see `languageOfPath`). */
 export const codeRuleDialectForPath = (path: string): CodeRuleDialectLabel | undefined => languageOfPath(CODE_RULE_DIALECT_SUFFIXES, path);
+/** What a language's registry entry declares for a capability. */
+export const codeRuleLanguageCapability = (language: CodeRuleLanguageId, capability: CodeRuleSemanticCapability): CodeRuleCapabilitySupport =>
+  ENTRIES[language].capabilities[capability];
 export const codeRuleLanguageImplements = (language: CodeRuleAstLanguage, capability: CodeRuleSemanticCapability): boolean =>
-  semanticLanguageImplements(language, codeRuleLanguageFamily(language), capability);
-export const codeRuleLanguageSuppressions = (language: CodeRuleAstLanguage): readonly CodeRuleSuppression[] =>
-  semanticLanguageSuppressions(codeRuleLanguageFamily(language));
-export const codeRuleLanguageUsesFamily = (language: CodeRuleAstLanguage, family: CodeRuleLanguageFamily): boolean => codeRuleLanguageFamily(language) === family;
+  codeRuleLanguageCapability(language, capability) === "supported";
+export const codeRuleLanguageSuppressions = (language: CodeRuleAstLanguage): readonly CodeRuleSuppression[] => ENTRIES[language].suppressions as readonly CodeRuleSuppression[];
+
+/** Files audits read as text only (regex rules over their content); never parsed, whatever language their suffix suggests. */
+const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
+  [".rs", "rust"],
+  [".json", "json"],
+  [".yaml", "yaml"],
+  [".yml", "yaml"],
+  [".toml", "toml"],
+  [".md", "markdown"],
+  [".mdx", "markdown"],
+  [".rst", "text"],
+  [".txt", "text"],
+  [".sql", "text"],
+  [".sh", "text"],
+  [".bash", "text"],
+  [".zsh", "text"],
+  [".html", "text"],
+  [".css", "text"],
+  [".scss", "text"],
+]);
+
+/**
+ * The suffixes audits and the bridge read and the file label each selects: every supported dialect's, and the text
+ * files'. A supported dialect's suffix wins over a text one; a planned language's suffix selects no dialect. The
+ * native repository index receives the same map.
+ */
+export const SOURCE_LANGUAGES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
+  ...CODE_RULE_DIALECT_SUFFIXES,
+  ...[...TEXT_SOURCE_SUFFIXES].filter(([suffix]) => !CODE_RULE_DIALECT_SUFFIXES.has(suffix)),
+]);

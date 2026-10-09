@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { parse } from "node:path";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "./database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "./git.js";
@@ -74,7 +74,7 @@ function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): v
   db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
 }
 
-/** Clone-keyed repositories this process already checked for a remote to adopt. */
+/** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */
 const adoptionChecked = new Set<RepositoryKey>();
 
 /**
@@ -118,9 +118,10 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
     return contextOf(location, checkoutPath, repositoryKey, cloneId);
   }, { behavior: "immediate" });
   if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
-  adoptionChecked.add(context.repositoryKey);
+  // "No remote" is not remembered: a remote added later is adopted the next time the clone is recorded.
   const remoteKey = remoteKeyOf(location.workspaceRoot);
   if (remoteKey === undefined) return context;
+  adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
   adoptRemote(db, context.repositoryKey, target, now);
   const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
@@ -254,7 +255,10 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
       tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, other.repositoryKey))).run();
       tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
     }
-    tx.update(repositories).set({ aliases: [...repository.aliases, alias], updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
+    // The merged repository's own key and aliases resolve here too, so a fresh clone of its remote joins `key`.
+    const merged = other === undefined ? [] : [other.repositoryKey, ...other.aliases];
+    const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
+    tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
   return alias;
 }
@@ -314,4 +318,15 @@ export function pruneCheckouts(db: RerailDatabase): string[] {
     tx.delete(checkouts).where(inArray(checkouts.checkoutPath, gone)).run();
   }, { behavior: "immediate" });
   return gone;
+}
+
+/**
+ * Changes whenever a checkout is recorded, re-recorded under another identity or removed: the count, the newest row
+ * and the newest record time. Caches of which checkout holds a folder are forgotten when it changes.
+ */
+export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "get">): string {
+  const row = db.get<{ count: number; newest: number | null; created: number | null }>(
+    sql`SELECT count(*) AS count, max(rowid) AS newest, max(${checkouts.createdAt}) AS created FROM ${checkouts}`,
+  );
+  return `${row?.count ?? 0}:${row?.newest ?? 0}:${row?.created ?? 0}`;
 }

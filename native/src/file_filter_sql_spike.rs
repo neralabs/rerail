@@ -176,7 +176,7 @@ const FILE_CLAUSE_SQL: &str =
 fn spike_sql_file_filter_indexes() {
     let native = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repository = native.parent().unwrap().to_path_buf();
-    let rules = repository.join("code-rule-dsl/rules");
+    let rules = repository.join("packs/tslint/rules");
     let capabilities =
         fs::read_to_string(repository.join("code-rule-dsl/capabilities.json")).unwrap();
 

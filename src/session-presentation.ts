@@ -153,7 +153,8 @@ function onPresentation(
   presence: PresentationPresence,
   health: string[],
 ): SessionPresentation {
-  const sessionUrl = sessionPageUrl(origin.href, session.host, session.sessionId);
+  // The session page opens on the repository picker unless the link names the repository, as the rules link does.
+  const sessionUrl = sessionPageUrl(rulesDashboardUrl(origin, scope), session.host, session.sessionId);
   const ruleNoun = hud.activeRuleCount === 1 ? "rule" : "rules";
   const items: SessionPresentation["parts"] = [
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
@@ -168,18 +169,13 @@ function onPresentation(
 }
 
 /**
- * The dashboard origin people can open for `cwd`'s checkout, resolved as the footer resolves it: the
- * Rerail home daemon's recorded URL when it is loopback. Undefined when there is none, or the daemon is
- * bound somewhere a browser should not be sent (`0.0.0.0`).
- * Passive: reads locator files only and never probes or starts anything, so hooks can afford it per steer.
+ * The dashboard the session-start note links into for `cwd`: the Rerail home daemon's recorded URL when it is
+ * loopback, scoped to `cwd`'s repository and checkout (`?repository=&checkout=`) when the daemon names them, so the
+ * session page opens in that repository rather than on the picker. Undefined when there is none, or the daemon is
+ * bound somewhere a browser should not be sent (`0.0.0.0`). Passive: never starts anything.
  */
 export async function dashboardOrigin(cwd: string): Promise<string | undefined> {
-  try {
-    const daemon = await verifyDaemon(cwd);
-    return typeof daemon === "string" ? undefined : daemon.origin.href;
-  } catch {
-    return undefined;
-  }
+  return steerDashboard(cwd);
 }
 
 /**
@@ -402,8 +398,12 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
   }
 }
 
-/** What the session-start note says about the session's rules, as the daemon presents them (hosts that cannot open the database). */
+/**
+ * What the session-start note says about the session's rules, as the daemon presents them (hosts that cannot open the
+ * database). Read on demand: the note is the agent's, so the person's footer preference (silent) must not hide that the
+ * repository is not set up.
+ */
 export async function presentedSessionNoteRules(session: AdapterSession): Promise<SessionNoteRules> {
-  const presentation = await readPresentation({ sessionId: session.sessionId, host: session.host, cwd: session.cwd });
+  const presentation = await readPresentation({ sessionId: session.sessionId, host: session.host, cwd: session.cwd, onDemand: true });
   return presentation.status === "not-set-up" ? { setUp: false } : { setUp: true, ruleCount: presentation.counts?.rules ?? null };
 }

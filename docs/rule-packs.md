@@ -1,6 +1,6 @@
 # Rule packs
 
-A rule pack is a named set of rules that come with Rerail (origin **By Rerail**). Rules you write yourself are **Created by you** and belong to no pack. A pack holds no rules of its own: it lists rules that already ship with Rerail, and adds the metadata the dashboard shows (a title and a group for each rule), an optional match definition, and whether its rules start on.
+A rule pack is a named set of rules that come with Rerail (origin **By Rerail**). Rules you write yourself are **Created by you** and belong to no pack. A pack is a `packs/<id>/` directory: its rule documents in `rules/`, and a `pack.json` that lists them with the metadata the dashboard shows (a title and a group for each rule), an optional match definition, and whether its rules start on.
 
 A rule pack runs only where a repository adds it. Setting a repository up adds the packs recommended for it; after that, packs are added, removed, turned off or given another mode per repository, per folder and per checkout on the rules page or through the API (see [Rule scoping](rule-scoping.md)).
 
@@ -8,16 +8,16 @@ Rerail recommends packs for a repository by matching the repository's files agai
 
 ## The packs
 
-Only rules that already exist ship as packs. Rerail ships one:
+Only rules that already exist ship as packs. Rerail ships two:
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
-| Cyclomatic complexity (limit 6) | language | 3 | never recommended; runs only in repositories that add it | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `code-rule-dsl/rules/opt-in/complexity/`. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| TSLint | language | 74 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `code-rule-dsl/rules/opt-in/tslint/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
+| Cyclomatic complexity (limit 6) | language | 3 | never recommended; runs only in repositories that add it | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `packs/complexity/rules/`. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
+| TSLint | language | 75 | the `typescript` dependency, `*.ts` or `*.tsx` files | The golden TSLint ports in `packs/tslint/rules/`: each passed TSLint's own test suite in the conformance harness, with TSLint's default options. Group: TSLint. |
 
-The rule lists are the pack files themselves: `policies/rule-packs/complexity.json` and `policies/rule-packs/tslint.json`. A rule's title comes from its document's description.
+The rule lists are the pack files themselves: `packs/complexity/pack.json` and `packs/tslint/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/bundled-rule-documents.ts`, and `package.json` `files`); their rules run only in repositories that add them. The other packs under `packs/` are not shipped yet.
 
-A pack for a project's own conventions is added the same way: its rule documents under `code-rule-dsl/rules/` and a `repository` pack file in `policies/rule-packs/` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until their rule ports exist.
+A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
 Every rule is listed in the mode its own document has (all `steer` today), and every pack lists its rules as on.
 
@@ -27,10 +27,10 @@ A rule honours its linter's suppression comments only where its document says so
 
 ## Format
 
-This is the pack format, `rerail.rule-pack/v1`. Today packs ship inside core; where they move to in this repository
-and what each must prove is specified in [pack-format.md](pack-format.md).
+This is the pack format, `rerail.rule-pack/v1`. Where packs live in this repository and what each must prove is
+specified in [pack-format.md](pack-format.md).
 
-A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule documents it lists:
+A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<id>/rules/`:
 
 ```json
 {
@@ -38,7 +38,7 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
   "id": "tslint",
   "name": "TSLint",
   "category": "language",
-  "covers": "The 74 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
+  "covers": "The 75 TSLint core rules ported to Rerail that pass TSLint's own test suite, with TSLint's default options.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -48,7 +48,7 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
     ]
   },
   "rules": [
-    { "id": "tslint:triple-equals", "title": "Requires === and !== in place of == and !=", "group": "TSLint" }
+    { "id": "tslint:triple-equals", "document": "rules/triple-equals.json", "title": "Requires === and !== in place of == and !=", "group": "TSLint" }
   ]
 }
 ```
@@ -59,11 +59,13 @@ A pack is one file, `policies/rule-packs/<id>.json`, kept apart from the rule do
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
 - `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
-- `rules` lists bundled rules by id; each rule belongs to exactly one pack, and a pack adds no rule documents.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack.
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
   - `on` (optional, default `true`) is whether the pack starts the rule on.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved by the conformance harness (`golden.json`).
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule; the TSLint ports are proved by the conformance harness (the golden manifest, `packs/tslint/conformance.json`).
+  - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
+    ([pack format](pack-format.md#packjson)).
 
 `test/rule-packs.test.ts` holds the packs to this: TSLint lists exactly the golden ports, the complexity pack exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
 
@@ -79,11 +81,11 @@ The folder is where set-up adds the pack. A language or framework pack goes in t
 
 ## Cyclomatic complexity
 
-The complexity pack flags a function whose cyclomatic complexity is above 6: one plus the decision points inside it, with lizard 1.24.0's decision points and without its tokenizer defects. On Python it gives lizard's number for every function lizard reads correctly, checked function by function on jinja, click and marshmallow. Each finding names the number, for example `CYCLOMATIC_COMPLEXITY src/grade.py:1: Cyclomatic complexity 8 (limit 6). Split this function into smaller ones or simplify its branching.` What counts in each language, where it deliberately differs from lizard, the real-code comparison and the corpus that proves the rest are in `code-rule-dsl/rules/opt-in/complexity/README.md`. Test files are not scored.
+The complexity pack flags a function whose cyclomatic complexity is above 6: one plus the decision points inside it, with lizard 1.24.0's decision points and without its tokenizer defects. On Python it gives lizard's number for every function lizard reads correctly, checked function by function on jinja, click and marshmallow. Each finding names the number, for example `CYCLOMATIC_COMPLEXITY src/grade.py:1: Cyclomatic complexity 8 (limit 6). Split this function into smaller ones or simplify its branching.` What counts in each language, where it deliberately differs from lizard, the real-code comparison and the corpus that proves the rest are in `packs/complexity/README.md`. Test files are not scored.
 
 It reproduces the complexity feedback of the Metrics-in-the-Loop study (the C arm): the same tool semantics, the same limit, and only the functions the agent changed. To use it:
 
-1. Add the `complexity` pack to the repository with `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`; the whole repository unless the entry names a `folder`). Set-up never adds it, because it has no match definition. A coding agent may make this call only before the repository is set up; after that a person makes it.
+1. Add the `complexity` pack to the repository with `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`; the whole repository unless the entry names a `folder`). Set-up never adds it, because it has no match definition. A coding agent may make this call only before the repository is set up; after that a person makes it.
 2. Report only the functions the agent changed: set the workspace's audit scope to `ai-output`, with `rerail settings --session <session-id> --scope ai-output`. A finding covers its whole function, so under `ai-output` a function is reported when an edit touches any of its lines. Under the default `touched-files` scope every function over the limit in an edited file is reported, including ones the agent never touched.
 
 It differs from the study in when and how often the agent hears about it:

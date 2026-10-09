@@ -21,8 +21,8 @@ Run the harness from the repository root. `conformance` below stands for `node -
 conformance fetch                  # once; sparse, shallow checkout into tmp/tslint-fixtures (idempotent)
 conformance --rule no-var-keyword  # evaluate one port, print every miss/extra with line text and caret
 conformance --rule quotemark --ends   # also list violations whose start matches but end differs
-RERAIL_TSLINT_PORTS=<dir> conformance --rule curly   # score scratch copies of the ports instead of rules/
-conformance golden                 # golden gate only: every golden rule meets its golden.json entry
+RERAIL_TSLINT_PORTS=<dir> conformance --rule curly   # score scratch copies of the ports instead of candidates/
+conformance golden                 # golden gate only: every golden rule meets its golden manifest entry
 conformance --label all --no-corpus # all rules; writes the consolidated report + summary (see below)
 conformance --label m3 --no-corpus --compare conformance/tslint/history/summary-<date>-m2.json --delta-only
                                    # milestone: summary + delta against an earlier summary
@@ -31,7 +31,7 @@ conformance --rename-identifiers   # identifier-poisoning gate: every rule on re
 conformance --rename-identifiers --rule class-name   # one rule's detail on renamed fixtures
 conformance literals [--all]       # static scan: identifier literals a port hardcodes that only fixtures use
 node --import tsx conformance/tslint/promote.ts <rule>   # promote a proven port into the golden set (see below)
-node --import tsx conformance/tslint/promote.ts --check  # pack <-> golden.json <-> audit consistency
+node --import tsx conformance/tslint/promote.ts --check  # pack <-> golden manifest <-> audit consistency
 ```
 
 While you port a rule, read the fixtures in `tmp/tslint-fixtures/test/rules/<rule>/` and the implementation in
@@ -40,18 +40,24 @@ of each variant, and the document the variant ran with.
 
 ## File layout
 
+The ports and their records are data in the TSLint pack, [`packs/tslint/`](../../packs/tslint/README.md); this
+directory is the harness, test support that never ships.
+
 ```
+packs/tslint/
+  rules/<rule>.json                      a golden port: the shipped doc (see Golden set)
+  candidates/<rule>.json                 a non-golden port: ONE rerail.policy/v1 doc (id "tslint:<rule>", scope include ["**/*"])
+  candidates/<rule>/<variant>.json       optional per-variant override, golden or not (see below)
+  candidates/<rule>.verdict.json         optional manual verdict sidecar (non-golden rules only)
+  conformance.json                       the golden manifest: expected verdict, TP and out-of-scope files per golden rule
+  divergences.json                       the PASS audit: honesty classes (genuine / bounded / fixture-fit / option-baked / requires-config / poisoned)
 conformance/tslint/
-  rules/<rule>.json                 a non-golden port: ONE rerail.policy/v1 doc (id "tslint:<rule>", scope include ["**/*"])
-  rules/<rule>/<variant>.json       optional per-variant override, golden or not (see below)
-  rules/<rule>.verdict.json         optional manual verdict sidecar (non-golden rules only)
-  golden.json                       golden gate: expected verdict, TP and out-of-scope files per golden rule
-  golden.ts golden-gate.ts          golden membership (the pack folder), golden.json, and the gate
+  golden.ts golden-gate.ts          golden membership (the pack's rules/), the golden manifest, and the gate
   promote.ts                        promotion into the pack and its --check
   tslint-rules.tsv                  rule list (all 163 core rules): name, T = needs type info, F = has fixer
   excluded-rules.json               rules removed from the equivalence set: rule -> reason
   repairs.ts                        minimal edits that make invalid fixtures parse (effective verdicts)
-  audit.ts                          PASS honesty classes (genuine / bounded / fixture-fit / option-baked / requires-config / poisoned)
+  audit.ts                          the PASS audit's classes, read from packs/tslint/divergences.json
   rename.ts poison.ts               identifier rename of fixtures and the normal-vs-renamed score comparison
   literal-scan.ts                   identifier literals in ports that only the fixtures use
   grammar-gaps.ts                   constructs checked against tsc and the engine (valid TS the grammar rejects)
@@ -93,11 +99,11 @@ A **variant** is a fixture directory that contains a `tslint.json`, with its pat
 `.` is the rule directory, and `single` or `tags/content` name nested directories. As in TSLint's runner, a
 variant lints every `**/*.lint` beneath it. Its `tslint.json` sets the rule options.
 
-**Overrides.** The DSL has no rule options, so write `rules/<rule>.json` for TSLint's default options and add
-`rules/<rule>/<variant>.json` for each variant whose options change what is flagged. For example,
-`rules/quotemark/single.json` covers `test/rules/quotemark/single/`. A variant without an override runs the default
-doc. The `--corpus` run uses only the default doc. The harness flags any override that matches no variant. A golden
-rule's default doc is its pack doc (see Golden set).
+**Overrides.** The DSL has no rule options, so write `candidates/<rule>.json` for TSLint's default options and add
+`candidates/<rule>/<variant>.json` for each variant whose options change what is flagged. For example,
+`candidates/quotemark/single.json` covers `test/rules/quotemark/single/`. A variant without an override runs the
+default doc. The `--corpus` run uses only the default doc. The harness flags any override that matches no variant. A
+golden rule's default doc is its pack doc (see Golden set).
 
 ## Verdicts
 
@@ -114,9 +120,9 @@ the verdict. The report lists these files per rule: `Np` in the rules table, and
 lines in `--rule`. `source-incomplete` means a clause that is unsound under errors skipped the file, and it still
 counts as an engine failure (`+Ne`).
 | `COMPILE_ERROR` | a port document fails `CodeRuleDslRuntime.compile` (message shown) |
-| `NO_PORT` | no default doc (pack doc or `rules/<rule>.json`) and no overrides |
+| `NO_PORT` | no default doc (pack doc or `candidates/<rule>.json`) and no overrides |
 
-Manual, from `rules/<rule>.verdict.json` (never read for a golden rule; `golden.json` carries its notes). Its verdict replaces the automatic one in the report; the automatic
+Manual, from `candidates/<rule>.verdict.json` (never read for a golden rule; the golden manifest carries its notes). Its verdict replaces the automatic one in the report; the automatic
 metrics stay visible.
 
 ```json
@@ -158,7 +164,7 @@ Repairs keep every expected failure's start column; the harness checks this. A r
 next to the raw one, and its **effective** verdict is `PASS (repaired fixture)` when it passes every fixture after
 `fixture-artifact` repairs alone. A rule that needs a `grammar-gap` repair keeps its raw verdict.
 
-Every effective PASS carries a class from `audit.ts`: `genuine`, `bounded` (unrolled to a named depth),
+Every effective PASS carries a class from the audit (`packs/tslint/divergences.json`): `genuine`, `bounded` (unrolled to a named depth),
 `fixture-fit` (a stand-in the fixtures happen not to break), `option-baked` (the default doc hardcodes an option list)
 or `requires-config` (TSLint has no meaningful option-less behaviour: a mandatory option, or bare `true` is inert or a
 blanket ban, so the default doc bakes a fixture's options or steers nothing) or `poisoned` (passes because it matches
@@ -187,19 +193,19 @@ structure the rule is about. Two checks catch it:
 
 ## Golden set
 
-The golden set is the ports Rerail ships, disabled, in the opt-in pack
-(`code-rule-dsl/rules/opt-in/tslint/<rule>.json`, rule id `tslint:<rule>`; see its README). The pack
-folder decides membership and holds each golden rule's default doc, so there is no `rules/<rule>.json` or
-`rules/<rule>.verdict.json` for it; its option-variant overrides stay in `rules/<rule>/`. `RERAIL_TSLINT_PORTS`
-replaces the non-golden defaults, the overrides and the sidecars, never a golden default: to change one, edit the
-pack doc and let the gate judge it.
+The golden set is the ports Rerail ships, disabled, in the TSLint pack
+(`packs/tslint/rules/<rule>.json`, rule id `tslint:<rule>`; see its README). The pack's
+`rules/` decides membership and holds each golden rule's default doc, so there is no `candidates/<rule>.json` or
+`candidates/<rule>.verdict.json` for it; its option-variant overrides stay in `candidates/<rule>/`.
+`RERAIL_TSLINT_PORTS` replaces the non-golden defaults, the overrides and the sidecars, never a golden default: to
+change one, edit the pack doc and let the gate judge it.
 
 The harness scores a golden default doc with its shipped scope (TypeScript sources outside build output). A fixture
 file outside that scope is not evaluated and is reported as out of scope (`No` in the rules table, `outOfScope` in
-the summary), never as a miss. None of the 74 golden rules loses a fixture file this way. Non-golden ports keep their
+the summary), never as a miss. None of the 75 golden rules loses a fixture file this way. Non-golden ports keep their
 `**/*` scope.
 
-`golden.json` has one entry per golden rule: `verdict` (`PASS`, or `PASS (repaired fixture)` when invalid fixture
+The golden manifest, `packs/tslint/conformance.json`, has one entry per golden rule: `verdict` (`PASS`, or `PASS (repaired fixture)` when invalid fixture
 syntax is the only blocker), `truePositives` (on the repaired fixtures for a repaired-fixture PASS; FP, FN and
 engine failures must be 0), `outOfScope` (fixture files the shipped scope leaves out), and the notes a sidecar gave
 the report: `reason`, `primitive`, `secondary`, and `evidence`, which for a repaired-fixture PASS cites the fixture
@@ -209,10 +215,11 @@ against its entry and exit 1 with one line per regression; the report's Golden s
 `node --import tsx conformance/tslint/promote.ts <rule>` promotes a port: its audit class must be `genuine` and it must not be in
 `REQUIRES_CONFIGURATION`; scored with the doc as it would ship, it must reach an effective PASS and score identically
 on renamed fixtures. It writes the pack doc (the port's default doc with a `Port of TSLint's ...` description prefix
-and the shipped scope) and the `golden.json` entry, then prints the `git rm` for the port default and sidecar.
-`--check` needs no fixtures and runs in the unit tests: the manifest lists exactly the pack's rules, every one is
-audited `genuine` and needs no configuration, every pack doc is well-formed with the shipped scope, and no golden
-rule keeps a port default or sidecar in `rules/`.
+and the shipped scope) and the manifest entry, then prints the `git rm` for the port default and sidecar; the rule's
+`pack.json` entry is added by hand. `--check` needs no fixtures and runs in the unit tests: the manifest lists exactly
+the pack's rules, every one is audited `genuine` and needs no configuration, every pack doc is well-formed with the
+shipped scope, and no golden rule keeps a port default or sidecar in `candidates/`. `npm run test:conformance` fetches
+the fixtures and runs this directory's tests, so the golden gate and the rename gate run in CI.
 
 ## Porting rules
 

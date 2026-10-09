@@ -62,6 +62,6 @@ rerail-language-conformance *args:
 rerail-query-parity *args:
     @node --import tsx benchmark/query-parity.ts {{ args }}
 
-# Promote a proven TSLint port into Rerail's opt-in pack (the golden set, seeded disabled): <rule> | --check.
+# Promote a proven TSLint port into the TSLint pack, packs/tslint (the golden set, seeded disabled): <rule> | --check.
 rerail-promote-tslint *args:
     @node --import tsx conformance/tslint/promote.ts {{ args }}

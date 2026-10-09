@@ -14,7 +14,7 @@ export interface ConformanceReport {
   rules: RuleResult[];
   corpus: CorpusTiming | undefined;
   consolidated: Consolidated;
-  /** Golden rules that miss their golden.json entry (`golden.ts`); empty when the gate holds. */
+  /** Golden rules that miss their conformance.json entry (`golden.ts`); empty when the gate holds. */
   goldenFailures: string[];
 }
 
@@ -86,7 +86,7 @@ export function reportMarkdown(report: ConformanceReport): string {
   const golden = report.rules.filter(rule => rule.golden);
   lines.push("## Golden set", "");
   lines.push(
-    `${golden.length} rules ship in the opt-in pack (G in the rules table), scored with their shipped docs. Gate (golden.json): ${
+    `${golden.length} rules ship in the TSLint pack (G in the rules table), scored with their shipped docs. Gate (conformance.json): ${
       report.goldenFailures.length === 0 ? "every golden rule meets its entry." : `${report.goldenFailures.length} failure(s):`
     }`,
   );
@@ -124,7 +124,7 @@ export function reportMarkdown(report: ConformanceReport): string {
 
   lines.push("## Rules", "");
   lines.push(
-    "G = golden (in the opt-in pack). Raw = the harness verdict (sidecar verdict when there is one). Effective = PASS (repaired fixture) when the port passes every fixture once invalid fixture syntax is repaired (repairs.ts) and that was its only blocker. TP/FP/FN are raw; `rep` is the score on repaired fixtures. `+Ne` = engine failures (block PASS); `Np` = files the kernel marked `source-partial` (syntax errors; AST checks ran outside them; informational); `No` = fixture files outside a golden doc's shipped scope (not scored).",
+    "G = golden (in the TSLint pack). Raw = the harness verdict (sidecar verdict when there is one). Effective = PASS (repaired fixture) when the port passes every fixture once invalid fixture syntax is repaired (repairs.ts) and that was its only blocker. TP/FP/FN are raw; `rep` is the score on repaired fixtures. `+Ne` = engine failures (block PASS); `Np` = files the kernel marked `source-partial` (syntax errors; AST checks ran outside them; informational); `No` = fixture files outside a golden doc's shipped scope (not scored).",
     "",
   );
   lines.push("| rule | G | T | F | raw | effective | PASS class | TP/FP/FN | rep | end | primitive | secondary | needs | reason | doc KiB | eval ms |");
@@ -251,7 +251,7 @@ export function ruleDetail(rule: RuleResult, showEnds = false): string {
   const { goldenEntry } = rule;
   if (goldenEntry !== undefined) {
     out.push(`  golden: expects ${goldenEntry.verdict}, TP ${goldenEntry.truePositives}${goldenEntry.primitive === undefined ? "" : ` [${goldenEntry.primitive}]`}${goldenEntry.reason === undefined ? "" : ` ${goldenEntry.reason}`}`);
-  } else if (rule.golden) out.push("  golden: no golden.json entry");
+  } else if (rule.golden) out.push("  golden: no conformance.json entry");
   for (const item of annotationOf(rule)?.evidence ?? []) out.push(`  evidence ${item.variant}${item.file === undefined ? "" : `/${item.file}`}:${item.line}  ${item.why}`);
   for (const note of rule.notes) out.push(`  note: ${note}`);
   if (rule.fixes !== undefined) out.push(`  fixes: ${rule.fixes.matched}/${rule.fixes.files} TSLint .fix files reproduced`);

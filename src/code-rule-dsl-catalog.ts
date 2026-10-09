@@ -12,6 +12,7 @@ import { physicalPath, withinCheckout } from "./checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "./checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "./database.js";
 import { reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
+import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "./native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "./audit.js";
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
@@ -26,7 +27,7 @@ import {
   type RepositoryStatus,
 } from "./repository-model.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
-import { parentCheckouts } from "./repository-registry.js";
+import { parentCheckouts, recordedCheckoutsVersion } from "./repository-registry.js";
 import { checkoutStatus } from "./repository-start.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "./rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "./rule-library.js";
@@ -57,13 +58,22 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
 
 type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
-/** Compiled executables keyed by capabilities and source, shared by every checkout of the process. */
-class CompiledRuleCache {
-  readonly #outcomes = new Map<string, CompileOutcome>();
+/**
+ * Compiled executables shared by every checkout of the process: one per rule id and capabilities, for the source last
+ * compiled. Editing a rule replaces its entry, so a long-running daemon keeps no earlier versions.
+ */
+export class CompiledRuleCache {
+  readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: CompileOutcome }>();
+
+  /** Rules (per capabilities) with a compiled version held. */
+  get size(): number {
+    return this.#outcomes.size;
+  }
 
   compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string): CompileOutcome {
-    const key = `${capabilities.digest}\0${sourceDigest}`;
-    let outcome = this.#outcomes.get(key);
+    const key = `${capabilities.digest}\0${policyId}`;
+    const cached = this.#outcomes.get(key);
+    let outcome = cached?.sourceDigest === sourceDigest ? cached.outcome : undefined;
     if (outcome === undefined) {
       try {
         const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
@@ -74,7 +84,7 @@ class CompiledRuleCache {
       } catch (error) {
         outcome = { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
-      this.#outcomes.set(key, outcome);
+      this.#outcomes.set(key, { sourceDigest, outcome });
     }
     return outcome;
   }
@@ -237,7 +247,13 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       const sourceDigest = digest(sourceText);
       const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest);
       if (!outcome.ok) {
-        quarantined.push({ ruleId: id, kind: "file", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: outcome.reason });
+        // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
+        const unsupported = languageNotSupportedOf(outcome.reason);
+        quarantined.push({
+          ruleId: id, kind: "file", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+          reason: unsupported?.reason ?? outcome.reason,
+          ...(unsupported === undefined ? {} : { code: unsupported.code }),
+        });
         continue;
       }
       codeRules.push({ id, executable: outcome.executable, placement });
@@ -252,7 +268,7 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       });
       versioned.push({ id, sourceDigest, placement, source: rule.source });
     }
-    for (const entry of quarantined) reportQuarantinedRule(this.#source.label, entry);
+    for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
     const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
     if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
     return {
@@ -323,6 +339,11 @@ export class CheckoutCatalogs {
     const entry = this.#entry(root, false);
     this.#read(entry);
     return entry.eligibility;
+  }
+
+  /** See {@link recordedCheckoutsVersion}; `CheckoutOwners` forgets its cached ownership when it changes. */
+  recordedCheckoutsVersion(): string {
+    return recordedCheckoutsVersion(this.database);
   }
 
   /** The recorded checkouts strictly inside `root` (physical paths), at any depth. */

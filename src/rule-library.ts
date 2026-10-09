@@ -5,7 +5,7 @@
 import { and, asc, eq, or } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import { readStoredCodeRule, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { assertCodeRuleStorable } from "./code-rule-compile.js";
 import { codeRuleSchema } from "./code-rule-schema.js";
 import type { BundledCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
@@ -32,6 +32,11 @@ export interface LibraryRuleWriteOptions {
   readonly copiedFromRuleId?: string | null;
   readonly createdAt?: number;
   readonly now?: number;
+  /**
+   * Store the rule even when it takes a By Rerail rule's id: a rules dump's library rule was written before a release
+   * bundled its id, and the library rule wins. Without it only a rule already in the library may keep such an id.
+   */
+  readonly shadowBundled?: boolean;
 }
 
 export interface LibraryRuleQuery {
@@ -44,11 +49,11 @@ export interface CopiedRule {
   readonly folders: readonly string[];
 }
 
-/** Validate a rule body of `kind`; file rules must compile in the engine, conversation regexes must be accepted. */
+/** Validate a rule body of `kind`: file rules must compile in the engine (or name a language it does not read yet), conversation regexes must be accepted. */
 export function validateLibraryDocument(document: unknown, kind: RuleKind): RuleDocument {
   if (kind === "file") {
     const rule = codeRuleSchema.parse(document);
-    assertCodeRuleCompiles(rule);
+    assertCodeRuleStorable(rule);
     return { kind, rule };
   }
   const rule = parseConversationRule(document);
@@ -59,13 +64,16 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Rule
 /** Write an already validated document; the caller owns the transaction. */
 export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: RuleDocument, options: LibraryRuleWriteOptions = {}): void {
   const id = document.rule.id;
-  if (bundle.documents.has(id)) throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
+  const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
+  if (bundle.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
+    throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
+  }
   db.insert(ruleCatalogIdentities).values({ ruleId: id, kind: document.kind }).onConflictDoNothing().run();
   const identity = db.select().from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get();
   if (identity?.kind !== document.kind) {
     throw new Error(`rule ${id} exists with kind ${identity?.kind}; remove it before storing ${document.kind}`);
   }
-  const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   const now = options.now ?? Date.now();
   let revision: number;
   if (document.kind === "file") revision = document.rule.revision;

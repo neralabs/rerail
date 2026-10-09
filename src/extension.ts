@@ -85,12 +85,19 @@ async function rerailStarted(cwd: string, databasePath: string | undefined): Pro
 
 /**
  * What the session-start note says about the session's rules: the database's answer under Node, else the
- * daemon's, which counts the rules on for the session as the footer does.
+ * daemon's, which counts the rules on for the session as the footer does. The daemon reads only its own database,
+ * so with a configured one the CLI answers under Node instead (set up or not; the count is left out).
  */
 async function sessionNoteRulesFor(session: AdapterSession, databasePath: string | undefined): Promise<SessionNoteRules> {
   const reader = await databaseReader();
   if (reader !== undefined) return reader.sessionNoteRules(session.cwd, databasePath);
-  return presentedSessionNoteRules(session);
+  if (databasePath === undefined) return presentedSessionNoteRules(session);
+  const cli = join(PACKAGE_ROOT, "dist", "cli.js");
+  if (!existsSync(cli)) return { setUp: false };
+  const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--set-up", "--repo", session.cwd, "--database", databasePath], {
+    cwd: session.cwd, timeout: STATE_CHECK_TIMEOUT_MS,
+  });
+  return stdout.trim() === "set-up" ? { setUp: true, ruleCount: null } : { setUp: false };
 }
 
 function streamId(message: AgentMessage): string {

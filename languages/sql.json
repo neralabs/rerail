@@ -1,0 +1,20 @@
+{
+  "format": "rerail.language/v1",
+  "id": "sql",
+  "status": "planned",
+  "family": "sql",
+  "dialects": [
+    {
+      "label": "sql",
+      "suffixes": [".sql"]
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

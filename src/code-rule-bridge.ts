@@ -14,7 +14,7 @@ import type {
 } from "./code-rule.js";
 import type { AuditMode } from "./audit.js";
 import { compareDeterministicStrings } from "./stable-json.js";
-import { languageOfPath, CODE_RULE_DIALECT_SUFFIXES } from "./code-rule-languages.js";
+import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
@@ -23,12 +23,6 @@ const OBSERVATION_CONCURRENCY = 16;
 const IGNORED_DIRECTORIES = new Set([
   ".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next",
   ".turbo", "coverage", "target", "vendor",
-]);
-const SOURCE_LANGUAGES = new Map<string, CodeRuleSourceLanguage>([
-  ...CODE_RULE_DIALECT_SUFFIXES,
-  [".rs", "rust"], [".json", "json"], [".yaml", "yaml"], [".yml", "yaml"],
-  [".toml", "toml"], [".md", "markdown"], [".mdx", "markdown"], [".rst", "text"], [".txt", "text"], [".sql", "text"],
-  [".sh", "text"], [".bash", "text"], [".zsh", "text"], [".html", "text"], [".css", "text"], [".scss", "text"],
 ]);
 
 interface Preimage {

@@ -7,20 +7,20 @@
  * must be inside the scope and produce none. A rule without a fixture file fails: a default that nothing
  * proves can fire is exactly what this guards against.
  *
- * The opt-in TSLint pack (rules/opt-in/tslint/, seeded disabled) is the golden set: the conformance harness proves it
- * against TSLint's own fixtures and gates it with golden.json instead. Here each doc must compile and scope TypeScript
- * sources only, the pack must agree with golden.json and the audit (`conformance/tslint/promote.ts --check`), and the
+ * The TSLint pack (packs/tslint/rules/, shipped in core) is the golden set: the conformance harness proves it
+ * against TSLint's own fixtures and gates it with conformance.json instead. Here each doc must compile and scope TypeScript
+ * sources only, the pack must agree with conformance.json and the audit (`conformance/tslint/promote.ts --check`), and the
  * harness must score golden rules with the pack's docs. Rules TSLint cannot run without configuration
  * (`REQUIRES_CONFIGURATION`, audited `requires-config`) stay out of it.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { languageFor } from "../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../src/native.js";
-import { bundledRulesDirectory, loadBundledRules, OPT_IN_RULES_DIRECTORY } from "../src/bundled-rule-documents.js";
+import { bundledRulesDirectory, corePackDirectories, loadBundledRules } from "../src/bundled-rule-documents.js";
+import { evaluateExample } from "../conformance/pack-validation.js";
 import { PASS_AUDIT } from "../conformance/tslint/audit.js";
 import { emptyGoldenManifest, goldenRules, loadGoldenManifest, PACK_DIRECTORY } from "../conformance/tslint/golden.js";
 import { checkGolden, REQUIRES_CONFIGURATION } from "../conformance/tslint/promote.js";
@@ -30,29 +30,28 @@ const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../code-rule-dsl/", import.me
 const FIXTURES = fileURLToPath(new URL("./fixtures/bundled-rules/", import.meta.url));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-const evaluationSchema = z.object({ violations: z.array(z.object({ code: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 const ruleFileSchema = z.object({ id: z.string() });
 const fixtureSideSchema = z.object({ path: z.string().min(1), content: z.string() });
 const fixtureSchema = z.object({ flag: fixtureSideSchema, pass: fixtureSideSchema });
 
 function violations(compiled: NativeCompiledCodeRuleDsl, path: string, source: string): string[] {
-  const language = languageFor(path) ?? "text";
-  const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language, path, source }] });
-  const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
-  expect(result.failures).toEqual([]);
-  return result.violations.map(violation => violation.code);
+  const { codes, failures } = evaluateExample(compiled, path, source);
+  expect(failures).toEqual([]);
+  return codes;
 }
 
 const bundled = loadBundledRules(bundledRulesDirectory());
-const optIn = loadBundledRules(join(bundledRulesDirectory(), OPT_IN_RULES_DIRECTORY, "tslint"));
-/** Rule id -> rule file stem; the fixture file shares the stem. */
+const packRules = loadBundledRules(join(bundledRulesDirectory(), "absent"), corePackDirectories());
+const packIds = new Set(packRules.map(document => document.rule.id));
+/** Core's own rules; rules in the packs core ships are proven by their own tests. */
+const documents = bundled.filter(document => !packIds.has(document.rule.id));
+const optIn = packRules.filter(document => document.rule.id.startsWith("tslint:"));
+/** Rule id -> rule file stem; the fixture file shares the stem. Core ships no rules of its own today, so the directory may be absent. */
 const stemByRuleId: Record<string, string> = Object.fromEntries(
-  readdirSync(bundledRulesDirectory())
+  (existsSync(bundledRulesDirectory()) ? readdirSync(bundledRulesDirectory()) : [])
     .filter(name => name.endsWith(".json"))
     .map(name => [ruleFileSchema.parse(JSON.parse(readFileSync(join(bundledRulesDirectory(), name), "utf8"))).id, name.slice(0, -5)]),
 );
-/** The rules at the top of the bundled folder; rules in opt-in packs (`opt-in/<pack>/`) are proven by their own tests. */
-const documents = bundled.filter(document => document.rule.id in stemByRuleId);
 
 describe("bundled rules", () => {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
@@ -84,26 +83,26 @@ describe("bundled rules", () => {
   });
 });
 
-describe("opt-in TSLint pack", () => {
+describe("TSLint pack", () => {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  it("is exactly the golden set, consistent with golden.json and the PASS audit", () => {
-    expect(relative(bundledRulesDirectory(), PACK_DIRECTORY)).toBe(join("opt-in", "tslint"));
+  it("is exactly the golden set, consistent with conformance.json and the PASS audit", () => {
+    expect(corePackDirectories().map(directory => join(directory, "rules"))).toContain(PACK_DIRECTORY);
     expect(optIn.map(document => document.rule.id).sort()).toEqual(goldenRules().map(rule => `tslint:${rule}`));
     expect(Object.keys(loadGoldenManifest().rules).sort()).toEqual(goldenRules());
     expect(checkGolden()).toEqual([]);
     for (const rule of goldenRules()) expect(PASS_AUDIT[rule]?.class, rule).toBe("genuine");
   });
 
-  it("flags a golden.json that disagrees with the pack folder", () => {
+  it("flags a conformance.json that disagrees with the pack folder", () => {
     const [first] = goldenRules();
     const manifest = loadGoldenManifest();
     const missing = { ...emptyGoldenManifest(), rules: Object.fromEntries(Object.entries(manifest.rules).filter(([rule]) => rule !== first)) };
-    expect(checkGolden(missing)).toEqual([`${first}: in the pack but has no golden.json entry`]);
+    expect(checkGolden(missing)).toEqual([`${first}: in the pack but has no conformance.json entry`]);
     const extra = { ...manifest, rules: { ...manifest.rules, "not-a-pack-rule": { verdict: "PASS" as const, truePositives: 1 } } };
-    expect(checkGolden(extra)).toEqual(["not-a-pack-rule: golden.json entry without a pack doc"]);
+    expect(checkGolden(extra)).toEqual(["not-a-pack-rule: conformance.json entry without a pack doc"]);
   });
 
-  it("is where the harness takes golden default docs from; non-golden ports stay in conformance/tslint/rules", () => {
+  it("is where the harness takes golden default docs from; non-golden ports stay in packs/tslint/candidates", () => {
     const golden = goldenRules();
     for (const rule of golden) {
       const port = findPort(rule);

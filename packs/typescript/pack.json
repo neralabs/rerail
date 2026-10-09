@@ -1,0 +1,182 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "typescript",
+  "name": "TypeScript",
+  "category": "language",
+  "covers": "21 ESLint and typescript-eslint rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "reason": "matches TypeScript",
+  "match": {
+    "any": [
+      {
+        "npmDependencies": [
+          "typescript"
+        ]
+      },
+      {
+        "files": [
+          "**/*.ts",
+          "**/*.mts",
+          "**/*.cts"
+        ],
+        "exclude": [
+          "**/*.d.ts"
+        ],
+        "label": "*.ts files"
+      },
+      {
+        "files": [
+          "**/*.tsx"
+        ],
+        "label": "*.tsx files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "eslint-no-debugger",
+      "document": "rules/eslint-no-debugger.json",
+      "title": "ESLint no-debugger: Disallow the use of debugger",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-eqeqeq",
+      "document": "rules/eslint-eqeqeq.json",
+      "title": "ESLint eqeqeq: Require the use of === and !==",
+      "group": "ESLint",
+      "examples": {
+        "caught": {
+          "path": "src/session.ts",
+          "text": "export function isGuest(role: string): boolean {\n  return role == \"guest\";\n}\n"
+        },
+        "passes": {
+          "path": "src/session.ts",
+          "text": "export function isGuest(role: string): boolean {\n  return role === \"guest\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "eslint-no-dupe-keys",
+      "document": "rules/eslint-no-dupe-keys.json",
+      "title": "ESLint no-dupe-keys: Disallow duplicate keys in object literals",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-self-compare",
+      "document": "rules/eslint-no-self-compare.json",
+      "title": "ESLint no-self-compare: Disallow comparisons where both sides are exactly the same",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-duplicate-case",
+      "document": "rules/eslint-no-duplicate-case.json",
+      "title": "ESLint no-duplicate-case: Disallow duplicate case labels",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-useless-rename",
+      "document": "rules/eslint-no-useless-rename.json",
+      "title": "ESLint no-useless-rename: Disallow renaming import, export, and destructured assignments to the same name",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-script-url",
+      "document": "rules/eslint-no-script-url.json",
+      "title": "ESLint no-script-url: Disallow javascript: URLs",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-implied-eval",
+      "document": "rules/eslint-no-implied-eval.json",
+      "title": "ESLint no-implied-eval: Disallow the use of eval()-like methods",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-radix",
+      "document": "rules/eslint-radix.json",
+      "title": "ESLint radix: Enforce the consistent use of the radix argument when using parseInt()",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-use-isnan",
+      "document": "rules/eslint-use-isnan.json",
+      "title": "ESLint use-isnan: Require calls to isNaN() when checking for NaN",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-new-wrappers",
+      "document": "rules/eslint-no-new-wrappers.json",
+      "title": "ESLint no-new-wrappers: Disallow new operators with the String, Number, and Boolean objects",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-unused-private-class-members",
+      "document": "rules/eslint-no-unused-private-class-members.json",
+      "title": "ESLint no-unused-private-class-members: Disallow unused private class members",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-compare-neg-zero",
+      "document": "rules/eslint-no-compare-neg-zero.json",
+      "title": "ESLint no-compare-neg-zero: Disallow comparing against -0",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-template-curly-in-string",
+      "document": "rules/eslint-no-template-curly-in-string.json",
+      "title": "ESLint no-template-curly-in-string: Disallow template literal placeholder syntax in regular strings",
+      "group": "ESLint"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-assertion",
+      "document": "rules/typescript-eslint-no-non-null-assertion.json",
+      "title": "typescript-eslint no-non-null-assertion: Disallow non-null assertions using the ! postfix operator",
+      "group": "typescript-eslint",
+      "examples": {
+        "caught": {
+          "path": "src/config.ts",
+          "text": "export function port(env: Map<string, string>): string {\n  return env.get(\"PORT\")!;\n}\n"
+        },
+        "passes": {
+          "path": "src/config.ts",
+          "text": "export function port(env: Map<string, string>): string {\n  return env.get(\"PORT\") ?? \"8080\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "typescript-eslint-no-namespace",
+      "document": "rules/typescript-eslint-no-namespace.json",
+      "title": "typescript-eslint no-namespace: Disallow TypeScript namespaces",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-duplicate-enum-values",
+      "document": "rules/typescript-eslint-no-duplicate-enum-values.json",
+      "title": "typescript-eslint no-duplicate-enum-values: Disallow duplicate enum member values",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-prefer-as-const",
+      "document": "rules/typescript-eslint-prefer-as-const.json",
+      "title": "typescript-eslint prefer-as-const: Enforce the use of as const over literal type",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-this-alias",
+      "document": "rules/typescript-eslint-no-this-alias.json",
+      "title": "typescript-eslint no-this-alias: Disallow aliasing this",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-unsafe-function-type",
+      "document": "rules/typescript-eslint-no-unsafe-function-type.json",
+      "title": "typescript-eslint no-unsafe-function-type: Disallow using the unsafe built-in Function type",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-wrapper-object-types",
+      "document": "rules/typescript-eslint-no-wrapper-object-types.json",
+      "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
+      "group": "typescript-eslint"
+    }
+  ]
+}

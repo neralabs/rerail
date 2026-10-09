@@ -78,10 +78,23 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     await this.#lane(this.#options.startingCheckout)?.opening;
   }
 
+  /**
+   * Re-read every known checkout's eligibility. A lane whose checkout may no longer run rules (stopped, not set up, or
+   * the session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again
+   * if the checkout becomes eligible.
+   */
   refreshCodeRules(): void {
     if (this.#closing) return;
     for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
-    for (const lane of this.#lanes.values()) if (this.#eligibility.get(lane.root) === "ok") lane.enforcer.refreshCodeRules();
+    for (const lane of [...this.#lanes.values()]) {
+      if (this.#mayRun(lane.root)) {
+        lane.enforcer.refreshCodeRules();
+        continue;
+      }
+      this.#lanes.delete(lane.root);
+      lane.enforcer.interrupt();
+      void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
+    }
   }
 
   updateSettings(settings: Required<AuditSettings>): void {
@@ -109,6 +122,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
     const responses: CodeRuleResponse[] = [];
     for (const lane of [...this.#lanes.values()]) {
+      if (!this.#mayRun(lane.root)) continue;
       const edits = partitioned.get(lane);
       if (edits === undefined) {
         const { pending: _pending, ...status } = lane.enforcer.snapshotStatus();
@@ -146,9 +160,15 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       if (routed !== undefined) partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), routed.path]);
     }
     const auditIds: string[] = [];
+    const visited = new Set<string>();
     for (const [lane, paths] of partitioned) {
       await lane.opening;
       auditIds.push(...await lane.enforcer.audit(sessionId, { scope: "touched-files", mode: input.mode, paths }));
+      // The lane's walk skips the checkouts nested in a folder it was given; each is audited whole, in its own lane.
+      for (const nested of this.#nestedCheckoutsOf(lane.root)) {
+        if (!paths.some(path => path === "" || nested === path || nested.startsWith(`${path}/`))) continue;
+        await this.#audit(sessionId, join(lane.root, nested), input.mode, undefined, auditIds, visited);
+      }
     }
     return auditIds;
   }
@@ -254,9 +274,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
-    if (sessionId === undefined || this.#closing) return undefined;
-    const starting = this.#eligibilityOf(this.#options.startingCheckout);
-    if (starting === "stopped" || starting === "unrecorded" || this.#eligibilityOf(root) !== "ok") return undefined;
+    if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
     let lane = this.#lanes.get(root);
     if (lane === undefined) {
       const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
@@ -273,6 +291,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       this.#lanes.set(root, lane);
     }
     return lane;
+  }
+
+  /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */
+  #mayRun(root: string): boolean {
+    const starting = this.#eligibilityOf(this.#options.startingCheckout);
+    return starting !== "stopped" && starting !== "unrecorded" && this.#eligibilityOf(root) === "ok";
   }
 
   #eligibilityOf(root: string): CheckoutEligibility {

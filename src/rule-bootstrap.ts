@@ -2,7 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { parseRuleDocument } from "./bundled-rule-documents.js";
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "./code-rule-compile.js";
+import { assertCodeRuleStorable, CodeRuleCompileError } from "./code-rule-compile.js";
 import {
   repositories,
   RULE_KINDS,
@@ -24,14 +24,15 @@ export function defaultRulesDumpPath(databasePath: string): string {
 
 /**
  * Compile every code rule of a dump in the engine before anything is written, so an import is all or nothing:
- * the error lists each rule the engine rejects, by dump index and id.
+ * the error lists each rule the engine rejects, by dump index and id. A rule whose language is not supported yet
+ * imports, inactive.
  */
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "file") continue;
     try {
-      assertCodeRuleCompiles(document.rule);
+      assertCodeRuleStorable(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
       problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);
@@ -122,9 +123,10 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
 }
 
 /**
- * Import a rules dump, all or nothing: every file rule must compile first. Library rules are upserted; each
- * listed repository's attachments and repository settings are replaced and its set-up time kept, while this
- * machine's start state is left alone.
+ * Import a rules dump, all or nothing: every file rule must compile first. Library rules are upserted, including one
+ * that takes a By Rerail rule's id (the library rule wins). Each listed repository's attachments and repository settings
+ * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
+ * knows under another key or an alias receives them, and keeps every key as an alias.
  */
 export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, value: unknown, now = Date.now()): RulesDumpImportReport {
   const version = typeof value === "object" && value !== null ? (value as { version?: unknown }).version : undefined;
@@ -135,7 +137,6 @@ export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, valu
   const documents = dump.library.map((entry, index) => {
     const document = parseRuleDocument(entry.rule, `rules dump library[${index}]`);
     if (document.kind !== entry.kind) throw new Error(`rules dump library[${index}] body does not match kind ${entry.kind}`);
-    if (bundle.documents.has(document.rule.id)) throw new Error(`rules dump library[${index}] (${document.rule.id}) takes a By Rerail rule id`);
     if (document.kind === "conversation") validateLibraryDocument(document.rule, document.kind);
     return { document, entry };
   });
@@ -147,20 +148,27 @@ export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, valu
         copiedFromRuleId: entry.copiedFromRuleId,
         createdAt: entry.createdAt,
         now: entry.updatedAt,
+        shadowBundled: true,
       });
     }
+    const known = tx.select().from(repositories).all();
     for (const repository of dump.repositories) {
-      const key = repository.repositoryKey;
+      // A repository this machine knows under another key, or under one of its aliases, takes the dump's configuration.
+      const names = [repository.repositoryKey, ...repository.aliases];
+      const existing = known.find(row => names.includes(row.repositoryKey) || row.aliases.some(alias => names.includes(alias)));
+      const key = existing?.repositoryKey ?? repository.repositoryKey;
+      const aliases = [...new Set([...(existing?.aliases ?? []), ...names])].filter(alias => alias !== key);
+      const displayName = existing === undefined || existing.repositoryKey === repository.repositoryKey ? repository.displayName : existing.displayName;
       tx.insert(repositories).values({
         repositoryKey: key,
-        displayName: repository.displayName,
-        aliases: repository.aliases,
+        displayName,
+        aliases,
         configuredAt: repository.configuredAt,
         createdAt: now,
         updatedAt: now,
       }).onConflictDoUpdate({
         target: repositories.repositoryKey,
-        set: { displayName: repository.displayName, aliases: repository.aliases, configuredAt: repository.configuredAt, updatedAt: now },
+        set: { displayName, aliases, configuredAt: repository.configuredAt, updatedAt: now },
       }).run();
       tx.delete(ruleAttachments).where(eq(ruleAttachments.repositoryKey, key)).run();
       tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();

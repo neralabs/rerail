@@ -21,7 +21,7 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceStartState,
+  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState,
 } from "./repository-start.js";
 import type { RepositoryStartState } from "./repository-model.js";
 import { repositoryName } from "./repository-identity.js";
@@ -113,7 +113,7 @@ function usage(): string {
     "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--database <file>]",
     "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
-    "  rerail state [--repo <dir>] [--database <file>]",
+    "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
@@ -416,11 +416,16 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
  * `rerail state`: started, stopped or not-set-up for the checkout, for callers that cannot open SQLite (OMP runs on
  * Bun). `--database` names the database file when a caller configured one other than the home's default.
  */
+/** `rerail state`: this checkout's start state; with `--set-up`, whether its repository is set up (`set-up` or `not-set-up`). */
 function runStateCommand(args: readonly string[]): number {
-  const { options } = parseArguments(args, { flags: [], options: ["--repo", "--database"] }, argument => `Unknown state option: ${argument}\n\n${usage()}`);
+  const { flags, options } = parseArguments(args, { flags: ["--set-up"], options: ["--repo", "--database"] }, argument => `Unknown state option: ${argument}\n\n${usage()}`);
   const databasePath = options.get("--database");
+  const database = databasePath === undefined ? undefined : resolve(databasePath);
   const workspace = resolve(options.get("--repo") ?? process.cwd());
-  process.stdout.write(`${workspaceStartState(workspace, databasePath === undefined ? undefined : resolve(databasePath))}\n`);
+  const answer = flags.has("--set-up")
+    ? (workspaceSetUp(workspace, database) ? "set-up" : "not-set-up")
+    : workspaceStartState(workspace, database);
+  process.stdout.write(`${answer}\n`);
   return 0;
 }
 

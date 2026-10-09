@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "javascript",
+  "status": "supported",
+  "family": "ecma",
+  "dialects": [
+    {
+      "label": "javascript",
+      "variant": "JavaScript",
+      "suffixes": [".js", ".jsx", ".mjs", ".cjs"],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:JavaScript",
+      "tapeTag": 6
+    }
+  ],
+  "capabilities": {
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": ["eslint"]
+}

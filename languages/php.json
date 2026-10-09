@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "php",
+  "status": "supported",
+  "family": "php",
+  "dialects": [
+    {
+      "label": "php",
+      "variant": "Php",
+      "suffixes": [".php"],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Php",
+      "tapeTag": 7
+    }
+  ],
+  "capabilities": {
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "supported",
+    "formatArgs": "supported"
+  },
+  "suppressions": ["phpstan", "psalm", "phpcs"]
+}

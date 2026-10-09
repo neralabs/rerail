@@ -1,3 +1,4 @@
+import { LANGUAGE_NOT_SUPPORTED } from "./code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import type { RuleKind } from "./schema.js";
 import { ruleDocumentDigest } from "./stable-json.js";
@@ -18,13 +19,17 @@ export function readStoredCodeRule(stored: unknown): StoredCodeRuleRead {
   return { ok: false, reason: issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}` };
 }
 
-/** A stored row that failed validation and was left out of every read. */
+/**
+ * A stored row left out of every read and evaluation: one that fails validation, or, with `code`
+ * `language-not-supported`, a valid code rule the engine cannot read yet (kept inactive, never a failure).
+ */
 export interface QuarantinedRule {
   ruleId: string;
   kind: RuleKind;
   /** `global`, `project:<id>`, or the per-project store's row scope. */
   owner: string;
   reason: string;
+  code?: typeof LANGUAGE_NOT_SUPPORTED;
 }
 
 const reported = new Set<string>();

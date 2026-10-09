@@ -82,7 +82,7 @@ def main() -> None:
                   for kind in ("relation", "column", "constant")}
         report = {"tool": "libpg_query", "version": f"pglast {common.TOOLS['pglast']}, PostgreSQL 18.6",
                   "corpus": {"name": name, "repository": declared["repository"], "commit": declared["commit"]},
-                  "generator": "rerail-fixtures/sql/t3/generate_corpus.py", "sites": counts, "files": files}
+                  "generator": "fixtures/sql/t3/generate_corpus.py", "sites": counts, "files": files}
         path = OUT / f"{name}-names-values.json"
         path.write_text(json.dumps(report, ensure_ascii=False))
         print(f"{name}: {len(files)} files, {counts}, rejected statements "

@@ -1,0 +1,25 @@
+{
+  "name": "@neralabs/rerail-pack-php",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail code rules.",
+  "license": "Apache-2.0 AND BSD-3-Clause AND MIT",
+  "files": [
+    "pack.json",
+    "rules",
+    "licenses",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

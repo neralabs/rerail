@@ -26,7 +26,7 @@ mod value;
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
 };
-use super::language::{CodeRuleLanguage, Semantic};
+use super::language::{CodeRuleLanguage, Semantic, Support, language_not_supported};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
     UtilOrigin, UtilTable, collect_variables, reads_values,
@@ -597,11 +597,12 @@ fn compile_query_as(
                 .get("language")
                 .and_then(Value::as_str)
                 .ok_or_else(|| invalid(format!("{path}/ast/language is required")))?;
-            let code_rule_language = CodeRuleLanguage::parse(language_name).ok_or_else(|| {
-                invalid(format!(
-                    "{path}/ast/language must equal python, typescript, javascript or php"
-                ))
-            })?;
+            let code_rule_language =
+                CodeRuleLanguage::read(language_name, &format!("{path}/ast/language"), || {
+                    invalid(format!(
+                        "{path}/ast/language must equal python, typescript, javascript or php"
+                    ))
+                })?;
             let rule = ast
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
@@ -1384,8 +1385,9 @@ fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec
         .collect()
 }
 
-/// Refuse predicates a code-rule language's semantic family does not implement before any dialect
-/// reaches a family-specific compiler.
+/// Refuse predicates a code-rule language does not support before any dialect reaches a
+/// family-specific compiler: `refused` ones as invalid, `not-supported-yet` ones as
+/// `language-not-supported`.
 pub(super) fn refuse_unavailable_semantics(
     value: &Value,
     path: &str,
@@ -1402,13 +1404,13 @@ pub(super) fn refuse_unavailable_semantics(
     match value {
         Value::Object(object) => {
             for (predicate, child) in object {
-                if semantic(predicate)
-                    .is_some_and(|semantic| !language.family().implements(semantic))
-                {
-                    return Err(invalid(format!(
-                        "{path}/{predicate}: `{predicate}` is not available for {} policies",
-                        language.name()
-                    )));
+                if let Some(semantic) = semantic(predicate) {
+                    unsupported_semantic(
+                        language.capability(semantic),
+                        &format!("{path}/{predicate}"),
+                        predicate,
+                        language.name(),
+                    )?;
                 }
                 refuse_unavailable_semantics(child, &format!("{path}/{predicate}"), language)?;
             }
@@ -1423,11 +1425,68 @@ pub(super) fn refuse_unavailable_semantics(
     Ok(())
 }
 
+/// The error for `predicate` at `at` when `language`'s registry entry does not support its
+/// capability.
+fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+    match support {
+        Support::Supported => Ok(()),
+        Support::Refused => Err(invalid(format!(
+            "{at}: `{predicate}` is not available for {language} policies"
+        ))),
+        Support::NotSupportedYet => Err(language_not_supported(format!(
+            "{at}: `{predicate}` is not supported yet for {language} policies"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::CodeRuleDslRuntime;
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_planned_language_or_capability_is_language_not_supported() {
+        let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+        let forbid = |language: &str| json!({ "id": "c", "forbid": { "ast": { "language": language, "rule": { "kind": "identifier" } } }, "violation": violation() });
+        for language in ["vue", "sql", "rust"] {
+            assert_eq!(
+                rejection(compile_document_with(
+                    clause_document(forbid(language)),
+                    &capabilities
+                )),
+                format!(
+                    "language-not-supported: /clauses/0/forbid/ast/language: `{language}` is not supported yet"
+                )
+            );
+        }
+        let mut defined = clause_document(forbid("python"));
+        defined["clauses"] = json!([
+            { "id": "d", "define": { "language": "vue", "utils": { "u": { "kind": "identifier" } } } },
+            forbid("python")
+        ]);
+        assert_eq!(
+            rejection(compile_document_with(defined, &capabilities)),
+            "language-not-supported: /clauses/0/define/language: `vue` is not supported yet"
+        );
+        assert_eq!(
+            super::unsupported_semantic(
+                super::Support::NotSupportedYet,
+                "/r/calls",
+                "calls",
+                "typescript"
+            )
+            .unwrap_err()
+            .reason,
+            "language-not-supported: /r/calls: `calls` is not supported yet for typescript policies"
+        );
+        assert_eq!(
+            super::unsupported_semantic(super::Support::Refused, "/r/calls", "calls", "typescript")
+                .unwrap_err()
+                .reason,
+            "/r/calls: `calls` is not available for typescript policies"
+        );
+    }
 
     #[test]
     fn duplicate_keys_are_rejected_in_json_and_yaml() {

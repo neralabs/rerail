@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import ts from "typescript";
-import { HARNESS_DIRECTORY, loadScoredRules, loadVariants } from "./fixtures.js";
+import { loadScoredRules, loadVariants, TSLINT_PACK } from "./fixtures.js";
 import { globalProtectedNames, optionNames, ruleSourceWords } from "./rename.js";
 import { findPort } from "./runner.js";
 
@@ -35,7 +35,7 @@ const REVIEW: ReadonlySet<LiteralViolation["status"]> = new Set(["suspicious", "
 const LITERAL_KEYS = new Set(["pattern", "context", "selector", "regex", "text", "fix"]);
 
 export interface PortLiteral {
-  /** Port file relative to the harness directory. */
+  /** Port file relative to the TSLint pack (`rules/<rule>.json`, `candidates/...`). */
   file: string;
   key: string;
   isRegex: boolean;
@@ -64,7 +64,7 @@ export function portLiterals(rule: string): PortLiteral[] {
   const literals: PortLiteral[] = [];
   for (const path of [port.document, ...port.overrides.values()]) {
     if (path === undefined) continue;
-    const file = relative(HARNESS_DIRECTORY, path);
+    const file = relative(TSLINT_PACK, path);
     // A file-content/path regex is `{ source, pattern }`; an AST `pattern` is ast-grep code.
     const visit = (value: unknown, key: string, parent: object | undefined): void => {
       if (typeof value === "string") {
@@ -119,7 +119,7 @@ export function scanRule(rule: string): LiteralViolation[] {
         : sourceNames.has(literal.token)
           ? "rule-source"
           : options.has(literal.token)
-            ? literal.file === `rules/${rule}.json`
+            ? literal.file === `candidates/${rule}.json`
               ? "option-default"
               : "option"
             : LANGUAGE_WORDS.has(literal.token)

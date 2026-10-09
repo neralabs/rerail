@@ -135,6 +135,34 @@ describe("rules dump", () => {
     expect(target.select().from(ruleSettings).all().map(row => row.ownerKind)).toEqual(["repository"]);
   });
 
+  it("keeps a library rule that a later release bundles editable, and round-trips it through a dump", async () => {
+    const source = await temporaryDatabase();
+    writeLibraryRule(source, testBundle(), { kind: "file", rule: codeRule("shared", { mode: "log" }) });
+    const later = testBundle();
+    const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "file" as const, rule: codeRule("shared") }]]) };
+    expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "file").document.rule.mode).toBe("steer");
+    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
+
+    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0 });
+    const target = await temporaryDatabase();
+    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0 });
+    expect(getLibraryRule(target, "shared")?.document.rule.mode).toBe("steer");
+  });
+
+  it("imports a repository listed under one of this machine's aliases into the repository that holds the alias", async () => {
+    const source = await repositoryWithTslint(["web"]);
+    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
+    const target = await temporaryDatabase();
+    addRepository(target, "remote:github.com/acme/app-renamed");
+    target.update(repositories).set({ aliases: [REPOSITORY] }).run();
+
+    expect(importRulesDump(target, bundle, dump)).toEqual({ library: 0, repositories: 1 });
+    expect(target.select({ key: repositories.repositoryKey, aliases: repositories.aliases }).from(repositories).all())
+      .toEqual([{ key: "remote:github.com/acme/app-renamed", aliases: [REPOSITORY] }]);
+    expect(target.select({ key: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments).all())
+      .toEqual([{ key: "remote:github.com/acme/app-renamed", folder: "web" }]);
+  });
+
   it("imports nothing when a file rule does not compile", async () => {
     const db = await temporaryDatabase();
     const broken = { ...codeRule("broken"), clauses: [{ ...codeRule("broken").clauses[0], forbid: { regex: { pattern: "(", source: "file.content" } } }] };

@@ -4,9 +4,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dashboardOrigin, formatTerminalStatus, linkDeliveries, readPresentation, readRepositoryState, readRulesDashboard, readSummaryState } from "../src/session-presentation.js";
+import { dashboardOrigin, formatTerminalStatus, linkDeliveries, presentedSessionNoteRules, readPresentation, readRepositoryState, readRulesDashboard, readSummaryState } from "../src/session-presentation.js";
 import type { RepositoryStartState } from "../src/repository-model.js";
-import { steerBlock } from "../src/rerail-steer.js";
+import { sessionStartNote, steerBlock } from "../src/rerail-steer.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../src/api/session-contracts.js";
 import type { z } from "zod";
 import { hookRerailStarted } from "../src/repository-start.js";
@@ -55,6 +55,15 @@ afterEach(async () => {
 
 const read = (onDemand = false) => readPresentation({ sessionId: "session /?&one", host: "claude-code", cwd, onDemand });
 
+describe("session-start note rules", () => {
+  it("says a repository is not set up even where the person keeps the footer silent", async () => {
+    response = { presence: "silent", repositoryState: "not-set-up", context: response.context };
+    expect(await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })).toEqual({ setUp: false });
+    response = { ...response, repositoryState: "started" };
+    expect(await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })).toEqual({ setUp: true, ruleCount: 3 });
+  });
+});
+
 describe("installed session presentation", () => {
   it("renders exact-session counters and three separate navigation links", async () => {
     const result = await read();
@@ -72,9 +81,16 @@ describe("installed session presentation", () => {
     expect(new URL(result.parts[1]!.url!).hash).toBe("#rules");
     expect(new URL(result.parts[1]!.url!).search).toBe("");
     response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
-    const rules = new URL((await read()).parts[1]!.url!);
+    const scopedResult = await read();
+    const rules = new URL(scopedResult.parts[1]!.url!);
     expect(Object.fromEntries(rules.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
     expect(rules.hash).toBe("#rules");
+    // The session page needs the scope too: without it the page opens the repository picker, not the session.
+    const scopedSession = new URL(scopedResult.parts[0]!.url!);
+    expect(Object.fromEntries(scopedSession.searchParams)).toEqual({
+      repository: "remote:github.com/acme/app", checkout: cwd, sessionId: "session /?&one", host: "claude-code",
+    });
+    expect(scopedSession.hash).toBe("#sessions");
     const rendered = formatTerminalStatus(result);
     expect(rendered.split("\u001b]8;;http")).toHaveLength(4);
   });
@@ -275,6 +291,15 @@ describe("rules page", () => {
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     knownCheckout = false;
     expect(await readRulesDashboard({ cwd })).toEqual({ url: `http://127.0.0.1:${port}/#rules`, reason: null });
+  });
+
+  it("scopes the session note's session link to the checkout's repository when the daemon knows it", async () => {
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    const page = new URL((await scoped(`http://127.0.0.1:${port}`)).replace("#rules", "#sessions"));
+    page.searchParams.set("sessionId", "s1");
+    page.searchParams.set("host", "omp");
+    expect(sessionStartNote(await dashboardOrigin(cwd), "omp", "s1", { setUp: true, ruleCount: 1 })).toContain(page.href);
   });
 
   it("scopes steers' Why? links to the checkout's repository when the daemon knows it", async () => {

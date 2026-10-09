@@ -1,8 +1,12 @@
-//! The languages Rerail reads, in one table. Every question about a language asks here: which
-//! grammar dialects a code-rule language spans, which dialect a file label selects, a dialect's tape
-//! tag, its node kinds and fields (`KindCatalog`, which rules and tapes share), and which semantic
-//! family serves a grammar. The host owns which file extensions select a label
-//! (`SOURCE_LANGUAGES` in code-rule-enforcer.ts); the repository index receives them.
+//! The languages Rerail reads. Every question about a language asks here: which grammar dialects
+//! a code-rule language spans, which dialect a file label selects, a dialect's tape tag, its node
+//! kinds and fields (`KindCatalog`, which rules and tapes share), which semantic family serves a
+//! grammar, and which capabilities a language supports. The language registry
+//! (`languages/*.json`, `docs/language-packs.md`) is their one source: `build.rs` validates it
+//! and generates `DIALECTS`, `CodeRuleLanguage`, `PLANNED_LANGUAGES`, `Family::of` and
+//! `Family::honours` from it (`language_registry.rs` in `OUT_DIR`). The host routes files by the
+//! same registry's suffixes (`SOURCE_LANGUAGES` in code-rule-languages.ts); the repository index
+//! receives them.
 //!
 //! Three layers:
 //! - A **dialect** is one tree-sitter grammar (`GrammarDialect`): Python, TypeScript, TSX,
@@ -14,10 +18,11 @@
 //!   decoder, call arguments, suppression comments and line terminators. TypeScript, TSX and
 //!   JavaScript share the ECMAScript family.
 //!
-//! Adding a language: add its dialect row (file label, tape tag, extensions), its code-rule language
-//! (name and dialects), its family, and the family's arm wherever a family is matched; what a
-//! family does not implement is refused when a code rule compiles (`Family::implements`), never
-//! answered by another family's code.
+//! Adding a language: add its registry entry (`planned` first), its `GrammarDialect` variant and
+//! its family's arm wherever a family is matched (the build fails until each exists). A rule that
+//! names a planned language, or a capability its language has `not-supported-yet`, is refused as
+//! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
+//! another family's code.
 
 use crate::code_rule_dsl::module_path::ModulePath;
 use ast_grep_core::{
@@ -204,30 +209,17 @@ impl Language for GrammarDialect {
 }
 
 impl LanguageExt for GrammarDialect {
-    /// The grammar `build.rs` generates from a vendored grammar (Blade; Python, TypeScript and
-    /// TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/PATCHES.md`), else
-    /// ast-grep's. ast-grep is built without its Python and TypeScript parsers, so `SupportLang`
-    /// only lends these dialects its pattern syntax.
+    /// The grammar the registry names: one `build.rs` generates from a vendored grammar (Blade;
+    /// Python, TypeScript and TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/
+    /// PATCHES.md`), else ast-grep's. ast-grep is built without its Python and TypeScript parsers,
+    /// so `SupportLang` only lends these dialects its pattern syntax. Test-only dialects are
+    /// ast-grep's.
     fn get_ts_language(&self) -> TSLanguage {
-        unsafe extern "C" {
-            fn tree_sitter_blade() -> *const ();
-            fn tree_sitter_python() -> *const ();
-            fn tree_sitter_typescript() -> *const ();
-            fn tree_sitter_tsx() -> *const ();
-        }
-        let vendored = match self {
-            Self::Blade => tree_sitter_blade,
-            Self::Python => tree_sitter_python,
-            Self::TypeScript => tree_sitter_typescript,
-            Self::Tsx => tree_sitter_tsx,
-            _ => {
-                return self
-                    .support()
-                    .expect("a dialect without a vendored grammar is ast-grep's")
-                    .get_ts_language();
-            }
-        };
-        unsafe { tree_sitter_language::LanguageFn::from_raw(vendored) }.into()
+        registry_grammar(*self).unwrap_or_else(|| {
+            self.support()
+                .expect("a dialect without a registry grammar is ast-grep's")
+                .get_ts_language()
+        })
     }
 }
 
@@ -310,6 +302,16 @@ impl KindCatalog {
                 id => embedded.shift(id),
             },
             _ => own,
+        }
+    }
+
+    /// The embedded PHP's `comment` kind in the dialect's numbering (Blade's tapes), which the
+    /// dialect's own `comment` shadows in `kind_id`: a rule's `kind: comment` names both.
+    pub(crate) fn embedded_comment_kind(self) -> Option<u16> {
+        let embedded = self.embedded?;
+        match embedded.php.id_for_node_kind("comment", true) {
+            0 => None,
+            id => Some(embedded.shift(id)),
         }
     }
 
@@ -484,59 +486,23 @@ fn shift_kinds(node: &mut PatternNode, embedded: &Embedded) {
 }
 
 /// One grammar dialect: the file label hosts and the store use, and its persisted tape tag (never
-/// reused). Its extensions are the host's; tests read them through `label_of_path`.
+/// reused). Its suffixes are the host's routing; tests read them through `label_of_path`. The
+/// rows are the registry's supported dialects (`DIALECTS`, generated).
 struct Dialect {
     lang: GrammarDialect,
     label: &'static str,
     #[cfg(test)]
-    extensions: &'static [&'static str],
+    suffixes: &'static [&'static str],
     tape_tag: u8,
 }
 
-const DIALECTS: &[Dialect] = &[
-    Dialect {
-        lang: GrammarDialect::Python,
-        label: "python",
-        #[cfg(test)]
-        extensions: &["py", "pyi"],
-        tape_tag: 1,
-    },
-    Dialect {
-        lang: GrammarDialect::TypeScript,
-        label: "typescript",
-        #[cfg(test)]
-        extensions: &["ts", "mts", "cts"],
-        tape_tag: 2,
-    },
-    Dialect {
-        lang: GrammarDialect::Tsx,
-        label: "tsx",
-        #[cfg(test)]
-        extensions: &["tsx"],
-        tape_tag: 3,
-    },
-    Dialect {
-        lang: GrammarDialect::JavaScript,
-        label: "javascript",
-        #[cfg(test)]
-        extensions: &["js", "jsx", "mjs", "cjs"],
-        tape_tag: 6,
-    },
-    Dialect {
-        lang: GrammarDialect::Php,
-        label: "php",
-        #[cfg(test)]
-        extensions: &["php"],
-        tape_tag: 7,
-    },
-    Dialect {
-        lang: GrammarDialect::Blade,
-        label: "blade",
-        #[cfg(test)]
-        extensions: &["blade.php"],
-        tape_tag: 8,
-    },
-];
+// `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`, `dialects`, `family`,
+// `capability`), `PLANNED_LANGUAGES`, `Family::of` and `Family::honours`.
+include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
+
+/// The family `Family::of` reads a test-only grammar with.
+#[cfg(test)]
+const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 
 /// Grammars only tests parse (tape round trips over other shapes); no file or code rule selects them.
 #[cfg(test)]
@@ -560,28 +526,17 @@ pub(crate) fn label(lang: GrammarDialect) -> Option<&'static str> {
     dialect(lang).map(|dialect| dialect.label)
 }
 
-/// The file label a path's extension selects, as the host's table does for dialect files.
+/// The file label a path's suffix selects, as the host's table does for dialect files: the
+/// longest matching suffix.
 #[cfg(test)]
 pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
     let path = path.to_ascii_lowercase();
     DIALECTS
         .iter()
-        .filter(|dialect| {
-            dialect
-                .extensions
-                .iter()
-                .any(|extension| path.ends_with(&format!(".{extension}")))
-        })
-        .max_by_key(|dialect| {
-            dialect
-                .extensions
-                .iter()
-                .filter(|extension| path.ends_with(&format!(".{extension}")))
-                .map(|extension| extension.len())
-                .max()
-                .expect("filtered dialect has a matching extension")
-        })
-        .map(|dialect| dialect.label)
+        .flat_map(|dialect| dialect.suffixes.iter().map(move |suffix| (suffix, dialect)))
+        .filter(|(suffix, _)| path.ends_with(**suffix))
+        .max_by_key(|(suffix, _)| suffix.len())
+        .map(|(_, dialect)| dialect.label)
 }
 
 /// A dialect's persisted tape tag.
@@ -613,68 +568,43 @@ pub(crate) fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
     lang
 }
 
-/// A code-rule language: the `language` of a query, a define or a transform.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum CodeRuleLanguage {
-    Python,
-    TypeScript,
-    JavaScript,
-    Php,
-    Blade,
+/// The stable code of a compile error for a rule whose language, or a capability it reads, the
+/// registry marks not supported yet. Hosts keep such a rule stored but inactive.
+pub(crate) const LANGUAGE_NOT_SUPPORTED: &str = "language-not-supported";
+
+/// A `language-not-supported` compile error: its message starts with the code.
+pub(crate) fn language_not_supported(message: impl std::fmt::Display) -> napi::Error {
+    napi::Error::new(
+        napi::Status::InvalidArg,
+        format!("{LANGUAGE_NOT_SUPPORTED}: {message}"),
+    )
 }
 
 impl CodeRuleLanguage {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Python,
-        Self::TypeScript,
-        Self::JavaScript,
-        Self::Php,
-        Self::Blade,
-    ];
-
     pub(crate) fn parse(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|language| language.name() == name)
     }
 
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Python => "python",
-            Self::TypeScript => "typescript",
-            Self::JavaScript => "javascript",
-            Self::Php => "php",
-            Self::Blade => "blade",
-        }
-    }
-
-    /// The dialects its rules run on, the first being the one its own text (transform templates,
-    /// define clauses) is read in.
-    pub(crate) const fn dialects(self) -> &'static [GrammarDialect] {
-        match self {
-            Self::Python => &[GrammarDialect::Python],
-            Self::TypeScript => &[
-                GrammarDialect::TypeScript,
-                GrammarDialect::Tsx,
-                GrammarDialect::JavaScript,
-            ],
-            Self::JavaScript => &[GrammarDialect::JavaScript],
-            Self::Php => &[GrammarDialect::Php],
-            Self::Blade => &[GrammarDialect::Blade],
-        }
+    /// The language a rule's `language` at `path` names. A language the registry plans is
+    /// `language-not-supported`; any other unknown name is `unknown`'s error.
+    pub(crate) fn read(
+        name: &str,
+        path: &str,
+        unknown: impl FnOnce() -> napi::Error,
+    ) -> napi::Result<Self> {
+        Self::parse(name).ok_or_else(|| {
+            if PLANNED_LANGUAGES.contains(&name) {
+                language_not_supported(format!("{path}: `{name}` is not supported yet"))
+            } else {
+                unknown()
+            }
+        })
     }
 
     pub(crate) const fn primary(self) -> GrammarDialect {
         self.dialects()[0]
-    }
-
-    pub(crate) const fn family(self) -> Family {
-        match self {
-            Self::Python => Family::Python,
-            Self::TypeScript | Self::JavaScript => Family::Ecma,
-            Self::Php => Family::Php,
-            Self::Blade => Family::Blade,
-        }
     }
 }
 
@@ -685,10 +615,25 @@ pub(crate) enum Family {
     /// TypeScript, TSX and JavaScript.
     Ecma,
     Php,
+    /// Its semantics are those of the PHP its template embeds (`blade::view`), as the Blade
+    /// compiler oracle (`fixtures/blade`) checks.
     Blade,
 }
 
-/// A semantic capability a family may implement.
+/// Whether a language reads a capability, as its registry entry declares.
+/// The generated `CodeRuleLanguage::capability` constructs the variants the registry uses; one no
+/// supported language declares today is still handled wherever a rule is compiled.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Support {
+    Supported,
+    /// The language has no such thing, or no plan for it: a rule using it is invalid.
+    Refused,
+    /// Planned: a rule using it is `language-not-supported`, kept but inactive.
+    NotSupportedYet,
+}
+
+/// A semantic capability a language may support (the registry's `capabilities` keys).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Semantic {
     /// Scope table, bindings and usage: `resolves`, `binds`.
@@ -703,7 +648,9 @@ pub(crate) enum Semantic {
     FormatArgs,
 }
 
-/// Inline suppression comments a family honours.
+/// Inline suppression comments a family honours (the registry's `suppressions`). PHP has three
+/// linters' (a PHP project may run any of them); Blade templates have none: no linter reads a
+/// template's `{{-- --}}` comments for directives.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Suppression {
     /// Ruff's `# noqa`.
@@ -719,63 +666,12 @@ pub(crate) enum Suppression {
 }
 
 impl Family {
-    pub(crate) fn of(lang: GrammarDialect) -> Self {
-        match lang {
-            GrammarDialect::Python => Self::Python,
-            GrammarDialect::TypeScript | GrammarDialect::Tsx | GrammarDialect::JavaScript => {
-                Self::Ecma
-            }
-            GrammarDialect::Php => Self::Php,
-            GrammarDialect::Blade => Self::Blade,
-            #[cfg(test)]
-            _ => Self::Ecma,
-        }
-    }
-
-    /// Whether the family implements `semantic`; a code rule using it otherwise does not compile.
-    pub(crate) const fn implements(self, semantic: Semantic) -> bool {
-        match (self, semantic) {
-            (Self::Python, _) => true,
-            (Self::Ecma, Semantic::Scope | Semantic::Value | Semantic::Arguments) => true,
-            (Self::Ecma, Semantic::Calls | Semantic::FormatArgs) => false,
-            (
-                Self::Php,
-                Semantic::Scope
-                | Semantic::Value
-                | Semantic::Arguments
-                | Semantic::FormatArgs
-                | Semantic::Calls,
-            ) => true,
-            // Blade's arms read its embedded PHP program (`blade::view`) as PHP, as the Blade
-            // compiler oracle (`fixtures/blade`) checks.
-            (
-                Self::Blade,
-                Semantic::Scope
-                | Semantic::Value
-                | Semantic::Arguments
-                | Semantic::FormatArgs
-                | Semantic::Calls,
-            ) => true,
-        }
-    }
-
     /// Whether the family's values, arguments and variables are PHP's: PHP's, and Blade's, whose
     /// semantics are those of the PHP its template embeds (`blade::view`).
     pub(crate) const fn reads_php(self) -> bool {
         match self {
             Self::Php | Self::Blade => true,
             Self::Python | Self::Ecma => false,
-        }
-    }
-
-    /// Whether the family's files carry `suppression`'s comments. PHP has three linters' (a PHP
-    /// project may run any of them); Blade templates have none: no linter reads a template's
-    /// `{{-- --}}` comments for directives.
-    pub(crate) const fn honours(self, suppression: Suppression) -> bool {
-        match (self, suppression) {
-            (Self::Python, Suppression::Noqa) | (Self::Ecma, Suppression::Eslint) => true,
-            (Self::Php, Suppression::Phpstan | Suppression::Psalm | Suppression::Phpcs) => true,
-            (Self::Python, _) | (Self::Ecma, _) | (Self::Php, _) | (Self::Blade, _) => false,
         }
     }
 }
@@ -888,15 +784,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_dialect_round_trips_its_label_extensions_and_tape_tag() {
+    fn every_dialect_round_trips_its_label_suffixes_and_tape_tag() {
         for dialect in DIALECTS {
             assert_eq!(dialect_by_label(dialect.label), Some(dialect.lang));
             assert_eq!(from_tape_tag(dialect.tape_tag), Some(dialect.lang));
-            for extension in dialect.extensions {
-                assert_eq!(
-                    label_of_path(&format!("a/b.{extension}")),
-                    Some(dialect.label)
-                );
+            for suffix in dialect.suffixes {
+                assert_eq!(label_of_path(&format!("a/b{suffix}")), Some(dialect.label));
             }
         }
         let mut tags = DIALECTS
@@ -916,6 +809,143 @@ mod tests {
             for &lang in language.dialects() {
                 assert!(label(lang).is_some(), "{lang:?}");
                 assert_eq!(Family::of(lang), language.family());
+            }
+        }
+    }
+
+    #[test]
+    fn a_planned_language_is_not_supported_yet_and_an_unknown_one_is_invalid() {
+        let unknown = || napi::Error::new(napi::Status::InvalidArg, "unknown".to_owned());
+        for planned in PLANNED_LANGUAGES {
+            assert!(CodeRuleLanguage::parse(planned).is_none(), "{planned}");
+            let error = CodeRuleLanguage::read(planned, "/language", unknown).unwrap_err();
+            assert_eq!(
+                error.reason,
+                format!("language-not-supported: /language: `{planned}` is not supported yet")
+            );
+        }
+        assert_eq!(
+            CodeRuleLanguage::read("ruby", "/language", unknown)
+                .unwrap_err()
+                .reason,
+            "unknown"
+        );
+        assert_eq!(
+            CodeRuleLanguage::read("php", "/language", unknown).unwrap(),
+            CodeRuleLanguage::Php
+        );
+    }
+
+    /// The host reads the registry through `src/code-rule-language-registry.generated.ts`, which a script
+    /// generates; the engine reads it through `build.rs`. Both must read the same registry.
+    #[test]
+    fn the_host_registry_module_matches_the_engine_tables() {
+        let module = include_str!("../../../src/code-rule-language-registry.generated.ts");
+        let start = module.find("/* registry */").expect("registry start") + 14;
+        let end = module.find("/* end registry */").expect("registry end");
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(&module[start..end]).expect("registry JSON");
+        let text = |value: &serde_json::Value| value.as_str().expect("string").to_owned();
+        let supported = entries
+            .iter()
+            .filter(|entry| entry["status"] == "supported")
+            .collect::<Vec<_>>();
+        let planned = entries
+            .iter()
+            .filter(|entry| entry["status"] == "planned")
+            .map(|entry| text(&entry["id"]))
+            .collect::<Vec<_>>();
+        assert_eq!(planned, PLANNED_LANGUAGES);
+        assert_eq!(
+            supported
+                .iter()
+                .map(|entry| text(&entry["id"]))
+                .collect::<Vec<_>>(),
+            CodeRuleLanguage::ALL.map(CodeRuleLanguage::name)
+        );
+        let rows = supported
+            .iter()
+            .flat_map(|entry| entry["dialects"].as_array().expect("dialects"))
+            .map(|dialect| {
+                let suffixes = dialect["suffixes"]
+                    .as_array()
+                    .expect("suffixes")
+                    .iter()
+                    .map(text)
+                    .collect::<Vec<_>>();
+                (
+                    text(&dialect["label"]),
+                    suffixes,
+                    dialect["tapeTag"].as_u64(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let native = DIALECTS
+            .iter()
+            .map(|dialect| {
+                let suffixes = dialect.suffixes.iter().map(|s| (*s).to_owned()).collect();
+                (
+                    dialect.label.to_owned(),
+                    suffixes,
+                    Some(u64::from(dialect.tape_tag)),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows, native);
+        let semantics = [
+            ("scope", Semantic::Scope),
+            ("value", Semantic::Value),
+            ("arguments", Semantic::Arguments),
+            ("calls", Semantic::Calls),
+            ("formatArgs", Semantic::FormatArgs),
+        ];
+        let suppressions = [
+            ("noqa", Suppression::Noqa),
+            ("eslint", Suppression::Eslint),
+            ("phpstan", Suppression::Phpstan),
+            ("psalm", Suppression::Psalm),
+            ("phpcs", Suppression::Phpcs),
+        ];
+        for (entry, language) in supported.iter().zip(CodeRuleLanguage::ALL) {
+            let runs_on = entry["runsOn"].as_array().map_or_else(
+                || {
+                    entry["dialects"]
+                        .as_array()
+                        .expect("dialects")
+                        .iter()
+                        .map(|dialect| text(&dialect["label"]))
+                        .collect::<Vec<_>>()
+                },
+                |labels| labels.iter().map(text).collect(),
+            );
+            let dialects = language
+                .dialects()
+                .iter()
+                .map(|&lang| label(lang).expect("label").to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(runs_on, dialects, "{language:?}");
+            let capabilities = entry["capabilities"].as_object().expect("capabilities");
+            assert_eq!(capabilities.len(), semantics.len(), "{language:?}");
+            for (name, semantic) in semantics {
+                let support = match language.capability(semantic) {
+                    Support::Supported => "supported",
+                    Support::Refused => "refused",
+                    Support::NotSupportedYet => "not-supported-yet",
+                };
+                assert_eq!(capabilities[name], support, "{language:?} {name}");
+            }
+            let listed = entry["suppressions"]
+                .as_array()
+                .expect("suppressions")
+                .iter()
+                .map(text)
+                .collect::<Vec<_>>();
+            for (name, suppression) in suppressions {
+                assert_eq!(
+                    language.family().honours(suppression),
+                    listed.iter().any(|listed| listed == name),
+                    "{language:?} {name}"
+                );
             }
         }
     }

@@ -42,7 +42,9 @@ import { compareDeterministicStrings } from "./stable-json.js";
 import { assertContentStoreOwner } from "./main-instance.js";
 import { contentStorePath } from "./rerail-build.js";
 import { withinCheckout } from "./checkout-control.js";
-import { languageOfPath, CODE_RULE_DIALECT_SUFFIXES, CODE_RULE_DIALECTS } from "./code-rule-languages.js";
+import { languageOfPath, CODE_RULE_DIALECTS, SOURCE_LANGUAGES } from "./code-rule-languages.js";
+
+export { SOURCE_LANGUAGES };
 
 
 const MAX_SOURCE_BYTES = 32_000_000;
@@ -68,26 +70,6 @@ export const IGNORED_DIRECTORIES = new Set([
   "coverage",
   "target",
   "vendor",
-]);
-/** The extensions audits evaluate and the file label each selects; native discovery lists the same. */
-export const SOURCE_LANGUAGES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
-  ...CODE_RULE_DIALECT_SUFFIXES,
-  [".rs", "rust"],
-  [".json", "json"],
-  [".yaml", "yaml"],
-  [".yml", "yaml"],
-  [".toml", "toml"],
-  [".md", "markdown"],
-  [".mdx", "markdown"],
-  [".rst", "text"],
-  [".txt", "text"],
-  [".sql", "text"],
-  [".sh", "text"],
-  [".bash", "text"],
-  [".zsh", "text"],
-  [".html", "text"],
-  [".css", "text"],
-  [".scss", "text"],
 ]);
 /** A repository index honours the walk's bounds, ignored directories and source languages. */
 const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts"> = {
@@ -603,10 +585,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * Rules the catalog skipped because their rows fail validation are adapter errors: kept in every response while
-   * they last, and recorded as one failed run each time the catalog loads a different set of them.
+   * they last, and recorded as one failed run each time the catalog loads a different set of them. A rule kept
+   * inactive as `language-not-supported` is no failure: it evaluates nothing until the engine reads its language.
    */
   #reportQuarantined(): void {
-    const quarantined = this.#catalog.quarantined();
+    const quarantined = this.#catalog.quarantined().filter(entry => entry.code === undefined);
     const report = JSON.stringify(quarantined.map(({ ruleId, owner, reason }) => [ruleId, owner, reason]));
     if (report === this.#quarantineReport) return;
     this.#quarantineReport = report;
