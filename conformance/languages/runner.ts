@@ -12,6 +12,7 @@ import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
   corpusRecordingPath,
   defaultCorpusRoot,
+  FINDING_PARTS,
   fixturesDirectory,
   fixturesRecordingPath,
   loadRecording,
@@ -25,8 +26,10 @@ import {
   type PackRule,
   type Recording,
 } from "./pack.js";
+import type { RuleSubCheckId } from "../checks.js";
+import { DIFFERENCE_LIMIT, type RuleReport } from "../validation-report.js";
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
-import { precisionRecall, scoreSource, type Point } from "./score.js";
+import { comparePort, keepParts, precisionRecall, scoreSource, type Part, type Point, type Position } from "./score.js";
 
 /** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
 const AUDIT_BATCH_FILES = 32;
@@ -47,7 +50,17 @@ const pageSchema = z.object({
       ruleId: z.string(),
       code: z.string(),
       path: z.string().optional(),
-      span: z.object({ startByte: z.number().int().nonnegative(), startLine: z.number().int().nonnegative(), startColumn: z.number().int().nonnegative() }).optional(),
+      /** 0-based lines and byte columns, on the family's linter's lines; the end is exclusive. */
+      span: z
+        .object({
+          startByte: z.number().int().nonnegative(),
+          startLine: z.number().int().nonnegative(),
+          startColumn: z.number().int().nonnegative(),
+          endByte: z.number().int().nonnegative(),
+          endLine: z.number().int().nonnegative(),
+          endColumn: z.number().int().nonnegative(),
+        })
+        .optional(),
     }),
   ),
   failures: z.array(z.object({ ruleId: z.string().optional(), code: z.string(), message: z.string(), path: z.string().optional() })),
@@ -161,8 +174,14 @@ const codeRuleDocumentSchema = z.object({
   clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })).min(1),
 });
 
+/** A configuration error that fails the run (`T4Report.errors`), and the pack rule it belongs to, if any. */
+interface Problem {
+  rule?: string;
+  text: string;
+}
+
 /** Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error. */
-function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[]): CompiledRule[] {
+function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: Problem[]): CompiledRule[] {
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const seen = new Map<string, string>();
   return rules.flatMap(rule => {
@@ -179,27 +198,38 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
       }
       return [{ rule, policyId: document.id, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
     } catch (error) {
-      errors.push(`${rule.id}: ${relative(RERAIL_ROOT, path)}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push({ rule: rule.id, text: `${rule.id}: ${relative(RERAIL_ROOT, path)}: ${error instanceof Error ? error.message : String(error)}` });
       return [];
     }
   });
 }
 
-/** Byte offset → upstream coordinates: the engine's line (the family's linter's terminators), code points from line start. */
-function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
+/**
+ * Byte span → upstream coordinates: the engine's lines (the family's linter's terminators), columns in code points from
+ * the line's start, 1-based; the end is exclusive, as the recordings carry it.
+ */
+function positionOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Position {
   if (violation.path === undefined || violation.span === undefined) throw new Error(`${violation.ruleId}: a finding without a path or span cannot be scored`);
   const source = sources.get(violation.path);
   if (source === undefined) throw new Error(`${violation.ruleId}: finding in ${violation.path}, which was not evaluated`);
-  const lineStart = violation.span.startByte - violation.span.startColumn;
-  const column = [...source.subarray(lineStart, violation.span.startByte).toString("utf8")].length + 1;
-  return { path: violation.path, line: violation.span.startLine + 1, column };
+  const { span } = violation;
+  const column = (byte: number, byteColumn: number): number => [...source.subarray(byte - byteColumn, byte).toString("utf8")].length + 1;
+  return {
+    path: violation.path,
+    line: span.startLine + 1,
+    column: column(span.startByte, span.startColumn),
+    endLine: span.endLine + 1,
+    endColumn: column(span.endByte, span.endColumn),
+  };
 }
 
 /** What Rerail reported for one pack rule over one source. */
 interface RuleActual {
-  points: Point[];
+  points: Position[];
   /** Failures other than `source-partial` and the syntax-error skips below. */
   engineFailures: number;
+  /** Every failure but `source-partial`, the syntax-error skips included, by unit (index into `SourceRun.units`). */
+  failures: { unit: number; path?: string; text: string }[];
   partialPaths: Set<string>;
   /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE`, at the grammar's first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
@@ -212,6 +242,8 @@ interface SourceRun {
   label: string;
   /** Per pack rule id. */
   actual: Map<string, RuleActual>;
+  /** Per tool, the paths of each fixture unit evaluated, in evaluation order; empty for a corpus. */
+  units: Map<string, string[][]>;
   /** Per tool: its recording, or the reason there is none. */
   recordings: Map<string, Recording | string>;
   /** Paths evaluated; upstream findings elsewhere are out of scope. */
@@ -219,10 +251,16 @@ interface SourceRun {
   summary: SourceSummary;
 }
 
-/** Collects each rule's violations and failures; `syntaxErrors` holds the probe-confirmed syntax-error files. */
+const emptyActual = (): RuleActual => ({ points: [], engineFailures: 0, failures: [], partialPaths: new Set(), syntaxErrorFiles: new Map() });
+
+/**
+ * Collects each rule's violations and failures over the evaluation of unit `unit`; `syntaxErrors` holds the
+ * probe-confirmed syntax-error files.
+ */
 function collectActual(
   compiled: readonly CompiledRule[],
   evaluation: Evaluation,
+  unit: number,
   sources: ReadonlyMap<string, Buffer>,
   syntaxErrors: ReadonlyMap<string, SyntaxErrorLocation>,
   actual: SourceRun["actual"],
@@ -230,13 +268,13 @@ function collectActual(
   const byCodeRule = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
   const slot = (rule: string): RuleActual => {
     let entry = actual.get(rule);
-    if (entry === undefined) actual.set(rule, (entry = { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() }));
+    if (entry === undefined) actual.set(rule, (entry = emptyActual()));
     return entry;
   };
   for (const entry of compiled) slot(entry.rule.id);
   for (const violation of evaluation.violations) {
     const rule = byCodeRule.get(violation.ruleId);
-    if (rule !== undefined) slot(rule).points.push(pointOf(violation, sources));
+    if (rule !== undefined) slot(rule).points.push(positionOf(violation, sources));
   }
   for (const failure of evaluation.failures) {
     const rule = failure.ruleId === undefined ? undefined : byCodeRule.get(failure.ruleId);
@@ -244,7 +282,10 @@ function collectActual(
     const located = failure.path === undefined ? undefined : syntaxErrors.get(failure.path);
     if (INFORMATIONAL_FAILURE_CODES.has(failure.code)) {
       if (failure.path !== undefined) slot(rule).partialPaths.add(failure.path);
-    } else if (located !== undefined && failure.code === SYNTAX_ERROR_FAILURE.code && failure.message === SYNTAX_ERROR_FAILURE.message) {
+      continue;
+    }
+    slot(rule).failures.push({ unit, ...(failure.path === undefined ? {} : { path: failure.path }), text: `${failure.code}: ${failure.message}` });
+    if (located !== undefined && failure.code === SYNTAX_ERROR_FAILURE.code && failure.message === SYNTAX_ERROR_FAILURE.message) {
       slot(rule).syntaxErrorFiles.set(located.path, located);
     } else slot(rule).engineFailures += 1;
   }
@@ -275,9 +316,10 @@ function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus:
   return recording;
 }
 
-async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<SourceRun> {
+async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: Problem[]): Promise<SourceRun> {
   const languages = familyLanguages(loaded);
   const actual: SourceRun["actual"] = new Map();
+  const units: SourceRun["units"] = new Map();
   const recordings: SourceRun["recordings"] = new Map();
   const scored = new Set<string>();
   const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, skipped: 0, outsideScope: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
@@ -287,13 +329,19 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
     if (typeof recording === "string") continue;
     const source = (recording as FixtureRecording).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
+    const toolUnits: string[][] = [];
+    units.set(tool, toolUnits);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
       const files: SourceFile[] = [];
       for (const path of paths) {
         const language = languageFor(path);
         if (language === undefined || !languages.has(language)) {
-          errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
+          errors.push({ text: `fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing` });
+          continue;
+        }
+        if (scored.has(`${tool}\0${path}`)) {
+          errors.push({ text: `fixtures ${tool}: ${path} is in more than one unit` });
           continue;
         }
         files.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
@@ -304,7 +352,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
         rules.map(entry => entry.compiled),
         files,
       );
-      collectActual(rules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+      collectActual(rules, evaluation, toolUnits.length, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+      toolUnits.push(files.map(file => file.path));
       for (const file of files) scored.add(`${tool}\0${file.path}`);
       summary.units += 1;
       summary.files += files.length;
@@ -314,7 +363,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
   summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { name: "fixtures", label: "fixtures", actual, recordings, scored, summary };
+  return { name: "fixtures", label: "fixtures", actual, units, recordings, scored, summary };
 }
 
 /** Every file of a source some rule skipped for its syntax errors, each once, in path order. */
@@ -342,16 +391,16 @@ async function walk(root: string, directory: string, files: string[]): Promise<v
   }
 }
 
-async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], corpus: PackCorpus, corpusRoot: string, errors: string[]): Promise<SourceRun | undefined> {
+async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], corpus: PackCorpus, corpusRoot: string, errors: Problem[]): Promise<SourceRun | undefined> {
   const directory = join(corpusRoot, corpus.name);
   if (!existsSync(directory)) {
-    errors.push(`corpus ${corpus.name}: no checkout at ${directory} (clone ${corpus.repository} at ${corpus.commit})`);
+    errors.push({ text: `corpus ${corpus.name}: no checkout at ${directory} (clone ${corpus.repository} at ${corpus.commit})` });
     return undefined;
   }
   if (existsSync(join(directory, ".git"))) {
     const head = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (head !== corpus.commit) {
-      errors.push(`corpus ${corpus.name}: ${directory} is at ${head}; the pack pins ${corpus.commit}`);
+      errors.push({ text: `corpus ${corpus.name}: ${directory} is at ${head}; the pack pins ${corpus.commit}` });
       return undefined;
     }
   }
@@ -379,13 +428,14 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
     files,
   );
   const actual: SourceRun["actual"] = new Map();
-  collectActual(compiled, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+  collectActual(compiled, evaluation, 0, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
   const scored = new Set<string>();
   for (const tool of recordings.keys()) for (const file of files) scored.add(`${tool}\0${file.path}`);
   return {
     name: corpus.name,
     label: `corpus:${corpus.name}`,
     actual,
+    units: new Map(),
     recordings,
     scored,
     summary: {
@@ -422,73 +472,175 @@ function engineInfo(): { path: string; version: string } {
   return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
-function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Divergence[], used: Set<Divergence>, errors: string[]): RuleRow | undefined {
+/** A rule's row for one source, and the findings behind it at every part the recording carries. */
+interface ScoredRow {
+  row: RuleRow;
+  /** The parts the recording carries for the rule; the declared match's when it records no finding of the rule. */
+  parts: Part[];
+  /** Upstream's findings and Rerail's that the row scores, upstream's with `parts`, Rerail's with every part. */
+  expected: Position[];
+  actual: Position[];
+}
+
+function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Divergence[], used: Set<Divergence>, errors: Problem[]): ScoredRow | undefined {
   const { rule } = entry;
   const recording = run.recordings.get(rule.upstream.tool);
   if (recording === undefined) return undefined;
   if (typeof recording === "string") {
-    errors.push(`${rule.id} (${run.label}): ${recording}`);
+    errors.push({ rule: rule.id, text: `${rule.id} (${run.label}): ${recording}` });
     return undefined;
   }
   if (!recording.source.rules.includes(rule.upstream.rule)) {
-    errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
+    errors.push({ rule: rule.id, text: `${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}` });
     return undefined;
   }
   // Lines the tool did not analyse: its silence there is no verdict, so neither side's findings are scored.
   const unanalysed = recording.source.kind === "corpus" ? recording.source.unanalysed : [];
   const analysed = (point: Point): boolean =>
     !unanalysed.some(region => region.path === point.path && region.startLine <= point.line && point.line <= region.endLine);
+  const findings = recording.findings.filter(finding => finding.rule === rule.upstream.rule);
+  // The recording schema has every finding of a rule carry the same parts.
+  const carried = findings[0];
+  const parts: Part[] = carried === undefined ? (rule.match === "line" ? ["line"] : ["line", "column"]) : ["line", ...FINDING_PARTS.filter(part => carried[part] !== undefined)];
   let left = 0;
   const expected: Point[] = [];
-  for (const finding of recording.findings) {
-    if (finding.rule !== rule.upstream.rule) continue;
+  const positions: Position[] = [];
+  for (const finding of findings) {
     if (!run.scored.has(`${rule.upstream.tool}\0${finding.path}`)) {
       // A corpus recording covers the whole checkout; a fixtures recording lists every file it ran on.
-      if (run.name === "fixtures") errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
+      if (run.name === "fixtures") errors.push({ rule: rule.id, text: `${rule.id} (fixtures): ${finding.path} is not among the recording's files` });
       else run.summary.outsideScope += 1;
       continue;
     }
     if (rule.match === "line+column" && finding.column === undefined) {
-      errors.push(`${rule.id} (${run.label}): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
+      errors.push({ rule: rule.id, text: `${rule.id} (${run.label}): ${finding.path}:${finding.line} has no column; the rule matches line+column` });
       continue;
     }
     const point = { path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) };
-    if (analysed(point)) expected.push(point);
-    else left += 1;
+    if (analysed(point)) {
+      expected.push(point);
+      positions.push(keepParts(finding, parts));
+    } else left += 1;
   }
-  const rerail: RuleActual = run.actual.get(rule.id) ?? { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() };
-  const claimed = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
-  const actual = claimed.filter(analysed);
-  left += claimed.length - actual.length;
+  const rerail: RuleActual = run.actual.get(rule.id) ?? emptyActual();
+  const claimed = rerail.points.filter(analysed);
+  left += rerail.points.length - claimed.length;
+  const actual = claimed.map(({ path, line, column }) => (rule.match === "line" || column === undefined ? { path, line } : { path, line, column }));
   const applicable = divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
   const score = scoreSource(expected, actual, rule.match, applicable);
   for (const entry of score.explained) used.add(entry.divergence);
   return {
-    rule: rule.id,
-    upstream: rule.upstream,
-    capabilities: rule.capabilities,
-    source: run.label,
-    tp: score.tp,
-    fp: score.falsePositives.length,
-    fn: score.falseNegatives.length,
-    ...precisionRecall(score),
-    unanalysed: left,
-    engineFailures: rerail.engineFailures,
-    partialFiles: rerail.partialPaths.size,
-    syntaxErrorFiles: {
-      count: rerail.syntaxErrorFiles.size,
-      files: [...rerail.syntaxErrorFiles.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
+    row: {
+      rule: rule.id,
+      upstream: rule.upstream,
+      capabilities: rule.capabilities,
+      source: run.label,
+      tp: score.tp,
+      fp: score.falsePositives.length,
+      fn: score.falseNegatives.length,
+      ...precisionRecall(score),
+      unanalysed: left,
+      engineFailures: rerail.engineFailures,
+      partialFiles: rerail.partialPaths.size,
+      syntaxErrorFiles: {
+        count: rerail.syntaxErrorFiles.size,
+        files: [...rerail.syntaxErrorFiles.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
+      },
+      divergences: score.explained.map(({ side, point, divergence }) => ({ kind: divergence.kind, side, ...point, evidence: divergence.evidence })),
+      falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
+      falseNegatives: score.falseNegatives.slice(0, EXAMPLE_LIMIT),
     },
-    divergences: score.explained.map(({ side, point, divergence }) => ({ kind: divergence.kind, side, ...point, evidence: divergence.evidence })),
-    falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
-    falseNegatives: score.falseNegatives.slice(0, EXAMPLE_LIMIT),
+    parts,
+    expected: positions,
+    actual: claimed,
+  };
+}
+
+/** The check 4 sub-checks the runner judges for a port; ports:coverage reads source.json instead. */
+export type PortSubCheckId = Exclude<Extract<RuleSubCheckId, `ports:${string}`>, "ports:coverage">;
+/** What the fixtures showed about a port, as the pack validation report gives it (`rules[].ports`). */
+export type PortsWorking = NonNullable<RuleReport["ports"]>;
+
+export interface PortScore {
+  /**
+   * Each sub-check's failures, one line per problem; none passes it. `ports:points` is the port's share of
+   * `reportFailures`. The others judge the fixtures only, so they fail `not run: <why>` when the fixtures did not score
+   * the port.
+   */
+  failures: Record<PortSubCheckId, string[]>;
+  /** Null when the fixtures did not score the port. */
+  working: PortsWorking | null;
+}
+
+/** A T4 report and what pack validation's check 4 reads from the same run; `ports` and `unowned` carry no date and no timing. */
+export interface PackRun extends T4Report {
+  /** Per scored pack rule id, in the pack's order. */
+  ports: Map<string, PortScore>;
+  /** The `reportFailures` lines no port owns: a tool's or a corpus's recording errors, stale capability exemptions. */
+  unowned: string[];
+}
+
+/** One port's check 4 sub-checks; `fixtures` is the port's fixtures row when the fixtures scored it. */
+function portScore(rule: PackRule, report: T4Report, errors: readonly Problem[], fixtures: { run: SourceRun; scored: ScoredRow } | undefined, divergences: readonly Divergence[]): PortScore {
+  const owned = errors.filter(error => error.rule === rule.id).map(error => error.text);
+  const rows = report.rules.filter(row => row.rule === rule.id);
+  const points = [...owned, ...rows.flatMap(rowProblems), ...report.staleDivergences.filter(divergence => divergence.rule === rule.id).map(staleProblem)];
+  if (fixtures === undefined) {
+    const notRun = [`not run: ${owned[0] ?? "the fixtures were not scored"}`];
+    return { failures: { "ports:points": points, "ports:span": notRun, "ports:unknown-misses": notRun, "ports:evidence": notRun }, working: null };
+  }
+  const { run, scored } = fixtures;
+  const units = run.units.get(rule.upstream.tool) ?? [];
+  const comparison = comparePort({
+    expected: scored.expected,
+    actual: scored.actual,
+    match: rule.match,
+    parts: scored.parts,
+    divergences: divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name)),
+    units,
+    failures: run.actual.get(rule.id)?.failures ?? [],
+  });
+  const label = `${rule.id} (${run.label})`;
+  const finer = scored.parts.filter(part => part !== "line" && !(part === "column" && rule.match === "line+column"));
+  const [firstSpan] = comparison.span;
+  const [firstMiss] = comparison.unknownMisses;
+  return {
+    failures: {
+      "ports:points": points,
+      "ports:span":
+        firstSpan === undefined
+          ? []
+          : [`${label}: ${comparison.span.length} finding(s) agree at ${rule.match} but differ at ${finer.join(", ")}, first upstream ${JSON.stringify(firstSpan.expected)}, Rerail ${JSON.stringify(firstSpan.actual)}`],
+      "ports:unknown-misses":
+        firstMiss === undefined ? [] : [`${label}: ${comparison.unknownMisses.length} upstream finding(s) missed and explained only by a rerail-unknown divergence, first ${JSON.stringify(firstMiss)}`],
+      "ports:evidence":
+        comparison.evidence > 0
+          ? []
+          : [
+              `${label}: no upstream finding is reproduced in a unit where the port agrees completely (${comparison.agreeing} of ${units.length} unit(s) agree; upstream reports ${scored.expected.length} finding(s))`,
+            ],
+    },
+    working: {
+      parts: scored.parts,
+      units: units.length,
+      expected: scored.expected.length,
+      actual: scored.actual.length,
+      pointsMatched: comparison.pointsMatched,
+      matched: comparison.matched,
+      missing: comparison.missing.length,
+      extra: comparison.extra.length,
+      explained: comparison.explained,
+      evidence: comparison.evidence,
+      differences: comparison.differences.slice(0, DIFFERENCE_LIMIT),
+      sources: rows.map(({ source, tp, fp, fn, divergences, engineFailures }) => ({ source, tp, fp, fn, explained: divergences.length, engineFailures })),
+    },
   };
 }
 
 /** T4: score the pack's rules over its upstream fixtures and/or pinned corpora. */
-export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<T4Report> {
+export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<PackRun> {
   const { pack } = loaded;
-  const errors: string[] = [];
+  const errors: Problem[] = [];
   const unknown = (options.rules ?? []).filter(id => !pack.rules.some(rule => rule.id === id));
   if (unknown.length > 0) throw new Error(`unknown rule(s) in ${pack.pack}: ${unknown.join(", ")}`);
   const unknownCorpora = options.corpora.filter(name => !pack.corpora.some(corpus => corpus.name === name));
@@ -506,7 +658,14 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
   }
 
   const used = new Set<Divergence>();
-  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded.divergences, used, errors) ?? []));
+  const scored = runs.map(run => {
+    const rows = new Map<string, ScoredRow>();
+    for (const entry of compiled) {
+      const row = rowFor(entry, run, loaded.divergences, used, errors);
+      if (row !== undefined) rows.set(entry.rule.id, row);
+    }
+    return rows;
+  });
   const scoredSources = new Set(runs.map(run => run.name));
   const allSources = ["fixtures", ...pack.corpora.map(corpus => corpus.name)];
   const selectedIds = new Set(selected.map(rule => rule.id));
@@ -522,7 +681,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
   // An exemption stands only while no rule exercises the capability; once one does, the exemption is stale.
   for (const { capability } of pack.exemptCapabilities) {
     const rules = capabilities[capability]!;
-    if (rules.length > 0) errors.push(`stale exemption: capability ${capability} is covered by rule(s) ${rules.join(", ")}`);
+    if (rules.length > 0) errors.push({ text: `stale exemption: capability ${capability} is covered by rule(s) ${rules.join(", ")}` });
   }
   const exempt = new Set(pack.exemptCapabilities.map(exemption => exemption.capability));
   const report: T4Report = {
@@ -542,29 +701,38 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
       exempt: pack.exemptCapabilities,
     },
     sources: runs.map(run => run.summary),
-    rules: rows,
+    rules: scored.flatMap(rows => [...rows.values()].map(({ row }) => row)),
     staleDivergences: stale.map(({ rule, source, path, line, kind }) => ({ rule, ...(source === undefined ? {} : { source }), path, line, kind })),
-    errors,
+    errors: errors.map(error => error.text),
     pass: false,
   };
   report.pass = reportFailures(report).length === 0;
-  return report;
+  const fixtures = runs.findIndex(run => run.name === "fixtures");
+  const ports = new Map(
+    selected.map(rule => {
+      const row = fixtures === -1 ? undefined : scored[fixtures]!.get(rule.id);
+      return [rule.id, portScore(rule, report, errors, row === undefined ? undefined : { run: runs[fixtures]!, scored: row }, loaded.divergences)] as const;
+    }),
+  );
+  return { ...report, ports, unowned: errors.filter(error => error.rule === undefined).map(error => error.text) };
 }
+
+/** A row's problems: an unexplained FP on any source, an unexplained FN on the fixtures, engine failures. */
+function rowProblems(row: RuleRow): string[] {
+  const problems: string[] = [];
+  if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
+  if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+  if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
+  return problems;
+}
+
+const staleProblem = (divergence: T4Report["staleDivergences"][number]): string =>
+  `${divergence.rule}: stale divergence ${divergence.path}:${divergence.line} (${divergence.kind}) explains nothing`;
 
 /**
  * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
  * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall.
  */
 export function reportFailures(report: T4Report): string[] {
-  return [
-    ...report.errors,
-    ...report.rules.flatMap(row => {
-      const problems: string[] = [];
-      if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
-      if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
-      if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
-      return problems;
-    }),
-    ...report.staleDivergences.map(divergence => `${divergence.rule}: stale divergence ${divergence.path}:${divergence.line} (${divergence.kind}) explains nothing`),
-  ];
+  return [...report.errors, ...report.rules.flatMap(rowProblems), ...report.staleDivergences.map(staleProblem)];
 }
