@@ -106,7 +106,7 @@ pub(crate) fn evaluation_json(
             "witnesses": evaluation.metrics.witnesses,
         },
     });
-    if std::env::var_os("RERAIL_POLICY_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
         value.as_object_mut().expect("evaluation object").insert(
             "profile".to_owned(),
             json!({

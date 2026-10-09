@@ -243,7 +243,7 @@ async function createProject(project: string, prompt: string, nonce: string): Pr
           match: { operator: "gte", threshold: 0.95 },
           sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
           action: {
-            content: `RERAIL_COSINE_MATCH ${nonce}. Echo this exact marker in your final reply.`,
+            content: `RERAIL_CONVERSATION_MATCH ${nonce}. Echo this exact marker in your final reply.`,
           },
           repeat: { mode: "once" },
         },
@@ -719,7 +719,7 @@ async function runHost(host: RerailHost): Promise<Evidence> {
       port: 0,
       kernelSocketPath: join(sandbox, "engine.sock"),
     });
-    env.RERAIL_KERNEL_SOCKET = daemon.kernelSocketPath;
+    env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
     const invocation = hostCommand(host, project, prompt);
     result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
       cwd: project,

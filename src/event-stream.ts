@@ -122,7 +122,7 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         if (event.kind === "session-start") host = event.session.host;
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
-        const socketPath = process.env.RERAIL_KERNEL_SOCKET
+        const socketPath = process.env.RERAIL_ENGINE_SOCKET
           ?? await daemonEngineSocket(replaceOtherPackage);
         replaceOtherPackage = false;
         return await ingestEngineEvent(socketPath, event, configuration);

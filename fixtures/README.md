@@ -4,7 +4,7 @@ Language conformance test data: inputs, the reports and values upstream tools re
 and the `generate_*` scripts that record each, grouped by language family. Nothing here is published as a package
 or shipped to users: no package's `files` includes this directory.
 
-Rerail's code-rule DSL engine tests compare against these oracles. They read this directory, or `RERAIL_FIXTURES_DIR`
+Rerail's code-rule DSL engine tests compare against these oracles. They read this directory, or `RERAIL_ORACLES_DIR`
 when it is set (for Rust through `native/build.rs`, for TypeScript through `test/oracles.ts`).
 
 Maintainers run the generators by hand against the pinned upstream versions their headers name; CI and the product

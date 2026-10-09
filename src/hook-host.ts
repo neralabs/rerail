@@ -58,7 +58,7 @@ export async function runHostHook(
     const session: AdapterSession = { host, sessionId, cwd: workspace };
 
     if (options.embedder === undefined) {
-      const socketPath = options.kernelSocketPath ?? process.env.RERAIL_KERNEL_SOCKET
+      const socketPath = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET
         ?? await daemonEngineSocket(true);
       const configuration = {
         storageRoot,

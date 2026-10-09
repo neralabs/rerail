@@ -11,8 +11,8 @@ export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
 export const PACKS_ROOT = join(RERAIL_ROOT, "packs");
 /** A pack moved to `packs/<id>/` names its conformance pack this; one still under conformance/languages/, `pack.json`. */
 export const CONFORMANCE_FILE = "conformance.json";
-/** The conformance fixtures: `RERAIL_FIXTURES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
-export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_FIXTURES_DIR || "fixtures");
+/** The conformance fixtures: `RERAIL_ORACLES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
+export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_ORACLES_DIR || "fixtures");
 /** Where `--write` puts reports: `.rerail/` is gitignored, so reports are never committed. */
 export const REPORTS_DIRECTORY = join(RERAIL_ROOT, ".rerail", "reports");
 

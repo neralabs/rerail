@@ -412,7 +412,7 @@ export interface RunOptions {
 }
 
 function engineInfo(): { path: string; version: string } {
-  const path = process.env.RERAIL_NATIVE_KERNEL_PATH ?? join(RERAIL_ROOT, "native", `rerail.${nativePlatformSuffix()}.node`);
+  const path = process.env.RERAIL_ENGINE_PATH ?? join(RERAIL_ROOT, "native", `rerail_engine.${nativePlatformSuffix()}.node`);
   let built = "";
   try {
     built = `, built ${statSync(path).mtime.toISOString()}`;

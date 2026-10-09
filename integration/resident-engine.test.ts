@@ -532,11 +532,11 @@ describe("engine service", () => {
     const previous = {
       RERAIL_HOME: process.env.RERAIL_HOME,
       RERAIL_AUTOSTART: process.env.RERAIL_AUTOSTART,
-      RERAIL_KERNEL_SOCKET: process.env.RERAIL_KERNEL_SOCKET,
+      RERAIL_ENGINE_SOCKET: process.env.RERAIL_ENGINE_SOCKET,
     };
     process.env.RERAIL_HOME = home;
     process.env.RERAIL_AUTOSTART = "0";
-    delete process.env.RERAIL_KERNEL_SOCKET;
+    delete process.env.RERAIL_ENGINE_SOCKET;
     startTestRepository(root);
     try {
       await expect(

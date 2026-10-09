@@ -360,7 +360,7 @@ function oldestMtime(root, paths) {
 }
 
 function nativeAddon(checkout) {
-  const prefix = `rerail.${process.platform}-${process.arch}`;
+  const prefix = `rerail_engine.${process.platform}-${process.arch}`;
   try {
     const name = readdirSync(join(checkout, "native")).find(entry => entry.startsWith(prefix) && entry.endsWith(".node"));
     return name === undefined ? undefined : join("native", name);

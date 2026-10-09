@@ -104,7 +104,7 @@ pub(super) fn profile_result(
     metrics: &Metrics,
     serialization: Duration,
 ) -> Result<ResultText> {
-    if std::env::var_os("RERAIL_POLICY_PROFILE").is_none() {
+    if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_none() {
         return Ok(result);
     }
     let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;

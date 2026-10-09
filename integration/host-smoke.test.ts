@@ -70,6 +70,6 @@ it("counts extension errors from this package's extension or engine and ignores 
   };
   expect(await silent("Extension error (/checkout/package/dist/default-extension.js): handler timed out after 5000ms")).toBe(false);
   expect(await silent("Extension error (/checkout/package/dist/pi-extension.js): boom")).toBe(false);
-  expect(await silent("Extension error (/elsewhere/index.js): cannot load rerail.darwin-arm64.node")).toBe(false);
+  expect(await silent("Extension error (/elsewhere/index.js): cannot load rerail_engine.darwin-arm64.node")).toBe(false);
   expect(await silent("Extension error (/elsewhere/other-extension.js): unrelated failure")).toBe(true);
 });

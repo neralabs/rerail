@@ -33,7 +33,7 @@ it("bridges real MCP writes with split UTF-8 input and no response to notificati
   });
   const child = spawn(process.execPath, [resolve("dist/cli.js"), "mcp-bridge"], {
     cwd: root,
-    env: { ...process.env, RERAIL_NATIVE_KERNEL_PATH: join(root, "no-host-addon.node") },
+    env: { ...process.env, RERAIL_ENGINE_PATH: join(root, "no-host-addon.node") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";

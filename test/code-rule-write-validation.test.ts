@@ -26,15 +26,15 @@ const unboundMessage: CodeRule = {
 const ENGINE_REASON = /\/clauses\/0\/violation\/message: `\$TYPO` names no capture/;
 
 let root: string;
-const originalEnginePath = process.env.RERAIL_NATIVE_KERNEL_PATH;
+const originalEnginePath = process.env.RERAIL_ENGINE_PATH;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "rerail-policy-write-"));
 });
 
 afterEach(async () => {
-  if (originalEnginePath === undefined) delete process.env.RERAIL_NATIVE_KERNEL_PATH;
-  else process.env.RERAIL_NATIVE_KERNEL_PATH = originalEnginePath;
+  if (originalEnginePath === undefined) delete process.env.RERAIL_ENGINE_PATH;
+  else process.env.RERAIL_ENGINE_PATH = originalEnginePath;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -69,7 +69,7 @@ describe("code rule writes compile in the engine", () => {
   it("refuses to store a code rule it cannot validate when the native engine is unavailable", () => {
     const catalog = scopedCatalog();
     try {
-      process.env.RERAIL_NATIVE_KERNEL_PATH = join(root, "missing.node");
+      process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
       expect(() => catalog.upsertCodeRule(MOCK_CODE_RULES[0]!)).toThrow(/cannot validate policy rule mock-no-console-log: native kernel unavailable/);
       expect(catalog.get(MOCK_CODE_RULES[0]!.id)).toBeUndefined();
     } finally {
@@ -93,7 +93,7 @@ describe("code rule writes compile in the engine", () => {
       expect(body.message).toMatch(ENGINE_REASON);
       expect(catalog.get(unboundMessage.id)).toBeUndefined();
 
-      process.env.RERAIL_NATIVE_KERNEL_PATH = join(root, "missing.node");
+      process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
       const unavailable = await app.request(`/api/rules/${MOCK_CODE_RULES[0]!.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },

@@ -25,7 +25,7 @@ import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "./nati
 import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "./native-session-client.js";
 import type { SessionDatabaseOptions } from "./session-database-options.js";
 import type { ConversationRuleSourceOptions } from "./rule-sources.js";
-import { registerRerailCommands } from "./rerail-command.js";
+import { registerHostCommands } from "./host-commands.js";
 import { createOmpPresentation } from "./omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, readRepositoryState } from "./session-presentation.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
@@ -305,7 +305,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           await initialize(currentContext, { rebuild: true });
         },
       });
-      registerRerailCommands(pi, {
+      registerHostCommands(pi, {
         sessionId: () => activeSession?.sessionId,
         packageRoot: PACKAGE_ROOT,
         cwd: () => currentContext?.cwd ?? process.cwd(),

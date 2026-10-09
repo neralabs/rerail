@@ -31,14 +31,14 @@ import { steerBlock } from "../src/rerail-steer.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import { SqliteSessionStore } from "../src/session-store.js";
 import type { ConversationRule } from "../src/rule-schema.js";
-import type { RerailCommandContext } from "../src/rerail-command.js";
+import type { HostCommandContext } from "../src/host-commands.js";
 import { startTestRepository, stopTestRepository } from "./support/started-repository.js";
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
 vi.setConfig({ testTimeout: 30_000 });
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
-type CommandHandler = (args: string, context: RerailCommandContext) => Promise<void>;
+type CommandHandler = (args: string, context: HostCommandContext) => Promise<void>;
 interface PiHarness {
   handlers: Map<string, Handler>;
   commands: Map<string, CommandHandler>;

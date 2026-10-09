@@ -23,7 +23,7 @@
 //   node --import tsx scripts/code-rule-dsl-reference.mjs examples [--engine PATH] [--verbose]
 //     Compiles every example of the reference with the native engine (`CodeRuleDslRuntime.compile`),
 //     wrapping rule, query, clause and define examples into documents. PATH is a built engine:
-//     `native/*.node`, or a debug build (`target/debug/librerail_native.dylib`), which Node
+//     `native/*.node`, or a debug build (`target/debug/librerail_engine.dylib`), which Node
 //     loads the same way; without it, the addon the package loads (`resolveNativeBindingPath`).
 //     Examples marked `data-kind="fragment"` are fragments on purpose. Reads only;
 //     `npm run test:reference` runs it in `test:all`, after the engine is built.

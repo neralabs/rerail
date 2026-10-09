@@ -9,7 +9,7 @@ import { contentStorePath } from "../src/rerail-build.js";
 
 /** The reference binary intentionally retains these reviewed defects. */
 const REFERENCE_BUGS: Record<string, true> = { B1: true, B2: true, B3: true, B5: true, B6: true, B7: true, B11: true, B12: true, B13: true, B14: true, B15: true, B19: true };
-const USING_REFERENCE_ADDON = process.env.RERAIL_NATIVE_KERNEL_PATH?.includes("jeff-baseline") === true;
+const USING_REFERENCE_ADDON = process.env.RERAIL_ENGINE_PATH?.includes("jeff-baseline") === true;
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",

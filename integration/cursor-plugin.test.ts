@@ -31,7 +31,7 @@ afterEach(async () => {
 
 async function invokeCursorHook(executable: string, input: Readonly<Record<string, unknown>>, kernelSocketPath: string): Promise<Record<string, unknown>> {
   const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
-  const child = spawn(process.execPath, [executable], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, RERAIL_KERNEL_SOCKET: kernelSocketPath } });
+  const child = spawn(process.execPath, [executable], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, RERAIL_ENGINE_SOCKET: kernelSocketPath } });
   const output: Buffer[] = [];
   const errors: Buffer[] = [];
   child.stdout.on("data", chunk => output.push(Buffer.from(chunk)));

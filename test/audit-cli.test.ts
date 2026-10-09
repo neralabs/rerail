@@ -13,7 +13,7 @@ import { RerailRuntime, type RerailRuntimeOptions } from "../src/runtime.js";
 import { runAuditCommand } from "../src/audit-cli.js";
 import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { auditRequestSchema } from "../src/audit-control-schema.js";
-import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
+import { registerHostCommands, type HostCommandHost } from "../src/host-commands.js";
 import { isRerailStarted, workspaceStartState } from "../src/repository-start.js";
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
@@ -66,10 +66,10 @@ describe("rerail scan and settings CLI", () => {
   it("starts, stops, and restarts this repository through slash commands", async () => {
     const { root } = await fixture();
     const name = basename(root);
-    const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
+    const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
     let reattached = 0;
     const notices: string[] = [];
-    registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
+    registerHostCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
       packageRoot: resolve("."),
       cwd: () => root,
       reattach: async () => { reattached += 1; },

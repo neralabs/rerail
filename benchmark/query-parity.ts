@@ -374,7 +374,7 @@ function childArguments(side: Side, options: Options) {
 async function child(options: Options, side: Side) {
   const childOptions = childArguments(side, options);
   const stdout = await new Promise<string>((resolveResult, reject) => {
-    const worker = spawn(process.execPath, [...process.execArgv, script, ...childOptions], { env: { ...process.env, ...side.environment, RERAIL_NATIVE_KERNEL_PATH: side.addon }, stdio: ["ignore", "pipe", "inherit"] });
+    const worker = spawn(process.execPath, [...process.execArgv, script, ...childOptions], { env: { ...process.env, ...side.environment, RERAIL_ENGINE_PATH: side.addon }, stdio: ["ignore", "pipe", "inherit"] });
     const chunks: Buffer[] = []; worker.stdout.on("data", chunk => chunks.push(chunk)); worker.on("error", reject); worker.on("close", code => code === 0 ? resolveResult(Buffer.concat(chunks).toString("utf8")) : reject(new Error(`${side.name} exited ${code}`)));
   });
   return childResultSchema.parse(JSON.parse(stdout));

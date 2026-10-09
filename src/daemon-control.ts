@@ -315,9 +315,9 @@ export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<
   const daemon = process.env.RERAIL_AUTOSTART === "0"
     ? await findRunningDaemon(home)
     : (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
-  if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_KERNEL_SOCKET");
+  if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
-    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_KERNEL_SOCKET");
+    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }
   return daemon.state.kernelSocketPath;
 }

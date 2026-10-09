@@ -1,7 +1,7 @@
 /**
  * The Rerail commands every coding agent gets, and the instructions each one carries. Claude Code and
  * Cursor read them as slash-command files, Codex as skills (`$rerail-ui`), and OMP and Pi register them
- * in-process (`rerail-command.ts`). One catalog keeps the names, descriptions and `/rerail` list the same
+ * in-process (`host-commands.ts`). One catalog keeps the names, descriptions and `/rerail` list the same
  * everywhere.
  */
 

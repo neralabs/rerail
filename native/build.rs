@@ -139,20 +139,20 @@ fn build_grammar(grammar: &VendoredGrammar) {
         .compile(&format!("tree-sitter-{name}"));
 }
 
-/// Where the engine's tests read the conformance fixtures: `RERAIL_FIXTURES_DIR` if set (relative
+/// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
 /// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a
 /// build without them (a sparse checkout) goes on; the tests that need them then fail to compile,
 /// naming the fix.
 fn configure_fixtures() {
-    println!("cargo:rerun-if-env-changed=RERAIL_FIXTURES_DIR");
+    println!("cargo:rerun-if-env-changed=RERAIL_ORACLES_DIR");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let root = manifest.parent().expect("repository root");
-    let directory = match std::env::var_os("RERAIL_FIXTURES_DIR") {
+    let directory = match std::env::var_os("RERAIL_ORACLES_DIR") {
         Some(directory) => {
             let directory = root.join(directory);
             assert!(
                 is_checkout(&directory),
-                "RERAIL_FIXTURES_DIR={} is not a fixtures directory",
+                "RERAIL_ORACLES_DIR={} is not a fixtures directory",
                 directory.display()
             );
             directory
@@ -162,7 +162,7 @@ fn configure_fixtures() {
             println!("cargo:rerun-if-changed={}", fixtures.display());
             if !is_checkout(&fixtures) {
                 println!(
-                    "cargo:warning=Rerail fixtures not found in {}: check out the repository's fixtures/ directory, or set RERAIL_FIXTURES_DIR; the engine's tests need them",
+                    "cargo:warning=Rerail fixtures not found in {}: check out the repository's fixtures/ directory, or set RERAIL_ORACLES_DIR; the engine's tests need them",
                     fixtures.display()
                 );
                 return;
@@ -173,10 +173,7 @@ fn configure_fixtures() {
     let directory = directory
         .canonicalize()
         .expect("fixtures directory is readable");
-    println!(
-        "cargo:rustc-env=RERAIL_FIXTURES_DIR={}",
-        directory.display()
-    );
+    println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 

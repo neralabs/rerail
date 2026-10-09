@@ -8,16 +8,16 @@ import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "./repository-identity.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
-export interface RerailCommandHost {
+export interface HostCommandHost {
   registerCommand(name: string, command: {
     description: string;
-    handler(args: string, context: RerailCommandContext): Promise<void>;
+    handler(args: string, context: HostCommandContext): Promise<void>;
   }): void;
   /** Hands a prompt to the coding agent as if the person had typed it; `/rerail-create` runs through it. */
   sendUserMessage(content: string): void;
 }
 
-export interface RerailCommandContext {
+export interface HostCommandContext {
   hasUI?: boolean;
   ui: {
     notify(message: string, level: "info" | "error"): void;
@@ -27,7 +27,7 @@ export interface RerailCommandContext {
   };
 }
 
-export interface RerailCommandOptions {
+export interface HostCommandOptions {
   /** Installed package root; the launcher runs `<packageRoot>/dist/cli.js`. */
   packageRoot: string;
   host?: "omp" | "pi";
@@ -52,12 +52,12 @@ interface LauncherResult {
 }
 
 /** Start, stop and state change or read the database the extension's gate reads, when one was configured. */
-function databaseArgs(options: RerailCommandOptions): string[] {
+function databaseArgs(options: HostCommandOptions): string[] {
   const database = options.databasePath?.();
   return database === undefined ? [] : ["--database", database];
 }
 
-async function runLauncher(options: RerailCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
+async function runLauncher(options: HostCommandOptions, args: readonly string[], hostArgs: readonly string[] = []): Promise<LauncherResult> {
   const child = spawn(nodeExecutable(), [join(options.packageRoot, "dist", "cli.js"), ...args, ...hostArgs], {
     cwd: options.cwd(),
     env: process.env,
@@ -81,7 +81,7 @@ async function runLauncher(options: RerailCommandOptions, args: readonly string[
 const START_STATES: readonly RepositoryStartState[] = ["started", "stopped", "never"];
 
 /** `rerail state` for this checkout, as `/rerail-start` reads it; OMP runs on Bun, which cannot open the database itself. */
-async function launcherStartState(options: RerailCommandOptions): Promise<RepositoryStartState> {
+async function launcherStartState(options: HostCommandOptions): Promise<RepositoryStartState> {
   const result = await runLauncher(options, ["state"], databaseArgs(options));
   const state = result.stdout.trim();
   const known = START_STATES.find(candidate => candidate === state);
@@ -89,7 +89,7 @@ async function launcherStartState(options: RerailCommandOptions): Promise<Reposi
   return known;
 }
 
-function notifyResult(ctx: RerailCommandContext, name: string, result: LauncherResult): void {
+function notifyResult(ctx: HostCommandContext, name: string, result: LauncherResult): void {
   ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
 
@@ -104,7 +104,7 @@ function openingNotice(url: string, opening: PageOpening): string {
  * this body: its questions asked through `ctx.ui.select` / `ctx.ui.input` and answered
  * back to the launcher. It returns what the person should see, as the launcher's result.
  */
-async function setUpRepository(options: RerailCommandOptions, _ctx: RerailCommandContext): Promise<LauncherResult> {
+async function setUpRepository(options: HostCommandOptions, _ctx: HostCommandContext): Promise<LauncherResult> {
   return runLauncher(options, ["start"], databaseArgs(options));
 }
 
@@ -114,9 +114,9 @@ const shellWord = (value: string): string => "'" + value.replaceAll("'", String.
 const REMOVE = "Yes, remove Rerail";
 const STOP_HERE = "Just stop it in this repo (/rerail-stop)";
 
-type CommandAction = (ctx: RerailCommandContext, args: string) => Promise<void>;
+type CommandAction = (ctx: HostCommandContext, args: string) => Promise<void>;
 
-export function registerRerailCommands(pi: RerailCommandHost, options: RerailCommandOptions): void {
+export function registerHostCommands(pi: HostCommandHost, options: HostCommandOptions): void {
   function register(name: RerailCommandName, action: CommandAction, acceptsArguments = false): void {
     pi.registerCommand(name, {
       description: RERAIL_COMMANDS.find(command => command.name === name)?.description ?? name,

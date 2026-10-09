@@ -14,7 +14,7 @@ vi.mock("../src/daemon-control.js", async () => ({
   openDashboard: mocks.openDashboard,
 }));
 import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
-import { registerRerailCommands, type RerailCommandHost, type RerailCommandContext, type RerailCommandOptions } from "../src/rerail-command.js";
+import { registerHostCommands, type HostCommandHost, type HostCommandContext, type HostCommandOptions } from "../src/host-commands.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -28,10 +28,10 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-function commandHarness(options: Partial<RerailCommandOptions> = {}, choice?: string) {
-  const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
+function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string) {
+  const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
   const sent: string[] = [];
-  registerRerailCommands({
+  registerHostCommands({
     registerCommand(name, command) { commands.set(name, command); },
     sendUserMessage(content) { sent.push(content); },
   }, {
@@ -42,7 +42,7 @@ function commandHarness(options: Partial<RerailCommandOptions> = {}, choice?: st
   });
   const notices: Array<{ message: string; level: string }> = [];
   const selections: string[][] = [];
-  const ctx: RerailCommandContext = {
+  const ctx: HostCommandContext = {
     ui: {
       notify(message, level) { notices.push({ message, level }); },
       select: async (_title, labels) => { selections.push(labels); return choice; },
