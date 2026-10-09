@@ -152,6 +152,33 @@ describe("the repository registry", () => {
     expect(() => linkAlias(database, key, "https://github.com/acme/api")).toThrow(/set-up repository/u);
   });
 
+  it("keeps the merged repository's own key and aliases when an alias brings it in", async () => {
+    const root = await temporary("rerail-registry-merge-");
+    const database = open(join(root, "rerail.sqlite"));
+    const web = gitRepository(join(root, "web"), "https://github.com/acme/web.git");
+    const mirror = gitRepository(join(root, "mirror"), "https://github.com/acme/web-mirror.git");
+    const key = recordCheckout(database, web).repositoryKey;
+    const mirrorKey = recordCheckout(database, mirror).repositoryKey;
+    linkAlias(database, mirrorKey, "https://github.com/acme/web-old");
+
+    // Linking the mirror's alias to web brings the mirror's repository, with its own key and aliases, into web.
+    linkAlias(database, key, "https://github.com/acme/web-old");
+    const merged = listRepositories(database).find(repository => repository.repositoryKey === key)!;
+    expect([...merged.aliases].sort()).toEqual([mirrorKey, "remote:github.com/acme/web-old"].sort());
+    // A fresh clone of the mirror joins web instead of starting a repository of its own.
+    const fresh = gitRepository(join(root, "fresh-mirror"), "https://github.com/acme/web-mirror.git");
+    expect(recordCheckout(database, fresh).repositoryKey).toBe(key);
+  });
+
+  it("adopts a remote added to a clone after it was first recorded", async () => {
+    const root = await temporary("rerail-registry-late-remote-");
+    const database = open(join(root, "rerail.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    expect(recordCheckout(database, clone).repositoryKey).toMatch(/^clone:/u);
+    git(clone, "remote", "add", "origin", "https://github.com/acme/late.git");
+    expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
+  });
+
   it("gives an unconfigured target the clone repository's configuration, and moves only checkouts to a configured one", async () => {
     const root = await temporary("rerail-registry-adopt-");
     const database = open(join(root, "rerail.sqlite"));

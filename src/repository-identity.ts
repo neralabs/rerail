@@ -145,14 +145,14 @@ export function resolveCloneId(workspace: string): { cloneId: string; location: 
     return { cloneId: readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
   }
   const directory = dirname(location.identityPath);
-  let existing;
+  // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a
+  // real directory, never a symlink (lstat).
   try {
-    existing = lstatSync(directory);
+    mkdirSync(directory, { mode: 0o700 });
   } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
+    if (errorCode(error) !== "EEXIST") throw error;
+    if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is not a directory Rerail can keep its identity in`);
   }
-  if (existing === undefined) mkdirSync(directory, { mode: 0o700 });
-  else if (!existing.isDirectory()) throw new Error(`${directory} is not a directory Rerail can keep its identity in`);
   return { cloneId: readOrCreateIdentity(location.identityPath, randomUUID()), location };
 }
 

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadBundledCatalog } from "../src/bundled-rules.js";
 import { openRerailDatabase } from "../src/database.js";
 import { loadNativeBinding } from "../src/native.js";
-import { bundledCodeRuleDslDirectory, CheckoutCatalogs, loadCodeRuleCapabilities } from "../src/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory, CheckoutCatalogs, CompiledRuleCache, loadCodeRuleCapabilities } from "../src/code-rule-dsl-catalog.js";
 import { decisionFor, type RepositoryAuditRuleProvenance } from "../src/audit.js";
 import {
   CODE_RULE_LATEST_ECMA_VERSION,
@@ -1233,5 +1233,32 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   ])("both accept %s", (_name, input) => {
     expect(codeRuleSchema.safeParse(input).success).toBe(true);
     expect(() => loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
+  });
+});
+
+describe("compiled rule cache", () => {
+  function cachedRule(id: string, revision: number): { text: string; digest: string } {
+    const text = JSON.stringify({
+      format: "rerail.policy/v1", id, revision, mode: "steer",
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "c", violation: { code: "X", anchor: "witness.span", message: "x" }, forbid: { regex: { pattern: `N${revision}`, source: "file.content" } } }],
+    });
+    return { text, digest: `sha256:${id}:${revision}` };
+  }
+
+  it("keeps one compiled version per rule, so editing a rule does not keep its earlier versions in memory", () => {
+    const cache = new CompiledRuleCache();
+    const capabilities = loadCodeRuleCapabilities();
+    const first = cachedRule("cache:a", 1);
+    const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest);
+    expect(outcome.ok).toBe(true);
+    expect(cache.compile(capabilities, "cache:a", first.text, first.digest)).toBe(outcome);
+    for (let revision = 2; revision <= 5; revision += 1) {
+      const edited = cachedRule("cache:a", revision);
+      expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest).ok).toBe(true);
+    }
+    const other = cachedRule("cache:b", 1);
+    cache.compile(capabilities, "cache:b", other.text, other.digest);
+    expect(cache.size).toBe(2);
   });
 });

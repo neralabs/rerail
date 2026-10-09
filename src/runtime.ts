@@ -452,7 +452,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
-  readonly #owners = new CheckoutOwners();
+  readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #trusted: boolean;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** Kept past disposal for late receipts, with the repository each session was attributed to. */

@@ -387,3 +387,51 @@ describe("repository audit through the runtime", () => {
     }
   }, 60_000);
 });
+
+describe("CheckoutCodeRuleRouter lanes after review", () => {
+  it("drops a checkout's steering result once that checkout is stopped, so another checkout's batch does not carry it", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    const sibling = await repository(join(root, "sibling"));
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION", "steer"))] }, databasePath);
+    setUpTestRepository(sibling, { library: [file(needle("test:sibling", "SIBLING", "steer"))] }, databasePath);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("stopped-lane");
+    await edit(auditor, "stopped-lane", 1, join(sibling, "api", "x.py"));
+    // A batch with nothing for a lane reports that lane's current status.
+    const steered = await auditor.auditGeneratedEdits("stopped-lane", { revision: 2, checkpoints: ["edit"], edits: [] });
+    expect(steered.disposition).toBe("steer");
+    expect(steered.violations.map(violation => violation.code)).toEqual(["SIBLING"]);
+
+    stopTestRepository(sibling, databasePath);
+    auditor.refreshCodeRules();
+    const next = await auditor.auditGeneratedEdits("stopped-lane", { revision: 3, checkpoints: ["edit"], edits: [] });
+    expect(next.violations).toEqual([]);
+    expect(next.disposition).toBe("continue");
+  });
+
+  it("audits a recorded checkout nested in a folder a folder-scoped audit names, in its own lane", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    const service = await repository(join(session, "packages", "service"));
+    await writeFile(join(session, "packages", "outer.py"), "NEEDLE\n");
+    await writeFile(join(service, "api", "inner.py"), "NEEDLE\n");
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    setUpTestRepository(service, { library: [file(needle("test:service", "SERVICE"))] }, databasePath);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("folder");
+    await auditor.audit("folder", { scope: "touched-files", mode: "log", paths: ["packages"] });
+    await auditor.settle();
+
+    expect(violations(audits).toSorted((a, b) => a.code.localeCompare(b.code))).toEqual([
+      { checkout: service, path: "api/inner.py", code: "SERVICE", mode: "block" },
+      { checkout: session, path: "packages/outer.py", code: "SESSION", mode: "block" },
+    ]);
+  });
+});
