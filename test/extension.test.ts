@@ -577,7 +577,8 @@ describe("OMP conversation-rules extension", () => {
       daemon.state.down.delete("omp-test-session");
       await vi.advanceTimersByTimeAsync(4_000);
       await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(4));
-      expect(stderr).toHaveBeenCalledTimes(1);
+      // The 4th initialize is counted when it is sent; the report is written once its reply arrives.
+      await vi.waitFor(() => expect(stderr).toHaveBeenCalledTimes(1));
       expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail attached after 3 failed attempt(s)"));
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
       expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-test-session" });
