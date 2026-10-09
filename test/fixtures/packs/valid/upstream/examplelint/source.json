@@ -1,0 +1,57 @@
+{
+  "tool": "examplelint",
+  "version": "1.0.0",
+  "repository": "https://example.com/examplelint",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "tag": "v1.0.0",
+  "configurations": [
+    "default"
+  ],
+  "extensions": [
+    ".py",
+    ".pyi"
+  ],
+  "keywords": [
+    "assert",
+    "def",
+    "if"
+  ],
+  "commentVocabulary": [],
+  "testWords": [
+    "a",
+    "assert",
+    "b",
+    "c",
+    "d",
+    "def",
+    "f",
+    "if",
+    "x"
+  ],
+  "configurationWords": [],
+  "sharedNames": [],
+  "rules": {
+    "EX101": {
+      "implementation": [
+        "examplelint/rules/ex101.py"
+      ],
+      "tests": [
+        "tests/asserts.py",
+        "tests/clean.py"
+      ],
+      "deprecated": null,
+      "enabledBy": {
+        "configuration": "default",
+        "options": []
+      },
+      "names": {
+        "implementation": [
+          "Assert"
+        ],
+        "shared": []
+      },
+      "regexes": [],
+      "unscored": []
+    }
+  }
+}

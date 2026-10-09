@@ -1,0 +1,54 @@
+[
+  {
+    "rule": "eslint-eqeqeq",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-dupe-keys",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "eslint-no-implied-eval",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-new-wrappers",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-script-url",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-self-compare",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-template-curly-in-string",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-no-unused-private-class-members",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "eslint-no-useless-rename",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "eslint-radix",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "typescript-eslint-no-non-null-assertion",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "typescript-eslint-no-this-alias",
+    "check": "ports:span"
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "rule": "n-callback-return",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-exports-style",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "n-exports-style",
+    "check": "ports:span"
+  },
+  {
+    "rule": "n-exports-style",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-global-require",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-handle-callback-err",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-callback-literal",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-mixed-requires",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-new-require",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-path-concat",
+    "check": "generality:names"
+  },
+  {
+    "rule": "n-no-path-concat",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-process-env",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-no-sync",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-buffer",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-console",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-process",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-text-decoder",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-text-encoder",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-url",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-global-url-search-params",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-node-protocol",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-promises-dns",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "n-prefer-promises-dns",
+    "check": "size:combinatorial-expansion"
+  },
+  {
+    "rule": "n-prefer-promises-fs",
+    "check": "provenance:recommended"
+  }
+]

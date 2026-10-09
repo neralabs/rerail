@@ -1,0 +1,42 @@
+[
+  {
+    "rule": "python-conformance:ruff-b011-assert-false",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "python-conformance:ruff-b028-no-explicit-stacklevel",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "python-conformance:ruff-b905-zip-without-explicit-strict",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "python-conformance:ruff-e711-none-comparison",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "python-conformance:ruff-f722-forward-annotation-syntax-error",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "python-conformance:ruff-f811-redefined-while-unused",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "python-conformance:ruff-f821-undefined-name",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "python-conformance:ruff-f841-unused-variable",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "python-conformance:ruff-sim222-expr-or-true",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "python-conformance:ruff-sim222-expr-or-true",
+    "check": "ports:span"
+  }
+]

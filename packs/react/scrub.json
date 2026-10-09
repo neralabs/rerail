@@ -1,0 +1,170 @@
+[
+  {
+    "rule": "react-button-has-type",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-button-has-type",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "react-button-has-type",
+    "check": "size:combinatorial-expansion"
+  },
+  {
+    "rule": "react-hooks-rules-of-hooks",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "react-hooks-rules-of-hooks",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-hooks-rules-of-hooks",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-jsx-key",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-jsx-key",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-jsx-no-comment-textnodes",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-jsx-no-comment-textnodes",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-jsx-no-duplicate-props",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-jsx-no-duplicate-props",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-jsx-no-target-blank",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-jsx-no-target-blank",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-jsx-no-undef",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-jsx-no-undef",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-children-prop",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-children-prop",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-danger",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-danger",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-danger",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "react-no-danger-with-children",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-danger-with-children",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-danger-with-children",
+    "check": "size:combinatorial-expansion"
+  },
+  {
+    "rule": "react-no-direct-mutation-state",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-direct-mutation-state",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-find-dom-node",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-find-dom-node",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-is-mounted",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-is-mounted",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-render-return-value",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-render-return-value",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-string-refs",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-no-string-refs",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-no-unescaped-entities",
+    "check": "ports:coverage"
+  },
+  {
+    "rule": "react-no-unescaped-entities",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-self-closing-comp",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-self-closing-comp",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-self-closing-comp",
+    "check": "provenance:recommended"
+  },
+  {
+    "rule": "react-void-dom-elements-no-children",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "react-void-dom-elements-no-children",
+    "check": "ports:span"
+  },
+  {
+    "rule": "react-void-dom-elements-no-children",
+    "check": "provenance:recommended"
+  }
+]

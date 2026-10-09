@@ -1,0 +1,6 @@
+[
+  {
+    "rule": "next-no-head-element",
+    "check": "ports:coverage"
+  }
+]

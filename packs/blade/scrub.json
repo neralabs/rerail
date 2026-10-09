@@ -1,0 +1,58 @@
+[
+  {
+    "rule": "blade-parser-debug-directive",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "blade-parser-for-else-structure",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "bladestan-argument-sprintf",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "bladestan-array-duplicate-key",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "bladestan-if-always-false",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "bladestan-missing-function-return-type",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "bladestan-random-int-parameters",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "bladestan-variable-undefined",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "tlint-no-dump-directives",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "tlint-no-dump-directives",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "tlint-no-json-directive",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "tlint-no-ray-directive",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "tlint-no-ray-directive",
+    "check": "ports:unknown-misses"
+  }
+]

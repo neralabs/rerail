@@ -1,0 +1,42 @@
+[
+  {
+    "rule": "phpcs-generic-php-backtick-operator",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "phpcs-generic-php-backtick-operator",
+    "check": "ports:span"
+  },
+  {
+    "rule": "phpstan-argument-sprintf",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "phpstan-array-duplicate-key",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "phpstan-if-always-true",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "phpstan-random-int-parameters",
+    "check": "ports:evidence"
+  },
+  {
+    "rule": "phpstan-random-int-parameters",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "phpstan-variable-undefined",
+    "check": "ports:unknown-misses"
+  },
+  {
+    "rule": "psalm-unused-variable",
+    "check": "ports:unknown-misses"
+  }
+]

@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "source": {
     "kind": "fixtures",
-    "origin": "https://example.com/examplelint@0000000",
+    "origin": "https://example.com/examplelint@0123456789abcdef0123456789abcdef01234567",
     "rules": [
       "EX101"
     ],
     "files": [
-      "asserts.py"
+      "asserts.py",
+      "clean.py"
     ]
   },
   "findings": [
@@ -16,13 +17,25 @@
       "rule": "EX101",
       "path": "asserts.py",
       "line": 1,
-      "column": 1
+      "column": 1,
+      "endLine": 1,
+      "endColumn": 9
     },
     {
       "rule": "EX101",
       "path": "asserts.py",
       "line": 3,
-      "column": 1
+      "column": 1,
+      "endLine": 3,
+      "endColumn": 9
+    },
+    {
+      "rule": "EX101",
+      "path": "clean.py",
+      "line": 2,
+      "column": 5,
+      "endLine": 2,
+      "endColumn": 13
     }
   ]
 }
