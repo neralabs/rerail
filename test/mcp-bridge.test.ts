@@ -7,24 +7,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../src/daemon-control.js";
 import { runRerailMcpBridge } from "../src/mcp-bridge.js";
 
-type FetchStep = Response | Error | ((home: string) => Promise<Response>);
+/** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
+interface Machine {
+  home: string;
+  listeners: Map<number, number>;
+}
+
+type FetchStep = Response | Error | ((machine: Machine) => Promise<Response>);
 
 interface BridgeRun {
   stdout: readonly string[];
   stderr: readonly string[];
+  /** Bodies relayed to `/mcp`. */
   requests: readonly string[];
+  /** `/mcp` endpoints dialled. */
   endpoints: readonly string[];
+  /** `/healthz` endpoints probed. */
+  probes: readonly string[];
 }
 
 interface RecordedDaemon {
   pid: number;
   port: number;
+  startedAt?: number;
 }
 
 interface BridgeSetup {
   /** The daemon the home records; null records none. Defaults to a live one on port 4321. */
   daemon?: RecordedDaemon | null;
+  /** The pid that answers on the recorded port; null when nothing listens there. Defaults to the recorded pid. */
+  listener?: number | null;
 }
+
+const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
 
 const directories: string[] = [];
 
@@ -53,7 +68,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath: "/tmp/rerail-bridge-test.sock",
     ui: "bundled",
-    startedAt: 0,
+    startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
   }));
 }
@@ -70,16 +85,29 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
   directories.push(root);
   const home = join(root, "home");
   const daemon = setup.daemon === undefined ? { pid: process.pid, port: 4321 } : setup.daemon;
-  if (daemon !== null) await recordDaemon(home, daemon);
+  const machine: Machine = { home, listeners: new Map() };
+  if (daemon !== null) {
+    await recordDaemon(home, daemon);
+    const listener = setup.listener === undefined ? daemon.pid : setup.listener;
+    if (listener !== null) machine.listeners.set(daemon.port, listener);
+  }
   const requests: string[] = [];
   const endpoints: string[] = [];
+  const probes: string[] = [];
   const remaining = [...steps];
   const fetchImpl = vi.fn(async (endpoint: URL, init: RequestInit): Promise<Response> => {
+    const listener = machine.listeners.get(Number(endpoint.port));
+    if (endpoint.pathname === "/healthz") {
+      probes.push(endpoint.href);
+      if (listener === undefined) throw new TypeError("fetch failed");
+      return jsonResponse(200, { status: "ok", pid: listener });
+    }
     endpoints.push(endpoint.href);
     requests.push(String(init.body));
+    if (listener === undefined) throw new TypeError("fetch failed");
     const step = remaining.shift();
     if (step === undefined) throw new Error("unexpected request");
-    if (typeof step === "function") return await step(home);
+    if (typeof step === "function") return await step(machine);
     if (step instanceof Error) throw step;
     return step;
   });
@@ -94,7 +122,7 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
     fetch: fetchImpl,
     home,
   });
-  return { stdout: collectedStdout(), stderr: collectedStderr(), requests, endpoints };
+  return { stdout: collectedStdout(), stderr: collectedStderr(), requests, endpoints, probes };
 }
 
 describe("Rerail MCP bridge", () => {
@@ -181,18 +209,20 @@ describe("Rerail MCP bridge", () => {
     const request = JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" });
     const daemon = recorded === null ? null : { pid: exitedPid(), port: 51_234 };
     const run = await runBridge([request], [], { daemon });
-    const message = "Rerail daemon is not running; start it with rerail daemon start";
     expect(run.requests).toEqual([]);
-    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message } })]);
-    expect(run.stderr).toEqual([expect.stringContaining(message)]);
+    expect(run.probes).toEqual([]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message: NOT_RUNNING } })]);
+    expect(run.stderr).toEqual([expect.stringContaining(NOT_RUNNING)]);
   });
 
   it("reads the home again after a failed request and follows a daemon that moved", async () => {
     const first = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
     const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
     const pong = JSON.stringify({ jsonrpc: "2.0", id: 2, result: {} });
-    const restarted = async (home: string): Promise<Response> => {
-      await recordDaemon(home, { pid: process.pid, port: 52_345 });
+    const restarted = async (machine: Machine): Promise<Response> => {
+      machine.listeners.delete(51_234);
+      machine.listeners.set(52_345, process.pid);
+      await recordDaemon(machine.home, { pid: process.pid, port: 52_345, startedAt: 1 });
       throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
     };
     const run = await runBridge([first, second], [restarted, new Response(pong, { status: 200 })], {
@@ -220,7 +250,9 @@ describe("Rerail MCP bridge", () => {
         input: Readable.from([`${request}\n`, `${request}\n`]),
         stdout: new PassThrough(),
         stderr: new PassThrough(),
-        fetch: async (_endpoint, init) => {
+        // The bridge checks the recorded daemon's health once before its first relay.
+        fetch: async (endpoint, init) => {
+          if (endpoint.pathname === "/healthz") return jsonResponse(200, { status: "ok", pid: process.pid });
           headers.push(new Headers(init.headers).get("x-rerail-caller-cwd") ?? "");
           bodies.push(String(init.body));
           return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), { status: 200 });
@@ -232,5 +264,61 @@ describe("Rerail MCP bridge", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("checks a recorded daemon's health once and then relays with one state file read per request", async () => {
+    const requests = [1, 2, 3].map(id => JSON.stringify({ jsonrpc: "2.0", id, method: "ping" }));
+    const pongs = [1, 2, 3].map(id => JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+    const run = await runBridge(requests, pongs.map(pong => new Response(pong, { status: 200 })));
+    expect(run.probes).toEqual(["http://127.0.0.1:4321/healthz"]);
+    expect(run.requests).toEqual(requests);
+    expect(run.stdout).toEqual(pongs);
+  });
+
+  it("checks health again when the state file records a daemon started at another time", async () => {
+    const first = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+    const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    const pongs = [1, 2].map(id => JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+    const restartedInPlace = async (machine: Machine): Promise<Response> => {
+      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 1 });
+      return new Response(pongs[0], { status: 200 });
+    };
+    const run = await runBridge([first, second], [restartedInPlace, new Response(pongs[1], { status: 200 })]);
+    expect(run.probes).toEqual(["http://127.0.0.1:4321/healthz", "http://127.0.0.1:4321/healthz"]);
+    expect(run.stdout).toEqual(pongs);
+  });
+
+  // A daemon.json left behind by a SIGKILL or a reboot whose pid now belongs to another process.
+  it.each([
+    ["nothing listens on its port", null],
+    ["a different daemon answers on its port", process.ppid],
+  ] as const)("refuses a stale state file whose pid is alive when %s, and relays nothing", async (_case, listener) => {
+    const write = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "library_rules_upsert", arguments: { id: "stale-home-rule" } },
+    });
+    const elsewhere = JSON.stringify({ jsonrpc: "2.0", id: 5, result: { content: [] } });
+    const run = await runBridge([write], [new Response(elsewhere, { status: 200 })], { listener });
+    expect(run.requests).toEqual([]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 5, error: { code: -32000, message: NOT_RUNNING } })]);
+    expect(run.stderr).toEqual([`rerail: mcp bridge: ${NOT_RUNNING}`]);
+  });
+
+  it("reports a daemon that stopped answering after its health check as not running", async () => {
+    const lines = [1, 2, 3].map(id => JSON.stringify({ jsonrpc: "2.0", id, method: "ping" }));
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+    const killed = async (machine: Machine): Promise<Response> => {
+      machine.listeners.clear();
+      throw new TypeError("fetch failed");
+    };
+    const run = await runBridge(lines, [new Response(pong, { status: 200 }), killed]);
+    expect(run.requests).toEqual(lines.slice(0, 2));
+    expect(run.stdout).toEqual([
+      pong,
+      JSON.stringify({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: NOT_RUNNING } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 3, error: { code: -32000, message: NOT_RUNNING } }),
+    ]);
   });
 });

@@ -3,7 +3,8 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { DAEMON_STATE_FILE, processAlive, readDaemonState } from "./daemon-control.js";
+import { DAEMON_STATE_FILE, probeDaemon, processAlive, readDaemonState } from "./daemon-control.js";
+import type { DaemonState } from "./daemon.js";
 import { CALLER_CWD_HEADER } from "./repository-model.js";
 import { defaultRerailHome } from "./rerail-home.js";
 
@@ -71,29 +72,63 @@ async function writeLine(output: Writable, line: string): Promise<void> {
   if (!output.write(`${line}\n`)) await once(output, "drain");
 }
 
+const DAEMON_NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
+
+function sameDaemon(left: DaemonState, right: DaemonState): boolean {
+  return left.pid === right.pid && left.url === right.url && left.startedAt === right.startedAt;
+}
+
 /**
  * The home's daemon as its state file records it, read again for every request: the daemon takes a free port
- * when the default one is held, and a restart or update may move it while the bridge runs.
+ * when the default one is held, and a restart or update may move it while the bridge runs. A state file left
+ * behind by a SIGKILL or a reboot can name a pid since reused, with nothing or another home's daemon on its
+ * port, so each state file is checked once against `/healthz` before any request goes to its URL; after that a
+ * request costs one file read until a request fails to connect.
  */
-async function daemonEndpoint(home: string): Promise<URL> {
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
-  if (state === undefined || !processAlive(state.pid)) throw new Error("Rerail daemon is not running; start it with rerail daemon start");
-  return new URL("/mcp", state.url);
+class DaemonLocator {
+  #confirmed: DaemonState | undefined;
+
+  constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch) {}
+
+  async endpoint(): Promise<URL> {
+    const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
+    if (state === undefined || !processAlive(state.pid)) throw new Error(DAEMON_NOT_RUNNING);
+    if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
+      this.#confirmed = undefined;
+      const health = await probeDaemon(state.url, this.fetchImpl);
+      if (health?.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
+      this.#confirmed = state;
+    }
+    return new URL("/mcp", state.url);
+  }
+
+  /** After a request failed to connect: checks the home's daemon again, and throws when none answers. */
+  async recheck(): Promise<void> {
+    this.#confirmed = undefined;
+    await this.endpoint();
+  }
 }
 
 /** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
 async function relay(
-  endpoint: URL,
   request: string,
+  daemon: DaemonLocator,
   callerHeaders: Readonly<Record<string, string>>,
   fetchImpl: RerailMcpBridgeFetch,
 ): Promise<string | undefined> {
-  const response = await fetchImpl(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders },
-    body: request,
-    signal: AbortSignal.timeout(30_000),
-  });
+  const endpoint = await daemon.endpoint();
+  let response: Response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders },
+      body: request,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    await daemon.recheck();
+    throw error;
+  }
   const body = await response.text();
   if (response.ok) return body === "" ? undefined : body;
   const json = response.headers.get("content-type")?.includes("application/json") ?? false;
@@ -103,14 +138,14 @@ async function relay(
 
 async function relayRequest(
   request: string,
-  home: string,
+  daemon: DaemonLocator,
   callerHeaders: Readonly<Record<string, string>>,
   stdout: Writable,
   stderr: Writable,
   fetchImpl: RerailMcpBridgeFetch,
 ): Promise<void> {
   try {
-    const body = await relay(await daemonEndpoint(home), request, callerHeaders, fetchImpl);
+    const body = await relay(request, daemon, callerHeaders, fetchImpl);
     if (body !== undefined) await writeLine(stdout, body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -133,10 +168,10 @@ export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): 
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
-  const home = options.home ?? defaultRerailHome();
+  const daemon = new DaemonLocator(options.home ?? defaultRerailHome(), fetchImpl);
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {
     if (request.trim() === "") continue;
-    await relayRequest(request, home, callerHeaders, stdout, stderr, fetchImpl);
+    await relayRequest(request, daemon, callerHeaders, stdout, stderr, fetchImpl);
   }
 }

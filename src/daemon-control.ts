@@ -122,9 +122,13 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
   }
 }
 
-export async function probeDaemon(url: string): Promise<DaemonHealth | undefined> {
+/** The health the daemon at `url` reports; `fetchImpl` lets a client with its own transport, such as the MCP bridge, probe through it. */
+export async function probeDaemon(
+  url: string,
+  fetchImpl: (endpoint: URL, init: RequestInit) => Promise<Response> = fetch,
+): Promise<DaemonHealth | undefined> {
   try {
-    const response = await fetch(new URL("/healthz", url), { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const response = await fetchImpl(new URL("/healthz", url), { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
     if (!response.ok) return undefined;
     const body = await response.json() as DaemonHealth;
     return body.status === "ok" ? body : undefined;
