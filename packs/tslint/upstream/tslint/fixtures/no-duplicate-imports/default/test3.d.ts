@@ -1,0 +1,10 @@
+export {};
+
+declare module 'a' {
+    import foo from 'foo';
+}
+
+declare module 'b' {
+    // Error because these imports could be combined in an outer scope.
+    import foo from 'foo';
+}

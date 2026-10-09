@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+/* Test import grouping where only a list or regex strings is passed to config. */
+
+import { x } from "@pkg/foo";
+import { app_f } from "app/foo";
+
+import { a } from "@pkg/bar";
+import { app_b } from "app/bar";
+
+import { xbar } from "../xbar";
+
+import { bar } from "../bar";
+
+import { foo } from "foo";
+
+import "./baa";
+import "./baz";
+
+export class Test {}

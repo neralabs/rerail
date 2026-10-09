@@ -1,0 +1,98 @@
+let x;
+if (true) {
+    x = 1;
+} else {
+    x = 2;
+}
+
+if (true)
+    x = "TRUE";
+else if (false)
+    x = "FALSE";
+else
+    x = "FILE_NOT_FOUND";
+
+// Must assign same variable
+if (true) {
+    x = 1;
+} else {
+    y = 2;
+}
+
+// All branches must be present
+if (true) {
+    x = 1;
+}
+
+// Must not be a multi-statement block.
+if (true) {
+    x = 1;
+} else {
+    x = 2;
+    y = 3;
+}
+
+// Or even multi-line.
+if (true)
+    x = [
+        1,
+        2
+    ];
+else
+    x = 3;
+
+// Works for complex left hand side.
+if (true) {
+    foo(bar).baz = 0;
+} else {
+    foo(bar).baz = 1;
+}
+
+if (length === 0) {
+    x = "foo";
+} else if (length === 1) {
+    x = "bar";
+} else if (length === 2) {
+    x = "something else";
+} else {
+    x = "unknown";
+}
+
+if (length === 0) {
+    x = "foo";
+} else {
+    if (length === 1) {
+        x = "bar";
+    } else {
+        if (length === 2) {
+            x = "something else";
+        } else {
+            x = "unknown";
+        }
+    }
+}
+
+if (length === 0) {
+    y = "foo";
+} else if (length === 1) {
+    x = "bar";
+} else if (length === 2) {
+    x = "something else";
+} else {
+    x = "unknown";
+}
+
+if (length === 0) {
+    y = "foo";
+} else {
+    if (length === 1) {
+        x = "bar";
+    } else {
+        if (length === 2) {
+            x = "something else";
+        } else {
+            x = "unknown";
+        }
+    }
+}
+

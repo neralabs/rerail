@@ -18,10 +18,11 @@ precedence = "override"
 SPDX-FileCopyrightText = "Minish Lab contributors"
 SPDX-License-Identifier = "MIT"
 
-# palantir/tslint core rules, re-implemented as policy documents: the TSLint pack's shipped rules and its
-# candidates (ports not shipped and option variants); see packs/tslint/licenses/tslint/UPSTREAM.md.
+# palantir/tslint core rules, re-implemented as policy documents (the TSLint pack's shipped rules and its candidates:
+# ports not shipped and option variants), TSLint's rule tests with their markup removed, and the names its rule sources
+# and test options protect; see packs/tslint/licenses/tslint/UPSTREAM.md.
 [[annotations]]
-path = ["packs/tslint/rules/**", "packs/tslint/candidates/**"]
+path = ["packs/tslint/rules/**", "packs/tslint/candidates/**", "packs/tslint/upstream/tslint/fixtures/**", "packs/tslint/upstream/tslint/protected-identifiers.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2013 Palantir Technologies, Inc.", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"
