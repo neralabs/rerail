@@ -21,8 +21,9 @@
 // parse is left out. Each kept file is one analysis unit.
 //
 // Corpora: every file the runner scores (TypeScript and JavaScript files under the corpus's paths, outside
-// directories the host ignores and the pack's excludes) is linted once per tool, with every pack rule of the tool on. Files ESLint
-// cannot parse are `skipped`. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
+// directories the host ignores and the pack's excludes) is linted once per tool, with every shipped pack rule of the tool
+// on: a corpus recording covers the shipped ports, and the runner scores a candidate on a corpus only where it is
+// covered. Files ESLint cannot parse are `skipped`. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
@@ -81,6 +82,8 @@ for (const rule of PACK.rules.filter(entry => entry.upstream.tool === "typescrip
   RULES.get(rule.upstream.tool).push(rule.upstream.rule);
 }
 for (const rules of RULES.values()) rules.sort();
+/** The shipped ports' rules by tool (documents under `rules/`): a corpus recording covers these, not the candidates. */
+const SHIPPED = new Map([...RULES].map(([tool, rules]) => [tool, rules.filter(rule => PACK.rules.some(entry => entry.upstream.rule === rule && entry.policy.startsWith("rules/")))]));
 const versionOf = tool => PACK.tools.find(entry => entry.name === tool).version;
 
 let optionsRuns = 0;
@@ -366,7 +369,8 @@ async function recordCorpus(name, directory) {
   if (head !== corpus.commit) throw new Error(`${directory} is at ${head}; the pack pins ${corpus.commit}`);
   const files = corpusFiles(corpus, directory);
   console.log(`corpus ${name}: ${files.length} files`);
-  for (const [tool, rules] of RULES) {
+  for (const [tool, rules] of SHIPPED) {
+    if (rules.length === 0) continue;
     const started = performance.now();
     const { findings, unparsed } = await lint(directory, files, rules);
     writeJson(join(HERE, tool, `corpus-${name}.expected.json`), {

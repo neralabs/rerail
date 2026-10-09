@@ -159,21 +159,19 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/143/private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript/src/FooBar/file.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/144/src/foo/[foo_bar].js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/145/src/foo/foo$Bar.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/146/src/foo/_foo Bar.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/147/src/foo/_foo Bar.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/148/src/foo/barBaz.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/149/src/qux/FooBar.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/150/src/foo/1_.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/151/src/foo/a_b.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/152/src/foo/f_a_q_page.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/153/src/foo/a_b_c.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/154/src/foo/1_a_b.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/155.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/156/src/foo-js/bar.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/157/src/foo-js/bar.spec.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/158/src/foo-js/.spec.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/159/foo.SPEC.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/160/.SPEC.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/146/src/foo/barBaz.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/147/src/qux/FooBar.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/148/src/foo/1_.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/149/src/foo/a_b.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/150/src/foo/f_a_q_page.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/151/src/foo/a_b_c.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/152/src/foo/1_a_b.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/153.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/154/src/foo-js/bar.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/155/src/foo-js/bar.spec.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/156/src/foo-js/.spec.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/157/foo.SPEC.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/158/.SPEC.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/001.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/002.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/003.js` | `test/no-null.js` | derived |

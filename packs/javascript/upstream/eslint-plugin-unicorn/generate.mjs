@@ -109,8 +109,9 @@ function languageOf(languageOptions) {
 /** A case's `filename` as a relative path under its fixture directory, undefined without one, null when unusable. */
 function relativeFilename(filename) {
   if (typeof filename !== "string" || filename.length === 0) return undefined;
-  // A name with a control character (filename-case tests one with a line break) is no path a repository lists.
-  if (/[\u0000-\u001f\u007f]/u.test(filename)) return null;
+  // A name with a control character or a line separator (filename-case tests line breaks, U+2028 and U+2029) is no path
+  // a repository lists.
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(filename)) return null;
   const path = normalize(filename.replace(/\\/gu, "/").replace(/^[A-Za-z]:/u, "")).replace(/^(\.\.\/|\/)+/u, "");
   return path.length === 0 || path === "." ? undefined : path;
 }

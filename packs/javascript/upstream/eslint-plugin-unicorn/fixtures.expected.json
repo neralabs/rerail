@@ -155,21 +155,19 @@
    "filename-case/143/private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript/src/FooBar/file.js",
    "filename-case/144/src/foo/[foo_bar].js",
    "filename-case/145/src/foo/foo$Bar.js",
-   "filename-case/146/src/foo/_foo Bar.js",
-   "filename-case/147/src/foo/_foo Bar.js",
-   "filename-case/148/src/foo/barBaz.js",
-   "filename-case/149/src/qux/FooBar.js",
-   "filename-case/150/src/foo/1_.js",
-   "filename-case/151/src/foo/a_b.js",
-   "filename-case/152/src/foo/f_a_q_page.js",
-   "filename-case/153/src/foo/a_b_c.js",
-   "filename-case/154/src/foo/1_a_b.js",
-   "filename-case/155.js",
-   "filename-case/156/src/foo-js/bar.js",
-   "filename-case/157/src/foo-js/bar.spec.js",
-   "filename-case/158/src/foo-js/.spec.js",
-   "filename-case/159/foo.SPEC.js",
-   "filename-case/160/.SPEC.js",
+   "filename-case/146/src/foo/barBaz.js",
+   "filename-case/147/src/qux/FooBar.js",
+   "filename-case/148/src/foo/1_.js",
+   "filename-case/149/src/foo/a_b.js",
+   "filename-case/150/src/foo/f_a_q_page.js",
+   "filename-case/151/src/foo/a_b_c.js",
+   "filename-case/152/src/foo/1_a_b.js",
+   "filename-case/153.js",
+   "filename-case/154/src/foo-js/bar.js",
+   "filename-case/155/src/foo-js/bar.spec.js",
+   "filename-case/156/src/foo-js/.spec.js",
+   "filename-case/157/foo.SPEC.js",
+   "filename-case/158/.SPEC.js",
    "no-null/001.js",
    "no-null/002.js",
    "no-null/003.js",
@@ -952,55 +950,43 @@
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/146/src/foo/_foo Bar.js",
+   "path": "filename-case/146/src/foo/barBaz.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/147/src/foo/_foo Bar.js",
+   "path": "filename-case/147/src/qux/FooBar.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/148/src/foo/barBaz.js",
+   "path": "filename-case/148/src/foo/1_.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/149/src/qux/FooBar.js",
+   "path": "filename-case/149/src/foo/a_b.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/150/src/foo/1_.js",
+   "path": "filename-case/150/src/foo/f_a_q_page.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/151/src/foo/a_b.js",
+   "path": "filename-case/151/src/foo/a_b_c.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "unicorn/filename-case",
-   "path": "filename-case/152/src/foo/f_a_q_page.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "unicorn/filename-case",
-   "path": "filename-case/153/src/foo/a_b_c.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "unicorn/filename-case",
-   "path": "filename-case/154/src/foo/1_a_b.js",
+   "path": "filename-case/152/src/foo/1_a_b.js",
    "line": 1,
    "column": 1
   },

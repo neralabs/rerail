@@ -1,8 +1,8 @@
 // Records @vitest/eslint-plugin for the TypeScript pack's vitest ports (packs/typescript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-vitest/fixtures.expected.json (the rules' own
-// RuleTester cases) and eslint-plugin-vitest/corpus-<name>.expected.json (the pack's pinned corpora).
+// RuleTester cases). No vitest port ships, so it records no corpus: a corpus recording covers shipped ports only.
 // Run offline by a maintainer, never in CI:
-//   node generate.mjs --tools <dir> --vitest <checkout> [--fixtures] [--corpus <name>=<checkout>]...
+//   node generate.mjs --tools <dir> --vitest <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for @vitest/eslint-plugin 1.6.27
 // (validation/upstream/vitest-eslint-plugin-1.6.27): eslint 10.0.0, @vitest/eslint-plugin 1.6.27,
 // @typescript-eslint/parser 8.58.0 and tsx (to load the plugin's .ts tests). The checkout is
@@ -16,14 +16,11 @@
 // left out. A case with another parser is left out. A case's code is written to a test file, fixtures/<rule>/<n>.test.ts
 // (.test.tsx with JSX, or the TypeScript-family extension of its filename after `.test`). Code that does not parse is left out. Each kept file is
 // one analysis unit.
-//
-// Corpora: every file the runner scores (TypeScript and JavaScript files under the corpus's paths, outside directories
-// the host ignores and the pack's excludes) is linted the same way. Files ESLint cannot parse are `skipped`.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -35,14 +32,10 @@ const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", "
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 function parseArguments(argv) {
-  const options = { corpora: new Map(), fixtures: false };
+  const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    if (flag === "--fixtures") options.fixtures = true;
-    else if (flag === "--corpus") {
-      const [name, directory] = argv[++index].split("=");
-      options.corpora.set(name, resolve(directory));
-    } else if (["--tools", "--vitest"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
+    if (["--tools", "--vitest"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
     else throw new Error(`unknown argument ${flag}`);
   }
   for (const key of ["tools", "vitest"]) if (options[key] === undefined) throw new Error(`--${key} is required`);
@@ -218,22 +211,7 @@ async function recordFixtures() {
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }
 
-async function recordCorpus(name, directory) {
-  const corpus = PACK.corpora.find(entry => entry.name === name);
-  if (corpus === undefined) throw new Error(`corpus ${name} is not in conformance.json`);
-  assertCommit(directory, corpus.commit);
-  const files = corpusFiles(directory, corpus);
-  const { findings, skipped } = await lint(ESLint, directory, config(), files, RULES);
-  const source = { kind: "corpus", name, repository: corpus.repository, commit: corpus.commit, rules: RULES, skipped: skipped.map(({ path }) => path).sort() };
-  writeRecording(join(HERE, `corpus-${name}.expected.json`), TOOL, VERSION, source, findings);
-  console.log(`corpus ${name}: ${files.length} files, ${skipped.length} unparsed, ${findings.length} findings`);
-}
-
-if (options.fixtures) {
-  installHooks();
-  const { register } = await import(pathToFileURL(toolsRequire.resolve("tsx/cjs/api")).href);
-  register();
-  await recordFixtures();
-}
-for (const [name, directory] of options.corpora) await recordCorpus(name, directory);
-if (!options.fixtures && options.corpora.size === 0) console.error("nothing to do: pass --fixtures and/or --corpus <name>=<checkout>");
+installHooks();
+const { register } = await import(pathToFileURL(toolsRequire.resolve("tsx/cjs/api")).href);
+register();
+await recordFixtures();

@@ -18,7 +18,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`) and its recordings (`fixtures.expected.json`, `corpus-vscode.expected.json`) |
 | `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a V1 validation gate or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) is listed in `conformance.json`, scored and reported, never gated |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a V1 validation gate or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only |
 | `candidates/typescript-eslint-no-explicit-any.json` | A candidate still in the older `tempo.policy/v1` format, which is not a rule document, so it stays out of `rules/` |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -27,8 +27,7 @@ Re-recording runs offline against the pinned tool versions (the recorder's heade
 ```sh
 node upstream/generate.mjs --tools <dir> --typescript-eslint <typescript-eslint checkout at v8.70.1> \
   --fixtures --corpus vscode=<vscode checkout>
-node upstream/eslint-plugin-vitest/generate.mjs --tools <dir> --vitest <eslint-plugin-vitest checkout at v1.6.27> \
-  --fixtures --corpus vscode=<vscode checkout>
+node upstream/eslint-plugin-vitest/generate.mjs --tools <dir> --vitest <eslint-plugin-vitest checkout at v1.6.27>
 ```
 
 Scoring one rule with every false positive and false negative printed:
