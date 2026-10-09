@@ -294,6 +294,21 @@ describe("recommendRulePacks", () => {
     expect(recommendRulePacks(root, withAcme).map(({ pack: found }) => found.id)).toEqual(["acme-api"]);
   });
 
+  it("never recommends a pack without rules, even where its match fits", async () => {
+    const root = await temporaryDirectory("rerail-empty-pack-");
+    writeFiles(root, { "web/src/App.jsx": "export const App = () => null;\n" });
+    const empty = writePack(await temporaryDirectory("rerail-empty-pack-def-"), {
+      format: "rerail.rule-pack/v1", id: "acme-jsx", name: "acme-jsx", category: "framework",
+      covers: "No rules yet: every port is a candidate.", reason: "matches JSX",
+      match: { any: [{ files: ["**/*.jsx"], label: "*.jsx files" }] },
+      rules: [],
+    }, {});
+    const loaded = readRulePacks([empty]);
+
+    expect(loaded.map(found => [found.id, found.rules.length])).toEqual([["acme-jsx", 0]]);
+    expect(recommendRulePacks(root, loaded)).toEqual([]);
+  });
+
   it("lets the daemon reuse a repository's recommendations for a minute, then scans it again", async () => {
     const root = await temporaryDirectory("rerail-recommend-cache-");
     writeFiles(root, { "app/main.py": "print(1)\n" });

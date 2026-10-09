@@ -12,10 +12,11 @@ export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
  * Rule packs: named sets of rules that come with Rerail. A pack's optional match definition says which repositories
- * it fits and why; a pack without one is never recommended and is chosen by hand. A pack is a `packs/<id>/` directory
- * (`docs/pack-format.md`): `pack.json` lists each rule with the document in the pack's `rules/` that defines it. Core
- * ships the packs in `CORE_RULE_PACKS` inside its own package. A pack's rules run only in repositories that add it
- * (`repository_attachments_set`); this module defines, validates and recommends.
+ * it fits and why; a pack without one is never recommended and is chosen by hand, and a pack without rules is never
+ * recommended. A pack is a `packs/<id>/` directory (`docs/pack-format.md`): `pack.json` lists each rule with the
+ * document in the pack's `rules/` that defines it. Core ships the packs in `CORE_RULE_PACKS` inside its own package.
+ * A pack's rules run only in repositories that add it (`repository_attachments_set`); this module defines, validates
+ * and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -54,7 +55,10 @@ const signalSchema: z.ZodType<RulePackSignal> = z.union([
 
 const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSchema).min(1) }).strict();
 
-/** `packs/<id>/pack.json`: every rule names its document, so the pack is self-contained. */
+/**
+ * `packs/<id>/pack.json`: every rule names its document, so the pack is self-contained. A pack may list no rules while
+ * all of its ports are candidates; such a pack is never recommended.
+ */
 export const rulePackFileSchema = z
   .object({
     format: z.literal(RULE_PACK_FORMAT),
@@ -67,7 +71,7 @@ export const rulePackFileSchema = z
     match: matchSchema.optional(),
     /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
     honourSuppressionComments: z.boolean().optional(),
-    rules: z.array(z.object({ ...packRuleFields, document: documentPathSchema }).strict()).min(1),
+    rules: z.array(z.object({ ...packRuleFields, document: documentPathSchema }).strict()),
   })
   .strict();
 export type RulePackFile = z.infer<typeof rulePackFileSchema>;
@@ -201,14 +205,14 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 
 /**
  * The packs that fit the repository at `repositoryRoot`, from its files and `package.json` dependencies alone:
- * no model, no network, and no list of what does not fit. A pack without a match definition never fits.
- * Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
+ * no model, no network, and no list of what does not fit. A pack without a match definition or without rules never
+ * fits. Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
  * `RulePackRecommendation.folder`).
  */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
   const scan = scanRepository(repositoryRoot);
   return packs.flatMap(pack => {
-    if (pack.match === undefined) return [];
+    if (pack.match === undefined || pack.rules.length === 0) return [];
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
     const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);

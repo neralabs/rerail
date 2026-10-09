@@ -5,7 +5,8 @@
  * corpus, a missing checkout failing; 0: none).
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
- * breaks one check of a copy of it, and `vue`, for a language core plans, passes with its rule not supported yet.
+ * breaks one check of a copy of it, `vue`, for a language core plans, passes with its rule not supported yet, and
+ * `empty`, whose ports are all candidates, passes with no rules.
  */
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,6 +105,13 @@ describe("validatePack", () => {
     expect(validation.rules).toEqual([
       { id: "vue:no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
     ]);
+  });
+
+  it("passes a pack that ships no rules while its ports are candidates", async () => {
+    const validation = await validatePack(join(FIXTURES, "empty"), { corpora: false });
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules).toEqual([]);
   });
 
   const cases: [string, (directory: string) => void, Partial<Record<PackCheckName, string[]>>][] = [
