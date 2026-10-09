@@ -1,6 +1,7 @@
 //! The adapter test kit: every family's adapter against known-good literals (`kit`), and the
 //! registry's capabilities against the concerns the adapters read.
 
+use super::value::kit as value_kit;
 use super::{
     Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules,
     ValueRules, with_adapter,
@@ -8,6 +9,7 @@ use super::{
 use crate::code_rule_dsl::language::{CodeRuleLanguage, Family, GrammarDialect, Semantic, Support};
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::value::{Lang, Value};
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
 use std::borrow::Cow;
@@ -30,6 +32,7 @@ struct Expect {
     regions: &'static [Document],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    value: value_kit::Expect,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -93,6 +96,7 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    value_kit::check::<A>(&expect.value, expect.dialect, tape);
 }
 
 #[test]
@@ -105,6 +109,17 @@ fn python() {
         name: "file",
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        value: value_kit::Expect {
+            lang: Lang::Python,
+            string: Value::Str("é".to_owned()),
+            numbers: [Value::int(16), Value::int(u64::MAX)],
+            decoded: ("x = 0x10\n", "integer", Value::int(16)),
+            name_kinds: &["identifier"],
+            str_type: Ok(()),
+            structure_parts: Ok(()),
+            spelled: ("x = 1\n", true),
+            name: None,
+        },
     });
 }
 
@@ -118,6 +133,24 @@ fn ecma() {
         name: "ﬁle",
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        value: value_kit::Expect {
+            lang: Lang::Js,
+            string: Value::Utf16(vec![0xe9]),
+            numbers: [
+                Value::Float(16.0),
+                Value::Float(18_446_744_073_709_551_615.0),
+            ],
+            decoded: ("let x = 0x10;\n", "number", Value::Float(16.0)),
+            name_kinds: &["identifier", "undefined"],
+            str_type: Err(
+                "`str` is not a TypeScript type name; expected one of string, number, bigint, boolean, null, undefined, array, object, regexp",
+            ),
+            structure_parts: Err(
+                "the structural modes compare Python and PHP syntax; use tokens for TypeScript",
+            ),
+            spelled: ("let x = 1;\n", true),
+            name: Some(("foo;\n", "identifier", "foo")),
+        },
     });
 }
 
@@ -131,6 +164,27 @@ fn php() {
         name: "ﬁle",
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        value: value_kit::Expect {
+            lang: Lang::Php,
+            string: Value::PhpStr(vec![0xc3, 0xa9]),
+            numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
+            decoded: ("<?php $x = 0x10;\n", "integer", Value::int(16)),
+            name_kinds: &[
+                "variable_name",
+                "name",
+                "qualified_name",
+                "relative_name",
+                "class_constant_access_expression",
+            ],
+            str_type: Err(
+                "`str` is not a PHP type name; expected one of int, float, string, bool, null, array",
+            ),
+            structure_parts: Err(
+                "`structure-parts` compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation",
+            ),
+            spelled: ("<?php $x = 1;\n", true),
+            name: Some(("<?php foo();\n", "name", "foo")),
+        },
     });
 }
 
@@ -147,6 +201,28 @@ fn blade() {
             ("<p>x</p>\n", &[]),
         ],
         module: (".blade.php", None),
+        value: value_kit::Expect {
+            lang: Lang::Php,
+            string: Value::PhpStr(vec![0xc3, 0xa9]),
+            numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
+            decoded: ("<p>{{ 0x10 }}</p>\n", "integer", Value::int(16)),
+            name_kinds: &[
+                "variable_name",
+                "name",
+                "qualified_name",
+                "relative_name",
+                "class_constant_access_expression",
+            ],
+            str_type: Err(
+                "`str` is not a PHP type name; expected one of int, float, string, bool, null, array",
+            ),
+            structure_parts: Err(
+                "`structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation",
+            ),
+            // `@unless($x)` is `if (!($x))`, whose `!(` the template does not spell.
+            spelled: ("@unless($x) a @endunless\n", false),
+            name: Some(("<p>{{ foo() }}</p>\n", "name", "foo")),
+        },
     });
 }
 

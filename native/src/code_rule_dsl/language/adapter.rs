@@ -20,7 +20,7 @@ pub(crate) use arguments::ArgumentRules;
 pub(crate) use calls::CallRules;
 pub(crate) use format_args::FormatArgRules;
 pub(crate) use scope::ScopeRules;
-pub(crate) use value::ValueRules;
+pub(crate) use value::{ValueFeature, ValueRules};
 
 use super::{Family, language_not_supported};
 use crate::code_rule_dsl::identifier::python_name;
@@ -218,7 +218,7 @@ impl Adapter for Blade {
     const LABEL: &'static str = "blade";
     const TERMINATORS: Terminators = Terminators::Newlines;
     type Scope = Self;
-    type Value = Php;
+    type Value = Self;
     type Arguments = Php;
     type Calls = Php;
     type FormatArgs = Php;

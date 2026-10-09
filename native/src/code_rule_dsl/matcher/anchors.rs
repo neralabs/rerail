@@ -1,8 +1,8 @@
 use super::{AstMatcher, StopBy, UtilRef};
 use crate::code_rule_dsl::budget;
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 #[cfg(test)]
 use crate::code_rule_dsl::test_support::{Walk, record_walk};
-use crate::code_rule_dsl::value;
 mod semantic;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};
@@ -485,15 +485,21 @@ impl AnchorPlan {
     }
 }
 
-/// The kinds whose value the decoder can know, as the grammar's symbol ids.
-fn value_kinds(language: GrammarDialect) -> BTreeSet<u16> {
-    let kinds = match crate::code_rule_dsl::language::Family::of(language) {
-        crate::code_rule_dsl::language::Family::Python => value::python::VALUE_KINDS,
-        crate::code_rule_dsl::language::Family::Ecma => value::ecma::VALUE_KINDS,
-        crate::code_rule_dsl::language::Family::Php
-        | crate::code_rule_dsl::language::Family::Blade => value::php::VALUE_KINDS,
-    };
-    crate::code_rule_dsl::language::kind_ids(language, kinds)
+/// The kinds whose value `reading` can know, as the grammar's symbol ids: those the decoder reads
+/// and, following bindings, the names it follows.
+fn value_kinds(reading: &super::Reading) -> BTreeSet<u16> {
+    let (values, names) = with_adapter!(reading.family, A => (
+        <<A as Adapter>::Value as ValueRules>::VALUE_KINDS,
+        <<A as Adapter>::Value as ValueRules>::NAME_KINDS,
+    ));
+    let mut kinds = crate::code_rule_dsl::language::kind_ids(reading.language, values);
+    if reading.follow {
+        kinds.extend(crate::code_rule_dsl::language::kind_ids(
+            reading.language,
+            names,
+        ));
+    }
+    kinds
 }
 
 fn intersect_kinds(left: &mut Option<BTreeSet<u16>>, right: Option<&BTreeSet<u16>>) {
