@@ -61,7 +61,8 @@
     "policies/rule-packs"
   ],
   "scripts": {
-    "build": "npm run build:clean && npm run build:native && npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
+    "build": "npm run build:clean && npm run build:native && npm run build:js",
+    "build:js": "npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:ui": "node scripts/copy-ui.mjs",
     "ensure:sqlite": "node scripts/ensure-sqlite.mjs",
