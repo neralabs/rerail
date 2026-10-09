@@ -3,7 +3,7 @@
 use super::options::{DEFAULT_PYTHON_MINOR, python_builtins};
 use super::{
     Access, Binding, BuildError, Builder, Form, Grammar, Import, ImportKind, NodeRef, Origin,
-    Reading, Reference, ScopeKind, Site, VALUE,
+    Reading, Reference, ScopeKind, ScopeTable, Site, VALUE,
 };
 use crate::code_rule_dsl::identifier::python_identifier as identifier;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -229,6 +229,30 @@ fn field<'r, D: Doc>(node: &Node<'r, D>, id: u16) -> Option<Node<'r, D>> {
 
 fn same<D: Doc>(left: &Node<'_, D>, right: Option<&Node<'_, D>>) -> bool {
     right.is_some_and(|right| right.node_id() == left.node_id())
+}
+
+/// Builds a Python file's table: Ruff's visit of the module, then its string type definitions.
+pub(crate) fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>, reading: Reading) -> Visit {
+    visit_module(builder, root, reading)?;
+    builder.table.sort_references();
+    string_type_definitions(builder, root, reading)
+}
+
+/// Orders each name's bindings as Ruff adds them: the body in order, then what function bodies
+/// bind into the scope (`nonlocal`, placeholders). Marks what a nested `nonlocal` rebinds.
+pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
+    for scope in &mut table.scopes {
+        for bindings in scope.bindings.values_mut() {
+            bindings.sort_by_key(|binding| (binding.deferred, binding.offset));
+        }
+    }
+    if table
+        .references
+        .iter()
+        .any(|reference| reference.access == Access::Nonlocal)
+    {
+        table.mark_rebound(&root.text(), root.range().start);
+    }
 }
 
 /// Visits a module; `deferred_annotations` reads every annotation after it, as
