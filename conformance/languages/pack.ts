@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CODE_RULE_LANGUAGE_FAMILIES } from "../../src/code-rule-languages.js";
+import { parseJsonWithoutDuplicateKeys } from "../../src/json-duplicate-keys.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,20 @@ const corpusSchema = z.strictObject({
 });
 export type PackCorpus = z.infer<typeof corpusSchema>;
 
-const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
+/** No value twice. */
+const distinct = (values: readonly string[]): boolean => new Set(values).size === values.length;
+
+const toolSchema = z.strictObject({
+  name: nonEmpty,
+  version: nonEmpty,
+  /**
+   * The tool's approved configurations, in order of preference, named as its recorder names them (Ruff's `default`,
+   * ESLint's `recommended`). A port is recorded with the options of the first one that turns its rule on, and with
+   * upstream's defaults when none does. Declaring them declares the tool's source facts: the recorder writes
+   * `upstream/<tool>/source.json`, and checks 7 to 9 judge the tool's ports. Without them, those checks are not judged.
+   */
+  recommended: z.array(nonEmpty).min(1).refine(distinct, "recommended configurations are listed once each").optional(),
+});
 
 const ruleSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u, "rule ids are lowercase kebab-case"),
@@ -94,16 +108,43 @@ export const packSchema = z
   });
 export type Pack = z.infer<typeof packSchema>;
 
-const findingSchema = z.strictObject({
-  rule: nonEmpty,
-  /** Posix path relative to the fixtures directory or the corpus checkout. */
-  path: nonEmpty,
-  /** 1-based. */
-  line: z.number().int().positive(),
-  /** 1-based, in Unicode code points from the line's start (PHP_CodeSniffer's, ESLint's + 1). */
-  column: z.number().int().positive().optional(),
-});
+const position = z.number().int().positive();
+
+/**
+ * A finding carries the parts of its position the tool reports: `line`; `line, column`; `line, column, endColumn`
+ * (Bandit, whose end column lies on a line it does not report); or `line, column, endLine, endColumn`.
+ */
+const findingSchema = z
+  .strictObject({
+    rule: nonEmpty,
+    /** Posix path relative to the fixtures directory or the corpus checkout. */
+    path: nonEmpty,
+    /** 1-based. */
+    line: position,
+    /** 1-based, in Unicode code points from the line's start (PHP_CodeSniffer's, ESLint's + 1). */
+    column: position.optional(),
+    /** 1-based line of the finding's end, the position just past its last character. */
+    endLine: position.optional(),
+    /**
+     * That end's column: 1-based, in Unicode code points, exclusive (an empty finding's equals its `column`). Ruff's
+     * `end_location.column`, ESLint's `endColumn` converted to code points. Without `endLine`, the end lies on a line
+     * the tool does not report (Bandit's `end_col_offset`, converted from UTF-8 bytes).
+     */
+    endColumn: position.optional(),
+  })
+  .superRefine((finding, context) => {
+    const issue = (message: string): void => context.addIssue({ code: "custom", message });
+    if (finding.endColumn !== undefined && finding.column === undefined) issue("endColumn needs column");
+    if (finding.endLine !== undefined && finding.endColumn === undefined) issue("endLine needs endColumn");
+    if (finding.endLine !== undefined && finding.endLine < finding.line) issue(`endLine ${finding.endLine} is before line ${finding.line}`);
+    if (finding.endLine === finding.line && finding.column !== undefined && finding.endColumn !== undefined && finding.endColumn < finding.column)
+      issue(`endColumn ${finding.endColumn} is before column ${finding.column} on line ${finding.line}`);
+  });
 export type UpstreamFinding = z.infer<typeof findingSchema>;
+
+/** The position parts a finding carries beyond its line. */
+export const FINDING_PARTS = ["column", "endLine", "endColumn"] as const;
+const partsOf = (finding: UpstreamFinding): string => ["line", ...FINDING_PARTS.filter(part => finding[part] !== undefined)].join(", ");
 
 /**
  * One analysis unit, evaluated in its own workspace as the upstream rule test analyses it: a file, or several files
@@ -137,12 +178,27 @@ const corpusSourceSchema = z.strictObject({
     .default([]),
 });
 
-export const recordingSchema = z.strictObject({
-  tool: nonEmpty,
-  version: nonEmpty,
-  source: z.discriminatedUnion("kind", [fixtureSourceSchema, corpusSourceSchema]),
-  findings: z.array(findingSchema),
-});
+/** Every finding of one rule carries the same parts, which are the parts the rule's findings are compared on. */
+export const recordingSchema = z
+  .strictObject({
+    tool: nonEmpty,
+    version: nonEmpty,
+    source: z.discriminatedUnion("kind", [fixtureSourceSchema, corpusSourceSchema]),
+    findings: z.array(findingSchema),
+  })
+  .superRefine((recording, context) => {
+    const parts = new Map<string, string>();
+    const reported = new Set<string>();
+    for (const finding of recording.findings) {
+      const carried = partsOf(finding);
+      const first = parts.get(finding.rule);
+      if (first === undefined) parts.set(finding.rule, carried);
+      else if (first !== carried && !reported.has(finding.rule)) {
+        reported.add(finding.rule);
+        context.addIssue({ code: "custom", message: `${finding.rule}: findings carry different parts (${first} / ${carried})` });
+      }
+    }
+  });
 export type Recording = z.infer<typeof recordingSchema>;
 export type FixtureRecording = Recording & { source: z.infer<typeof fixtureSourceSchema> };
 export type CorpusRecording = Recording & { source: z.infer<typeof corpusSourceSchema> };
@@ -161,6 +217,121 @@ const divergenceSchema = z.strictObject({
 });
 export type Divergence = z.infer<typeof divergenceSchema>;
 export const divergencesSchema = z.array(divergenceSchema);
+
+/** A set of strings, written in `compareDeterministicStrings` order with no repeats, so a recorder writes it byte-stably. */
+const sortedSet = z.array(nonEmpty).superRefine((values, context) => {
+  const index = values.findIndex((value, at) => at > 0 && compareDeterministicStrings(values[at - 1]!, value) >= 0);
+  if (index !== -1) context.addIssue({ code: "custom", message: `${JSON.stringify(values[index])} is repeated or out of order` });
+});
+
+/** A regex upstream's code matches names with, as the recorder translated it to a JavaScript regex. */
+const upstreamRegexSchema = z
+  .strictObject({ source: nonEmpty, flags: z.string().regex(/^[dgimsuvy]*$/u) })
+  .refine(({ source, flags }) => {
+    try {
+      new RegExp(source, flags);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "not a JavaScript regex");
+
+/**
+ * Why check 4 does not score one of a rule's upstream tests. A test upstream itself skips, and a case whose code another
+ * scored case repeats under the same parser, is no test lost and has no entry.
+ */
+export const UNSCORED_REASONS = {
+  notebook: "a Jupyter notebook, which no dialect reads",
+  settings: "upstream's tests lint it only with settings other than the approved configuration's",
+  "not-copied": "upstream reports the rule there under the approved configuration, but the recorder does not copy it",
+  "custom-parser": "the case names a parser the pack's configuration does not lint with",
+  "type-information": "the case needs type information, which the pack's configuration does not build",
+  syntax: "the case is written in a syntax only another parser reads (Flow)",
+  unparsable: "the pack's configuration cannot parse the case's code",
+} as const;
+export type UnscoredReason = keyof typeof UNSCORED_REASONS;
+
+/** One upstream test of a rule that check 4 does not score: a test file, or one RuleTester case of it. */
+const unscoredTestSchema = z.strictObject({
+  /** The test file's upstream path. */
+  test: nonEmpty,
+  /** The RuleTester case (`invalid[5]`, `run 2 valid[0]`), or null for a whole file. */
+  case: nonEmpty.nullable(),
+  reason: z.enum(Object.keys(UNSCORED_REASONS) as [UnscoredReason, ...UnscoredReason[]]),
+});
+export type UnscoredTest = z.infer<typeof unscoredTestSchema>;
+const unscoredKey = (entry: UnscoredTest): string => `${entry.test}\u0000${entry.case ?? ""}`;
+
+/** What one upstream rule's source says about it at the pinned commit. */
+const upstreamRuleSchema = z.strictObject({
+  /** Upstream paths of the rule's implementation: its own module, and the files that raise its violation. */
+  implementation: sortedSet,
+  /** Upstream paths of the rule's own tests. */
+  tests: sortedSet,
+  /** The deprecation upstream's own metadata reports for the rule, or null. */
+  deprecated: nonEmpty.nullable(),
+  /** The first approved configuration that turns the rule on, and the options it sets; null when none does. */
+  enabledBy: z.strictObject({ configuration: nonEmpty, options: z.array(z.unknown()) }).nullable(),
+  names: z.strictObject({
+    /** Names the rule's own implementation checks. */
+    implementation: sortedSet,
+    /** Names the helpers only this rule delegates to check; `sharedNames` holds the helpers every rule shares. */
+    shared: sortedSet,
+  }),
+  /** The regexes the implementation and the helpers it delegates to match names with. */
+  regexes: z.array(upstreamRegexSchema),
+  /** The rule's upstream tests the recorded fixtures leave out, by test file and case, each once. */
+  unscored: z.array(unscoredTestSchema).superRefine((entries, context) => {
+    const index = entries.findIndex((entry, at) => at > 0 && compareDeterministicStrings(unscoredKey(entries[at - 1]!), unscoredKey(entry)) >= 0);
+    const entry = entries[index];
+    if (entry !== undefined) context.addIssue({ code: "custom", message: `${entry.test}${entry.case === null ? "" : ` ${entry.case}`} is repeated or out of order` });
+  }),
+});
+export type UpstreamRule = z.infer<typeof upstreamRuleSchema>;
+
+/**
+ * `upstream/<tool>/source.json`: the facts checks 7 and 8 read about a tool's source, written by the tool's recorder
+ * from the pinned checkout and runtime, so the checks need neither. The recorder refuses a checkout that is not
+ * `commit`, a source tree that differs from `tag`'s, or a runtime that is not `version`.
+ */
+export const upstreamSourceSchema = z
+  .strictObject({
+    tool: nonEmpty,
+    version: nonEmpty,
+    repository: z.url(),
+    commit: z.string().regex(/^[0-9a-f]{40}$/u, "a full lowercase commit sha"),
+    /** The release tag the runtime was published from. */
+    tag: nonEmpty,
+    /** The approved configurations the facts were recorded under: conformance.json's `tools[].recommended`. */
+    configurations: z.array(nonEmpty).min(1).refine(distinct, "configurations are listed once each"),
+    /** Keywords of the language the tool lints: syntax wherever a rule spells them. */
+    keywords: sortedSet,
+    /** Words the language or the tool gives meaning inside comments (directives, pragmas, documentation tags). */
+    commentVocabulary: sortedSet,
+    /** The file extensions the approved configurations lint (`.py`, `.mjs`): check 1's in-scope probe. */
+    extensions: sortedSet.min(1),
+    /** Every word of upstream's test code (and expected outputs), for all of the tool's rules: what check 8 runs regexes over. */
+    testWords: sortedSet,
+    /** The words of upstream's test configurations and other test data that its test code does not hold. */
+    configurationWords: sortedSet,
+    /** Names the helpers every rule of the tool delegates to check (shared crates or modules). */
+    sharedNames: sortedSet,
+    /** Per upstream rule name, as conformance.json's `upstream.rule` spells it: every port of the tool has one. */
+    rules: z.record(nonEmpty, upstreamRuleSchema),
+  })
+  .superRefine((source, context) => {
+    const issue = (message: string): void => context.addIssue({ code: "custom", message });
+    const names = Object.keys(source.rules);
+    if (names.length === 0) issue("rules is empty");
+    const unsorted = names.findIndex((name, at) => at > 0 && compareDeterministicStrings(names[at - 1]!, name) >= 0);
+    if (unsorted !== -1) issue(`rules: ${names[unsorted]} is out of order`);
+    for (const [name, rule] of Object.entries(source.rules)) {
+      if (rule.enabledBy !== null && !source.configurations.includes(rule.enabledBy.configuration))
+        issue(`rules.${name}: enabledBy names ${rule.enabledBy.configuration}, which is not in configurations`);
+    }
+  });
+export type UpstreamSource = z.infer<typeof upstreamSourceSchema>;
+export const UPSTREAM_SOURCE_FILE = "source.json";
 
 export interface LoadedPack {
   pack: Pack;
@@ -242,6 +413,17 @@ export function corpusRecordingPath(loaded: LoadedPack, tool: string, corpus: st
 
 export function loadRecording(path: string): Recording {
   return parseJson(path, recordingSchema);
+}
+
+export function upstreamSourcePath(loaded: LoadedPack, tool: string): string {
+  return join(loaded.oraclesDirectory, tool, UPSTREAM_SOURCE_FILE);
+}
+
+/** A tool's source facts; throws naming the file when it is not JSON, repeats a key or fails the schema. */
+export function loadUpstreamSource(path: string): UpstreamSource {
+  const parsed = upstreamSourceSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), path));
+  if (!parsed.success) throw new Error(`${path}: ${z.prettifyError(parsed.error)}`);
+  return parsed.data;
 }
 
 /**
