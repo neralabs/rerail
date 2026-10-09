@@ -106,7 +106,7 @@ def main() -> None:
         "tool": "clippy-driver",
         "version": CLIPPY_VERSION,
         "rustc": RUSTC_VERSION,
-        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), rerail-fixtures/rust/suppress/fixtures",
+        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), fixtures/rust/suppress/fixtures",
                    "clippy": "https://github.com/rust-lang/rust-clippy@" + CLIPPY_COMMIT, "rules": RULES,
                    "attribute_rules": sorted(ATTRIBUTE_RULES), "edition": "2024", "crate_type": "lib"},
         "files": files,

@@ -197,7 +197,7 @@ def main() -> None:
     record = {
         "tool": "rustc",
         "version": RUSTC_VERSION,
-        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), rerail-fixtures/rust/literal/fixtures",
+        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), fixtures/rust/literal/fixtures",
                    "edition": EDITION},
         "cases": results,
     }

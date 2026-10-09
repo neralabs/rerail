@@ -1,0 +1,29 @@
+name: Node.js and dependencies
+description: Node.js v24 with the npm cache, `npm ci`, and optionally the built package from the build job.
+
+inputs:
+  built:
+    description: Download the `built` artifact (dist/ and the native engine) from the build job.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js v24
+      uses: actions/setup-node@v6
+      with:
+        node-version: "24"
+        cache: "npm"
+        cache-dependency-path: |
+          package-lock.json
+          playground/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+    - name: Download the built package
+      if: inputs.built == 'true'
+      uses: actions/download-artifact@v8
+      with:
+        name: built

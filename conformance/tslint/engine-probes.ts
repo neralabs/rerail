@@ -1,5 +1,6 @@
 import { loadNativeBinding } from "../../src/native.js";
-import { applyToWorkspace, capabilitiesJson } from "./runner.js";
+import { capabilitiesJson } from "../engine.js";
+import { applyToWorkspace } from "./runner.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 /**

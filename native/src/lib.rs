@@ -2,6 +2,10 @@
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+/// `build.rs` generates the language tables with this file; the library builds it only for tests,
+/// so `cargo test` checks how the build validates the language registry.
+#[cfg(test)]
+mod build_languages;
 mod code_rule_dsl;
 pub mod content_store;
 pub mod git_workspace;

@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FIXTURE_RULES, HARNESS_DIRECTORY, loadExcludedRules, loadRuleList, loadScoredRules, loadVariants } from "./fixtures.js";
+import { FIXTURE_RULES, loadExcludedRules, loadRuleList, loadScoredRules, loadVariants } from "./fixtures.js";
 import { LintSyntaxError, parseLintFile, preprocessDirectives, satisfiesRange, type ParsedLintFile } from "./lint-format.js";
+import { COMMITTED_PORTS_DIRECTORY } from "./runner.js";
 
 // Verbatim excerpts of palantir/tslint test/rules fixtures (Apache-2.0) at the pinned SHA, so these run without a fetch.
 const NO_DEBUGGER = `var testVariable = "debugger";
@@ -103,7 +104,7 @@ describe("excluded rules", () => {
     const core = new Set(loadRuleList().map(rule => rule.name));
     const excluded = [...loadExcludedRules().keys()];
     expect(excluded.filter(rule => !core.has(rule))).toEqual([]);
-    expect(excluded.filter(rule => existsSync(join(HARNESS_DIRECTORY, "rules", `${rule}.json`)) || existsSync(join(HARNESS_DIRECTORY, "rules", rule)))).toEqual([]);
+    expect(excluded.filter(rule => existsSync(join(COMMITTED_PORTS_DIRECTORY, `${rule}.json`)) || existsSync(join(COMMITTED_PORTS_DIRECTORY, rule)))).toEqual([]);
     expect(loadScoredRules()).toHaveLength(core.size - excluded.length);
   });
 });

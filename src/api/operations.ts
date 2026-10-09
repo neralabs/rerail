@@ -27,6 +27,7 @@ import {
 } from "../audit-control-schema.js";
 import type { SqliteAuditControlStore } from "../audit-control.js";
 import { CodeRuleCompileError, EngineUnavailableError } from "../code-rule-compile.js";
+import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../code-rule-language-support.js";
 import { codeRuleSchema } from "../code-rule-schema.js";
 import { RULE_MODES } from "../rule-mode.js";
 import { engineRegexIssues } from "../rule-regexes.js";
@@ -151,7 +152,22 @@ const quarantinedRuleSchema = z.object({
   kind: z.enum(RULE_KINDS),
   owner: z.string().describe("global, project:<id>, or the per-project store's row scope."),
   reason: z.string(),
+  code: z.literal(LANGUAGE_NOT_SUPPORTED).optional(),
 }).strict();
+
+const inactiveField = {
+  inactive: z
+    .object({ code: z.literal(LANGUAGE_NOT_SUPPORTED), reason: z.string() })
+    .strict()
+    .optional()
+    .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
+};
+
+/** A stored rule, marked inactive when the engine does not read its language or a capability it uses yet. */
+function withSupport<T extends { kind: string; rule: unknown }>(stored: T): T & { inactive?: CodeRuleLanguageNotSupported } {
+  const unsupported = stored.kind === "file" ? codeRuleLanguageNotSupported(stored.rule) : undefined;
+  return unsupported === undefined ? stored : { ...stored, inactive: unsupported };
+}
 
 const storedRuleBase = {
   enabled: z.boolean(),
@@ -166,13 +182,13 @@ const storedRuleBase = {
 };
 
 export const storedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase }).strict(),
 ]);
 
 const packIdField = { packId: z.string().nullable().describe("The rule pack this rule comes from; null for rules in no pack.") };
 const listedRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
+  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...storedRuleBase, ...packIdField, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...storedRuleBase, ...packIdField }).strict(),
 ]);
 
@@ -392,7 +408,8 @@ const sinceParameter = countParameter.describe("Epoch milliseconds; only activit
 /**
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
  * audit, so they carry no evidence either way: `measured: false` says so rather than
- * reporting a zero that reads as "never triggered".
+ * reporting a zero that reads as "never triggered". A file rule kept
+ * inactive (`inactive`) is not measured either: it is never evaluated.
  */
 const ruleActivitySchema = z.object({
   measured: z.boolean(),
@@ -401,6 +418,7 @@ const ruleActivitySchema = z.object({
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   rerails: z.number().int().nonnegative(),
+  ...inactiveField,
 }).strict();
 
 const violationRecordSchema = z.object({
@@ -565,7 +583,7 @@ export const operations: readonly Operation[] = [
       const catalog = stores.rules();
       const packs = loadRulePacks();
       return {
-        rules: catalog.list(ruleQuery(input)).map(stored => ({ ...stored, packId: rulePackIdOf(stored.rule.id, packs) })),
+        rules: catalog.list(ruleQuery(input)).map(stored => withSupport({ ...stored, packId: rulePackIdOf(stored.rule.id, packs) })),
         quarantined: catalog.quarantined().filter(entry => input.kind === undefined || entry.kind === input.kind),
       };
     },
@@ -585,14 +603,16 @@ export const operations: readonly Operation[] = [
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
       for (const stored of stores.rules().list({})) {
         // Every catalog rule is reported, so a caller never has to infer absence from a missing key.
+        const { inactive } = withSupport(stored);
         const totals = stored.kind === "conversation" ? undefined : activity.get(stored.rule.id);
         rules[stored.rule.id] = {
-          measured: stored.kind !== "conversation",
+          measured: stored.kind !== "conversation" && inactive === undefined,
           distinctViolations: totals?.distinctViolations ?? 0,
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
           rerails: stored.kind === "conversation" ? 0 : steers.get(stored.rule.id) ?? 0,
+          ...(inactive === undefined ? {} : { inactive }),
         };
       }
       return { since: input.since, rules };
@@ -608,14 +628,14 @@ export const operations: readonly Operation[] = [
     handler: (stores, input) => {
       const rule = stores.rules().get(input.id);
       if (rule === undefined) throw new ApiError(404, "rule-not-found", `rule ${input.id} does not exist`);
-      return { rule };
+      return { rule: withSupport(rule) };
     },
   }),
   defineOperation({
     id: "rules_upsert",
     method: "PUT",
     path: "/api/rules/{id}",
-    summary: "Create or replace a rule. The body is validated against its kind's schema, and a file rule is compiled in the kernel, before it is stored.",
+    summary: "Create or replace a rule. The body is validated against its kind's schema, and a file rule is compiled in the kernel, before it is stored. A file rule whose language, or a capability it reads, is not supported yet is stored inactive and returned with `inactive`.",
     params: ruleId,
     body: ruleUpsertSchema,
     output: z.object({ rule: storedRuleSchema }),
@@ -630,7 +650,7 @@ export const operations: readonly Operation[] = [
       };
       const store = stores.rules();
       try {
-        return { rule: input.kind === "file" ? store.upsertCodeRule(input.rule, options) : store.upsertConversationRule(input.rule, options) };
+        return { rule: withSupport(input.kind === "file" ? store.upsertCodeRule(input.rule, options) : store.upsertConversationRule(input.rule, options)) };
       } catch (error) {
         if (error instanceof CodeRuleCompileError) throw new ApiError(400, "invalid-rule", error.message);
         if (error instanceof EngineUnavailableError) throw new ApiError(503, "kernel-unavailable", error.message);

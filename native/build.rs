@@ -2,6 +2,8 @@
 // builds) carries it; the library compiles it only for tests.
 #[path = "src/build_identity.rs"]
 mod identity;
+#[path = "src/build_languages.rs"]
+mod languages;
 
 use identity::{grammar_build_id, hex};
 use sha2::{Digest, Sha256};
@@ -12,8 +14,26 @@ fn main() {
     for grammar in GRAMMARS {
         build_grammar(grammar);
     }
+    let registry = generate_languages();
     configure_fixtures();
-    build_identities();
+    build_identities(&registry);
+}
+
+/// The language registry, `languages/` at the repository root: validated, and generated into
+/// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes.
+fn generate_languages() -> Vec<(String, Vec<u8>)> {
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let directory = manifest
+        .parent()
+        .expect("repository root")
+        .join("languages");
+    println!("cargo:rerun-if-changed={}", directory.display());
+    let vendored = GRAMMARS
+        .iter()
+        .map(|grammar| grammar.name)
+        .collect::<Vec<_>>();
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
+    languages::generate(&directory, &vendored, &out)
 }
 
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (Blade's is 22 MB,
@@ -169,7 +189,8 @@ fn is_checkout(directory: &Path) -> bool {
 /// hand-bumped strings. `RERAIL_ENGINE_BUILD_ID` covers every engine source file and every locked
 /// dependency, so a stored clause result is only reused by the build that would compute it.
 /// `RERAIL_GRAMMAR_BUILD_ID` covers the parser and grammar versions a stored tape was parsed with.
-fn build_identities() {
+/// The language registry is engine source: which dialects a language spans and what it supports.
+fn build_identities(registry: &[(String, Vec<u8>)]) {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let lock = manifest
         .parent()
@@ -187,6 +208,12 @@ fn build_identities() {
         engine.update(relative.to_string_lossy().as_bytes());
         engine.update([0]);
         engine.update(std::fs::read(path).expect("engine source is readable"));
+        engine.update([0]);
+    }
+    for (path, bytes) in registry {
+        engine.update(path.as_bytes());
+        engine.update([0]);
+        engine.update(bytes);
         engine.update([0]);
     }
     engine.update(lock_text.as_bytes());

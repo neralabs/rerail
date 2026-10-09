@@ -1,0 +1,31 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "valid:pass-statement",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Every pass statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pass-statement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "pass_statement"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PASS",
+        "message": "a pass statement"
+      }
+    }
+  ]
+}

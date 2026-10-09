@@ -1,6 +1,6 @@
 // T1 candidate-grammar measurement for the Vue pack. Run offline by a maintainer, never in CI:
 //
-//   node rerail-fixtures/vue/grammar/measure.mjs [--tools <dir>] [--corpora <dir>] [--out <report.json>] [--date D]
+//   node fixtures/vue/grammar/measure.mjs [--tools <dir>] [--corpora <dir>] [--out <report.json>] [--date D]
 //
 // Pins (refused when different): @vue/compiler-sfc 3.5.43 and @vue/compiler-dom 3.5.43 (the reference: descriptor
 // blocks and the template AST, `parseMode: "sfc"`), vue-eslint-parser 10.4.1 with @typescript-eslint/parser 8.70.1 and
@@ -271,7 +271,7 @@ const report = {
     { name: "tree-sitter (runtime)", version: "0.27.0" },
     ...grammars.map(grammar => ({ name: grammar.name, version: grammar.commit })),
   ],
-  benchmark: "candidate tree-sitter-vue grammars vs @vue/compiler-sfc and vue-eslint-parser (rerail-fixtures/vue/grammar/measure.mjs)",
+  benchmark: "candidate tree-sitter-vue grammars vs @vue/compiler-sfc and vue-eslint-parser (fixtures/vue/grammar/measure.mjs)",
   method: "Per file: @vue/compiler-sfc parse (descriptor + template AST) and vue-eslint-parser parseForESLint (TS parser); "
     + "per grammar: tree-sitter 0.27.0 parse, fastest of 3. Items (sfc.mjs): blocks by type and content range; template "
     + "elements by tag, start, end of end tag (or start tag) and parent; static attributes by name and value range; "

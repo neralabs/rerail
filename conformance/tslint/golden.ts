@@ -1,26 +1,26 @@
 /**
- * The golden set: the TSLint ports Rerail ships, disabled, in the opt-in pack
- * (`code-rule-dsl/rules/opt-in/tslint/<rule>.json`). The pack folder is the membership source of truth
- * and holds each golden rule's default-options doc; the harness scores those docs as shipped (their real-world scope),
- * pairing them with the rule's option-variant overrides in `rules/<rule>/<variant>.json`.
+ * The golden set: the TSLint ports Rerail ships, disabled, in the TSLint pack (`packs/tslint/rules/<rule>.json`). The
+ * pack's `rules/` folder is the membership source of truth and holds each golden rule's default-options doc; the
+ * harness scores those docs as shipped (their real-world scope), pairing them with the rule's option-variant overrides
+ * in `packs/tslint/candidates/<rule>/<variant>.json`.
  *
- * `golden.json` replaces verdict sidecars for golden rules. Per rule it records what the gate asserts on every full run
- * and on `node --import tsx conformance/tslint/cli.ts golden`: the effective verdict (`PASS`, or `PASS (repaired fixture)` when invalid
- * fixture syntax is the only blocker), the true positives on the fixtures in scope (on the repaired fixtures for a
- * repaired-fixture PASS) with no false positives, false negatives or engine failures, and the fixture files the shipped
- * scope leaves out (`<variant>/<file>`, reported as out of scope, never as misses). `reason`, `primitive`, `secondary`
- * and `evidence` carry the notes a sidecar used to give the report; for a repaired-fixture PASS, `evidence` cites the
- * fixture lines that are not valid TypeScript.
+ * The golden manifest, `packs/tslint/conformance.json`, replaces verdict sidecars for golden rules. Per rule it records
+ * what the gate asserts on every full run and on `node --import tsx conformance/tslint/cli.ts golden`: the effective
+ * verdict (`PASS`, or `PASS (repaired fixture)` when invalid fixture syntax is the only blocker), the true positives on
+ * the fixtures in scope (on the repaired fixtures for a repaired-fixture PASS) with no false positives, false negatives
+ * or engine failures, and the fixture files the shipped scope leaves out (`<variant>/<file>`, reported as out of scope,
+ * never as misses). `reason`, `primitive`, `secondary` and `evidence` carry the notes a sidecar used to give the report;
+ * for a repaired-fixture PASS, `evidence` cites the fixture lines that are not valid TypeScript.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { HARNESS_DIRECTORY, RERAIL_ROOT } from "./fixtures.js";
+import { TSLINT_PACK } from "./fixtures.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
-export const PACK_DIRECTORY = join(RERAIL_ROOT, "code-rule-dsl", "rules", "opt-in", "tslint");
-export const GOLDEN_MANIFEST = join(HARNESS_DIRECTORY, "golden.json");
-const GOLDEN_FORMAT = "rerail-tslint-golden/v1";
+export const PACK_DIRECTORY = join(TSLINT_PACK, "rules");
+export const GOLDEN_MANIFEST = join(TSLINT_PACK, "conformance.json");
+export const GOLDEN_FORMAT = "rerail-tslint-golden/v1";
 
 export const evidenceSchema = z.strictObject({
   variant: z.string().min(1),
@@ -90,7 +90,7 @@ export function membershipProblems(manifest: GoldenManifest, rules = goldenRules
   const listed = new Set(Object.keys(manifest.rules));
   const packed = new Set(rules);
   return [
-    ...rules.filter(rule => !listed.has(rule)).map(rule => `${rule}: in the pack but has no golden.json entry`),
-    ...[...listed].filter(rule => !packed.has(rule)).sort(compareDeterministicStrings).map(rule => `${rule}: golden.json entry without a pack doc`),
+    ...rules.filter(rule => !listed.has(rule)).map(rule => `${rule}: in the pack but has no conformance.json entry`),
+    ...[...listed].filter(rule => !packed.has(rule)).sort(compareDeterministicStrings).map(rule => `${rule}: conformance.json entry without a pack doc`),
   ];
 }

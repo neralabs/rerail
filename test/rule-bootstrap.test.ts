@@ -112,48 +112,30 @@ describe("bundled rules", () => {
     expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
 
-  it("reads opt-in packs from opt-in/<pack>/ by pack then file name, ignores non-JSON files in a pack, and rejects a file outside a pack or a duplicate id", async () => {
+  it("reads core's rules, then each pack's rules/ in pack order and by file name, ignoring non-JSON files, and rejects a duplicate id", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-bundled-"));
     temporaryDirectories.push(root);
     const write = async (path: string, id: string): Promise<void> => {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await writeFile(join(root, path), JSON.stringify(codeRule(id)));
     };
-    await write("default.json", "example:default");
-    await write("opt-in/zeta/a.json", "zeta:a");
-    await write("opt-in/alpha/b.json", "alpha:b");
-    await write("opt-in/alpha/a.json", "alpha:a");
-    await writeFile(join(root, "opt-in", "alpha", "README.md"), "# alpha pack\n");
-    expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
+    await write("core/default.json", "example:default");
+    await write("packs/zeta/rules/a.json", "zeta:a");
+    await write("packs/alpha/rules/b.json", "alpha:b");
+    await write("packs/alpha/rules/a.json", "alpha:a");
+    await writeFile(join(root, "packs", "alpha", "rules", "README.md"), "# alpha pack\n");
+    await writeFile(join(root, "packs", "alpha", "rules", ".DS_Store"), "\u0000\u0001binary");
+    const packs = [join(root, "packs", "alpha"), join(root, "packs", "zeta")];
+    expect(loadBundledRules(join(root, "core"), packs).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
       ["example:default", undefined],
       ["alpha:a", false],
       ["alpha:b", false],
       ["zeta:a", false],
     ]);
+    expect(loadBundledRules(join(root, "absent"), packs).map(document => document.rule.id)).toEqual(["alpha:a", "alpha:b", "zeta:a"]);
 
-    await write("opt-in/zeta/b.json", "alpha:a");
-    expect(() => loadBundledRules(root)).toThrow(/Duplicate bundled rule id: alpha:a/u);
-    await rm(join(root, "opt-in", "zeta", "b.json"));
-
-    await write("opt-in/tslint-stray.json", "tslint:stray");
-    expect(() => loadBundledRules(root)).toThrow(/must live in a pack folder .*tslint-stray\.json/u);
-  });
-
-  it("ignores hidden entries and non-JSON files directly in opt-in/, such as .DS_Store or a README", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-bundled-"));
-    temporaryDirectories.push(root);
-    await mkdir(join(root, "opt-in", "tslint"), { recursive: true });
-    await mkdir(join(root, "opt-in", ".hidden-pack"), { recursive: true });
-    await writeFile(join(root, "default.json"), JSON.stringify(codeRule("example:default")));
-    await writeFile(join(root, "opt-in", "tslint", "a.json"), JSON.stringify(codeRule("tslint:a")));
-    await writeFile(join(root, "opt-in", "tslint", "README.md"), "# tslint pack\n");
-    await writeFile(join(root, "opt-in", ".hidden-pack", "x.json"), JSON.stringify(codeRule("hidden:x")));
-    await writeFile(join(root, "opt-in", ".DS_Store"), "\u0000\u0001binary");
-    await writeFile(join(root, "opt-in", "README.md"), "# opt-in packs\n");
-    expect(loadBundledRules(root).map(document => [document.rule.id, document.enabledByDefault])).toEqual([
-      ["example:default", undefined],
-      ["tslint:a", false],
-    ]);
+    await write("packs/zeta/rules/b.json", "alpha:a");
+    expect(() => loadBundledRules(join(root, "core"), packs)).toThrow(/Duplicate bundled rule id: alpha:a/u);
   });
 });
 

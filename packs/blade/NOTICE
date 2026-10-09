@@ -1,0 +1,7 @@
+Rerail rule pack: Blade
+Copyright 2026 Nera Software Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Its rules are ports of rules from Bladestan (MIT), tlint (MIT) and stillat/blade-parser (MIT). Their licences and the
+record of every file copied from them are in licenses/bladestan/, licenses/tlint/ and licenses/blade-parser/.

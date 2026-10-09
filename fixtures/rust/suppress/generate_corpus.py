@@ -1,6 +1,6 @@
 """Writes corpus-<name>.expected.json: every site where clippy 0.1.99 (Rust 1.99.0) reports one of the Rust pack's
-ported lints (rerail/conformance/languages/rust/pack.draft.json) in a pinned corpus, and whether the corpus suppresses
-it. Run offline, never in CI, with the toolchain rules/common.py pins (it refuses any other; Python 3.9 standard
+ported lints (fixtures/rust/upstream/conformance.draft.json) in a pinned corpus, and whether the corpus suppresses
+it. Run offline, never in CI, with the toolchain upstream/common.py pins (it refuses any other; Python 3.9 standard
 library only):
 
     python3 generate_corpus.py <cargo target root> <name>=<corpus checkout> [...]
@@ -11,7 +11,7 @@ b2636752450484955e7ad334bac678424d51bc4a.
 
 Each corpus is checked twice with `cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets
 --all-features --message-format=json` (CARGO_TARGET_DIR=<cargo target root>/clippy-<name>, RUSTFLAGS untouched):
-once with `-W clippy::<lint>` for every ported lint, as rules/clippy/corpus-<name>.expected.json records, and once
+once with `-W clippy::<lint>` for every ported lint, as upstream/clippy/corpus-<name>.expected.json records, and once
 with `--force-warn clippy::<lint>`, which no in-source `allow` / `expect` (nor crate-level setting) can lower. A site
 reported only under `--force-warn` is `suppressed: true`; one reported under both is `suppressed: false`. Sites are
 the lint, the corpus-relative path and the primary span's 1-based line and column (code points), deduplicated;
@@ -25,7 +25,7 @@ import sys
 from collections import Counter
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "rules"))
+sys.path.insert(0, str(HERE.parent / "upstream"))
 import common  # noqa: E402
 
 

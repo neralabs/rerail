@@ -1,0 +1,7 @@
+Rerail rule pack: complexity
+Copyright 2026 Nera Software Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Its rules count lizard 1.24.0's decision points (https://github.com/terryyin/lizard); no lizard code or data is
+copied into it.

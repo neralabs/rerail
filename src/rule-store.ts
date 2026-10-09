@@ -1,7 +1,7 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleCompiles } from "./code-rule-compile.js";
+import { assertCodeRuleStorable } from "./code-rule-compile.js";
 import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
@@ -199,7 +199,7 @@ export class SqliteRuleStore {
    */
   upsertCodeRule(input: unknown, options: RuleWriteOptions = {}): StoredCodeRule {
     const rule = codeRuleSchema.parse(input);
-    assertCodeRuleCompiles(rule);
+    assertCodeRuleStorable(rule);
     return this.#writeCodeRule(rule, options);
   }
 

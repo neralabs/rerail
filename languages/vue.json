@@ -1,0 +1,30 @@
+{
+  "format": "rerail.language/v1",
+  "id": "vue",
+  "status": "planned",
+  "family": "vue",
+  "dialects": [
+    {
+      "label": "vue",
+      "suffixes": [".vue"]
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "typescript",
+      "via": "script-block"
+    },
+    {
+      "language": "javascript",
+      "via": "script-block"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "format": "rerail.language/v1",
+  "id": "typescript",
+  "status": "supported",
+  "family": "ecma",
+  "dialects": [
+    {
+      "label": "typescript",
+      "variant": "TypeScript",
+      "suffixes": [".ts", ".mts", ".cts"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:typescript",
+      "tapeTag": 2
+    },
+    {
+      "label": "tsx",
+      "variant": "Tsx",
+      "suffixes": [".tsx"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:tsx",
+      "tapeTag": 3
+    }
+  ],
+  "runsOn": ["typescript", "tsx", "javascript"],
+  "capabilities": {
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": ["eslint"]
+}

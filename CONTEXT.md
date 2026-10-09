@@ -99,3 +99,11 @@ A deterministic, versioned executable form of a Structural Retrieval Policy for 
 ## Selected Policy Context
 
 The bounded, deterministic set of matched Semantic Program nodes and Resolved Facts supplied to a policy evaluator.
+
+## Language Registry
+
+The one list of the languages Rerail knows (`languages/<id>.json`): for each, its family, dialects, file suffixes, per-capability support and status, `supported` or `planned`. The engine and the host both read it; nothing else branches on a language.
+
+## Language Pack
+
+A language's registry entry, its engine adapter, and the rule packs written in it. A File Rule for a `planned` language, or one reading a capability its language does not support yet, is stored but inactive: compiling it is refused as `language-not-supported`.

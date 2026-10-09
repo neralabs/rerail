@@ -3,7 +3,8 @@ import { join, relative, resolve, sep } from "node:path";
 import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
 import { RERAIL_ROOT } from "./fixtures.js";
-import { applyToWorkspace, capabilitiesJson, compileDocument, findPort, INFORMATIONAL_FAILURE_CODES, listPortedRules } from "./runner.js";
+import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
+import { applyToWorkspace, compileDocument, findPort, listPortedRules } from "./runner.js";
 import { compareDeterministicStrings } from "../../src/stable-json.js";
 
 type CorpusFile = { language: "typescript" | "tsx" | "javascript"; path: string; source: string };

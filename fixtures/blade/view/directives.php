@@ -2,7 +2,7 @@
 // The directives applications register beyond core Blade (`Blade::directive`), by corpus, for
 // `generate.php --definedness`: each compiles as the application compiles it, so PHPStan reads the
 // template as the application runs it. Each closure is an excerpt of the named upstream source
-// (rerail-fixtures/blade/licenses/<project>/UPSTREAM.md); where the upstream closure reads the
+// (fixtures/blade/licenses/<project>/UPSTREAM.md); where the upstream closure reads the
 // running application (a view path, a key generator), the excerpt writes a fixed value instead,
 // which changes no variable the template reads.
 

@@ -1,5 +1,5 @@
 /**
- * Honesty audit of every rule whose effective verdict is PASS: does the port implement TSLint's semantics (for the
+ * Honesty audit of every rule whose effective verdict is PASS, kept in the pack as `packs/tslint/divergences.json`: does the port implement TSLint's semantics (for the
  * default options) on real code, or does it pass only because of what the fixtures happen to contain?
  *
  * - `genuine`: implements the rule's semantics.
@@ -15,127 +15,30 @@
  *
  * `primitive` names what would make a non-genuine port genuine; it feeds the primitive histogram.
  */
-export type PassClass = "genuine" | "bounded" | "fixture-fit" | "option-baked" | "requires-config" | "poisoned";
 
-export interface PassAudit {
-  class: PassClass;
-  depth?: string;
-  primitive?: string;
-  note: string;
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import { TSLINT_PACK } from "./fixtures.js";
+
+export const AUDIT_FILE = join(TSLINT_PACK, "divergences.json");
+const AUDIT_FORMAT = "rerail-tslint-audit/v1";
+
+export const PASS_CLASSES = ["genuine", "bounded", "fixture-fit", "option-baked", "requires-config", "poisoned"] as const;
+export type PassClass = (typeof PASS_CLASSES)[number];
+
+const passAuditSchema = z.strictObject({
+  class: z.enum(PASS_CLASSES),
+  depth: z.string().min(1).optional(),
+  primitive: z.string().min(1).optional(),
+  note: z.string().min(1),
+});
+export type PassAudit = z.infer<typeof passAuditSchema>;
+
+const auditSchema = z.strictObject({ format: z.literal(AUDIT_FORMAT), rules: z.record(z.string(), passAuditSchema) });
+
+export function parseAudit(text: string): Readonly<Record<string, PassAudit>> {
+  return auditSchema.parse(JSON.parse(text)).rules;
 }
 
-export const PASS_AUDIT: Readonly<Record<string, PassAudit>> = {
-  "no-magic-numbers": { class: "genuine", note: "ALLOWED_NODES coverage (ExportAssignment, PropertyAssignment/Shorthand, VariableDeclaration(List), EnumMember, PropertyDeclaration, Parameter default) and the -1/0/1 default-allowed check on numeric text (incl. negative-unary anchoring) match TSLint exactly; verified export=, class field, enum member, parameter default and negative-literal cases all agree. One obscure divergence: TSLint's own isAllowedNumber does `parseFloat(node.text)`, so a hex literal like `0x10` parses to 0 and is spuriously allowed by TSLint's own bug; the port correctly flags it, which is arguably more correct, not less." },
-  "ban-ts-ignore": { class: "genuine", note: "Regex on every comment node matches TSLint's forEachComment scan." },
-  "ban-types": { class: "option-baked", note: "Structure genuine (excludes self-declarations, heritage targets, qualified names) but TSLint's default bans nothing; the doc bakes the fixture's String/Object/Fo* list." },
-  "no-for-in": { class: "genuine", note: "kind+regex bans all for-in, as TSLint does." },
-  "no-import-side-effect": { class: "genuine", note: "Default doc bans all side-effect imports (TSLint's default); ignore-module override models the option." },
-  "no-inferrable-types": { class: "genuine", note: "Default and option variants match shouldCheck/typeIsInferrable on extra cases too: readonly/override matched as modifier tokens, numeric initializers under any unary +/- chain." },
-  "no-internal-module": { class: "genuine", note: "Kind split encodes TSLint's Namespace/GlobalAugmentation checks." },
-  "no-namespace": { class: "genuine", note: "Top-level-only scope reproduces TSLint's walk; allow-declarations excludes .d.ts." },
-  "no-non-null-assertion": { class: "genuine", note: "non_null_expression, unconditional in both." },
-  "no-reference": { class: "fixture-fit", note: "Scans raw content for `/// <reference path=` instead of the compiler's referencedFiles; confirmed a string literal containing that text is not flagged (this port scope is per-file regex over content, so a string literal WOULD in fact be false-flagged in general use -- see sidecar; keep as regex-capture-anchor primary already recorded)." },
-  "no-reference-import": { class: "genuine", note: "The directive is a `///` comment before the first statement (comments and a shebang may precede it, as the compiler reads pragmas from the leading comments), its `types` value is read out of the comment by a `transform` and compared with every static import's specifier (import declarations and import-equals, at the top level and in ambient modules: findImports(AllStaticImports)). Verified re-exports, dynamic imports, `path` references, unclosed directives and directives after the first statement are not flagged. Residual: a specifier written with escapes (`\"b\\u0061z\"`) compares by its source fragments, not its value." },
-  "no-var-requires": { class: "fixture-fit", note: "Exemption list includes pair and parenthesized_expression; confirmed `var cfg = { b: require(\"b\") }; var c = (require(\"c\"));` -> no findings although TSLint would flag both." },
-  "only-arrow-functions": { class: "genuine", note: "functionIsExempt as TSLint: generators (distinct kinds), a leading `this` parameter, or `this` in the body outside nested scopes with their own `this` (hasOwnThisReference: classes, function declarations/expressions, object-literal methods), found by a has walk with that stopBy rule; overload and ambient signatures are flagged as FunctionDeclarations. Verified `function outer(){ function inner(){ this.y } }` flags outer, and an object-literal method's `this` does not exempt its enclosing function." },
-  "promise-function-async": { class: "fixture-fit", note: "Syntactic proxy for the inferred return type (sidecar already documents this); misses `function foo(){ return fetch(url).then(r => r.json()); }`." },
-  "ban-comma-operator": { class: "genuine", note: "Isolates the for-incrementor comma expression as TSLint's parent.incrementor check does." },
-  "ban": { class: "option-baked", note: "Structure genuine (name-blind call/property-chain text match, wildcard handled) but TSLint's default list is empty; the doc bakes the fixture's list." },
-  "curly": { class: "fixture-fit", note: "ignore-same-line tests whether the whole if_statement text is single-line; confirmed a wrapped condition with a one-line body is wrongly flagged." },
-  "forin": { class: "fixture-fit", note: "has continue_statement anywhere in the if subtree; confirmed nested continue inside a deeper if is still treated as filtered (should only count a direct/blocked continue in the then-branch) -- port is looser than TSLint but same direction of error, no FN found in the direct case; treat as fixture-fit since TSLint's own filter is stricter (an else-branch continue, sibling structure) and the port's has() search is unscoped." },
-  "function-constructor": { class: "genuine", note: "Name-blind Function call/new match, as TSLint." },
-  "label-position": { class: "genuine", note: "for-of shares for_in_statement kind, so the allowed-kind list covers it." },
-  "no-arg": { class: "genuine", note: "Literal arguments.callee pattern, as TSLint's text check." },
-  "no-bitwise": { class: "genuine", note: "Expression-kind operators only; type-position &/|are distinct kinds." },
-  "no-conditional-assignment": { class: "genuine", note: "stopBy:end gate reproduces TSLint's checking/noCheck propagation." },
-  "no-console": { class: "genuine", note: "Default bans all console.* (TSLint default); list override for the option." },
-  "no-construct": { class: "genuine", note: "new String/Number/Boolean by identifier text, as TSLint." },
-  "no-debugger": { class: "genuine", note: "Every debugger_statement." },
-  "adjacent-overload-signatures": { class: "genuine", note: "Key (normalised name, static-ness, call/construct by kind) bound once and compared with earlier siblings; the previous-member walk is a recursive util skipping any run of ;/,/comments (and accessors under ignore-accessors). Numeric names compare by source text." },
-  "unified-signatures": { class: "fixture-fit", primitive: "nthChild/position", note: "Any list length: $$$PRE/$$$POST captures align the other overload's parameter list. Parameters around the differing one compare by full text (TSLint: sigils + type), so overloads that differ also in a parameter name are missed; all unifiable pairs reported (TSLint: first pair per 3+ group)." },
-  "prefer-for-of": { class: "fixture-fit", primitive: "scope-graph", note: "Index uses resolved syntactically: nearer let/const/var/parameter declarations inside the loop shadow; catch parameters, destructured declarations and var hoisting into nested functions are not modelled." },
-  "no-unsafe-finally": { class: "genuine", note: "Nearest-boundary walk expressed as not-inside a local boundary that is itself inside the finally block; labeled jumps compare the bound label." },
-  "prefer-readonly": { class: "fixture-fit", primitive: "type-checker", note: "Receiver of a write decided syntactically (this, `const x = this` aliases, the class name) where TSLint uses its type; writes through other references to the class are missed." },
-  "prefer-function-over-method": { class: "genuine", note: "Own-this boundaries scoped to the bound method text; recursion compares the member name with the bound method name (string-literal method names are compared with quotes)." },
-  "completed-docs": { class: "fixture-fit", primitive: "jsdoc-parse", note: "Tag existence/content requirements are regexes over the whole comment text; a tag mentioned inside another tag's description satisfies them." },
-  "no-parameter-reassignment": { class: "fixture-fit", primitive: "scope-graph", note: "Target name joined to an enclosing function's parameter names; a nearer declaration shadowing the parameter is not modelled." },
-  "no-switch-case-fall-through": { class: "genuine", note: "endsControlFlow (no checker) as recursive utils: loops, try/finally, collected breaks, constant conditions; a labeled statement ends unless a break/continue carrying its own label (shared binding inside a `not`) is inside it, as matchLabel. Verified `L: { break L; }` falls through, `N: for(;;) { break O; }` does not. Residual: a labeled jump counts wherever it is in the labeled statement, reachable or not." },
-  "no-default-export": { class: "genuine", note: "Anchors the `default` keyword of a top-level export statement; .d.ts excluded by scope." },
-  "no-duplicate-imports": { class: "genuine", note: "Module text bound once and compared with earlier imports in the same list; external-module files share the list with string-named ambient modules, as walkWorker reuses `seen`." },
-  "no-mergeable-namespace": { class: "genuine", note: "Head identifier of each namespace name bound and compared with earlier sibling module declarations, as checkStatements keeps `seen` per statement list." },
-  "no-duplicate-switch-case": { class: "genuine", note: "Case value bound once and compared by text with the value of every earlier sibling case, as TSLint compares getText()." },
-  "no-duplicate-super": { class: "fixture-fit", primitive: "control-flow", note: "Sibling-scoped reachability: a compound statement containing return/throw/break anywhere (including a nested function's return) ends the sequence, where TSLint combines branches with worse(); labeled breaks are treated as plain breaks." },
-  "no-dynamic-delete": { class: "fixture-fit", note: "Narrow ASCII regex stands in for isValidPropertyAccess; confirmed `delete obj[\"café\"]` is not flagged though TSLint would flag it." },
-  "no-empty": { class: "genuine", note: "Brace-only regex plus constructor/catch/function exclusions mirror isExcluded." },
-  "no-eval": { class: "genuine", note: "Name-blind eval call, as TSLint." },
-  "no-misused-new": { class: "genuine", note: "Return type name (plain or generic, identifier only) bound once and compared with the declaring interface or class name, as returnTypeMatchesParent does." },
-  "no-null-keyword": { class: "genuine", note: "null outside literal_type and strict comparisons, as TSLint." },
-  "no-null-undefined-union": { class: "fixture-fit", primitive: "type-checker", note: "Needs the type checker for aliased/inferred-return unions; the port sees explicit A|null|undefined syntax, flattened through nesting and parentheses to any depth by recursive utils. `function get(c){ if(c) return null; return undefined; }` (inferred null|undefined return) is a real FN." },
-  "no-object-literal-type-assertion": { class: "fixture-fit", note: "Exemption regex requires only whitespace between `as` and the keyword; `{} as /* keep */ any` breaks the match and is wrongly flagged (confirmed)." },
-  "no-return-await": { class: "genuine", note: "Tail-position walk and try/catch exemption are recursive utils that stop at the enclosing function, as TSLint's; awaits over as/satisfies are exempt because tree-sitter binds the assertion inside the await." },
-  "no-submodule-imports": { class: "genuine", note: "Empty default whitelist matches TSLint's default; regex plus static/dynamic import and require() coverage mirrors findImports/isSubmodulePath." },
-  "no-tautology-expression": { class: "genuine", note: "$A op $A plus depth-1 operand-kind restriction mirrors TSLint's identifier/property-access/literal checks." },
-  "no-this-assignment": { class: "genuine", note: "variable_declarator + depth-1 has kind:this reproduces TSLint's \"initializer is a bare this\" check exactly." },
-  "no-unused-expression": { class: "genuine", note: "TSLint's checking walk (parens, void, ternary branches, comma operands, fast-null && / ||) is recursive utils to any depth; directive prologues are every leading string statement, as TSLint scans them." },
-  "no-var-keyword": { class: "genuine", note: "declare var / declare global { var } exclusions match TSLint's isGlobalVarDeclaration exactly." },
-  "prefer-conditional-expression": { class: "genuine", note: "Recursive utils follow the else-if chain to any length sharing $X; chain links skipped as TSLint's walk does." },
-  "prefer-object-spread": { class: "fixture-fit", note: "The \"used-result\" purity check is a regex limited to bare identifier/dotted-property chains; `Object.assign(cache[key], extra)` is missed." },
-  "radix": { class: "genuine", note: "Mirrors TSLint's 6 checked call forms and the single-argument restriction." },
-  "static-this": { class: "genuine", note: "TSLint resets its context at every class member: the inside walk stops at the nearest class member (stopBy rule) and tests it for `static`. Verified a static method of a class nested in an instance method is flagged, and an instance field of a class nested in a static method is not." },
-  "switch-default": { class: "genuine", note: "Two-level direct-child chain correctly scopes to the switch's own clauses." },
-  "triple-equals": { class: "genuine", note: "Default doc flags every bare ==/!= unconditionally (TSLint's true default); overrides exempt only literal null/undefined operands." },
-  "typeof-compare": { class: "genuine", note: "Operator set and faulty-result/legal-result lists match TSLint's isFaultyTypeofResult/LEGAL_TYPEOF_RESULTS exactly." },
-  "unnecessary-constructor": { class: "bounded", depth: "forwarding-super enumerated to 6 params", primitive: "utils", note: "Default (empty-body) doc is genuine; check-super-calls override enumerates forwarding-super-call parameter counts by regex only up to 6 params." },
-  "use-isnan": { class: "genuine", note: "All 8 relational/equality operators and the plain-identifier NaN check match TSLint's isExpressionNaN exactly." },
-  "invalid-void": { class: "genuine", note: "Structural placement checks plus the generics gate match TSLint's failedKinds set and allow-generics option." },
-  "member-ordering": { class: "requires-config", note: "Port genuine under an order option, but TSLint's bare `true` reports nothing (parseOptions throws \"Got empty options\"); the default doc bakes the fields-first preset. Rank failures against any earlier higher-ranked sibling (TSLint's last non-failing member holds the highest rank); alphabetize compares with any earlier same-rank member whose lower-cased name sorts after (the last non-failing member holds the greatest name of its rank), via a follows whose rule compares, computed names first, getter after same-named setter. Verified `b() a() c() B()` flags a and B." },
-  "cyclomatic-complexity": { class: "genuine", note: "Every tsutils function scope boundary (functions, methods, accessors, classes, namespaces, enums, interfaces, signatures, function types) counts TSLint's decision nodes in its own subtree with a count whose has walk stops at nested boundaries. Verified a class whose property initializer has 3 ternaries is reported at threshold 3, and an arrow function's decisions do not count for its enclosing function." },
-  "no-invalid-this": { class: "genuine", note: "TSLint's ParentType walk: the nearest class or function-like (arrows transparent) via an inside walk with that stopBy rule; allowed in a class method (a function-like whose own nearest scope is a class) or a `this`-parameter function; check-function-in-method in the override. Effective PASS on the repaired fixture." },
-  "comment-format": { class: "option-baked", note: "Structure genuine (check-space and check-lowercase with TSLint's exemptions, anchored after the slashes), but bare `true` checks nothing in TSLint; the default doc bakes the common check-space + check-lowercase config. Option variants are overrides." },
-  "file-header": { class: "requires-config", note: "Port genuine for a given header regex, but that regex is TSLint's mandatory `match` option; the default doc bakes the fixtures' `Good header \\d`, so it flags every real file. The first comment after an optional shebang must match the header regex, which is TSLint's required `match` option (each doc carries the fixture's); an empty file and a shebang file report where TSLint does (zero-width, after the shebang line). allow-single-line-comments and the trailing-newline option are overrides." },
-  "no-redundant-jsdoc": { class: "fixture-fit", primitive: "jsdoc-parse", note: "Content regexes per tag family stand in for a JSDoc parse and are not confined to `/** */` comments: `// @param {string} x` or a string containing `@type {x}` is flagged though TSLint only reads JSDoc." },
-  "type-literal-delimiter": { class: "genuine", note: "Type literals only (not interfaces): comma separators and a trailing ';' on single-line literals are flagged on the token, a missing delimiter on the member's last character; matches TSLint's default and singleLine options." },
-  "number-literal-format": { class: "genuine", note: "Number node + regex per TSLint check (leading 0, lowercase hex digits, leading/trailing decimal point, trailing zeros, exponent leading zeros), with mid-token anchors through named groups." },
-  "max-classes-per-file": { class: "requires-config", note: "Port genuine per threshold, but the threshold is TSLint's required argument (bare `true` compares against undefined and never fires); the default doc bakes the fixture's 1. Exact document-order count via recursive utils: after-K holds when a class with K-1 classes before it (an ancestor, or at/inside an earlier sibling of the node or any ancestor) precedes the node, to any depth; each threshold is its own doc." },
-  "no-default-import": { class: "fixture-fit", note: "TSLint's walk skips .d.ts and non-module files before scanning; the port has no such file-level exclusion." },
-  "no-require-imports": { class: "genuine", note: "Bare require($$$A) plus import x = require(...) matches tsutils' findImports(AllRequireLike)." },
-  "array-type": { class: "requires-config", note: "Port genuine per option, but TSLint requires one of array/generic/array-simple (bare `true` flags both T[] and Array<T>); the default doc bakes the fixture's \"array\". array-simple's isSimpleType (parens, nested Array<T>) is a recursive util, unbounded; verified 5-deep nesting matches TSLint." },
-  "arrow-return-shorthand": { class: "genuine", note: "Only-statement test (comments skipped) replaces the kind exclusion list; an unreachable second return is no longer flagged." },
-  "binary-expression-operand-order": { class: "fixture-fit", note: "The numeric-literal regex also matches BigInt literals; `1n + a` is a false positive (confirmed)." },
-  "callable-types": { class: "genuine", note: "Single-member-count structural check plus the extends Function heritage regex reproduces TSLint's checks." },
-  "class-name": { class: "genuine", note: "type_identifier scoped via immediate-parent inside to the declaration's own name field." },
-  "comment-type": { class: "requires-config", note: "Port faithful: bare `true` allows no comment kind, so the default doc flags every comment. An absurd ban; the rule needs an allowed-kinds list. Four mutually-exclusive regexes on raw comment text mirror TSLint's own text-prefix branching." },
-  "increment-decrement": { class: "genuine", note: "Default bans all update_expression; allow-post override's prefix-text regex leaves postfix unflagged." },
-  "interface-name": { class: "genuine", note: "Regexes behaviorally equivalent to TSLint's hasPrefixI plus its acronym-ambiguity filter." },
-  "interface-over-type-literal": { class: "genuine", note: "Flags alias names only when the value is an object_type lacking index_signature/mapped_type_clause." },
-  "no-angle-bracket-type-assertion": { class: "genuine", note: "not-inside dedups nested assertion chains, reproducing TSLint's outermost-only collapse at any depth." },
-  "no-parameter-properties": { class: "genuine", note: "has(stopBy:neighbor) on accessibility/override/readonly modifiers as direct children of required/optional_parameter matches isParameterProperty." },
-  "no-unnecessary-callback-wrapper": { class: "fixture-fit", primitive: "utils", note: "Self-call exclusion only covers 1-/2-param arity; confirmed `(a, b, c) => c(a, b, c)` is flagged though TSLint's own `expression.text === name.text` bail exempts it, and confirmed `x => (f)(x)` is flagged though TSLint's isIdentifier(callee) check means TSLint itself never even considers it." },
-  "no-unnecessary-initializer": { class: "genuine", note: "direct-child undefined check plus arm split (variable_declarator/param/assignment_pattern) mirrors TSLint's real coverage." },
-  "object-literal-key-quotes": { class: "fixture-fit", note: "as-needed/consistent-as-needed \"valid property name\" check is ASCII-only; tsutils' isValidPropertyName is Unicode- and numeric-literal-aware, so e.g. `{\"1e4\": 1}` is a real miss the fixtures don't exercise." },
-  "object-literal-shorthand": { class: "fixture-fit", note: "pair_pattern/shorthand_property_identifier_pattern kinds are shared with destructuring; confirmed `const { a: a } = x;` is flagged as longhand-property though TSLint's PropertyAssignment-based walk never touches destructuring." },
-  "one-variable-per-declaration": { class: "genuine", note: "declarator-follows-comma has-check plus export_statement/for_statement split mirrors TSLint's VariableStatement/for-initializer walk." },
-  "prefer-method-signature": { class: "genuine", note: "inside(property_signature)+has(type_annotation)+has(function_type) reproduces isPropertySignature+isFunctionTypeNode incl. TSLint's own blind spots." },
-  "prefer-template": { class: "genuine", note: "containsAnyStringLiterals/containsOnlyStringLiterals are recursive utils; the outermost offending concatenation is reported over every ancestor." },
-  "prefer-while": { class: "fixture-fit", note: "Text regex on the for_statement header stands in for an AST field check; confirmed a comment inside the header (`for (/* i */; i<10;) {}`) breaks the match and the violation is missed." },
-  "switch-final-break": { class: "fixture-fit", primitive: "control-flow", note: "\"always\" override checks only literal break/return/throw/continue as the clause's last statement, no recursive endsControlFlow; confirmed `case 0: if(a){throw x}else{throw y}` is flagged though TSLint's endsControlFlow means it should not be." },
-  "import-spacing": { class: "fixture-fit", primitive: "regex-ast-context", note: "Spacing checks run as unscoped file.content regex with no import_statement guard; confirmed a re-export `export { X } from\"./y\";` is flagged though TSLint's ImportDeclaration-only walker never inspects export-from statements." },
-  "linebreak-style": { class: "genuine", note: "Default/override regexes are exact per-line equivalents of TSLint's CR/LF walk." },
-  "new-parens": { class: "genuine", note: "new_expression lacking an arguments child mirrors ts.NewExpression.arguments === undefined exactly." },
-  "no-irregular-whitespace": { class: "genuine", note: "Char class reproduces TSLint's IRREGULAR_WHITESPACE_REGEX set, whole-file scope matching TSLint." },
-  "arrow-parens": { class: "fixture-fit", note: "ban-single-arg-parens override's textual regex over formal_parameters breaks on a comment inside the parens (`(bar/*x*/) => bar`), missing a violation TSLint's structural isSimpleParameter check would flag. (Effective verdict is PASS (repaired fixture) for the fixture-artifact blocker; this fixture-fit gap is separate and real.)" },
-  "import-blacklist": { class: "fixture-fit", note: "The implicit-named fallback (whole-module warn on a partially-banned import) is only wired for lodash, not the fixture's own `dummy` module; `import * as x from \"dummy\";` would be unflagged though TSLint's generic fallback flags any partially-banned module. (Effective verdict PASS (repaired fixture) for the fixture-artifact blocker; primary primitive stays fixture-artifact since option-baking is the more decisive limitation here.) The default doc also bakes the fixture's banned list (lodash, dummy, pull/pullAll), where TSLint's bare `true` bans nothing (found by the harness's `literals` scan)." },
-  "member-access": { class: "genuine", note: "stopBy:neighbor scoping mirrors TSLint's shouldCheck/check() exactly incl. accessor/constructor/parameter-property variants; both repairs are invalid-syntax (TS1245/TS1029) fixes, not semantic gaps." },
-  "newline-per-chained-call": { class: "bounded", depth: "receiver chain unrolled 5 levels", note: "hasChildCall's real recursion is unbounded descent through member/subscript chains; a 6-hop chain is a false negative." },
-  "no-any": { class: "genuine", note: "TSLint's check is purely syntactic (AnyKeyword); the predefined_type/any match plus rest-arg exclusion is exactly equivalent." },
-  "no-async-without-await": { class: "genuine", note: "functionBlockHasAwait/Return is a recursive `has-await-or-return` util that stops at arrow/function-declaration barriers, unbounded; verified an await 20 blocks deep counts." },
-  "no-empty-interface": { class: "genuine", note: "extends_type_clause text regex on [,<] is a safe proxy given the grammar; correctly distinguishes single-no-args vs multi/typed extends." },
-  "no-string-literal": { class: "fixture-fit", note: "Identifier regex is ASCII-letters/underscore/$ plus \\u00XX escapes only; TSLint's isValidPropertyAccess is fully Unicode-aware, so `obj[\"café\"]` is a real miss." },
-  "no-string-throw": { class: "genuine", note: "isString recursion through +/paren chains is a recursive `is-string` util, unbounded; verified 8-term concatenation and 7 nested parens are flagged." },
-  "no-unnecessary-class": { class: "genuine", note: "Static members decided by the member's own `static` token and constructors by their `constructor` name node (no text regex; decorators with arguments no longer hide static); anchored at the `class` keyword; abstract classes included." },
-  "prefer-switch": { class: "genuine", note: "Recursive utils: any-length if/else-if chains and || trees, recursive isSimple, min-cases counted through the chain." },
-  "quotemark": { class: "genuine", note: "default/single/double/backtick/avoid-escape/avoid-template/jsx-* overrides each reproduce TSLint's exact escape and backtick-invalid-context logic; the fixture blocker is genuinely invalid-TS syntax errors (repaired-fixture PASS)." },
-  "typedef": { class: "requires-config", note: "TSLint's typedef checks nothing without options, so the default doc is a placeholder check that cannot match; overrides carry the port. Bare-parameter arrow-call-signature starts at the last char of the preceding token (TSLint's parameters.pos - 1), via a named regex group anchor; verified `return n => n`, `async n => n`, template `${n => n}`. End stays one char short of TSLint's (param end + 1)." },
-  "unnecessary-else": { class: "genuine", note: "Recursive chain util walks the whole direct else-if chain, as recentStackParentMissingJumpStatement." },
-  "variable-name": { class: "genuine", note: "Declare skip matches TSLint: only a variable statement directly under `declare` (and its subtree); verified `declare module \"m\" { export const Bad_Name }` and `declare function f(Bad_Arg)` are flagged, `declare const Bad_Name` is not." },
-};
+export const PASS_AUDIT: Readonly<Record<string, PassAudit>> = parseAudit(readFileSync(AUDIT_FILE, "utf8"));

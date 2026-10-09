@@ -127,7 +127,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every document a project is seeded with (direct rules and each opt-in pack); semantic kinds read `benchmark/<kind>/with`. */
+/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own yet); semantic kinds read `benchmark/<kind>/with`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];
@@ -138,7 +138,7 @@ function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocu
       }) }],
     };
   }
-  const root = kind === "bundled" ? resolve(catalogRoot, "rules") : resolve(rerailRoot, "benchmark", kind, "with");
+  const root = kind === "bundled" ? resolve(rerailRoot, "packs", "tslint", "rules") : resolve(rerailRoot, "benchmark", kind, "with");
   return { capabilities: capabilities(), documents: readDocuments(root).sort((a, b) => compare(a.path, b.path)) };
 }
 export function coverage(documents: RuleDocument[], failures: readonly z.infer<typeof failureSchema>[]) {

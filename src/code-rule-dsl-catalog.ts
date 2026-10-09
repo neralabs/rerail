@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "./native.js";
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
+import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
 import type { AuditRuleProvenance } from "./audit.js";
 import { SqliteRuleStore } from "./rule-store.js";
@@ -232,7 +233,10 @@ class LiveRuleCatalog implements CodeRuleDslCatalog {
     if (this.#closed) throw new Error("Policy DSL catalog is closed");
   }
 
-  /** Compile each valid stored code rule independently so one engine-invalid row is quarantined, not fatal. */
+  /**
+   * Compile each valid stored code rule independently so one engine-invalid row is quarantined, not fatal. A rule the
+   * engine refuses as `language-not-supported` is quarantined with that code: inactive by design, so not reported.
+   */
   #apply(source: CatalogSource): CatalogSource {
     const next = new Map<string, { sourceDigest: string; executable: NativeCompiledCodeRuleDsl }>();
     const codeRules: SourcedCodeRule[] = [];
@@ -247,14 +251,17 @@ class LiveRuleCatalog implements CodeRuleDslCatalog {
         provenance.push(source.provenance[index]!);
       } catch (error) {
         const origin = source.provenance[index]!;
-        const quarantinedCodeRule = {
+        const reason = error instanceof Error ? error.message : String(error);
+        const unsupported = languageNotSupportedOf(reason);
+        const quarantinedCodeRule: QuarantinedRule = {
           ruleId: codeRule.policyId,
           kind: "file" as const,
           owner: origin.applicability === "global" ? "global" : `project:${origin.projectId ?? "unknown"}`,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: unsupported?.reason ?? reason,
+          ...(unsupported === undefined ? {} : { code: unsupported.code }),
         };
         quarantined.push(quarantinedCodeRule);
-        reportQuarantinedRule(this.#store.path, quarantinedCodeRule);
+        if (unsupported === undefined) reportQuarantinedRule(this.#store.path, quarantinedCodeRule);
       }
     }
     const applied = catalogSource(codeRules, provenance, quarantined, this.#capabilitiesJson);
