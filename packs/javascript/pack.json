@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript",
   "category": "language",
-  "covers": "62 ESLint core rules ported to Rerail, each scored against ESLint's own recorded findings on its test cases.",
+  "covers": "65 ESLint core rules ported to Rerail, each scored against ESLint's own recorded findings on its test cases.",
   "reason": "matches JavaScript",
   "match": {
     "any": [
@@ -144,6 +144,13 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint:no-console",
+      "document": "rules/no-console.json",
+      "title": "ESLint no-console: Disallow the use of console",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint:no-continue",
       "document": "rules/no-continue.json",
       "title": "ESLint no-continue: Disallow continue statements",
@@ -182,6 +189,12 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint:no-empty",
+      "document": "rules/eslint-no-empty.json",
+      "title": "ESLint no-empty: Disallow empty block statements",
+      "group": "ESLint"
+    },
+    {
       "id": "eslint:no-empty-pattern",
       "document": "rules/no-empty-pattern.json",
       "title": "ESLint no-empty-pattern: Disallow empty destructuring patterns",
@@ -204,6 +217,13 @@
       "id": "eslint:no-extend-native",
       "document": "rules/no-extend-native.json",
       "title": "ESLint no-extend-native: Disallow extending native types",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint:no-inline-comments",
+      "document": "rules/no-inline-comments.json",
+      "title": "ESLint no-inline-comments: Disallow inline comments after code",
       "group": "ESLint",
       "on": false
     },

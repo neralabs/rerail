@@ -878,7 +878,7 @@
         "tool": "eslint",
         "rule": "no-empty"
       },
-      "policy": "candidates/rules/eslint-no-empty.json",
+      "policy": "rules/eslint-no-empty.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1116,7 +1116,7 @@
         "tool": "eslint",
         "rule": "no-console"
       },
-      "policy": "candidates/rules/no-console.json",
+      "policy": "rules/no-console.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1208,7 +1208,7 @@
         "tool": "eslint",
         "rule": "no-inline-comments"
       },
-      "policy": "candidates/rules/no-inline-comments.json",
+      "policy": "rules/no-inline-comments.json",
       "capabilities": [
         "syntax"
       ],
