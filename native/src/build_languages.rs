@@ -550,10 +550,6 @@ fn render(entries: &[Entry]) -> String {
         planned.join(", ")
     );
 
-    out.push_str(
-        "impl Family {\n    /// The family a dialect is read with: its registry entry's.\n",
-    );
-    out.push_str("    pub(crate) fn of(lang: GrammarDialect) -> Self {\n        match lang {\n");
     let mut families: Vec<(&str, Vec<String>)> = Vec::new();
     for entry in &supported {
         let dialects = entry.dialects.iter().map(|dialect| variant(&dialect.label));
@@ -565,6 +561,22 @@ fn render(entries: &[Entry]) -> String {
             None => families.push((&entry.family, dialects.collect())),
         }
     }
+    out.push_str("impl Family {\n");
+    out.push_str(
+        "    /// The registry's families, in the order their first languages were added.\n",
+    );
+    let _ = writeln!(
+        out,
+        "    pub(crate) const ALL: [Self; {}] = [{}];\n",
+        families.len(),
+        families
+            .iter()
+            .map(|(family, _)| format!("Self::{}", pascal(family)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    out.push_str("    /// The family a dialect is read with: its registry entry's.\n");
+    out.push_str("    pub(crate) fn of(lang: GrammarDialect) -> Self {\n        match lang {\n");
     for (family, variants) in &families {
         let _ = writeln!(
             out,
@@ -729,6 +741,25 @@ mod tests {
         assert!(!generated.contains("adapter::Three"));
         assert!(!generated.contains("adapter::Four"));
         assert!(generated.contains("pub(crate) use with_adapter;"));
+    }
+
+    #[test]
+    fn every_family_is_listed_once_in_registry_order() {
+        let mut three = supported("three", ".three", 3);
+        three["family"] = json!("one");
+        let generated = Registry::new(
+            "families",
+            &[
+                supported("two", ".two", 2),
+                three,
+                supported("one", ".one", 1),
+                planned("four", ".four"),
+            ],
+        )
+        .generate();
+        assert!(
+            generated.contains("    pub(crate) const ALL: [Self; 2] = [Self::One, Self::Two];\n")
+        );
     }
 
     #[test]
