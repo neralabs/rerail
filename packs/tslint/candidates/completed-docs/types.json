@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:completed-docs",
+  "id": "tslint:completed-docs/types",
   "revision": 1,
   "mode": "steer",
   "description": "All categories listed as strings (no tag exemptions).",
@@ -22,7 +22,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for classes."
       }
     },
@@ -42,7 +42,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported classes."
       }
     },
@@ -62,7 +62,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for enums."
       }
     },
@@ -82,7 +82,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported enums."
       }
     },
@@ -102,7 +102,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for enum members."
       }
     },
@@ -150,7 +150,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for functions."
       }
     },
@@ -198,7 +198,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported functions."
       }
     },
@@ -218,7 +218,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for interfaces."
       }
     },
@@ -238,7 +238,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported interfaces."
       }
     },
@@ -296,7 +296,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for methods."
       }
     },
@@ -324,7 +324,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for namespaces."
       }
     },
@@ -344,7 +344,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported namespaces."
       }
     },
@@ -403,7 +403,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for properties."
       }
     },
@@ -423,7 +423,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for types."
       }
     },
@@ -443,7 +443,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported types."
       }
     },
@@ -497,7 +497,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for variables."
       }
     },
@@ -559,7 +559,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported variables."
       }
     }

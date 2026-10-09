@@ -12,5 +12,10 @@
       "line": 152,
       "why": "then-branch `super(); break;` inside a while: the break is absorbed by the loop, the else-branch's return is not sequential, so the super after the loop duplicates it"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "control-flow",
+    "note": "Sibling-scoped reachability: a compound statement containing return/throw/break anywhere (including a nested function's return) ends the sequence, where TSLint combines branches with worse(); labeled breaks are treated as plain breaks."
+  }
 }

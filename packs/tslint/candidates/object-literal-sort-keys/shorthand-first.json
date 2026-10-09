@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:object-literal-sort-keys",
+  "id": "tslint:object-literal-sort-keys/shorthand-first",
   "revision": 1,
   "mode": "steer",
   "description": "Options [\"shorthand-first\"]. checkAlphabetical: in an object literal spanning lines, each identifier- or string-keyed property (pair or shorthand) compares its key with the key of the nearest earlier such property, back to the last spread (methods, numeric and computed keys are skipped and keep the previous key); with shorthand-first: a shorthand after a normal property fails, a normal property compares only back to the last shorthand; string keys compare unquoted, by UTF-16 code unit. Only the first descending key of an object is reported, as TSLint returns after it. Not modelled: the blank-line reset (a descending key after a blank line is not reported by TSLint), which needs trivia.",
@@ -85,7 +85,7 @@
       },
       "violation": {
         "anchor": "capture.KEY",
-        "code": "OBJECT_LITERAL_SORT_KEYS",
+        "code": "object-literal-sort-keys",
         "message": "The key '$KEY' is not sorted alphabetically (after '$PREV')."
       }
     }

@@ -15,6 +15,8 @@ import {
   fixturesDirectory,
   fixturesRecordingPath,
   loadRecording,
+  coversFixture,
+  isCandidate,
   MINIMUM_RULES,
   RERAIL_ROOT,
   type CorpusRecording,
@@ -289,6 +291,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
+      const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
+      if (unitRules.length === 0) continue;
       const files: SourceFile[] = [];
       for (const path of paths) {
         const language = languageFor(path);
@@ -301,10 +305,10 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
       const evaluation = await evaluateWorkspace(
-        rules.map(entry => entry.compiled),
+        unitRules.map(entry => entry.compiled),
         files,
       );
-      collectActual(rules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+      collectActual(unitRules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
       for (const file of files) scored.add(`${tool}\0${file.path}`);
       summary.units += 1;
       summary.files += files.length;
@@ -442,6 +446,8 @@ function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Diver
   const expected: Point[] = [];
   for (const finding of recording.findings) {
     if (finding.rule !== rule.upstream.rule) continue;
+    // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
+    if (run.name === "fixtures" && !coversFixture(rule, finding.path)) continue;
     if (!run.scored.has(`${rule.upstream.tool}\0${finding.path}`)) {
       // A corpus recording covers the whole checkout; a fixtures recording lists every file it ran on.
       if (run.name === "fixtures") errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
@@ -465,6 +471,7 @@ function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Diver
   for (const entry of score.explained) used.add(entry.divergence);
   return {
     rule: rule.id,
+    candidate: isCandidate(rule),
     upstream: rule.upstream,
     capabilities: rule.capabilities,
     source: run.label,
@@ -553,13 +560,15 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 
 /**
  * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
- * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall.
+ * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall. A
+ * candidate's row (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
     ...report.errors,
     ...report.rules.flatMap(row => {
       const problems: string[] = [];
+      if (row.candidate) return problems;
       if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
       if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
       if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);

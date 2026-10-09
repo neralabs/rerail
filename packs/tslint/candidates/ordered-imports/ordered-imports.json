@@ -74,7 +74,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ORDERED_IMPORTS",
+        "code": "ordered-imports",
         "message": "Import sources within a group must be alphabetized ($SRC after $PREV)."
       }
     },
@@ -106,7 +106,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ORDERED_IMPORTS",
+        "code": "ordered-imports",
         "message": "Named imports must be alphabetized ($B before $A)."
       }
     }

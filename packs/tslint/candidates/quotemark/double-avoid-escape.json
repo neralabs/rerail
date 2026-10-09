@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:quotemark",
+  "id": "tslint:quotemark/double-avoid-escape",
   "revision": 1,
   "mode": "steer",
   "description": "Double quotes unless the literal contains a double quote.",
@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "QUOTEMARK",
+        "code": "quotemark",
         "message": "' should be \""
       }
     }

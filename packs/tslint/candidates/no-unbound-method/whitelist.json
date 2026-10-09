@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-unbound-method",
+  "id": "tslint:no-unbound-method/whitelist",
   "revision": 1,
   "mode": "steer",
   "description": "no-unbound-method with whitelist [expect], allow-typeof, allow-delete (syntactic approximation).",
@@ -131,7 +131,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNBOUND_METHOD",
+        "code": "no-unbound-method",
         "message": "Avoid referencing unbound methods which may cause unintentional scoping of 'this'."
       }
     },
@@ -173,7 +173,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNBOUND_METHOD",
+        "code": "no-unbound-method",
         "message": "Avoid referencing unbound methods which may cause unintentional scoping of 'this'."
       }
     }

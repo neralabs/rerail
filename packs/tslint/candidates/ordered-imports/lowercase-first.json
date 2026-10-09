@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:ordered-imports",
+  "id": "tslint:ordered-imports/lowercase-first",
   "revision": 1,
   "mode": "steer",
   "description": "Options [{\"import-sources-order\":\"lowercase-first\",\"named-imports-order\":\"lowercase-first\"}]. Sources: an import (or import-equals require) fails when its module path sorts before the path of the import directly before it (through comments; any other statement ends the block), after TSLint's transform (lowercase-first), with relative paths (./ or /) sorting after library paths, as compare() does. Named imports: the first specifier whose next specifier sorts before it, as findUnsortedPair (lowercase-first). Not modelled: blank lines ending a block (trivia), grouped-imports/groups, module-source-path basename.",
@@ -74,7 +74,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ORDERED_IMPORTS",
+        "code": "ordered-imports",
         "message": "Import sources within a group must be alphabetized ($SRC after $PREV)."
       }
     },
@@ -106,7 +106,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ORDERED_IMPORTS",
+        "code": "ordered-imports",
         "message": "Named imports must be alphabetized ($B before $A)."
       }
     }

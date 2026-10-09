@@ -15,5 +15,9 @@
       "line": 7,
       "why": "same syntax error; 12 expected failures lost"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "note": "ban-single-arg-parens override's textual regex over formal_parameters breaks on a comment inside the parens (`(bar/*x*/) => bar`), missing a violation TSLint's structural isSimpleParameter check would flag. (Effective verdict is PASS (repaired fixture) for the fixture-artifact blocker; this fixture-fit gap is separate and real.)"
+  }
 }

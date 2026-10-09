@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Add space after 'import'"
       }
     },
@@ -53,7 +53,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Too many spaces after 'import'"
       }
     },
@@ -76,7 +76,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Line breaks are not allowed in import declaration"
       }
     },
@@ -90,7 +90,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Line breaks are not allowed in import declaration"
       }
     },
@@ -104,7 +104,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Add space after 'from'"
       }
     },
@@ -118,7 +118,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Too many spaces after 'from'"
       }
     },
@@ -132,7 +132,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Too many spaces before 'from'"
       }
     },
@@ -165,7 +165,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Add space before 'from'"
       }
     },
@@ -188,7 +188,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Add space after '*'"
       }
     },
@@ -211,7 +211,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Too many spaces after '*'"
       }
     },
@@ -234,7 +234,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_SPACING",
+        "code": "import-spacing",
         "message": "Line breaks are not allowed in import declaration"
       }
     }

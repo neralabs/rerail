@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:comment-type",
+  "id": "tslint:comment-type/combo",
   "revision": 1,
   "mode": "steer",
   "description": "Allowed comment types: singleline, doc.",
@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMMENT_TYPE",
+        "code": "comment-type",
         "message": "triple-slash directives are not allowed"
       }
     },
@@ -53,7 +53,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMMENT_TYPE",
+        "code": "comment-type",
         "message": "multiline comments are not allowed"
       }
     }

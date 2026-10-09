@@ -8,5 +8,10 @@
       "line": 2,
       "why": "TSLint reports at 2:1 (offset after `#!...\\n`); the empty AFTER group starts there, while `program` starts at 1:1"
     }
-  ]
+  ],
+  "audit": {
+    "class": "requires-config",
+    "note": "Port genuine for a given header regex, but that regex is TSLint's mandatory `match` option; the default doc bakes the fixtures' `Good header \\d`, so it flags every real file. The first comment after an optional shebang must match the header regex, which is TSLint's required `match` option (each doc carries the fixture's); an empty file and a shebang file report where TSLint does (zero-width, after the shebang line). allow-single-line-comments and the trailing-newline option are overrides."
+  },
+  "requiresConfiguration": "the header regex is mandatory (fileHeaderRule.ts:52, minLength 1 at :94); the port's default doc bakes the fixtures' `Good header \\d` and flags every file"
 }

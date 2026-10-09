@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:max-file-line-count",
+  "id": "tslint:max-file-line-count/disabled",
   "revision": 1,
   "mode": "steer",
   "description": "Requires files to remain under 10 lines.",
@@ -31,7 +31,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "MAX_FILE_LINE_COUNT",
+        "code": "max-file-line-count",
         "message": "This file exceeds the maximum of 10 lines allowed. Consider breaking this file up into smaller parts"
       }
     }

@@ -50,7 +50,7 @@
       },
       "violation": {
         "anchor": "capture.KEY",
-        "code": "OBJECT_LITERAL_SORT_KEYS",
+        "code": "object-literal-sort-keys",
         "message": "The key '$KEY' is not sorted alphabetically (after '$PREV')."
       }
     }

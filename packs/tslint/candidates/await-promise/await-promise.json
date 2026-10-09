@@ -217,7 +217,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "AWAIT_PROMISE",
+        "code": "await-promise",
         "message": "Invalid 'await' of a non-Promise value."
       }
     },
@@ -253,7 +253,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "AWAIT_PROMISE",
+        "code": "await-promise",
         "message": "Invalid 'for-await-of' of a non-AsyncIterable value."
       }
     }

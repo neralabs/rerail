@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:file-name-casing",
+  "id": "tslint:file-name-casing/kebab-case",
   "revision": 1,
   "mode": "steer",
   "description": "File base name (without extension) must be kebab-case (a casing option is required; this doc ports kebab-case). Findings anchor at file start: the path regex match begins at offset 0.",
@@ -21,7 +21,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "File name must be kebab-case"
       }
     }

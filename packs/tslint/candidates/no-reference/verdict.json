@@ -8,5 +8,9 @@
       "line": 1,
       "why": "TSLint anchors at `something.ts` (col 22), inside the comment; capture.PATH starts and ends there"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "note": "Scans raw content for `/// <reference path=` instead of the compiler's referencedFiles; confirmed a string literal containing that text is not flagged (this port scope is per-file regex over content, so a string literal WOULD in fact be false-flagged in general use -- see sidecar; keep as regex-capture-anchor primary already recorded)."
+  }
 }

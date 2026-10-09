@@ -78,7 +78,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_VAR_REQUIRES",
+        "code": "no-var-requires",
         "message": "require statement not part of an import statement"
       }
     }

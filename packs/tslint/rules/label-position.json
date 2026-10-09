@@ -70,7 +70,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "LABEL_POSITION",
+        "code": "label-position",
         "message": "unexpected label on statement"
       }
     }

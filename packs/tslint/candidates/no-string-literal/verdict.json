@@ -9,5 +9,9 @@
       "line": 25,
       "why": "`obj[]`, marked 'invalid accessor - no crash': TypeScript recovers, tree-sitter reports an error, so the kernel reports source-incomplete and the file's 6 expected failures are all FN"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "note": "Identifier regex is ASCII-letters/underscore/$ plus \\u00XX escapes only; TSLint's isValidPropertyAccess is fully Unicode-aware, so `obj[\"café\"]` is a real miss."
+  }
 }

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/variable-declaration-ignore-function",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: variable-declaration, member-variable-declaration, variable-declaration-ignore-function.",
@@ -80,7 +80,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected member-variable-declaration to have a typedef"
       }
     },
@@ -107,7 +107,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected variable-declaration to have a typedef"
       }
     }

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:strict-boolean-expressions",
+  "id": "tslint:strict-boolean-expressions/allow-number",
   "revision": 1,
   "mode": "steer",
   "description": "Syntactic approximation: flags non-boolean LITERAL operands (number, string, object/array/new/function/class/regex, null, undefined; also parenthesized, to any depth) of &&, ||, !, ternary conditions and if/while/do conditions; allow-number.",
@@ -75,7 +75,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_BOOLEAN_EXPRESSIONS",
+        "code": "strict-boolean-expressions",
         "message": "This value in a boolean context is not a boolean."
       }
     }

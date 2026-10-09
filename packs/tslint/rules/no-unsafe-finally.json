@@ -86,7 +86,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNSAFE_FINALLY",
+        "code": "no-unsafe-finally",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -163,7 +163,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNSAFE_FINALLY",
+        "code": "no-unsafe-finally",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -237,7 +237,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNSAFE_FINALLY",
+        "code": "no-unsafe-finally",
         "message": "'return' statements in finally blocks are forbidden."
       }
     },
@@ -312,7 +312,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_UNSAFE_FINALLY",
+        "code": "no-unsafe-finally",
         "message": "'return' statements in finally blocks are forbidden."
       }
     }

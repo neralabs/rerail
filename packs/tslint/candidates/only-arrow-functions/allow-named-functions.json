@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:only-arrow-functions",
+  "id": "tslint:only-arrow-functions/allow-named-functions",
   "revision": 1,
   "mode": "steer",
   "description": "Option allow-named-functions. A function is exempt when it is a generator, its first parameter is `this`, or `this` occurs in its body outside nested scopes with their own `this` (tsutils hasOwnThisReference: classes, function declarations and expressions, object-literal methods), found by a has walk that stops at those scopes. Overload and ambient signatures are function declarations too.",
@@ -108,7 +108,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ONLY_ARROW_FUNCTIONS",
+        "code": "only-arrow-functions",
         "message": "non-arrow functions are forbidden"
       }
     }

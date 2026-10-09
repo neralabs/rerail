@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:comment-format",
+  "id": "tslint:comment-format/exceptions-pattern",
   "revision": 1,
   "mode": "steer",
   "description": "Line comments: check-space + check-lowercase, ignore-pattern STD\\w{2,3}.",
@@ -64,7 +64,7 @@
       },
       "violation": {
         "anchor": "capture.TEXT",
-        "code": "COMMENT_FORMAT",
+        "code": "comment-format",
         "message": "comment must start with a space and lowercase letter"
       }
     }

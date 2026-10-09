@@ -176,7 +176,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NEWLINE_PER_CHAINED_CALL",
+        "code": "newline-per-chained-call",
         "message": "When chaining calls, put method calls on new lines."
       }
     }

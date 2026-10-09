@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:comment-format",
+  "id": "tslint:comment-format/allow-trailing-lowercase",
   "revision": 1,
   "mode": "steer",
   "description": "Line comments: check-space + check-uppercase + allow-trailing-lowercase (adjacency approximated by previous sibling comment).",
@@ -84,7 +84,7 @@
       },
       "violation": {
         "anchor": "capture.TEXT",
-        "code": "COMMENT_FORMAT",
+        "code": "comment-format",
         "message": "comment must start with a space and uppercase letter"
       }
     }

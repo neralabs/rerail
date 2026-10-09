@@ -21,7 +21,7 @@
       },
       "violation": {
         "anchor": "capture.PATH",
-        "code": "NO_REFERENCE",
+        "code": "no-reference",
         "message": "<reference> is not allowed, use imports"
       }
     }

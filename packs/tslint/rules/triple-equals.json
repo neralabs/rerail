@@ -48,7 +48,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TRIPLE_EQUALS",
+        "code": "triple-equals",
         "message": "== should be ==="
       }
     },
@@ -74,7 +74,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TRIPLE_EQUALS",
+        "code": "triple-equals",
         "message": "!= should be !=="
       }
     }

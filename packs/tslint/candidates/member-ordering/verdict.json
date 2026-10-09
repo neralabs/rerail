@@ -20,5 +20,10 @@
       "line": 27,
       "why": "`private static c` after the already-failed `protected static b` is flagged because the earlier `public d` (line 25) outranks it: any earlier higher-rank sibling, not the immediate predecessor"
     }
-  ]
+  ],
+  "audit": {
+    "class": "requires-config",
+    "note": "Port genuine under an order option, but TSLint's bare `true` reports nothing (parseOptions throws \"Got empty options\"); the default doc bakes the fields-first preset. Rank failures against any earlier higher-ranked sibling (TSLint's last non-failing member holds the highest rank); alphabetize compares with any earlier same-rank member whose lower-cased name sorts after (the last non-failing member holds the greatest name of its rank), via a follows whose rule compares, computed names first, getter after same-named setter. Verified `b() a() c() B()` flags a and B."
+  },
+  "requiresConfiguration": "an order object must be provided (memberOrderingRule.ts:164); bare `true` throws \"Got empty options\" and reports nothing (:306-310, :617-618)"
 }

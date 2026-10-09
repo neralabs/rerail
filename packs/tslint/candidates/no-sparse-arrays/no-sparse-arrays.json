@@ -39,7 +39,7 @@
       },
       "violation": {
         "anchor": "witness.end",
-        "code": "NO_SPARSE_ARRAYS",
+        "code": "no-sparse-arrays",
         "message": "Array has a missing element."
       }
     }

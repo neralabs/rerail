@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-unnecessary-class",
+  "id": "tslint:no-unnecessary-class/allow-constructor-only",
   "revision": 1,
   "mode": "steer",
   "description": "no-unnecessary-class with allow-constructor-only.",
@@ -46,7 +46,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_UNNECESSARY_CLASS_EMPTY_CLASS",
+        "code": "no-unnecessary-class",
         "message": "This class has no members."
       }
     },
@@ -118,7 +118,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_UNNECESSARY_CLASS_STATIC_ONLY",
+        "code": "no-unnecessary-class",
         "message": "Every member of this class is static. Use namespaces or plain objects instead."
       }
     }

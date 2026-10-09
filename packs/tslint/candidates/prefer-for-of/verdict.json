@@ -18,5 +18,10 @@
       "line": 151,
       "why": "inner `let i = 1` (and the `let x = i`, `{i, x}` uses) belong to the block's own i, and `i:`/`{i: 1}` are a label and a key: the loop at line 149 is still flagged"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "scope-graph",
+    "note": "Index uses resolved syntactically: nearer let/const/var/parameter declarations inside the loop shadow; catch parameters, destructured declarations and var hoisting into nested functions are not modelled."
+  }
 }

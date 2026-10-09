@@ -171,7 +171,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "VARIABLE_NAME",
+        "code": "variable-name",
         "message": "variable name must be in lowerCamelCase or UPPER_CASE"
       }
     }

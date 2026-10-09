@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:cyclomatic-complexity",
+  "id": "tslint:cyclomatic-complexity/invalidThreshold",
   "revision": 1,
   "mode": "steer",
   "description": "Cyclomatic complexity threshold 20: a function scope boundary (tsutils isFunctionScopeBoundary: functions, methods, accessors, constructors, classes, namespaces, enums, interfaces, signatures and function types) fails when 1 + its decision points exceeds the threshold. Decision points are TSLint's increasesComplexity nodes (non-empty case, catch, conditional, do, for, for-in/of, if, while, && and ||), counted over the boundary's own subtree without entering nested boundaries: a count along a has walk whose stopBy is the boundary rule. Threshold -5 is below TSLint's minimum of 2, so TSLint disables the rule; modeled by excluding every file.",
@@ -137,7 +137,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CYCLOMATIC_COMPLEXITY",
+        "code": "cyclomatic-complexity",
         "message": "The function has a cyclomatic complexity higher than the threshold of 20"
       }
     }

@@ -21,7 +21,7 @@
       },
       "violation": {
         "anchor": "capture.TAG",
-        "code": "NO_REDUNDANT_JSDOC",
+        "code": "no-redundant-jsdoc",
         "message": "JSDoc tag is redundant in TypeScript code."
       }
     },
@@ -35,7 +35,7 @@
       },
       "violation": {
         "anchor": "capture.TYPE",
-        "code": "NO_REDUNDANT_JSDOC",
+        "code": "no-redundant-jsdoc",
         "message": "Type annotation in JSDoc is redundant in TypeScript code."
       }
     },
@@ -49,7 +49,7 @@
       },
       "violation": {
         "anchor": "capture.TAG",
-        "code": "NO_REDUNDANT_JSDOC",
+        "code": "no-redundant-jsdoc",
         "message": "Tag is redundant in TypeScript code if it has no description."
       }
     },
@@ -63,7 +63,7 @@
       },
       "violation": {
         "anchor": "capture.TAG",
-        "code": "NO_REDUNDANT_JSDOC",
+        "code": "no-redundant-jsdoc",
         "message": "Tag is redundant in TypeScript code if it has no description."
       }
     },
@@ -77,7 +77,7 @@
       },
       "violation": {
         "anchor": "capture.TAG",
-        "code": "NO_REDUNDANT_JSDOC",
+        "code": "no-redundant-jsdoc",
         "message": "Tag is redundant in TypeScript code if it has no description."
       }
     }

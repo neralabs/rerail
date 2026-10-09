@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:completed-docs",
+  "id": "tslint:completed-docs/functions/overloads-separate-docs/true",
   "revision": 1,
   "mode": "steer",
   "description": "functions, overloads documented separately.",
@@ -28,7 +28,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for functions."
       }
     },
@@ -56,7 +56,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for exported functions."
       }
     }

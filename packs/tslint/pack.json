@@ -246,7 +246,17 @@
       "id": "tslint:no-invalid-this",
       "document": "rules/no-invalid-this.json",
       "title": "Disallows using the `this` keyword outside of classes",
-      "group": "TSLint"
+      "group": "TSLint",
+      "examples": {
+        "caught": {
+          "path": "src/counter.ts",
+          "text": "export function increment(): void {\n  this.count += 1;\n}\n"
+        },
+        "passes": {
+          "path": "src/counter.ts",
+          "text": "export class Counter {\n  count = 0;\n  increment(): void {\n    this.count += 1;\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "tslint:no-irregular-whitespace",
@@ -318,7 +328,17 @@
       "id": "tslint:no-submodule-imports",
       "document": "rules/no-submodule-imports.json",
       "title": "Disallows importing any submodule of a non-relative package",
-      "group": "TSLint"
+      "group": "TSLint",
+      "examples": {
+        "caught": {
+          "path": "src/map.ts",
+          "text": "import map from \"lodash/map\";\n\nexport const double = (values: number[]): number[] => map(values, value => value * 2);\n"
+        },
+        "passes": {
+          "path": "src/map.ts",
+          "text": "import { map } from \"lodash\";\n\nexport const double = (values: number[]): number[] => map(values, value => value * 2);\n"
+        }
+      }
     },
     {
       "id": "tslint:no-switch-case-fall-through",
@@ -444,7 +464,17 @@
       "id": "tslint:triple-equals",
       "document": "rules/triple-equals.json",
       "title": "Requires === and !== in place of == and !=",
-      "group": "TSLint"
+      "group": "TSLint",
+      "examples": {
+        "caught": {
+          "path": "src/compare.ts",
+          "text": "export function same(a: unknown, b: unknown): boolean {\n  return a == b;\n}\n"
+        },
+        "passes": {
+          "path": "src/compare.ts",
+          "text": "export function same(a: unknown, b: unknown): boolean {\n  return a === b;\n}\n"
+        }
+      }
     },
     {
       "id": "tslint:type-literal-delimiter",

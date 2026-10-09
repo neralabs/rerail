@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:typedef",
+  "id": "tslint:typedef/array-destructuring",
   "revision": 1,
   "mode": "steer",
   "description": "Requires type definitions for: array-destructuring.",
@@ -24,7 +24,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPEDEF",
+        "code": "typedef",
         "message": "expected array-destructuring to have a typedef"
       }
     }

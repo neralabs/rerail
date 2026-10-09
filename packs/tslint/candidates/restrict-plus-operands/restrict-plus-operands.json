@@ -287,7 +287,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "RESTRICT_PLUS_OPERANDS",
+        "code": "restrict-plus-operands",
         "message": "Operands of '+' operation must either be both strings or both numbers or both bigints."
       }
     }

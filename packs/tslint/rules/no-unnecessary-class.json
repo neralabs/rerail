@@ -97,7 +97,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_UNNECESSARY_CLASS_EMPTY_CLASS",
+        "code": "no-unnecessary-class",
         "message": "This class has no members."
       }
     },
@@ -227,7 +227,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_UNNECESSARY_CLASS_CONSTRUCTOR_ONLY",
+        "code": "no-unnecessary-class",
         "message": "Every member of this class is a constructor. Use functions instead."
       }
     },
@@ -357,7 +357,7 @@
       },
       "violation": {
         "anchor": "capture.KW",
-        "code": "NO_UNNECESSARY_CLASS_STATIC_ONLY",
+        "code": "no-unnecessary-class",
         "message": "Every member of this class is static. Use namespaces or plain objects instead."
       }
     }

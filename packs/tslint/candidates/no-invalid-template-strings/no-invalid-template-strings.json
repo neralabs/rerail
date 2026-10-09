@@ -36,7 +36,7 @@
       },
       "violation": {
         "anchor": "capture.INTERPOLATION",
-        "code": "NO_INVALID_TEMPLATE_STRINGS",
+        "code": "no-invalid-template-strings",
         "message": "Interpolation will only work for template strings: $INTERPOLATION"
       }
     }

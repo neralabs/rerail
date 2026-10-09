@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:curly",
+  "id": "tslint:curly/as-needed",
   "revision": 1,
   "mode": "steer",
   "description": "Flags blocks with a single statement under if/else/loops (as-needed).",
@@ -104,7 +104,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CURLY_AS_NEEDED",
+        "code": "curly",
         "message": "Block contains only one statement; remove the curly braces."
       }
     }

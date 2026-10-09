@@ -149,7 +149,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_NAMESPACE",
+        "code": "no-namespace",
         "message": "'namespace' and 'module' are disallowed"
       }
     }

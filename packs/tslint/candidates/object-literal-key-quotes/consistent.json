@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:object-literal-key-quotes",
+  "id": "tslint:object-literal-key-quotes/consistent",
   "revision": 1,
   "mode": "steer",
   "description": "All property names in an object literal must be consistently quoted or unquoted (consistent). Reported at the opening brace.",
@@ -42,7 +42,7 @@
       },
       "violation": {
         "anchor": "capture.OPEN",
-        "code": "OBJECT_LITERAL_KEY_QUOTES",
+        "code": "object-literal-key-quotes",
         "message": "All property names in this object literal must be consistently quoted or unquoted."
       }
     }

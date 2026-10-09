@@ -68,7 +68,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "Importing this module is blacklisted. Try importing a submodule instead."
       }
     },
@@ -189,7 +189,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "Some named exports from this module are blacklisted for importing (or re-exporting). Import/re-export only the specific values you want, instead of the whole module."
       }
     },
@@ -282,7 +282,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "The export \"pull\"/\"pullAll\" is blacklisted."
       }
     },
@@ -382,7 +382,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "Importing (or re-exporting) the default export is blacklisted."
       }
     },
@@ -443,7 +443,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "This import is blacklisted by /.*\\.temp$/"
       }
     },
@@ -504,7 +504,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "IMPORT_BLACKLIST",
+        "code": "import-blacklist",
         "message": "This import is blacklisted by /.*\\.tmp$/"
       }
     }

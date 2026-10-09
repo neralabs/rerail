@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:completed-docs",
+  "id": "tslint:completed-docs/accessors-public",
   "revision": 1,
   "mode": "steer",
   "description": "public properties only.",
@@ -62,7 +62,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "COMPLETED_DOCS",
+        "code": "completed-docs",
         "message": "Documentation must exist for properties."
       }
     }

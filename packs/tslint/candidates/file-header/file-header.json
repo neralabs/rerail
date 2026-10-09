@@ -47,7 +47,7 @@
       },
       "violation": {
         "anchor": "capture.AFTER",
-        "code": "FILE_HEADER",
+        "code": "file-header",
         "message": "missing file header"
       }
     }

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:unnecessary-constructor",
+  "id": "tslint:unnecessary-constructor/check-super-calls",
   "revision": 1,
   "mode": "steer",
   "description": "Prevents blank constructors and constructors that only forward to super (check-super-calls). Argument/parameter counts are enumerated by regex up to 6 parameters.",
@@ -90,7 +90,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "UNNECESSARY_CONSTRUCTOR",
+        "code": "unnecessary-constructor",
         "message": "Remove unnecessary empty constructor."
       }
     }

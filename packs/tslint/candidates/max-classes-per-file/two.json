@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:max-classes-per-file",
+  "id": "tslint:max-classes-per-file/two",
   "revision": 1,
   "mode": "steer",
   "description": "A file may not contain more than 2 classes: flags a class with 2 or more classes before it in document order (ancestors, and classes at or inside earlier siblings of the class or any ancestor); utility after-K holds when a class with K-1 classes before it precedes the node.",
@@ -44,7 +44,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "MAX_CLASSES_PER_FILE",
+        "code": "max-classes-per-file",
         "message": "A maximum of 2 classes per file are allowed."
       }
     }

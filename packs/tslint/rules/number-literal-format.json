@@ -45,7 +45,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Number literal should not have a leading '0'."
       }
     },
@@ -68,7 +68,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Hexadecimal number literal should be uppercase."
       }
     },
@@ -91,7 +91,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Number literal should begin with '0.' and not just '.'."
       }
     },
@@ -114,7 +114,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Number literal should not end in '.'."
       }
     },
@@ -137,7 +137,7 @@
       },
       "violation": {
         "anchor": "capture.MANTISSA",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Number literal should not have a trailing '0'."
       }
     },
@@ -160,7 +160,7 @@
       },
       "violation": {
         "anchor": "capture.EXPONENT",
-        "code": "NUMBER_LITERAL_FORMAT",
+        "code": "number-literal-format",
         "message": "Number literal should not have a leading '0'."
       }
     }

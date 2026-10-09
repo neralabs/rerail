@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:object-literal-shorthand",
+  "id": "tslint:object-literal-shorthand/never",
   "revision": 1,
   "mode": "steer",
   "description": "Disallows shorthand properties and methods in object literals (never).",
@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "OBJECT_LITERAL_SHORTHAND",
+        "code": "object-literal-shorthand",
         "message": "Shorthand property and method assignments have been disallowed."
       }
     },
@@ -76,7 +76,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "OBJECT_LITERAL_SHORTHAND",
+        "code": "object-literal-shorthand",
         "message": "Shorthand property and method assignments have been disallowed."
       }
     }

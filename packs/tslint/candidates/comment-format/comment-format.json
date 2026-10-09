@@ -59,7 +59,7 @@
       },
       "violation": {
         "anchor": "capture.TEXT",
-        "code": "COMMENT_FORMAT",
+        "code": "comment-format",
         "message": "comment must start with a space and lowercase letter"
       }
     }

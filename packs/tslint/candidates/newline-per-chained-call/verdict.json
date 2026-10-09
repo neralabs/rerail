@@ -12,5 +12,10 @@
       "line": 10,
       "why": "`.map(function(item) { return item.helloYay().another() }` never closes `.map(`. TSLint recovers and reports all 12. The kernel returns source-incomplete"
     }
-  ]
+  ],
+  "audit": {
+    "class": "bounded",
+    "depth": "receiver chain unrolled 5 levels",
+    "note": "hasChildCall's real recursion is unbounded descent through member/subscript chains; a 6-hop chain is a false negative."
+  }
 }

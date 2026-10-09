@@ -150,7 +150,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "CYCLOMATIC_COMPLEXITY",
+        "code": "cyclomatic-complexity",
         "message": "The function has a cyclomatic complexity higher than the threshold of 20"
       }
     }

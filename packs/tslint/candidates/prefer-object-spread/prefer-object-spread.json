@@ -56,7 +56,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_OBJECT_SPREAD",
+        "code": "prefer-object-spread",
         "message": "Use the object spread operator instead."
       }
     },
@@ -106,7 +106,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_OBJECT_SPREAD",
+        "code": "prefer-object-spread",
         "message": "'Object.assign' returns the first argument. Prefer object spread if you want a new object."
       }
     }

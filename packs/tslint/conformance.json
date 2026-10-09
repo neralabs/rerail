@@ -1,609 +1,4788 @@
 {
-  "format": "rerail-tslint-golden/v1",
-  "rules": {
-    "adjacent-overload-signatures": {
-      "verdict": "PASS",
-      "truePositives": 15,
-      "reason": "PASS, genuine. Port matches getMisplacedOverloads: the member's key (name normalised over identifier, string, number and literal computed names; computed expressions by text; static-ness; call and construct signatures by kind) is bound and must appear on an earlier sibling, while the previous member must not share it. 'Previous member' is a recursive util that skips any run of `;`, `,` and comments (and accessors under ignore-accessors) between members, and comments between statements (an empty statement resets the key, as in TSLint). Numeric names compare by source text (TSLint normalises `0x10` to `16`). End positions differ where tree-sitter leaves a member's trailing `;` outside the node.",
-      "primitive": "grammar-gap",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 75,
-          "why": "`\"a\"();` shares key `a` with the identifier `a()` two members earlier: the string_fragment binding compares equal to the property_identifier by text"
-        }
-      ]
-    },
-    "arrow-return-shorthand": {
-      "verdict": "PASS",
-      "truePositives": 17
-    },
-    "ban-comma-operator": {
-      "verdict": "PASS",
-      "truePositives": 5
-    },
-    "ban-ts-ignore": {
-      "verdict": "PASS",
-      "truePositives": 5
-    },
-    "callable-types": {
-      "verdict": "PASS",
-      "truePositives": 19
-    },
-    "class-name": {
-      "verdict": "PASS",
-      "truePositives": 4
-    },
-    "cyclomatic-complexity": {
-      "verdict": "PASS",
-      "truePositives": 21,
-      "reason": "PASS. A function scope boundary (tsutils isFunctionScopeBoundary) fails when 1 + its decision points exceeds the threshold; the decision points are counted with the M5 count over a has walk whose stopBy is the boundary rule, so nested functions, classes and signatures keep their own count, as TSLint's walker resets complexity at each boundary. Threshold -5 disables the rule in TSLint and is modeled by an override that excludes every file.",
-      "evidence": [
-        {
-          "variant": "specifiedThreshold",
-          "file": "test.ts.lint",
-          "line": 219,
-          "why": "outer1 has 2 own decisions + 3 in inner1: the count stops at inner1, so outer1 is not reported"
-        }
-      ]
-    },
-    "function-constructor": {
-      "verdict": "PASS",
-      "truePositives": 6
-    },
-    "increment-decrement": {
-      "verdict": "PASS",
-      "truePositives": 18
-    },
-    "interface-name": {
-      "verdict": "PASS",
-      "truePositives": 5
-    },
-    "interface-over-type-literal": {
-      "verdict": "PASS",
-      "truePositives": 2
-    },
-    "invalid-void": {
-      "verdict": "PASS",
-      "truePositives": 40
-    },
-    "label-position": {
-      "verdict": "PASS",
-      "truePositives": 2
-    },
-    "linebreak-style": {
-      "verdict": "PASS",
-      "truePositives": 8
-    },
-    "member-access": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 26,
-      "reason": "Every option config ports and passes (accessor, constructor, no-public, parameter-property). The default port matches all 13 expected names on a repaired copy of the fixture. The default fixture has decorator/modifier orders that tree-sitter-typescript rejects, so the file yields source-incomplete. The rejected lines are invalid TS (TS1245/TS1029).",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 52,
-          "why": "`@decorator abstract method() {}`: a decorator before an abstract member fails in tree-sitter. TSLint parses it"
-        },
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 53,
-          "why": "`@decorator @moreDecorator({}) readonly static PROP`: `readonly static` in that order fails in tree-sitter"
-        }
-      ]
-    },
-    "new-parens": {
-      "verdict": "PASS",
-      "truePositives": 3
-    },
-    "no-angle-bracket-type-assertion": {
-      "verdict": "PASS",
-      "truePositives": 20
-    },
-    "no-any": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 20,
-      "reason": "The port (predefined_type `any`, plus a rest-parameter `any[]` exclusion for ignore-rest-args) finds every expected `any` on a repaired copy of the fixtures. Both fixture files contain deliberate syntax errors that TypeScript recovers from, so the kernel reports source-incomplete and yields no findings.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 7,
-          "why": "`const fooArrow(a: any[]) => {` is not valid TS; the kernel drops the whole file, TSLint still reports all 10 `any`s"
-        },
-        {
-          "variant": "ignore-rest-args",
-          "file": "test.ts.lint",
-          "line": 19,
-          "why": "`const function(...a: { [key: any]: any }[]) {` is also a syntax error; same whole-file loss"
-        }
-      ]
-    },
-    "no-arg": {
-      "verdict": "PASS",
-      "truePositives": 1
-    },
-    "no-async-without-await": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 14,
-      "reason": "On a copy of the fixture with the three unparseable lines removed, the port finds all 14 expected failures at the exact starts (async token; arrows and function declarations are barriers, function expressions and methods are not, as in TSLint). A recursive `has-await-or-return` utility stops descending at barrier nodes, reproducing TSLint's functionBlockHasAwait/Return recursion to any depth (probe: an await 20 blocks deep counts). The real fixture contains TS-invalid declarations that tree-sitter rejects, so the kernel reports source-incomplete for the file.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 105,
-          "why": "`async function foo;` is a tree-sitter syntax error, and also the expected failure itself (a bodyless async declaration without a return type)"
-        },
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 130,
-          "why": "`public const test: Promise<number>` is a syntax error; the whole file becomes source-incomplete"
-        },
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 134,
-          "why": "`public abstract async func<T>(...)` is rejected by tree-sitter-typescript"
-        }
-      ]
-    },
-    "no-bitwise": {
-      "verdict": "PASS",
-      "truePositives": 3
-    },
-    "no-conditional-assignment": {
-      "verdict": "PASS",
-      "truePositives": 25
-    },
-    "no-console": {
-      "verdict": "PASS",
-      "truePositives": 14
-    },
-    "no-construct": {
-      "verdict": "PASS",
-      "truePositives": 3
-    },
-    "no-debugger": {
-      "verdict": "PASS",
-      "truePositives": 1
-    },
-    "no-default-export": {
-      "verdict": "PASS",
-      "truePositives": 7,
-      "reason": "Passes the raw fixture since M0: error-tolerant evaluation reports the matches outside the syntax-error region. Was BLOCKED before M0: Port is exact on well-formed code (anchors the `default` keyword of a top-level export; .d.ts excluded by scope). tree-sitter-typescript rejects `export default abstract class { }` (anonymous abstract class), so the whole fixture yields source-incomplete; TypeScript parses it without errors, so this is a tree-sitter-typescript grammar gap.",
-      "primitive": "grammar-gap",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 32,
-          "why": "`export default abstract class { }` is a tree-sitter parse error (verified in isolation); every other line of the file matches when probed alone"
-        }
-      ]
-    },
-    "no-duplicate-imports": {
-      "verdict": "PASS",
-      "truePositives": 9,
-      "reason": "Genuine port: the module text (string_fragment) is bound on the import and compared with every earlier import in the same statement list, or, in an external module, with imports at top level and in earlier string-named ambient modules (TSLint reuses `seen` for augmentations). The allow-namespace-imports override keeps namespace and other imports in separate sets."
-    },
-    "no-duplicate-switch-case": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 6,
-      "reason": "Genuine port: a case value is flagged when an earlier sibling case of the same switch has a textually equal value, the binding shared from the value into `inside`/`follows`/`has`. The only raw FNs are in the fixture's `switch (value):` (a syntax error); the repaired fixture passes.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 2,
-          "why": "`switch (value):` does not parse; the kernel evaluates around the error region and misses the two duplicates inside it (lines 9 and 10), which the repaired fixture recovers"
-        }
-      ]
-    },
-    "no-empty": {
-      "verdict": "PASS",
-      "truePositives": 29
-    },
-    "no-empty-interface": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 3,
-      "reason": "Empty `interface_body` anchored on the name, split by presence of a single un-parameterised `extends` type. It is correct on the parseable lines, but the fixture's `interface M extends {}` does not parse in tree-sitter, so the kernel drops the file. `interface M extends {}` is TS1097, invalid TS, not a grammar gap.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 9,
-          "why": "`interface M extends {}` (empty extends list) is a tree-sitter syntax error, so source-incomplete. TSLint recovers and flags lines 1, 3 and 9"
-        }
-      ]
-    },
-    "no-eval": {
-      "verdict": "PASS",
-      "truePositives": 1
-    },
-    "no-for-in": {
-      "verdict": "PASS",
-      "truePositives": 1
-    },
-    "no-import-side-effect": {
-      "verdict": "PASS",
-      "truePositives": 8
-    },
-    "no-inferrable-types": {
-      "verdict": "PASS",
-      "truePositives": 25
-    },
-    "no-internal-module": {
-      "verdict": "PASS",
-      "truePositives": 13
-    },
-    "no-invalid-this": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 6,
-      "reason": "The port is TSLint's walk: the nearest enclosing class or function-like (arrow functions are transparent) decides, found by an inside walk whose stopBy is that scope rule (M5); `this` is allowed in a class method (a function-like whose own nearest scope is a class) or a function with a `this` parameter. The repaired fixture passes 6/6. The raw fixture has invalid syntax at line 22, and the port's absence claims over ancestors (`not inside`, and a stop rule walking ancestors) are unsound under syntax errors, so the file is skipped (source-incomplete).",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "enabled",
-          "file": "test.ts.lint",
-          "line": 22,
-          "why": "`function(this) => {` is a syntax error that TypeScript recovers from, so the kernel reports source-incomplete for the whole file"
-        },
-        {
-          "variant": "enabled",
-          "file": "test.ts.lint",
-          "line": 32,
-          "why": "`this` inside `function(nr){}` nested in `function(this){}` in a class method: the nearest function is unbound, so it is flagged although an outer function binds `this` (repaired fixture)"
-        }
-      ]
-    },
-    "no-irregular-whitespace": {
-      "verdict": "PASS",
-      "truePositives": 22
-    },
-    "no-magic-numbers": {
-      "verdict": "PASS",
-      "truePositives": 15
-    },
-    "no-mergeable-namespace": {
-      "verdict": "PASS",
-      "truePositives": 6,
-      "reason": "Genuine port: the namespace name's first identifier (the whole name, or the head of a dotted `x.y`, which TypeScript parses as namespace x) is bound and compared with every earlier sibling namespace/module declaration in the same statement list, including `declare` and `module` forms; string-named modules are only descended into, as in TSLint."
-    },
-    "no-misused-new": {
-      "verdict": "PASS",
-      "truePositives": 5,
-      "reason": "Genuine port: the construct signature's (or body-less `new` method's) return type name is bound and must equal the enclosing interface or class declaration's name, as returnTypeMatchesParent compares. `constructor` method signatures in interfaces and type literals are flagged unconditionally, as TSLint does.",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 2,
-          "why": "`new(): I` in interface I is flagged; `new(): {}` on line 5 is not a type reference and `new(): T` in a type literal has no declaration name"
-        }
-      ]
-    },
-    "no-namespace": {
-      "verdict": "PASS",
-      "truePositives": 5
-    },
-    "no-non-null-assertion": {
-      "verdict": "PASS",
-      "truePositives": 1
-    },
-    "no-null-keyword": {
-      "verdict": "PASS",
-      "truePositives": 4
-    },
-    "no-parameter-properties": {
-      "verdict": "PASS",
-      "truePositives": 4
-    },
-    "no-require-imports": {
-      "verdict": "PASS",
-      "truePositives": 5
-    },
-    "no-return-await": {
-      "verdict": "PASS",
-      "truePositives": 13,
-      "reason": "PASS, genuine. The tail-position walk (parens, ||, &&, comma, ?:, arrow bodies) and the try/catch exemption are recursive utils; the exemption stops at the enclosing function, as TSLint's isInsideTryBlock does. Findings anchor at the `await` keyword and the fix deletes it. tree-sitter parses `await x as T` as `await (x as T)` (valid TS, misparse), so an await whose operand is an as/satisfies expression is exempt.",
-      "primitive": "grammar-gap",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 10,
-          "why": "`return (await x as number);` needs the as-expression exemption because of the tree-sitter precedence difference"
-        }
-      ]
-    },
-    "no-string-throw": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 12,
-      "reason": "The port matches throw_statement whose operand is a string, template, parenthesized string or `+` concatenation with a string operand; a recursive `is-string` utility follows TSLint's isString through +/paren chains to any depth (probe: 8-term concatenations and 7 nested parens are flagged). It finds 12/12 on the fixture once `() => throw x` is rewritten as `() =>{throw x}` with the same columns. The fixture uses throw as an expression in an arrow body. That is invalid syntax, but TypeScript's parser recovers from it and tree-sitter does not.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 1,
-          "why": "`let a: never = () => throw 'bla';`: throw expression is a syntax error, so the kernel reports source-incomplete and all 12 failures are FN"
-        }
-      ]
-    },
-    "no-submodule-imports": {
-      "verdict": "PASS",
-      "truePositives": 14
-    },
-    "no-switch-case-fall-through": {
-      "verdict": "PASS",
-      "truePositives": 6,
-      "reason": "Since M3, tsutils' endsControlFlow (no checker, as the walker calls it) is recursive utils: jumps; blocks and clauses where any reached statement ends; if/else with both branches ending (constant true/false conditions pick one); while(true)/for(;;)/do whose body ends with no unlabeled break or continue collected from it; switch with a default whose last clause ends and no collected unlabeled break; try/catch/finally. A statement is collected only if no earlier sibling ends control flow, and nested loops/switches filter their own jumps. One approximation: a labeled statement is treated as not ending if it contains any labeled break/continue (TSLint compares the label). Findings anchor at the `case`/`default` keyword.",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 124,
-          "why": "`case 2:` follows outer `case 1:` whose nested switch always returns (default clause ends, no collected break), so no FP"
-        }
-      ]
-    },
-    "no-tautology-expression": {
-      "verdict": "PASS",
-      "truePositives": 20
-    },
-    "no-this-assignment": {
-      "verdict": "PASS",
-      "truePositives": 12
-    },
-    "no-unnecessary-class": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 54,
-      "reason": "The three checks (empty / constructor-only / static-only, one override per option) share utils for the plain class (class or abstract class without extends), members, the constructor (its `constructor` name node) and parameter-property constructors; a member counts as static by its own `static` token, not a text regex, so decorators with arguments do not hide it. Findings anchor at the `class` keyword, as TSLint reports them. The only well-formed variant (allow-constructor-only, 11/11) passes. The other three fixtures contain `private private Helper(): boolean {`, a syntax error TypeScript recovers from; the kernel reports the file partial and misses the finding next to the error region. With that one token fixed (`privateHelper`) all fixtures pass with no extras. `private private` is invalid TS (TS1028).",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 34,
-          "why": "`private private Helper(): boolean {` does not parse in tree-sitter-typescript; the file is partial and the constructor-only class at line 30 is missed"
-        },
-        {
-          "variant": "allow-static-only",
-          "file": "test.ts.lint",
-          "line": 34,
-          "why": "same malformed member; 1 FN"
-        },
-        {
-          "variant": "allow-empty",
-          "file": "test.ts.lint",
-          "line": 43,
-          "why": "same malformed member; 1 FN"
-        }
-      ]
-    },
-    "no-unnecessary-initializer": {
-      "verdict": "PASS",
-      "truePositives": 8
-    },
-    "no-unsafe-finally": {
-      "verdict": "PASS",
-      "truePositives": 25,
-      "reason": "Genuine port of jumpIsLocalToFinallyBlock: a return/throw/break/continue inside a finally block is flagged unless a function (any jump), a loop (unlabeled break/continue), a switch (unlabeled break) or a labeled statement carrying the jump's own label (bound from the jump) lies between it and the finally block.",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 211,
-          "why": "`break outer;` inside the `inner:` loop escapes: the enclosing labeled statement's label differs from the bound `outer`"
-        }
-      ]
-    },
-    "no-unused-expression": {
-      "verdict": "PASS",
-      "truePositives": 121
-    },
-    "no-var-keyword": {
-      "verdict": "PASS",
-      "truePositives": 16
-    },
-    "number-literal-format": {
-      "verdict": "PASS",
-      "truePositives": 25,
-      "reason": "Genuine port. Leading-0, uppercase-hex, leading/trailing-decimal and trailing-0 checks are number node + regex. Named groups in the node's own regex give the mid-token anchors: EXPONENT for an exponent's leading zeros (sign included), MANTISSA for a trailing-0 mantissa before an exponent.",
-      "evidence": [
-        {
-          "variant": ".",
-          "file": "test.ts.lint",
-          "line": 18,
-          "why": "`-123e0003`: failure starts at `0003` (col 6), inside the `number` token; capture.EXPONENT starts there"
-        }
-      ]
-    },
-    "one-variable-per-declaration": {
-      "verdict": "PASS",
-      "truePositives": 19
-    },
-    "only-arrow-functions": {
-      "verdict": "PASS",
-      "truePositives": 12
-    },
-    "prefer-conditional-expression": {
-      "verdict": "PASS",
-      "truePositives": 10
-    },
-    "prefer-function-over-method": {
-      "verdict": "PASS",
-      "truePositives": 14,
-      "reason": "Genuine port: the method text ($M) and name ($N) are bound, so a `this`/`super` use counts only when no own-`this` boundary (function, object or class method, nested class) lies between it and this method, and `this.<ownName>` is recognised as TSLint's isRecursiveCall. `this` parameters and `this` types are excluded; overrides encode allow-public / allow-protected.",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 16,
-          "why": "`recur() { this.recur(); }` is flagged: `this` sits in a member access whose property equals the bound method name"
-        }
-      ]
-    },
-    "prefer-method-signature": {
-      "verdict": "PASS",
-      "truePositives": 4
-    },
-    "prefer-switch": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 8,
-      "reason": "Both fixtures contain syntax errors, so the kernel yields no findings. On copies repaired only at the broken lines, the port reports exactly TSLint's findings in both variants. Since M3 it is exact: recursive utils follow an else-if chain of any length and `||` trees of any size, share $X across every `$X === <simple>`, test operands with a recursive isSimple, count cases up to min-cases through the chain, and skip only the else-if directly under a flagged if, as TSLint's walk does.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 34,
-          "why": "`if (x === 1 || x === 2 || && x === 3)` is a deliberate parse error; TSLint still reports 3 findings in the file"
-        },
-        {
-          "variant": "min-cases-2",
-          "file": "test.ts.lint",
-          "line": 33,
-          "why": "`if (x.y.z === a.b) else if (...)` has no then-statement, a syntax error that TypeScript recovers from"
-        }
-      ]
-    },
-    "prefer-template": {
-      "verdict": "PASS",
-      "truePositives": 18
-    },
-    "quotemark": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 52,
-      "reason": "Every option config ports and passes on well-formed fixtures (one override doc per option config, since the DSL has no rule options). The 4 remaining fixtures contain syntax errors that TypeScript's parser recovers from; the kernel reports source-incomplete for the whole file and yields no findings. Also observed: a tsx-only kind (jsx_attribute) anywhere in a rule, even under `not`, makes the rule inert on .ts files, so JSX-vs-code quote preferences cannot share one check across dialects.",
-      "primitive": "fixture-artifact",
-      "secondary": [
-        "per-subrule-dialect"
+  "pack": "tslint",
+  "family": "ecma",
+  "capabilities": [
+    "syntax"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "tslint",
+      "version": "6.1.3"
+    }
+  ],
+  "rules": [
+    {
+      "id": "adjacent-overload-signatures",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "adjacent-overload-signatures"
+      },
+      "policy": "rules/adjacent-overload-signatures.json",
+      "capabilities": [
+        "syntax"
       ],
-      "evidence": [
-        {
-          "variant": "invalid-double",
-          "file": "test.ts.lint",
-          "line": 2,
-          "why": "unterminated string `('a)`; TSLint still flags line 1, kernel: source-incomplete"
-        },
-        {
-          "variant": "invalid-single",
-          "file": "test.ts.lint",
-          "line": 2,
-          "why": "unterminated string `(\"a)`; TSLint still flags line 1, kernel: source-incomplete"
-        },
-        {
-          "variant": "jsx-double",
-          "file": "test.tsx.lint",
-          "line": 3,
-          "why": "`export const a = (` never closed; TSLint flags 4 literals, kernel: source-incomplete"
-        },
-        {
-          "variant": "jsx-single",
-          "file": "test.tsx.lint",
-          "line": 3,
-          "why": "`export const a = (` never closed; TSLint flags 3 literals, kernel: source-incomplete"
-        }
+      "match": "line+column",
+      "fixtures": [
+        "adjacent-overload-signatures/default/**"
       ]
     },
-    "radix": {
-      "verdict": "PASS",
-      "truePositives": 6
-    },
-    "static-this": {
-      "verdict": "PASS",
-      "truePositives": 10
-    },
-    "switch-default": {
-      "verdict": "PASS",
-      "truePositives": 2
-    },
-    "triple-equals": {
-      "verdict": "PASS",
-      "truePositives": 6
-    },
-    "type-literal-delimiter": {
-      "verdict": "PASS",
-      "truePositives": 13,
-      "reason": "Genuine port. Comma and extra-trailing-';' failures anchor on the delimiter token. A missing delimiter anchors on the member's last character through a named group in the member node's own regex (`(?<LAST>.)$`, i.e. member.end - 1), so the old workaround that only reached one-character final tokens is gone.",
-      "evidence": [
-        {
-          "variant": "one-liners-with-no-trailings",
-          "file": "test.ts.lint",
-          "line": 3,
-          "why": "`    y: string` with no delimiter: capture.LAST is the final `g` (col 13), as TSLint"
-        },
-        {
-          "variant": "one-liners-with-trailings",
-          "file": "test.ts.lint",
-          "line": 16,
-          "why": "`{ x: number; y: string }`: anchored at the last `g` of `string`"
-        }
+    {
+      "id": "adjacent-overload-signatures--ignore-accessors",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "adjacent-overload-signatures"
+      },
+      "policy": "candidates/adjacent-overload-signatures/ignore-accessors.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "adjacent-overload-signatures/ignore-accessors/**"
       ]
     },
-    "typeof-compare": {
-      "verdict": "PASS",
-      "truePositives": 14
-    },
-    "unnecessary-else": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 34,
-      "reason": "Both variant fixtures contain syntax errors, so the kernel yields source-incomplete and zero findings. On a copy with only the syntax errors repaired the port scores 19/19 and 15/15 with 0 FP. Since M3 it is exact: the `else` token of an if whose then-branch is, or ends with (through one only-statement block, as getLastStatement does), a jump; a recursive chain-ok util suppresses it when any if up the direct else-if chain lacks a jump, as recentStackParentMissingJumpStatement does; the jump keyword is captured for the message.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 86,
-          "why": "unterminated string `throw \"error;`; TSLint recovers, kernel: source-incomplete"
-        },
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 113,
-          "why": "`do {` with no `while (...)`; syntax error"
-        },
-        {
-          "variant": "allow-else-if",
-          "file": "test.ts.lint",
-          "line": 86,
-          "why": "same unterminated string; all 15 expected failures lost"
-        }
+    {
+      "id": "array-type",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "array-type"
+      },
+      "policy": "candidates/array-type/array-type.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "array-type/array/**"
       ]
     },
-    "use-isnan": {
-      "verdict": "PASS",
-      "truePositives": 8
+    {
+      "id": "array-type--array-simple",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "array-type"
+      },
+      "policy": "candidates/array-type/array-simple.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "array-type/array-simple/**"
+      ]
     },
-    "variable-name": {
-      "verdict": "PASS (repaired fixture)",
-      "truePositives": 93,
-      "reason": "ban-keywords and const-only-for-caps pass. The other 6 variants contain a deliberate syntax error and lose every finding. On repaired copies the format check (identifier regex per option set, alias exemption via same-metavar `var $N = $N` / `$O.$N` patterns) scores 17/17, 12/12, 14/14, 10/10, 13/13, 14/14 with 0 FP. The declare skip is TSLint's: only a variable statement that is a direct child of `declare` (and everything under it) is exempt; probes confirm `declare module \"m\" { export const Bad_Name }` and `declare function f(Bad_Arg)` are flagged while `declare const Bad_Name` is not.",
-      "primitive": "fixture-artifact",
-      "evidence": [
-        {
-          "variant": "default",
-          "file": "test.ts.lint",
-          "line": 30,
-          "why": "`invalid_arg: ...number` is not valid TS syntax; TSLint recovers, kernel: source-incomplete"
-        },
-        {
-          "variant": "allow-pascal-case",
-          "file": "test.ts.lint",
-          "line": 39,
-          "why": "`class {}` / `let {bar:} = foo;` (\"don't crash on syntax errors\") make the file source-incomplete"
-        }
+    {
+      "id": "array-type--generic",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "array-type"
+      },
+      "policy": "candidates/array-type/generic.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "array-type/generic/**"
+      ]
+    },
+    {
+      "id": "arrow-parens",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "arrow-parens"
+      },
+      "policy": "candidates/arrow-parens/arrow-parens.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "arrow-parens/default/**"
+      ]
+    },
+    {
+      "id": "arrow-parens--ban-single-arg-parens",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "arrow-parens"
+      },
+      "policy": "candidates/arrow-parens/ban-single-arg-parens.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "arrow-parens/ban-single-arg-parens/**"
+      ]
+    },
+    {
+      "id": "arrow-return-shorthand",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "arrow-return-shorthand"
+      },
+      "policy": "rules/arrow-return-shorthand.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "arrow-return-shorthand/default/**"
+      ]
+    },
+    {
+      "id": "arrow-return-shorthand--multiline",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "arrow-return-shorthand"
+      },
+      "policy": "candidates/arrow-return-shorthand/multiline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "arrow-return-shorthand/multiline/**"
+      ]
+    },
+    {
+      "id": "await-promise",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "await-promise"
+      },
+      "policy": "candidates/await-promise/await-promise.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "await-promise/es6-promise/**",
+        "await-promise/for-await-of/**"
+      ]
+    },
+    {
+      "id": "await-promise--custom-promise",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "await-promise"
+      },
+      "policy": "candidates/await-promise/custom-promise.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "await-promise/custom-promise/**"
+      ]
+    },
+    {
+      "id": "ban",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ban"
+      },
+      "policy": "candidates/ban/ban.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ban/**"
+      ]
+    },
+    {
+      "id": "ban-comma-operator",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ban-comma-operator"
+      },
+      "policy": "rules/ban-comma-operator.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ban-comma-operator/**"
+      ]
+    },
+    {
+      "id": "ban-ts-ignore",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ban-ts-ignore"
+      },
+      "policy": "rules/ban-ts-ignore.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ban-ts-ignore/**"
+      ]
+    },
+    {
+      "id": "ban-types",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ban-types"
+      },
+      "policy": "candidates/ban-types/ban-types.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ban-types/**"
+      ]
+    },
+    {
+      "id": "binary-expression-operand-order",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "binary-expression-operand-order"
+      },
+      "policy": "candidates/binary-expression-operand-order/binary-expression-operand-order.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "binary-expression-operand-order/**"
+      ]
+    },
+    {
+      "id": "callable-types",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "callable-types"
+      },
+      "policy": "rules/callable-types.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "callable-types/**"
+      ]
+    },
+    {
+      "id": "class-name",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "class-name"
+      },
+      "policy": "rules/class-name.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "class-name/**"
+      ]
+    },
+    {
+      "id": "comment-format",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-format"
+      },
+      "policy": "candidates/comment-format/comment-format.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-format/lower/**"
+      ]
+    },
+    {
+      "id": "comment-format--allow-trailing-lowercase",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-format"
+      },
+      "policy": "candidates/comment-format/allow-trailing-lowercase.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-format/allow-trailing-lowercase/**"
+      ]
+    },
+    {
+      "id": "comment-format--exceptions-pattern",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-format"
+      },
+      "policy": "candidates/comment-format/exceptions-pattern.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-format/exceptions-pattern/**"
+      ]
+    },
+    {
+      "id": "comment-format--exceptions-words",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-format"
+      },
+      "policy": "candidates/comment-format/exceptions-words.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-format/exceptions-words/**"
+      ]
+    },
+    {
+      "id": "comment-format--upper",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-format"
+      },
+      "policy": "candidates/comment-format/upper.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-format/upper/**"
+      ]
+    },
+    {
+      "id": "comment-type",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-type"
+      },
+      "policy": "candidates/comment-type/comment-type.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-type/directive/**"
+      ]
+    },
+    {
+      "id": "comment-type--combo",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-type"
+      },
+      "policy": "candidates/comment-type/combo.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-type/combo/**"
+      ]
+    },
+    {
+      "id": "comment-type--doc",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-type"
+      },
+      "policy": "candidates/comment-type/doc.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-type/doc/**"
+      ]
+    },
+    {
+      "id": "comment-type--multiline",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-type"
+      },
+      "policy": "candidates/comment-type/multiline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-type/multiline/**"
+      ]
+    },
+    {
+      "id": "comment-type--single-line",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "comment-type"
+      },
+      "policy": "candidates/comment-type/single-line.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "comment-type/single-line/**"
+      ]
+    },
+    {
+      "id": "completed-docs",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/completed-docs.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/defaults/**"
+      ]
+    },
+    {
+      "id": "completed-docs--accessors-public",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/accessors-public.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/accessors-public/**"
+      ]
+    },
+    {
+      "id": "completed-docs--accessors",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/accessors.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/accessors/**"
+      ]
+    },
+    {
+      "id": "completed-docs--constructors-overloads-default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/constructors/overloads/default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/constructors/overloads/default/**"
+      ]
+    },
+    {
+      "id": "completed-docs--constructors-overloads-true",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/constructors/overloads/true.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/constructors/overloads/true/**"
+      ]
+    },
+    {
+      "id": "completed-docs--constructors-privacies",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/constructors/privacies.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/constructors/privacies/**"
+      ]
+    },
+    {
+      "id": "completed-docs--constructors-tags",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/constructors/tags.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/constructors/tags/**"
+      ]
+    },
+    {
+      "id": "completed-docs--defaults-edge-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/defaults/edge-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/defaults/edge-case/**"
+      ]
+    },
+    {
+      "id": "completed-docs--functions-overloads-separate-docs-default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/functions/overloads-separate-docs/default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/functions/overloads-separate-docs/default/**"
+      ]
+    },
+    {
+      "id": "completed-docs--functions-overloads-separate-docs-false",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/functions/overloads-separate-docs/false.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/functions/overloads-separate-docs/false/**"
+      ]
+    },
+    {
+      "id": "completed-docs--functions-overloads-separate-docs-true",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/functions/overloads-separate-docs/true.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/functions/overloads-separate-docs/true/**"
+      ]
+    },
+    {
+      "id": "completed-docs--interface-members",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/interface-members.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/interface-members/**"
+      ]
+    },
+    {
+      "id": "completed-docs--locations",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/locations.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/locations/**"
+      ]
+    },
+    {
+      "id": "completed-docs--methods-overloads-separate-docs-default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/methods/overloads-separate-docs/default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/methods/overloads-separate-docs/default/**"
+      ]
+    },
+    {
+      "id": "completed-docs--methods-overloads-separate-docs-false",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/methods/overloads-separate-docs/false.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/methods/overloads-separate-docs/false/**"
+      ]
+    },
+    {
+      "id": "completed-docs--methods-overloads-separate-docs-true",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/methods/overloads-separate-docs/true.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/methods/overloads-separate-docs/true/**"
+      ]
+    },
+    {
+      "id": "completed-docs--privacies-private",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/privacies-private.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/privacies-private/**"
+      ]
+    },
+    {
+      "id": "completed-docs--privacies-protected",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/privacies-protected.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/privacies-protected/**"
+      ]
+    },
+    {
+      "id": "completed-docs--privacies-public",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/privacies-public.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/privacies-public/**"
+      ]
+    },
+    {
+      "id": "completed-docs--privacies",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/privacies.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/privacies/**"
+      ]
+    },
+    {
+      "id": "completed-docs--tags-content",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/tags/content.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/tags/content/**"
+      ]
+    },
+    {
+      "id": "completed-docs--tags-existence",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/tags/existence.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/tags/existence/**"
+      ]
+    },
+    {
+      "id": "completed-docs--types",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/types.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/types/**"
+      ]
+    },
+    {
+      "id": "completed-docs--variables",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/variables.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/variables/**"
+      ]
+    },
+    {
+      "id": "completed-docs--visibilities",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "completed-docs"
+      },
+      "policy": "candidates/completed-docs/visibilities.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "completed-docs/visibilities/**"
+      ]
+    },
+    {
+      "id": "curly",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "curly"
+      },
+      "policy": "candidates/curly/curly.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "curly/defaults/**"
+      ]
+    },
+    {
+      "id": "curly--as-needed",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "curly"
+      },
+      "policy": "candidates/curly/as-needed.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "curly/as-needed/**"
+      ]
+    },
+    {
+      "id": "curly--ignore-same-line",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "curly"
+      },
+      "policy": "candidates/curly/ignore-same-line.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "curly/ignore-same-line/**"
+      ]
+    },
+    {
+      "id": "cyclomatic-complexity",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "cyclomatic-complexity"
+      },
+      "policy": "rules/cyclomatic-complexity.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "cyclomatic-complexity/defaultThreshold/**"
+      ]
+    },
+    {
+      "id": "cyclomatic-complexity--invalid-threshold",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "cyclomatic-complexity"
+      },
+      "policy": "candidates/cyclomatic-complexity/invalidThreshold.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "cyclomatic-complexity/invalidThreshold/**"
+      ]
+    },
+    {
+      "id": "cyclomatic-complexity--specified-threshold",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "cyclomatic-complexity"
+      },
+      "policy": "candidates/cyclomatic-complexity/specifiedThreshold.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "cyclomatic-complexity/specifiedThreshold/**"
+      ]
+    },
+    {
+      "id": "encoding",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "encoding"
+      },
+      "policy": "candidates/encoding/encoding.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "encoding/**"
+      ]
+    },
+    {
+      "id": "file-header",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-header"
+      },
+      "policy": "candidates/file-header/file-header.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-header/bad/**",
+        "file-header/bad-shebang/**",
+        "file-header/bad-single-line/**",
+        "file-header/bad-use-strict/**",
+        "file-header/empty-file/**",
+        "file-header/good/**",
+        "file-header/good-shebang/**",
+        "file-header/good-single-line/**",
+        "file-header/good-use-strict/**"
+      ]
+    },
+    {
+      "id": "file-header--bad-newline",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-header"
+      },
+      "policy": "candidates/file-header/bad-newline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-header/bad-newline/**"
+      ]
+    },
+    {
+      "id": "file-header--bad-single-newline",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-header"
+      },
+      "policy": "candidates/file-header/bad-single-newline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-header/bad-single-newline/**"
+      ]
+    },
+    {
+      "id": "file-header--good-allow-single-line-comments",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-header"
+      },
+      "policy": "candidates/file-header/good-allow-single-line-comments.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-header/good-allow-single-line-comments/**"
+      ]
+    },
+    {
+      "id": "file-header--good-newline",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-header"
+      },
+      "policy": "candidates/file-header/good-newline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-header/good-newline/**"
+      ]
+    },
+    {
+      "id": "file-name-casing",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/file-name-casing.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/camel-case/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--complex",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/complex.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/complex/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--file-matcher",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/file-matcher.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/file-matcher/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--ignore",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/ignore.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/ignore/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--invalid-option",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/invalid-option.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/invalid-option/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--kebab-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/kebab-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/kebab-case/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--pascal-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/pascal-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/pascal-case/**"
+      ]
+    },
+    {
+      "id": "file-name-casing--snake-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "file-name-casing"
+      },
+      "policy": "candidates/file-name-casing/snake-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "file-name-casing/snake-case/**"
+      ]
+    },
+    {
+      "id": "forin",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "forin"
+      },
+      "policy": "candidates/forin/forin.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "forin/**"
+      ]
+    },
+    {
+      "id": "function-constructor",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "function-constructor"
+      },
+      "policy": "rules/function-constructor.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "function-constructor/**"
+      ]
+    },
+    {
+      "id": "import-blacklist",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "import-blacklist"
+      },
+      "policy": "candidates/import-blacklist/import-blacklist.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "import-blacklist/**"
+      ]
+    },
+    {
+      "id": "import-spacing",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "import-spacing"
+      },
+      "policy": "candidates/import-spacing/import-spacing.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "import-spacing/**"
+      ]
+    },
+    {
+      "id": "increment-decrement",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "increment-decrement"
+      },
+      "policy": "rules/increment-decrement.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "increment-decrement/default/**"
+      ]
+    },
+    {
+      "id": "increment-decrement--allow-post",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "increment-decrement"
+      },
+      "policy": "candidates/increment-decrement/allow-post.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "increment-decrement/allow-post/**"
+      ]
+    },
+    {
+      "id": "interface-name",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "interface-name"
+      },
+      "policy": "rules/interface-name.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "interface-name/always-prefix/**",
+        "interface-name/default/**"
+      ]
+    },
+    {
+      "id": "interface-name--never-prefix",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "interface-name"
+      },
+      "policy": "candidates/interface-name/never-prefix.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "interface-name/never-prefix/**"
+      ]
+    },
+    {
+      "id": "interface-over-type-literal",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "interface-over-type-literal"
+      },
+      "policy": "rules/interface-over-type-literal.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "interface-over-type-literal/**"
+      ]
+    },
+    {
+      "id": "invalid-void",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "invalid-void"
+      },
+      "policy": "rules/invalid-void.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "invalid-void/allow-generics/true/**",
+        "invalid-void/default/**"
+      ]
+    },
+    {
+      "id": "invalid-void--allow-generics-false",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "invalid-void"
+      },
+      "policy": "candidates/invalid-void/allow-generics/false.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "invalid-void/allow-generics/false/**"
+      ]
+    },
+    {
+      "id": "invalid-void--allow-generics-whitelist",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "invalid-void"
+      },
+      "policy": "candidates/invalid-void/allow-generics/whitelist.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "invalid-void/allow-generics/whitelist/**"
+      ]
+    },
+    {
+      "id": "label-position",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "label-position"
+      },
+      "policy": "rules/label-position.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "label-position/**"
+      ]
+    },
+    {
+      "id": "linebreak-style",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "linebreak-style"
+      },
+      "policy": "rules/linebreak-style.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "linebreak-style/emptyFile/**",
+        "linebreak-style/failure/CRLF/**",
+        "linebreak-style/success/LF/**"
+      ]
+    },
+    {
+      "id": "linebreak-style--failure-lf",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "linebreak-style"
+      },
+      "policy": "candidates/linebreak-style/failure/LF.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "linebreak-style/failure/LF/**"
+      ]
+    },
+    {
+      "id": "linebreak-style--success-crlf",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "linebreak-style"
+      },
+      "policy": "candidates/linebreak-style/success/CRLF.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "linebreak-style/success/CRLF/**"
+      ]
+    },
+    {
+      "id": "match-default-export-name",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "match-default-export-name"
+      },
+      "policy": "candidates/match-default-export-name/match-default-export-name.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "match-default-export-name/**"
+      ]
+    },
+    {
+      "id": "max-classes-per-file--one",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "max-classes-per-file"
+      },
+      "policy": "candidates/max-classes-per-file/one.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "max-classes-per-file/one/**"
+      ]
+    },
+    {
+      "id": "max-classes-per-file--two",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "max-classes-per-file"
+      },
+      "policy": "candidates/max-classes-per-file/two.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "max-classes-per-file/two/**"
+      ]
+    },
+    {
+      "id": "max-file-line-count--default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "max-file-line-count"
+      },
+      "policy": "candidates/max-file-line-count/default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "max-file-line-count/default/**"
+      ]
+    },
+    {
+      "id": "max-file-line-count--disabled",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "max-file-line-count"
+      },
+      "policy": "candidates/max-file-line-count/disabled.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "max-file-line-count/disabled/**"
+      ]
+    },
+    {
+      "id": "member-access",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-access"
+      },
+      "policy": "rules/member-access.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-access/default/**"
+      ]
+    },
+    {
+      "id": "member-access--accessor",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-access"
+      },
+      "policy": "candidates/member-access/accessor.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-access/accessor/**"
+      ]
+    },
+    {
+      "id": "member-access--constructor",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-access"
+      },
+      "policy": "candidates/member-access/constructor.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-access/constructor/**"
+      ]
+    },
+    {
+      "id": "member-access--no-public",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-access"
+      },
+      "policy": "candidates/member-access/no-public.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-access/no-public/**"
+      ]
+    },
+    {
+      "id": "member-access--parameter-property",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-access"
+      },
+      "policy": "candidates/member-access/parameter-property.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-access/parameter-property/**"
+      ]
+    },
+    {
+      "id": "member-ordering--alphabetize-nested",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/alphabetize-nested.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/alphabetize-nested/**"
+      ]
+    },
+    {
+      "id": "member-ordering--alphabetize",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/alphabetize.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/alphabetize/**"
+      ]
+    },
+    {
+      "id": "member-ordering--custom-categories",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/custom-categories.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/custom-categories/**"
+      ]
+    },
+    {
+      "id": "member-ordering--custom",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/custom.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/custom/**"
+      ]
+    },
+    {
+      "id": "member-ordering--fields-first",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/fields-first.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/fields-first/**"
+      ]
+    },
+    {
+      "id": "member-ordering--fix-trivia",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/fix-trivia.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/fix-trivia/**"
+      ]
+    },
+    {
+      "id": "member-ordering--instance-sandwich",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/instance-sandwich.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/instance-sandwich/**"
+      ]
+    },
+    {
+      "id": "member-ordering--mix-old-options",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/mix-old-options.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/mix-old-options/**"
+      ]
+    },
+    {
+      "id": "member-ordering--omit-access-modifier",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/omit-access-modifier.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/omit-access-modifier/**"
+      ]
+    },
+    {
+      "id": "member-ordering--public-before-private",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/public-before-private.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/public-before-private/**"
+      ]
+    },
+    {
+      "id": "member-ordering--static-before-instance",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/static-before-instance.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/static-before-instance/**"
+      ]
+    },
+    {
+      "id": "member-ordering--statics-first",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/statics-first.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/statics-first/**"
+      ]
+    },
+    {
+      "id": "member-ordering--variables-before-functions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "member-ordering"
+      },
+      "policy": "candidates/member-ordering/variables-before-functions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "member-ordering/variables-before-functions/**"
+      ]
+    },
+    {
+      "id": "new-parens",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "new-parens"
+      },
+      "policy": "rules/new-parens.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "new-parens/**"
+      ]
+    },
+    {
+      "id": "newline-before-return",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "newline-before-return"
+      },
+      "policy": "candidates/newline-before-return/newline-before-return.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "newline-before-return/default/**"
+      ]
+    },
+    {
+      "id": "newline-per-chained-call",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "newline-per-chained-call"
+      },
+      "policy": "candidates/newline-per-chained-call/newline-per-chained-call.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "newline-per-chained-call/default/**"
+      ]
+    },
+    {
+      "id": "no-angle-bracket-type-assertion",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-angle-bracket-type-assertion"
+      },
+      "policy": "rules/no-angle-bracket-type-assertion.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-angle-bracket-type-assertion/**"
+      ]
+    },
+    {
+      "id": "no-any",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-any"
+      },
+      "policy": "rules/no-any.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-any/default/**"
+      ]
+    },
+    {
+      "id": "no-any--ignore-rest-args",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-any"
+      },
+      "policy": "candidates/no-any/ignore-rest-args.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-any/ignore-rest-args/**"
+      ]
+    },
+    {
+      "id": "no-arg",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-arg"
+      },
+      "policy": "rules/no-arg.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-arg/**"
+      ]
+    },
+    {
+      "id": "no-async-without-await",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-async-without-await"
+      },
+      "policy": "rules/no-async-without-await.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-async-without-await/**"
+      ]
+    },
+    {
+      "id": "no-bitwise",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-bitwise"
+      },
+      "policy": "rules/no-bitwise.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-bitwise/**"
+      ]
+    },
+    {
+      "id": "no-boolean-literal-compare",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-boolean-literal-compare"
+      },
+      "policy": "candidates/no-boolean-literal-compare/no-boolean-literal-compare.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-boolean-literal-compare/**"
+      ]
+    },
+    {
+      "id": "no-conditional-assignment",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-conditional-assignment"
+      },
+      "policy": "rules/no-conditional-assignment.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-conditional-assignment/**"
+      ]
+    },
+    {
+      "id": "no-console",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-console"
+      },
+      "policy": "rules/no-console.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-console/all/**"
+      ]
+    },
+    {
+      "id": "no-console--list",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-console"
+      },
+      "policy": "candidates/no-console/list.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-console/list/**"
+      ]
+    },
+    {
+      "id": "no-construct",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-construct"
+      },
+      "policy": "rules/no-construct.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-construct/**"
+      ]
+    },
+    {
+      "id": "no-debugger",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-debugger"
+      },
+      "policy": "rules/no-debugger.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-debugger/**"
+      ]
+    },
+    {
+      "id": "no-default-export",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-default-export"
+      },
+      "policy": "rules/no-default-export.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-default-export/**"
+      ]
+    },
+    {
+      "id": "no-default-import",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-default-import"
+      },
+      "policy": "candidates/no-default-import/no-default-import.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-default-import/default/**"
+      ]
+    },
+    {
+      "id": "no-default-import--from-modules",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-default-import"
+      },
+      "policy": "candidates/no-default-import/fromModules.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-default-import/fromModules/**"
+      ]
+    },
+    {
+      "id": "no-duplicate-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-duplicate-imports"
+      },
+      "policy": "rules/no-duplicate-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-duplicate-imports/default/**"
+      ]
+    },
+    {
+      "id": "no-duplicate-imports--allow-namespace-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-duplicate-imports"
+      },
+      "policy": "candidates/no-duplicate-imports/allow-namespace-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-duplicate-imports/allow-namespace-imports/**"
+      ]
+    },
+    {
+      "id": "no-duplicate-super",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-duplicate-super"
+      },
+      "policy": "candidates/no-duplicate-super/no-duplicate-super.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-duplicate-super/**"
+      ]
+    },
+    {
+      "id": "no-duplicate-switch-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-duplicate-switch-case"
+      },
+      "policy": "rules/no-duplicate-switch-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-duplicate-switch-case/**"
+      ]
+    },
+    {
+      "id": "no-dynamic-delete",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-dynamic-delete"
+      },
+      "policy": "candidates/no-dynamic-delete/no-dynamic-delete.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-dynamic-delete/**"
+      ]
+    },
+    {
+      "id": "no-empty",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-empty"
+      },
+      "policy": "rules/no-empty.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-empty/default/**"
+      ]
+    },
+    {
+      "id": "no-empty--allow-empty-catch",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-empty"
+      },
+      "policy": "candidates/no-empty/allow-empty-catch.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-empty/allow-empty-catch/**"
+      ]
+    },
+    {
+      "id": "no-empty--allow-empty-functions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-empty"
+      },
+      "policy": "candidates/no-empty/allow-empty-functions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-empty/allow-empty-functions/**"
+      ]
+    },
+    {
+      "id": "no-empty-interface",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-empty-interface"
+      },
+      "policy": "rules/no-empty-interface.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-empty-interface/**"
+      ]
+    },
+    {
+      "id": "no-eval",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-eval"
+      },
+      "policy": "rules/no-eval.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-eval/**"
+      ]
+    },
+    {
+      "id": "no-floating-promises",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-floating-promises"
+      },
+      "policy": "candidates/no-floating-promises/no-floating-promises.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-floating-promises/promises/**"
+      ]
+    },
+    {
+      "id": "no-floating-promises--jquerypromise",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-floating-promises"
+      },
+      "policy": "candidates/no-floating-promises/jquerypromise.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-floating-promises/jquerypromise/**"
+      ]
+    },
+    {
+      "id": "no-for-in",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-for-in"
+      },
+      "policy": "rules/no-for-in.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-for-in/**"
+      ]
+    },
+    {
+      "id": "no-for-in-array",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-for-in-array"
+      },
+      "policy": "candidates/no-for-in-array/no-for-in-array.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-for-in-array/**"
+      ]
+    },
+    {
+      "id": "no-implicit-dependencies",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-implicit-dependencies"
+      },
+      "policy": "candidates/no-implicit-dependencies/no-implicit-dependencies.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-implicit-dependencies/default/**"
+      ]
+    },
+    {
+      "id": "no-implicit-dependencies--dev",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-implicit-dependencies"
+      },
+      "policy": "candidates/no-implicit-dependencies/dev.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-implicit-dependencies/dev/**"
+      ]
+    },
+    {
+      "id": "no-implicit-dependencies--optional",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-implicit-dependencies"
+      },
+      "policy": "candidates/no-implicit-dependencies/optional.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-implicit-dependencies/optional/**"
+      ]
+    },
+    {
+      "id": "no-implicit-dependencies--whitelist-with-dev",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-implicit-dependencies"
+      },
+      "policy": "candidates/no-implicit-dependencies/whitelist-with-dev.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-implicit-dependencies/whitelist-with-dev/**"
+      ]
+    },
+    {
+      "id": "no-implicit-dependencies--whitelist",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-implicit-dependencies"
+      },
+      "policy": "candidates/no-implicit-dependencies/whitelist.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-implicit-dependencies/whitelist/**"
+      ]
+    },
+    {
+      "id": "no-import-side-effect",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-import-side-effect"
+      },
+      "policy": "rules/no-import-side-effect.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-import-side-effect/default/**"
+      ]
+    },
+    {
+      "id": "no-import-side-effect--ignore-module",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-import-side-effect"
+      },
+      "policy": "candidates/no-import-side-effect/ignore-module.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-import-side-effect/ignore-module/**"
+      ]
+    },
+    {
+      "id": "no-inferrable-types",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-inferrable-types"
+      },
+      "policy": "rules/no-inferrable-types.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-inferrable-types/default/**"
+      ]
+    },
+    {
+      "id": "no-inferrable-types--ignore-params",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-inferrable-types"
+      },
+      "policy": "candidates/no-inferrable-types/ignore-params.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-inferrable-types/ignore-params/**"
+      ]
+    },
+    {
+      "id": "no-inferrable-types--ignore-properties",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-inferrable-types"
+      },
+      "policy": "candidates/no-inferrable-types/ignore-properties.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-inferrable-types/ignore-properties/**"
+      ]
+    },
+    {
+      "id": "no-internal-module",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-internal-module"
+      },
+      "policy": "rules/no-internal-module.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-internal-module/**"
+      ]
+    },
+    {
+      "id": "no-invalid-template-strings",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-invalid-template-strings"
+      },
+      "policy": "candidates/no-invalid-template-strings/no-invalid-template-strings.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-invalid-template-strings/**"
+      ]
+    },
+    {
+      "id": "no-invalid-this--enabled",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-invalid-this"
+      },
+      "policy": "candidates/no-invalid-this/enabled.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-invalid-this/enabled/**"
+      ]
+    },
+    {
+      "id": "no-irregular-whitespace",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-irregular-whitespace"
+      },
+      "policy": "rules/no-irregular-whitespace.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-irregular-whitespace/**"
+      ]
+    },
+    {
+      "id": "no-magic-numbers",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-magic-numbers"
+      },
+      "policy": "rules/no-magic-numbers.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-magic-numbers/default/**",
+        "no-magic-numbers/default-jsx/**"
+      ]
+    },
+    {
+      "id": "no-magic-numbers--allowed-numbers",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-magic-numbers"
+      },
+      "policy": "candidates/no-magic-numbers/allowed-numbers.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-magic-numbers/allowed-numbers/**"
+      ]
+    },
+    {
+      "id": "no-magic-numbers--custom",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-magic-numbers"
+      },
+      "policy": "candidates/no-magic-numbers/custom.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-magic-numbers/custom/**"
+      ]
+    },
+    {
+      "id": "no-magic-numbers--ignore-jsx",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-magic-numbers"
+      },
+      "policy": "candidates/no-magic-numbers/ignore-jsx.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-magic-numbers/ignore-jsx/**"
+      ]
+    },
+    {
+      "id": "no-mergeable-namespace",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-mergeable-namespace"
+      },
+      "policy": "rules/no-mergeable-namespace.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-mergeable-namespace/**"
+      ]
+    },
+    {
+      "id": "no-misused-new",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-misused-new"
+      },
+      "policy": "rules/no-misused-new.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-misused-new/**"
+      ]
+    },
+    {
+      "id": "no-namespace",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-namespace"
+      },
+      "policy": "rules/no-namespace.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-namespace/default/**"
+      ]
+    },
+    {
+      "id": "no-namespace--allow-declarations",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-namespace"
+      },
+      "policy": "candidates/no-namespace/allow-declarations.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-namespace/allow-declarations/**"
+      ]
+    },
+    {
+      "id": "no-non-null-assertion",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-non-null-assertion"
+      },
+      "policy": "rules/no-non-null-assertion.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-non-null-assertion/**"
+      ]
+    },
+    {
+      "id": "no-null-keyword",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-null-keyword"
+      },
+      "policy": "rules/no-null-keyword.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-null-keyword/**"
+      ]
+    },
+    {
+      "id": "no-null-undefined-union",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-null-undefined-union"
+      },
+      "policy": "candidates/no-null-undefined-union/no-null-undefined-union.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-null-undefined-union/**"
+      ]
+    },
+    {
+      "id": "no-object-literal-type-assertion",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-object-literal-type-assertion"
+      },
+      "policy": "candidates/no-object-literal-type-assertion/no-object-literal-type-assertion.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-object-literal-type-assertion/default/**"
+      ]
+    },
+    {
+      "id": "no-object-literal-type-assertion--allow-arguments",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-object-literal-type-assertion"
+      },
+      "policy": "candidates/no-object-literal-type-assertion/allow-arguments.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-object-literal-type-assertion/allow-arguments/**"
+      ]
+    },
+    {
+      "id": "no-parameter-properties",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-parameter-properties"
+      },
+      "policy": "rules/no-parameter-properties.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-parameter-properties/**"
+      ]
+    },
+    {
+      "id": "no-parameter-reassignment",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-parameter-reassignment"
+      },
+      "policy": "candidates/no-parameter-reassignment/no-parameter-reassignment.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-parameter-reassignment/**"
+      ]
+    },
+    {
+      "id": "no-promise-as-boolean",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-promise-as-boolean"
+      },
+      "policy": "candidates/no-promise-as-boolean/no-promise-as-boolean.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-promise-as-boolean/custom-promise/**",
+        "no-promise-as-boolean/es6-promise/**"
+      ]
+    },
+    {
+      "id": "no-redundant-jsdoc",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-redundant-jsdoc"
+      },
+      "policy": "candidates/no-redundant-jsdoc/no-redundant-jsdoc.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-redundant-jsdoc/**"
+      ]
+    },
+    {
+      "id": "no-reference",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-reference"
+      },
+      "policy": "candidates/no-reference/no-reference.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-reference/**"
+      ]
+    },
+    {
+      "id": "no-reference-import",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-reference-import"
+      },
+      "policy": "candidates/no-reference-import/no-reference-import.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-reference-import/**"
+      ]
+    },
+    {
+      "id": "no-require-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-require-imports"
+      },
+      "policy": "rules/no-require-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-require-imports/**"
+      ]
+    },
+    {
+      "id": "no-restricted-globals",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-restricted-globals"
+      },
+      "policy": "candidates/no-restricted-globals/no-restricted-globals.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-restricted-globals/**"
+      ]
+    },
+    {
+      "id": "no-return-await",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-return-await"
+      },
+      "policy": "rules/no-return-await.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-return-await/**"
+      ]
+    },
+    {
+      "id": "no-sparse-arrays",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-sparse-arrays"
+      },
+      "policy": "candidates/no-sparse-arrays/no-sparse-arrays.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-sparse-arrays/**"
+      ]
+    },
+    {
+      "id": "no-string-literal",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-string-literal"
+      },
+      "policy": "candidates/no-string-literal/no-string-literal.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-string-literal/**"
+      ]
+    },
+    {
+      "id": "no-string-throw",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-string-throw"
+      },
+      "policy": "rules/no-string-throw.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-string-throw/**"
+      ]
+    },
+    {
+      "id": "no-submodule-imports--dynamic-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-submodule-imports"
+      },
+      "policy": "candidates/no-submodule-imports/dynamic-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-submodule-imports/dynamic-imports/**"
+      ]
+    },
+    {
+      "id": "no-submodule-imports--static-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-submodule-imports"
+      },
+      "policy": "candidates/no-submodule-imports/static-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-submodule-imports/static-imports/**"
+      ]
+    },
+    {
+      "id": "no-switch-case-fall-through",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-switch-case-fall-through"
+      },
+      "policy": "rules/no-switch-case-fall-through.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-switch-case-fall-through/**"
+      ]
+    },
+    {
+      "id": "no-tautology-expression",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-tautology-expression"
+      },
+      "policy": "rules/no-tautology-expression.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-tautology-expression/**"
+      ]
+    },
+    {
+      "id": "no-this-assignment",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-this-assignment"
+      },
+      "policy": "rules/no-this-assignment.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-this-assignment/default/**"
+      ]
+    },
+    {
+      "id": "no-this-assignment--allow-destructuring",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-this-assignment"
+      },
+      "policy": "candidates/no-this-assignment/allow-destructuring.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-this-assignment/allow-destructuring/**"
+      ]
+    },
+    {
+      "id": "no-this-assignment--allowed-names",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-this-assignment"
+      },
+      "policy": "candidates/no-this-assignment/allowed-names.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-this-assignment/allowed-names/**"
+      ]
+    },
+    {
+      "id": "no-unbound-method",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unbound-method"
+      },
+      "policy": "candidates/no-unbound-method/no-unbound-method.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unbound-method/default/**",
+        "no-unbound-method/ignore-static/**"
+      ]
+    },
+    {
+      "id": "no-unbound-method--whitelist",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unbound-method"
+      },
+      "policy": "candidates/no-unbound-method/whitelist.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unbound-method/whitelist/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-callback-wrapper",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-callback-wrapper"
+      },
+      "policy": "candidates/no-unnecessary-callback-wrapper/no-unnecessary-callback-wrapper.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-callback-wrapper/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-class",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-class"
+      },
+      "policy": "rules/no-unnecessary-class.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-class/default/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-class--allow-constructor-only",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-class"
+      },
+      "policy": "candidates/no-unnecessary-class/allow-constructor-only.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-class/allow-constructor-only/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-class--allow-empty",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-class"
+      },
+      "policy": "candidates/no-unnecessary-class/allow-empty.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-class/allow-empty/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-class--allow-static-only",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-class"
+      },
+      "policy": "candidates/no-unnecessary-class/allow-static-only.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-class/allow-static-only/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-initializer",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-initializer"
+      },
+      "policy": "rules/no-unnecessary-initializer.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-initializer/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-qualifier",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-qualifier"
+      },
+      "policy": "candidates/no-unnecessary-qualifier/no-unnecessary-qualifier.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-qualifier/**"
+      ]
+    },
+    {
+      "id": "no-unnecessary-type-assertion",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unnecessary-type-assertion"
+      },
+      "policy": "candidates/no-unnecessary-type-assertion/no-unnecessary-type-assertion.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unnecessary-type-assertion/noStrictNullChecks/**",
+        "no-unnecessary-type-assertion/strict/**",
+        "no-unnecessary-type-assertion/strictNullChecks/**"
+      ]
+    },
+    {
+      "id": "no-unsafe-any",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unsafe-any"
+      },
+      "policy": "candidates/no-unsafe-any/no-unsafe-any.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unsafe-any/default/**",
+        "no-unsafe-any/jsx/**",
+        "no-unsafe-any/unknown/**"
+      ]
+    },
+    {
+      "id": "no-unsafe-finally",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unsafe-finally"
+      },
+      "policy": "rules/no-unsafe-finally.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unsafe-finally/**"
+      ]
+    },
+    {
+      "id": "no-unused-expression",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unused-expression"
+      },
+      "policy": "rules/no-unused-expression.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unused-expression/default/**"
+      ]
+    },
+    {
+      "id": "no-unused-expression--allow-fast-null-checks",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unused-expression"
+      },
+      "policy": "candidates/no-unused-expression/allow-fast-null-checks.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unused-expression/allow-fast-null-checks/**"
+      ]
+    },
+    {
+      "id": "no-unused-expression--allow-new",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unused-expression"
+      },
+      "policy": "candidates/no-unused-expression/allow-new.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unused-expression/allow-new/**"
+      ]
+    },
+    {
+      "id": "no-unused-expression--allow-tagged-template",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unused-expression"
+      },
+      "policy": "candidates/no-unused-expression/allow-tagged-template.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unused-expression/allow-tagged-template/**"
+      ]
+    },
+    {
+      "id": "no-unused-variable",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-unused-variable"
+      },
+      "policy": "candidates/no-unused-variable/no-unused-variable.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-unused-variable/check-parameters/**",
+        "no-unused-variable/default/**",
+        "no-unused-variable/ignore-pattern/**",
+        "no-unused-variable/type-checked/**"
+      ]
+    },
+    {
+      "id": "no-use-before-declare",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-use-before-declare"
+      },
+      "policy": "candidates/no-use-before-declare/no-use-before-declare.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-use-before-declare/**"
+      ]
+    },
+    {
+      "id": "no-var-keyword",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-var-keyword"
+      },
+      "policy": "rules/no-var-keyword.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-var-keyword/**"
+      ]
+    },
+    {
+      "id": "no-var-requires",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-var-requires"
+      },
+      "policy": "candidates/no-var-requires/no-var-requires.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-var-requires/**"
+      ]
+    },
+    {
+      "id": "no-void-expression",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-void-expression"
+      },
+      "policy": "candidates/no-void-expression/no-void-expression.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-void-expression/default/**"
+      ]
+    },
+    {
+      "id": "no-void-expression--ignore-arrow-function-shorthand",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "no-void-expression"
+      },
+      "policy": "candidates/no-void-expression/ignore-arrow-function-shorthand.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "no-void-expression/ignore-arrow-function-shorthand/**"
+      ]
+    },
+    {
+      "id": "number-literal-format",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "number-literal-format"
+      },
+      "policy": "rules/number-literal-format.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "number-literal-format/**"
+      ]
+    },
+    {
+      "id": "object-literal-key-quotes",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-key-quotes"
+      },
+      "policy": "candidates/object-literal-key-quotes/object-literal-key-quotes.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-key-quotes/always/**"
+      ]
+    },
+    {
+      "id": "object-literal-key-quotes--as-needed",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-key-quotes"
+      },
+      "policy": "candidates/object-literal-key-quotes/as-needed.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-key-quotes/as-needed/**"
+      ]
+    },
+    {
+      "id": "object-literal-key-quotes--consistent-as-needed",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-key-quotes"
+      },
+      "policy": "candidates/object-literal-key-quotes/consistent-as-needed.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-key-quotes/consistent-as-needed/**"
+      ]
+    },
+    {
+      "id": "object-literal-key-quotes--consistent",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-key-quotes"
+      },
+      "policy": "candidates/object-literal-key-quotes/consistent.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-key-quotes/consistent/**"
+      ]
+    },
+    {
+      "id": "object-literal-shorthand",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-shorthand"
+      },
+      "policy": "candidates/object-literal-shorthand/object-literal-shorthand.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-shorthand/always/**"
+      ]
+    },
+    {
+      "id": "object-literal-shorthand--never",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-shorthand"
+      },
+      "policy": "candidates/object-literal-shorthand/never.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-shorthand/never/**"
+      ]
+    },
+    {
+      "id": "object-literal-shorthand--only-methods",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-shorthand"
+      },
+      "policy": "candidates/object-literal-shorthand/onlyMethods.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-shorthand/onlyMethods/**"
+      ]
+    },
+    {
+      "id": "object-literal-sort-keys",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-sort-keys"
+      },
+      "policy": "candidates/object-literal-sort-keys/object-literal-sort-keys.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-sort-keys/default/**",
+        "object-literal-sort-keys/ignore-blank-lines/**",
+        "object-literal-sort-keys/locale-compare/**",
+        "object-literal-sort-keys/match-declaration-order/**"
+      ]
+    },
+    {
+      "id": "object-literal-sort-keys--ignore-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-sort-keys"
+      },
+      "policy": "candidates/object-literal-sort-keys/ignore-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-sort-keys/ignore-case/**"
+      ]
+    },
+    {
+      "id": "object-literal-sort-keys--match-declaration-order-only",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-sort-keys"
+      },
+      "policy": "candidates/object-literal-sort-keys/match-declaration-order-only.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-sort-keys/match-declaration-order-only/**"
+      ]
+    },
+    {
+      "id": "object-literal-sort-keys--shorthand-first",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "object-literal-sort-keys"
+      },
+      "policy": "candidates/object-literal-sort-keys/shorthand-first.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "object-literal-sort-keys/shorthand-first/**"
+      ]
+    },
+    {
+      "id": "one-variable-per-declaration",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "one-variable-per-declaration"
+      },
+      "policy": "rules/one-variable-per-declaration.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "one-variable-per-declaration/default/**"
+      ]
+    },
+    {
+      "id": "one-variable-per-declaration--ignore-for-loop",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "one-variable-per-declaration"
+      },
+      "policy": "candidates/one-variable-per-declaration/ignore-for-loop.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "one-variable-per-declaration/ignore-for-loop/**"
+      ]
+    },
+    {
+      "id": "only-arrow-functions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "only-arrow-functions"
+      },
+      "policy": "rules/only-arrow-functions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "only-arrow-functions/default/**"
+      ]
+    },
+    {
+      "id": "only-arrow-functions--allow-declarations",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "only-arrow-functions"
+      },
+      "policy": "candidates/only-arrow-functions/allow-declarations.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "only-arrow-functions/allow-declarations/**"
+      ]
+    },
+    {
+      "id": "only-arrow-functions--allow-named-functions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "only-arrow-functions"
+      },
+      "policy": "candidates/only-arrow-functions/allow-named-functions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "only-arrow-functions/allow-named-functions/**"
+      ]
+    },
+    {
+      "id": "ordered-imports",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ordered-imports"
+      },
+      "policy": "candidates/ordered-imports/ordered-imports.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ordered-imports/case-insensitive/**",
+        "ordered-imports/grouped-imports/**",
+        "ordered-imports/groups-complex/**",
+        "ordered-imports/groups-shared-order/**",
+        "ordered-imports/groups-string-list/**",
+        "ordered-imports/groups-unmatched/**",
+        "ordered-imports/import-sources-any/grouped-imports/**",
+        "ordered-imports/inside-module-declaration/**",
+        "ordered-imports/module-source-path/**",
+        "ordered-imports/standalone-grouped-import/**"
+      ]
+    },
+    {
+      "id": "ordered-imports--case-insensitive-legacy",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ordered-imports"
+      },
+      "policy": "candidates/ordered-imports/case-insensitive-legacy.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ordered-imports/case-insensitive-legacy/**"
+      ]
+    },
+    {
+      "id": "ordered-imports--import-sources-any-default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ordered-imports"
+      },
+      "policy": "candidates/ordered-imports/import-sources-any/default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ordered-imports/import-sources-any/default/**"
+      ]
+    },
+    {
+      "id": "ordered-imports--lowercase-first",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ordered-imports"
+      },
+      "policy": "candidates/ordered-imports/lowercase-first.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ordered-imports/lowercase-first/**"
+      ]
+    },
+    {
+      "id": "ordered-imports--named-imports-any",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "ordered-imports"
+      },
+      "policy": "candidates/ordered-imports/named-imports-any.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "ordered-imports/named-imports-any/**"
+      ]
+    },
+    {
+      "id": "prefer-conditional-expression",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-conditional-expression"
+      },
+      "policy": "rules/prefer-conditional-expression.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-conditional-expression/default/**"
+      ]
+    },
+    {
+      "id": "prefer-conditional-expression--check-else-if",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-conditional-expression"
+      },
+      "policy": "candidates/prefer-conditional-expression/check-else-if.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-conditional-expression/check-else-if/**"
+      ]
+    },
+    {
+      "id": "prefer-const",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-const"
+      },
+      "policy": "candidates/prefer-const/prefer-const.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-const/default/**",
+        "prefer-const/destructuring-all/**"
+      ]
+    },
+    {
+      "id": "prefer-for-of",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-for-of"
+      },
+      "policy": "candidates/prefer-for-of/prefer-for-of.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-for-of/**"
+      ]
+    },
+    {
+      "id": "prefer-function-over-method",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-function-over-method"
+      },
+      "policy": "rules/prefer-function-over-method.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-function-over-method/default/**"
+      ]
+    },
+    {
+      "id": "prefer-function-over-method--allow-protected",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-function-over-method"
+      },
+      "policy": "candidates/prefer-function-over-method/allow-protected.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-function-over-method/allow-protected/**"
+      ]
+    },
+    {
+      "id": "prefer-function-over-method--allow-public-and-protected",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-function-over-method"
+      },
+      "policy": "candidates/prefer-function-over-method/allow-public-and-protected.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-function-over-method/allow-public-and-protected/**"
+      ]
+    },
+    {
+      "id": "prefer-function-over-method--allow-public",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-function-over-method"
+      },
+      "policy": "candidates/prefer-function-over-method/allow-public.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-function-over-method/allow-public/**"
+      ]
+    },
+    {
+      "id": "prefer-method-signature",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-method-signature"
+      },
+      "policy": "rules/prefer-method-signature.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-method-signature/**"
+      ]
+    },
+    {
+      "id": "prefer-object-spread",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-object-spread"
+      },
+      "policy": "candidates/prefer-object-spread/prefer-object-spread.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-object-spread/**"
+      ]
+    },
+    {
+      "id": "prefer-readonly",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-readonly"
+      },
+      "policy": "candidates/prefer-readonly/prefer-readonly.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-readonly/default/**"
+      ]
+    },
+    {
+      "id": "prefer-readonly--only-inline-lambdas",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-readonly"
+      },
+      "policy": "candidates/prefer-readonly/only-inline-lambdas.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-readonly/only-inline-lambdas/**"
+      ]
+    },
+    {
+      "id": "prefer-switch",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-switch"
+      },
+      "policy": "rules/prefer-switch.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-switch/default/**"
+      ]
+    },
+    {
+      "id": "prefer-switch--min-cases-2",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-switch"
+      },
+      "policy": "candidates/prefer-switch/min-cases-2.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-switch/min-cases-2/**"
+      ]
+    },
+    {
+      "id": "prefer-template",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-template"
+      },
+      "policy": "rules/prefer-template.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-template/default/**"
+      ]
+    },
+    {
+      "id": "prefer-template--allow-single-concat",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-template"
+      },
+      "policy": "candidates/prefer-template/allow-single-concat.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-template/allow-single-concat/**"
+      ]
+    },
+    {
+      "id": "prefer-while",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "prefer-while"
+      },
+      "policy": "candidates/prefer-while/prefer-while.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "prefer-while/**"
+      ]
+    },
+    {
+      "id": "promise-function-async",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "promise-function-async"
+      },
+      "policy": "candidates/promise-function-async/promise-function-async.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "promise-function-async/**"
+      ]
+    },
+    {
+      "id": "quotemark",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "rules/quotemark.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/double/**",
+        "quotemark/invalid-double/**"
+      ]
+    },
+    {
+      "id": "quotemark--backtick",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/backtick.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/backtick/**"
+      ]
+    },
+    {
+      "id": "quotemark--double-avoid-escape",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/double-avoid-escape.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/double-avoid-escape/**"
+      ]
+    },
+    {
+      "id": "quotemark--double-avoid-template",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/double-avoid-template.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/double-avoid-template/**"
+      ]
+    },
+    {
+      "id": "quotemark--invalid-single",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/invalid-single.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/invalid-single/**"
+      ]
+    },
+    {
+      "id": "quotemark--jsx-double",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/jsx-double.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/jsx-double/**"
+      ]
+    },
+    {
+      "id": "quotemark--jsx-single",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/jsx-single.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/jsx-single/**"
+      ]
+    },
+    {
+      "id": "quotemark--single-avoid-escape",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/single-avoid-escape.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/single-avoid-escape/**"
+      ]
+    },
+    {
+      "id": "quotemark--single-avoid-template",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/single-avoid-template.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/single-avoid-template/**"
+      ]
+    },
+    {
+      "id": "quotemark--single",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "quotemark"
+      },
+      "policy": "candidates/quotemark/single.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "quotemark/single/**"
+      ]
+    },
+    {
+      "id": "radix",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "radix"
+      },
+      "policy": "rules/radix.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "radix/**"
+      ]
+    },
+    {
+      "id": "restrict-plus-operands",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "restrict-plus-operands"
+      },
+      "policy": "candidates/restrict-plus-operands/restrict-plus-operands.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "restrict-plus-operands/default/**",
+        "restrict-plus-operands/esnext-bigint/**"
+      ]
+    },
+    {
+      "id": "return-undefined",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "return-undefined"
+      },
+      "policy": "candidates/return-undefined/return-undefined.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "return-undefined/default/**",
+        "return-undefined/pre-ts-3.6/**"
+      ]
+    },
+    {
+      "id": "static-this",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "static-this"
+      },
+      "policy": "rules/static-this.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "static-this/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/strict-boolean-expressions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/allow-boolean-undefined-union/**",
+        "strict-boolean-expressions/allow-enum/**",
+        "strict-boolean-expressions/allow-null-union/**",
+        "strict-boolean-expressions/allow-undefined-union/**",
+        "strict-boolean-expressions/default/**",
+        "strict-boolean-expressions/no-null-checks/**",
+        "strict-boolean-expressions/no-null-checks-allow-null-union/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--allow-mix",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/allow-mix.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/allow-mix/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--allow-number",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/allow-number.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/allow-number/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--allow-string",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/allow-string.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/allow-string/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--ignore-rhs",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/ignore-rhs.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/ignore-rhs/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--no-allow-mix",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/no-allow-mix.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/no-allow-mix/**"
+      ]
+    },
+    {
+      "id": "strict-boolean-expressions--no-null-checks-allow-number-string",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-boolean-expressions"
+      },
+      "policy": "candidates/strict-boolean-expressions/no-null-checks-allow-number-string.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-boolean-expressions/no-null-checks-allow-number-string/**"
+      ]
+    },
+    {
+      "id": "strict-comparisons",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-comparisons"
+      },
+      "policy": "candidates/strict-comparisons/strict-comparisons.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-comparisons/default/**"
+      ]
+    },
+    {
+      "id": "strict-comparisons--allow-object-equal-comparison",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-comparisons"
+      },
+      "policy": "candidates/strict-comparisons/allow-object-equal-comparison.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-comparisons/allow-object-equal-comparison/**"
+      ]
+    },
+    {
+      "id": "strict-comparisons--allow-string-order-comparison",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-comparisons"
+      },
+      "policy": "candidates/strict-comparisons/allow-string-order-comparison.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-comparisons/allow-string-order-comparison/**"
+      ]
+    },
+    {
+      "id": "strict-string-expressions",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-string-expressions"
+      },
+      "policy": "candidates/strict-string-expressions/strict-string-expressions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-string-expressions/disallow-empty-types/**"
+      ]
+    },
+    {
+      "id": "strict-string-expressions--allow-empty-types",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-string-expressions"
+      },
+      "policy": "candidates/strict-string-expressions/allow-empty-types.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-string-expressions/allow-empty-types/**"
+      ]
+    },
+    {
+      "id": "strict-type-predicates",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "strict-type-predicates"
+      },
+      "policy": "candidates/strict-type-predicates/strict-type-predicates.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "strict-type-predicates/no-strict-null-checks/**",
+        "strict-type-predicates/strict-null-checks/**",
+        "strict-type-predicates/unknown/**"
+      ]
+    },
+    {
+      "id": "switch-default",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "switch-default"
+      },
+      "policy": "rules/switch-default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "switch-default/**"
+      ]
+    },
+    {
+      "id": "switch-final-break",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "switch-final-break"
+      },
+      "policy": "candidates/switch-final-break/switch-final-break.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "switch-final-break/default/**"
+      ]
+    },
+    {
+      "id": "switch-final-break--always",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "switch-final-break"
+      },
+      "policy": "candidates/switch-final-break/always.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "switch-final-break/always/**"
+      ]
+    },
+    {
+      "id": "triple-equals--allow-null-check",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "triple-equals"
+      },
+      "policy": "candidates/triple-equals/allow-null-check.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "triple-equals/allow-null-check/**"
+      ]
+    },
+    {
+      "id": "triple-equals--allow-undefined-check",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "triple-equals"
+      },
+      "policy": "candidates/triple-equals/allow-undefined-check.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "triple-equals/allow-undefined-check/**"
+      ]
+    },
+    {
+      "id": "type-literal-delimiter",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "type-literal-delimiter"
+      },
+      "policy": "rules/type-literal-delimiter.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "type-literal-delimiter/one-liners-with-no-trailings/**"
+      ]
+    },
+    {
+      "id": "type-literal-delimiter--one-liners-with-trailings",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "type-literal-delimiter"
+      },
+      "policy": "candidates/type-literal-delimiter/one-liners-with-trailings.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "type-literal-delimiter/one-liners-with-trailings/**"
+      ]
+    },
+    {
+      "id": "typedef",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/typedef.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/none/**"
+      ]
+    },
+    {
+      "id": "typedef--all",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/all.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/all/**"
+      ]
+    },
+    {
+      "id": "typedef--array-destructuring",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/array-destructuring.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/array-destructuring/**"
+      ]
+    },
+    {
+      "id": "typedef--arrow-call-signature-and-parameter",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/arrow-call-signature-and-parameter.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/arrow-call-signature-and-parameter/**"
+      ]
+    },
+    {
+      "id": "typedef--arrow-call-signature",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/arrow-call-signature.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/arrow-call-signature/**"
+      ]
+    },
+    {
+      "id": "typedef--arrow-parameter",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/arrow-parameter.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/arrow-parameter/**"
+      ]
+    },
+    {
+      "id": "typedef--call-signature",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/call-signature.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/call-signature/**"
+      ]
+    },
+    {
+      "id": "typedef--member-variable-declaration",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/member-variable-declaration.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/member-variable-declaration/**"
+      ]
+    },
+    {
+      "id": "typedef--object-destructuring",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/object-destructuring.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/object-destructuring/**"
+      ]
+    },
+    {
+      "id": "typedef--parameter",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/parameter.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/parameter/**"
+      ]
+    },
+    {
+      "id": "typedef--variable-declaration-ignore-function",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/variable-declaration-ignore-function.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/variable-declaration-ignore-function/**"
+      ]
+    },
+    {
+      "id": "typedef--variable-declaration",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typedef"
+      },
+      "policy": "candidates/typedef/variable-declaration.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typedef/variable-declaration/**"
+      ]
+    },
+    {
+      "id": "typeof-compare",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "typeof-compare"
+      },
+      "policy": "rules/typeof-compare.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "typeof-compare/**"
+      ]
+    },
+    {
+      "id": "unified-signatures",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unified-signatures"
+      },
+      "policy": "candidates/unified-signatures/unified-signatures.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unified-signatures/**"
+      ]
+    },
+    {
+      "id": "unnecessary-bind",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-bind"
+      },
+      "policy": "candidates/unnecessary-bind/unnecessary-bind.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-bind/untyped/**"
+      ]
+    },
+    {
+      "id": "unnecessary-bind--typed",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-bind"
+      },
+      "policy": "candidates/unnecessary-bind/typed.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-bind/typed/**"
+      ]
+    },
+    {
+      "id": "unnecessary-constructor",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-constructor"
+      },
+      "policy": "candidates/unnecessary-constructor/unnecessary-constructor.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-constructor/default/**"
+      ]
+    },
+    {
+      "id": "unnecessary-constructor--check-super-calls",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-constructor"
+      },
+      "policy": "candidates/unnecessary-constructor/check-super-calls.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-constructor/check-super-calls/**"
+      ]
+    },
+    {
+      "id": "unnecessary-else",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-else"
+      },
+      "policy": "rules/unnecessary-else.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-else/default/**"
+      ]
+    },
+    {
+      "id": "unnecessary-else--allow-else-if",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "unnecessary-else"
+      },
+      "policy": "candidates/unnecessary-else/allow-else-if.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "unnecessary-else/allow-else-if/**"
+      ]
+    },
+    {
+      "id": "use-isnan",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "use-isnan"
+      },
+      "policy": "rules/use-isnan.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "use-isnan/**"
+      ]
+    },
+    {
+      "id": "variable-name",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "rules/variable-name.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/default/**"
+      ]
+    },
+    {
+      "id": "variable-name--allow-leading-trailing-underscore",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/allow-leading-trailing-underscore.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/allow-leading-trailing-underscore/**"
+      ]
+    },
+    {
+      "id": "variable-name--allow-leading-underscore",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/allow-leading-underscore.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/allow-leading-underscore/**"
+      ]
+    },
+    {
+      "id": "variable-name--allow-pascal-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/allow-pascal-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/allow-pascal-case/**"
+      ]
+    },
+    {
+      "id": "variable-name--allow-snake-case",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/allow-snake-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/allow-snake-case/**"
+      ]
+    },
+    {
+      "id": "variable-name--allow-trailing-underscore",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/allow-trailing-underscore.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/allow-trailing-underscore/**"
+      ]
+    },
+    {
+      "id": "variable-name--ban-keywords",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/ban-keywords.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/ban-keywords/**"
+      ]
+    },
+    {
+      "id": "variable-name--const-only-for-caps",
+      "upstream": {
+        "tool": "tslint",
+        "rule": "variable-name"
+      },
+      "policy": "candidates/variable-name/const-only-for-caps.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column",
+      "fixtures": [
+        "variable-name/const-only-for-caps/**"
       ]
     }
-  }
+  ]
 }

@@ -9,7 +9,7 @@
     {
       "id": "bom",
       "forbid": { "regex": { "source": "file.content", "pattern": "\\A\\x{FEFF}" } },
-      "violation": { "anchor": "witness.span", "code": "ENCODING", "message": "This file is not UTF-8 encoded." }
+      "violation": { "anchor": "witness.span", "code": "encoding", "message": "This file is not UTF-8 encoded." }
     }
   ]
 }

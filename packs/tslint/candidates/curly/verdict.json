@@ -1,0 +1,6 @@
+{
+  "audit": {
+    "class": "fixture-fit",
+    "note": "ignore-same-line tests whether the whole if_statement text is single-line; confirmed a wrapped condition with a one-line body is wrongly flagged."
+  }
+}

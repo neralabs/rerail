@@ -18,5 +18,10 @@
       "line": 46,
       "why": "undocumented `set myAccessor` is not flagged: the documented `get myAccessor` (line 44) is a sibling accessor with the same bound name"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "jsdoc-parse",
+    "note": "Tag existence/content requirements are regexes over the whole comment text; a tag mentioned inside another tag's description satisfies them."
+  }
 }

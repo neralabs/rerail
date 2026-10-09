@@ -15,5 +15,9 @@
       "line": 11,
       "why": "`import forOwn = require(lodash);` is also not parseable by tree-sitter-typescript"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "note": "The implicit-named fallback (whole-module warn on a partially-banned import) is only wired for lodash, not the fixture's own `dummy` module; `import * as x from \"dummy\";` would be unflagged though TSLint's generic fallback flags any partially-banned module. (Effective verdict PASS (repaired fixture) for the fixture-artifact blocker; primary primitive stays fixture-artifact since option-baking is the more decisive limitation here.) The default doc also bakes the fixture's banned list (lodash, dummy, pull/pullAll), where TSLint's bare `true` bans nothing (found by the harness's `literals` scan)."
+  }
 }

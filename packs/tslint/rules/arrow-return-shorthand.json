@@ -131,7 +131,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ARROW_RETURN_SHORTHAND",
+        "code": "arrow-return-shorthand",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'.",
         "fix": "$E"
       }
@@ -240,7 +240,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ARROW_RETURN_SHORTHAND",
+        "code": "arrow-return-shorthand",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return', and wrapping the object literal in parentheses.",
         "fix": "($E)"
       }
@@ -338,7 +338,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ARROW_RETURN_SHORTHAND",
+        "code": "arrow-return-shorthand",
         "message": "This arrow function body can be simplified by omitting the curly braces and the keyword 'return'."
       }
     }

@@ -87,7 +87,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_COMPARISONS",
+        "code": "strict-comparisons",
         "message": "Cannot compare these operand types with this comparator."
       }
     }

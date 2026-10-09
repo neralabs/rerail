@@ -70,7 +70,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_VAR_KEYWORD",
+        "code": "no-var-keyword",
         "message": "Forbidden 'var' keyword, use 'let' or 'const' instead",
         "fix": "let"
       }

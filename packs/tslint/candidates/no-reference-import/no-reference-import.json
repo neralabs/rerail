@@ -14,7 +14,7 @@
           "exists": { "ast": { "language": "typescript", "rule": { "any": [ { "kind": "import_statement" }, { "kind": "import_alias" } ] } } }
         }
       },
-      "violation": { "anchor": "capture.NAME", "code": "NO_REFERENCE_IMPORT", "message": "No need to reference the module, since it is imported." }
+      "violation": { "anchor": "capture.NAME", "code": "no-reference-import", "message": "No need to reference the module, since it is imported." }
     }
   ]
 }

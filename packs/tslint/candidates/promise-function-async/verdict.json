@@ -9,5 +9,9 @@
       "line": 3,
       "why": "`function(p: Promise<void>) { return p; }` is caught only by the name-blind proxy (Promise-typed param + returns an identifier)"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "note": "Syntactic proxy for the inferred return type (sidecar already documents this); misses `function foo(){ return fetch(url).then(r => r.json()); }`."
+  }
 }

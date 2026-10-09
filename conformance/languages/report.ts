@@ -33,6 +33,8 @@ export const EXAMPLE_LIMIT = 50;
 
 export const ruleRowSchema = z.object({
   rule: z.string(),
+  /** A port under `candidates/`: scored and reported, never failing the run (`reportFailures`). */
+  candidate: z.boolean(),
   upstream: z.object({ tool: z.string(), rule: z.string() }),
   capabilities: z.array(z.string()),
   /** `fixtures` or `corpus:<name>`. */

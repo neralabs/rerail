@@ -1,0 +1,8 @@
+{
+  "audit": {
+    "class": "bounded",
+    "depth": "forwarding-super enumerated to 6 params",
+    "primitive": "utils",
+    "note": "Default (empty-body) doc is genuine; check-super-calls override enumerates forwarding-super-call parameter counts by regex only up to 6 params."
+  }
+}

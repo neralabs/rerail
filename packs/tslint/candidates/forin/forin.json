@@ -95,7 +95,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "FORIN",
+        "code": "forin",
         "message": "for (... in ...) statements must be filtered with an if statement"
       }
     }

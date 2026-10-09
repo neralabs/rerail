@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CODE_RULE_LANGUAGE_FAMILIES } from "../../src/code-rule-languages.js";
@@ -37,12 +37,28 @@ const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 const ruleSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u, "rule ids are lowercase kebab-case"),
   upstream: z.strictObject({ tool: nonEmpty, rule: nonEmpty }),
-  /** `rules/<id>.json`, relative to the pack directory. */
+  /** `rules/<id>.json` (shipped, gated) or `candidates/…` (scored, never gated), relative to the pack directory. */
   policy: nonEmpty,
   capabilities: z.array(nonEmpty).min(1),
   match: z.enum(["line", "line+column"]),
+  /**
+   * `path.matchesGlob` patterns over the tool's fixture paths: the rule is evaluated and scored only on the fixture
+   * units they match, the tests its upstream configuration ran on (one rule option variant, say). Default: every
+   * unit. Corpora are always scored whole.
+   */
+  fixtures: z.array(nonEmpty).min(1).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
+
+/** Whether `rule` is evaluated and scored on the fixture at `path` (see `fixtures`). */
+export function coversFixture(rule: PackRule, path: string): boolean {
+  return rule.fixtures === undefined || rule.fixtures.some(pattern => matchesGlob(path, pattern));
+}
+
+/** A port still being evaluated (`candidates/`): scored and reported, but its FPs, FNs and engine failures fail nothing. */
+export function isCandidate(rule: PackRule): boolean {
+  return !rule.policy.replace(/^\.\//u, "").startsWith("rules/");
+}
 
 /**
  * A declared capability no reference linter has a rule for that reads it like-for-like, so T4 cannot port one. It
@@ -212,18 +228,11 @@ export function listPacks(): string[] {
     .sort(compareDeterministicStrings);
 }
 
-/**
- * Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json in this runner's
- * schema. A conformance.json with a `format` is another harness's (the TSLint pack's golden manifest,
- * conformance/tslint/golden.ts). Their tests are test/packs.test.ts.
- */
+/** Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json. Their tests are test/packs.test.ts. */
 export function listPortedPacks(): string[] {
   if (!existsSync(PACKS_ROOT)) return [];
   return readdirSync(PACKS_ROOT, { withFileTypes: true })
-    .filter(entry => {
-      const path = join(PACKS_ROOT, entry.name, CONFORMANCE_FILE);
-      return entry.isDirectory() && existsSync(path) && !z.looseObject({ format: z.string() }).safeParse(JSON.parse(readFileSync(path, "utf8"))).success;
-    })
+    .filter(entry => entry.isDirectory() && existsSync(join(PACKS_ROOT, entry.name, CONFORMANCE_FILE)))
     .map(entry => entry.name)
     .sort(compareDeterministicStrings);
 }

@@ -54,7 +54,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPE_LITERAL_DELIMITER",
+        "code": "type-literal-delimiter",
         "message": "Expected type literal to use ';' instead of ','."
       }
     },
@@ -93,7 +93,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "TYPE_LITERAL_DELIMITER",
+        "code": "type-literal-delimiter",
         "message": "Did not expect single-line type literal to have a trailing ';'."
       }
     },
@@ -153,7 +153,7 @@
       },
       "violation": {
         "anchor": "capture.LAST",
-        "code": "TYPE_LITERAL_DELIMITER",
+        "code": "type-literal-delimiter",
         "message": "Expected type literal to use ';' to separate members."
       }
     }

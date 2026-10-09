@@ -100,7 +100,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to this function are not allowed."
       }
     },
@@ -132,7 +132,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to 'window.toString' are not allowed."
       }
     },
@@ -164,7 +164,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to '_.map' are not allowed."
       }
     },
@@ -196,7 +196,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to '_.filter' are not allowed. Use the native JavaScript 'myArray.filter' instead."
       }
     },
@@ -228,7 +228,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to '*.forEach' are not allowed. Use a regular for loop instead."
       }
     },
@@ -260,7 +260,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to 'chai.assert.equal' are not allowed. Use 'strictEqual' instead."
       }
     },
@@ -292,7 +292,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "BAN",
+        "code": "ban",
         "message": "Calls to '*._id.toString' are not allowed. Use 'toHexString' instead."
       }
     }

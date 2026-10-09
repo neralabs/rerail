@@ -30,7 +30,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_WHILE",
+        "code": "prefer-while",
         "message": "Prefer `while` loops instead of `for` loops without an initializer and incrementor."
       }
     }

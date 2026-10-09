@@ -15,5 +15,10 @@
       "line": 14,
       "why": "`@param {number} x Is a number`: capture.TYPE starts at 14:11 at `{number}`"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "jsdoc-parse",
+    "note": "Content regexes per tag family stand in for a JSDoc parse and are not confined to `/** */` comments: `// @param {string} x` or a string containing `@type {x}` is flagged though TSLint only reads JSDoc."
+  }
 }

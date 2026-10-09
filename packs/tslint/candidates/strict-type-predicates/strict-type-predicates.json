@@ -89,7 +89,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_TYPE_PREDICATES",
+        "code": "strict-type-predicates",
         "message": "Expression is always true or always false."
       }
     },
@@ -165,7 +165,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "STRICT_TYPE_PREDICATES",
+        "code": "strict-type-predicates",
         "message": "Expression is always true or always false."
       }
     }

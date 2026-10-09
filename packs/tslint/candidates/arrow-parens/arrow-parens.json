@@ -39,7 +39,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "ARROW_PARENS",
+        "code": "arrow-parens",
         "message": "Parentheses are required around the parameters of an arrow function definition"
       }
     }

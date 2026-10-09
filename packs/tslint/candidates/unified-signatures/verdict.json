@@ -12,5 +12,10 @@
       "line": 5,
       "why": "`a0(x: number)` pairs with line 3 `a0()` two overloads back (extra parameter), not with line 4, whose return type differs: the key and return type are shared bindings across the sibling relation"
     }
-  ]
+  ],
+  "audit": {
+    "class": "fixture-fit",
+    "primitive": "nthChild/position",
+    "note": "Any list length: $$$PRE/$$$POST captures align the other overload's parameter list. Parameters around the differing one compare by full text (TSLint: sigils + type), so overloads that differ also in a parameter name are missed; all unifiable pairs reported (TSLint: first pair per 3+ group)."
+  }
 }

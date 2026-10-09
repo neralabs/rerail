@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:no-void-expression",
+  "id": "tslint:no-void-expression/ignore-arrow-function-shorthand",
   "revision": 1,
   "mode": "steer",
   "description": "no-void-expression with ignore-arrow-function-shorthand (syntactic approximation, console.* only).",
@@ -108,7 +108,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_VOID_EXPRESSION",
+        "code": "no-void-expression",
         "message": "Expression has type `void`. Put it on its own line as a statement."
       }
     }

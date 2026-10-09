@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:file-name-casing",
+  "id": "tslint:file-name-casing/invalid-option",
   "revision": 1,
   "mode": "steer",
   "description": "Invalid option: TSLint warns and checks nothing; this override never matches (path regex requiring an empty path).",
@@ -21,7 +21,7 @@
       },
       "violation": {
         "anchor": "witness.start",
-        "code": "FILE_NAME_CASING",
+        "code": "file-name-casing",
         "message": "unreachable"
       }
     }

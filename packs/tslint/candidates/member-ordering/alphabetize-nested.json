@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "tslint:member-ordering",
+  "id": "tslint:member-ordering/alphabetize-nested",
   "revision": 1,
   "mode": "steer",
   "description": "Options [{\"order\": \"fields-first\", \"alphabetize\": true}]. One check. Rank: a member of rank i fails when an earlier sibling member of the same body is ranked after i (TSLint compares with the last non-failing member, which holds the highest rank seen so far). Alphabetize: that member also holds the greatest name of its rank so far, so a member that does not fail by rank fails when an earlier member of its rank has a greater name (lower-cased, string names unquoted, a computed name sorting first): a follows walk whose rule compares the two names. A getter fails after its same-named setter. Rank failures bind no $NAME, so they anchor at the member; alphabetical ones at its name.",
@@ -520,7 +520,7 @@
       },
       "violation": {
         "anchor": "capture.NAME",
-        "code": "MEMBER_ORDERING",
+        "code": "member-ordering",
         "message": "Member declaration out of order: after a member of a later-ranked category, or by name ($NAME after $PREV)."
       }
     }

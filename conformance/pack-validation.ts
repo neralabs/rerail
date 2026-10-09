@@ -15,7 +15,6 @@ import { rulePackFileSchema, rulePackPackageName, rulePackPackageSchema, type Ru
 import { compareDeterministicStrings } from "../src/stable-json.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { GOLDEN_FORMAT, goldenRules, membershipProblems, parseGoldenManifest, type GoldenManifest } from "./tslint/golden.js";
 import { capabilitiesJson } from "./engine.js";
 
 export const PACK_CHECKS = [
@@ -249,23 +248,18 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // The ported rules, by the document they port. A pack's conformance.json is the conformance runner's pack
-  // (conformance/languages/pack.ts), or, for TSLint, the golden manifest of the TSLint harness (conformance/tslint/golden.ts),
-  // whose upstream tests are fetched at a pinned commit rather than recorded.
+  // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
+  // (conformance/languages/pack.ts).
   const conformancePath = join(directory, CONFORMANCE_FILE);
   let loaded: LoadedPack | undefined;
-  let golden: GoldenManifest | undefined;
   if (existsSync(conformancePath)) {
     try {
-      const text = readFileSync(conformancePath, "utf8");
-      if (z.looseObject({ format: z.literal(GOLDEN_FORMAT) }).safeParse(JSON.parse(text)).success) golden = parseGoldenManifest(text);
-      else loaded = loadPack(directory);
+      loaded = loadPack(directory);
     } catch (error) {
       fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
     }
   }
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
-  const goldenDocuments = new Set(Object.keys(golden?.rules ?? {}).map(rule => `rules/${rule}.json`));
 
   // Check 2: proof. Every rule has examples or a port entry.
   // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
@@ -274,7 +268,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     fail("examples", "pack.json does not parse; see check 1");
   } else {
     for (const rule of pack.rules) {
-      if (rule.examples === undefined && !portByDocument.has(rule.document) && !goldenDocuments.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
+      if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
       if (rule.examples === undefined || result?.kind !== "compiled") continue;
       for (const side of ["caught", "passes"] as const) {
@@ -328,9 +322,6 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
   }
-  // TSLint: the golden manifest lists exactly the pack's rules. Its scoring against TSLint's fetched tests is the
-  // golden gate, conformance/tslint/golden-gate.test.ts.
-  if (golden !== undefined) for (const problem of membershipProblems(golden, goldenRules(join(directory, "rules")))) fail("ports", problem);
 
   // Check 5: package. Named for the pack, no dependencies, no validation material published, licence agreeing with
   // what licenses/ records.
