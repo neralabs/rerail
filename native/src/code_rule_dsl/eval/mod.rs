@@ -46,10 +46,11 @@ pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
             let path = required_str(file, "path", "snapshot.files")?;
             let language = required_str(file, "language", "snapshot.files")?;
             // A `module` of another type is refused like a malformed one.
-            let derived =
-                (language == "python" && file.get("module").is_none() && !packages.is_empty())
-                    .then(|| python_module_in(path, |directory| packages.contains(directory)))
-                    .flatten();
+            let derived = (crate::code_rule_dsl::language::adapter::packages(language)
+                && file.get("module").is_none()
+                && !packages.is_empty())
+            .then(|| python_module_in(path, |directory| packages.contains(directory)))
+            .flatten();
             FileInput::new(
                 path.to_owned(),
                 language.to_owned(),

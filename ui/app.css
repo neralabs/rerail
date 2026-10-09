@@ -63,6 +63,8 @@ fieldset.seg2{border:0;margin:0;min-width:0}
 .gen .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;background:var(--subtle)}
 .gen .pill.live{background:var(--success-subtle);color:var(--success-foreground)}
 .gen .pill .d{width:6px;height:6px;border-radius:50%;background:currentColor}
+.gen .ownerctl{display:inline-flex;align-items:center;gap:8px}
+.gen .ownerctl[hidden]{display:none}
 .rollup{margin:16px 0 20px}
 .rollup .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .rollhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:10px}

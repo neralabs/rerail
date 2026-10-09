@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,8 +9,10 @@ import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConversationRulesExtension } from "../src/extension.js";
 import { RerailRuntime } from "../src/runtime.js";
-import { defaultRerailDatabasePath, resetRepositoryHistory } from "../src/database.js";
-import { resolveRepositoryContext, ScopedRuleCatalog } from "../src/scoped-rule-catalog.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../src/database.js";
+import { loadBundledCatalog } from "../src/bundled-rules.js";
+import { addAttachment, removeAttachment, ruleConfigurationSignature, setRuleSetting } from "../src/rule-configuration.js";
+import { listLibraryRules, upsertLibraryRule } from "../src/rule-library.js";
 import * as schema from "../src/schema.js";
 import { SqlitePresentationPreferenceStore } from "../src/presentation-preference-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../src/seed.js";
@@ -18,6 +21,7 @@ import { testEmbedder } from "./hook-fixtures.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
 import { NativeSessionClient } from "../src/native-session-client.js";
 import { startTestRepository } from "./support/started-repository.js";
+import { setUpTestRepository } from "./support/repository-rules.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
@@ -254,22 +258,24 @@ describe("SQLite session persistence", () => {
       cwd: root,
       sessionManager: { getSessionId: () => "omp-live", getBranch: () => [] },
     } as unknown as ExtensionContext;
+    // Only rules the repository adds run: one conversation rule now, a file rule added mid-session.
+    const repositoryKey = setUpTestRepository(root, {
+      library: [{ kind: "conversation", rule: { ...MOCK_CONVERSATION_RULES[0]!, id: "host-only", mode: "log", action: { content: "Host rule" } } }],
+    });
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [{ ...MOCK_CONVERSATION_RULES[0]!, id: "host-only", mode: "log", action: { content: "Host rule" } }],
       registerTool: false,
       registerCommand: false,
     })(extensionApi);
 
     await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
     const reader = new SqliteSessionReader(databasePath);
-    const rules = ScopedRuleCatalog.open(defaultRerailDatabasePath(), resolveRepositoryContext(root));
-    rules.setEnabled({ ids: rules.list().filter(rule => rule.rule.id !== "host-only").map(rule => rule.rule.id) }, false);
-    // Core enables no bundled rule by default, so the host-supplied rule, which no catalog row masks, is the only one.
-    expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
-    rules.upsertCodeRule(MOCK_CODE_RULES[0], { enabled: true });
+    const configuration = openRerailDatabase(databasePath);
+    upsertLibraryRule(configuration, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "file");
+    addAttachment(configuration, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
+    configuration.$client.close();
     expect(reader.hud("omp-live").activeRuleCount).toBeNull();
     await handlers.get("message_end")?.({
       type: "message_end",
@@ -285,7 +291,6 @@ describe("SQLite session persistence", () => {
     }, context);
     expect(reader.hud("omp-live").activeRuleCount).toBe(2);
     reader.close();
-    rules.close();
     await Promise.all([
       handlers.get("tool_call")?.({
         type: "tool_call",
@@ -352,7 +357,6 @@ describe("SQLite session persistence", () => {
     const contextFor = (sessionId: string) => ({ cwd: root, sessionManager: { getSessionId: () => sessionId, getBranch: () => [] } }) as unknown as ExtensionContext;
     createConversationRulesExtension({
       modelPath: resolve("model"),
-      rules: [],
       registerTool: false,
       registerCommand: false,
     })(extensionApi);
@@ -501,34 +505,35 @@ describe("SQLite session persistence", () => {
       .toEqual({ payloadJson: '{"ruleIds":["rerail:no-raw-sql","team:api-auth"]}' });
   });
 
-  it("serves the latest effective coverage only while its configured rule set is synchronized", async () => {
+  it("serves the latest effective coverage only while its repository configuration is unchanged", async () => {
     const { root, store, reader, session } = await hudFixture("covered");
-    const rules = closeAfterTest(ScopedRuleCatalog.open(defaultRerailDatabasePath(), resolveRepositoryContext(root)));
+    const repositoryKey = setUpTestRepository(root, { library: [{ kind: "conversation", rule: MOCK_CONVERSATION_RULES[0]! }] });
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    closeAfterTest({ close: () => database.$client.close() });
+    const ownerCheckoutPaths = [realpathSync(root)];
+    const signature = () => ruleConfigurationSignature(database, loadBundledCatalog(), repositoryKey, ownerCheckoutPaths);
     store.openSession(session);
     store.startHudTracking(session, true);
-    rules.upsertConversationRule(MOCK_CONVERSATION_RULES[0]);
-    const coverage = {
-      repositoryId: rules.context().repositoryId,
-      activeRuleCount: 3,
-      conversationRuleSignature: rules.ruleSignature("conversation"),
-      fileRuleSignature: rules.ruleSignature("file"),
-    };
+    const coverage = { repositoryId: repositoryKey, ownerCheckoutPaths, activeRuleCount: 3, ruleSignature: signature() };
     store.recordRuleCoverage(session, coverage);
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 3, steeringCount: 0 });
-    rules.setEnabled({ filter: { kind: "conversation" } }, false);
+    setRuleSetting(database, {
+      owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: MOCK_CONVERSATION_RULES[0]!.id, on: false, mode: null,
+    });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
-    // A local registry mutation does not establish synchronization with a changed DB.
+    // A local registry mutation does not establish synchronization with a changed configuration.
     store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 4 });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
-    store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 2, conversationRuleSignature: rules.ruleSignature("conversation") });
+    store.recordRuleCoverage(session, { ...coverage, activeRuleCount: 2, ruleSignature: signature() });
     expect(reader.hud(session.sessionId).activeRuleCount).toBe(2);
-    rules.remove([MOCK_CONVERSATION_RULES[0]!.id]);
+    removeAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CONVERSATION_RULES[0]!.id });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
   });
 
   it("preserves a runtime's complete baseline across reopen but not across a database reset", async () => {
     const root = await temporaryDirectory();
     const path = defaultRerailDatabasePath();
+    const repositoryKey = setUpTestRepository(root);
     const options = { storageRoot: join(root, "sessions"), workspaceRoot: root, databasePath: path, modelPath: resolve("model"), autostart: false };
     const reader = new SqliteSessionReader(path);
     const session = { host: "claude-code" as const, sessionId: "runtime-hud", cwd: root };
@@ -546,8 +551,13 @@ describe("SQLite session persistence", () => {
       expect(reader.hud(session.sessionId).steeringCount).toBe(0);
       const baseline = reader.hud(session.sessionId).activeRuleCount;
       expect(baseline).not.toBeNull();
-      const rules = ScopedRuleCatalog.open(defaultRerailDatabasePath(), resolveRepositoryContext(root));
-      try { rules.upsertConversationRule({ ...MOCK_CONVERSATION_RULES[0], id: "late-source" }); } finally { rules.close(); }
+      const database = openRerailDatabase(path);
+      try {
+        upsertLibraryRule(database, loadBundledCatalog(), { ...MOCK_CONVERSATION_RULES[0]!, id: "late-source" }, "conversation");
+        addAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: "late-source" });
+      } finally {
+        database.$client.close();
+      }
       // Accounting cannot claim a mutation until the source actually loads it.
       runtime.recordRuleCoverage(session.sessionId);
       expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
@@ -566,7 +576,7 @@ describe("SQLite session persistence", () => {
       expect(reader.hud(session.sessionId).steeringCount).toBe(2);
       await runtime.dispose();
       const closedSession = reader.session(session.sessionId)!;
-      resetRepositoryHistory(path, resolveRepositoryContext(root).repositoryId);
+      resetRepositoryHistory(path, repositoryKey);
       runtime.recordSteer(session.sessionId, "late-after-reset");
       expect(reader.session(session.sessionId)).toMatchObject({
         startedAt: closedSession.startedAt, endedAt: closedSession.endedAt,
@@ -637,7 +647,7 @@ describe("resetRepositoryHistory", () => {
     const running = { host: "omp" as const, sessionId: "running", cwd: root };
     const writer = new SqliteSessionStore(path, { repositoryId: "alpha" });
     const other = new SqliteSessionStore(path, { repositoryId: "beta" });
-    const rules = ScopedRuleCatalog.open(path, { repositoryId: "alpha", workspaceRoot: root });
+    const rules = openRerailDatabase(path);
     const preferences = new SqlitePresentationPreferenceStore(path);
     try {
       writer.openSession(running, 100);
@@ -649,13 +659,13 @@ describe("resetRepositoryHistory", () => {
       other.openSession({ host: "codex", sessionId: "elsewhere", cwd: join(root, "beta") }, 70);
       other.append({ sessionId: "elsewhere", eventId: "kept", kind: "user-prompt", observedAt: 75, payload: {} });
       other.closeSession("elsewhere", 80);
-      rules.upsertConversationRule(MOCK_CONVERSATION_RULES[0], { now: 120 });
+      upsertLibraryRule(rules, loadBundledCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
       preferences.upsert({ repository: "", host: "", presence: "silent" });
       const inode = (await stat(path)).ino;
 
       expect(resetRepositoryHistory(path, "alpha")).toEqual({ sessions: 1, openSessions: 1 });
       expect((await stat(path)).ino).toBe(inode);
-      expect(rules.list().map(stored => stored.rule.id)).toEqual([MOCK_CONVERSATION_RULES[0]?.id]);
+      expect(listLibraryRules(rules).map(stored => stored.document.rule.id)).toEqual([MOCK_CONVERSATION_RULES[0]?.id]);
       expect(preferences.effective(root, "omp")).toBe("silent");
       const reader = closeAfterTest(new SqliteSessionReader(path));
       expect(reader.sessions()).toEqual([
@@ -679,7 +689,7 @@ describe("resetRepositoryHistory", () => {
       expect(reader.events("running").map(event => event.eventId)).toEqual(["healed"]);
       expect(reader.session("elsewhere")).toMatchObject({ eventCount: 1 });
     } finally {
-      rules.close();
+      rules.$client.close();
       preferences.close();
       writer.close();
       other.close();

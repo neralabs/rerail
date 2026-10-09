@@ -11,18 +11,22 @@ import { CodeRuleBridge } from "../src/code-rule-bridge.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../src/session-state.js";
 import type { ConversationRule } from "../src/rule-schema.js";
 import { linkSteers, steerBlock } from "../src/rerail-steer.js";
-import { dashboardOrigin } from "../src/session-presentation.js";
+import { steerDashboard } from "../src/session-presentation.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "./native-daemon-fixture.js";
-import { startTestRepository } from "./support/started-repository.js";
+import { setUpTestRepository } from "./support/repository-rules.js";
 
 async function checkoutSteer(cwd: string): Promise<string> {
-  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await dashboardOrigin(cwd));
+  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await steerDashboard(cwd));
 }
-
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
 const directories: string[] = [];
+const extensions: Array<{ shutdown(): Promise<unknown> }> = [];
 afterEach(async () => {
+  // A test that overran its timeout keeps running after this hook. Fence its extension and shut it down while the
+  // in-process daemon still answers: shutdown waits out any attach in flight, and an attach started once that daemon
+  // is closed would find no daemon in whichever RERAIL_HOME is stubbed by then and spawn a real one.
+  await Promise.allSettled(extensions.splice(0).map(extension => extension.shutdown()));
   await closeNativeTestDaemons();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -33,7 +37,6 @@ async function harness(host: "omp" | "pi") {
   const cwd = mkdtempSync(join(tmpdir(), `rerail-${host}-startup-`));
   directories.push(cwd);
   vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
-  startTestRepository(cwd);
   if (host === "omp") await startNativeTestDaemon(cwd);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler(args: string, context: Context): unknown }>();
@@ -62,12 +65,24 @@ async function harness(host: "omp" | "pi") {
     action: { content: "Check checkout requirements." },
     repeat: { mode: "always" },
   };
+  // Only rules a repository adds run.
+  setUpTestRepository(cwd, { library: [{ kind: "conversation", rule }] });
   const createExtension = host === "omp" ? createConversationRulesExtension : createPiConversationRulesExtension;
-  createExtension({ modelPath: resolve("model"), rules: [rule], registerTool: false })(api);
+  createExtension({ modelPath: resolve("model"), registerTool: false })(api);
+  let tornDown = false;
+  const live = (run: () => unknown): Promise<unknown> => tornDown
+    ? Promise.reject(new Error("session-lifecycle harness used after its test was torn down"))
+    : Promise.resolve(run());
+  extensions.push({
+    shutdown: () => {
+      tornDown = true;
+      return Promise.resolve(handlers.get("session_shutdown")!({}, context));
+    },
+  });
   return {
     context, branch, messages, entries,
-    emit: (name: string, event: unknown, ctx = context) => Promise.resolve(handlers.get(name)!(event, ctx)),
-    reload: () => Promise.resolve(commands.get("cosine-rules")!.handler("reload", context)),
+    emit: (name: string, event: unknown, ctx = context) => live(() => handlers.get(name)!(event, ctx)),
+    reload: () => live(() => commands.get("cosine-rules")!.handler("reload", context)),
   };
 }
 

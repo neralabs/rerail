@@ -1,10 +1,12 @@
 /**
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable. Data lands in the
- * store; the caller re-renders and reconciles in place.
+ * store; the caller re-renders and reconciles in place. With a repository in scope the page
+ * polls its context, its rules and its activity, violations and sessions; without one, only
+ * the repository list.
  */
 import { get } from "./api.js";
-import { data, ui, sinceFor } from "./state.js";
+import { data, ui, sinceFor, setScope } from "./state.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -23,33 +25,103 @@ let timer = null;
 let backoff = INTERVAL;
 let inFlight = null;
 let queued = false;
+/** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
+let generation = 0;
 
-/** Conditional GET; resolves `undefined` on 304, the body on 200. `slot` names the ETag's data slot. */
+/** Conditional GET; resolves `undefined` on 304 or after a scope change, the body on 200. `slot` names the ETag's data slot. */
 async function fetchFresh(path, slot = path) {
+  const started = generation;
   const { status, etag, body } = await get(path, { etag: etags.get(slot) });
-  if (status === 304) return undefined;
+  if (started !== generation || status === 304) return undefined;
   if (etag !== undefined) etags.set(slot, etag);
   return body;
 }
 
-async function loadRules() {
-  const body = await fetchFresh("/api/rules");
+/** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
+export function scopeTarget() {
+  const target = {};
+  const repository = data.repository?.repositoryKey ?? ui.scope?.repository;
+  if (repository !== undefined) target.repository = repository;
+  if (ui.scope?.checkout !== undefined) target.checkout = ui.scope.checkout;
+  return target;
+}
+
+const scopeQuery = () => new URLSearchParams(scopeTarget()).toString();
+
+/** `&repository=<key>` for the machine-wide reads (activity, violations, sessions), once the key is known. */
+function repositoryFilter() {
+  const key = data.repository?.repositoryKey ?? ui.scope?.repository;
+  return key === undefined ? "" : `&repository=${encodeURIComponent(key)}`;
+}
+
+async function loadRepositories() {
+  const body = await fetchFresh("/api/repositories", "repositories");
   if (body === undefined) return false;
-  const next = new Map();
-  for (const stored of body.rules) next.set(stored.rule.id, stored);
-  data.rules = next;
+  data.repositories = body.repositories;
+  return true;
+}
+
+async function loadContext() {
+  const body = await fetchFresh(`/api/repository?${scopeQuery()}`, "context");
+  if (body === undefined) return false;
+  data.repository = body.repository;
+  data.checkout = body.checkout;
+  return true;
+}
+
+/**
+ * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
+ * the first folder's mode on the rule, and each folder's own on and mode (`folderStates`; `mixed` when they differ).
+ * A change from the row is written at every folder.
+ */
+function toStoredRules(entries) {
+  const rules = new Map();
+  for (const entry of entries) {
+    const id = entry.rule.id;
+    const known = rules.get(id);
+    if (known !== undefined) {
+      if (!known.folders.includes(entry.folder)) {
+        known.folders.push(entry.folder);
+        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode });
+        known.enabled = known.enabled && entry.on;
+        known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+      }
+      continue;
+    }
+    rules.set(id, {
+      kind: entry.kind,
+      rule: { ...entry.rule, mode: entry.mode },
+      enabled: entry.on,
+      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
+      source: entry.source,
+      folders: [entry.folder],
+      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode }],
+      mixed: false,
+      onSource: entry.onSource,
+      modeSource: entry.modeSource,
+      revision: entry.revision,
+    });
+  }
+  return rules;
+}
+
+async function loadRules() {
+  const body = await fetchFresh(`/api/repository/rules?${scopeQuery()}`, "rules");
+  if (body === undefined) return false;
+  data.rules = toStoredRules(body.rules);
+  data.unavailable = body.unavailable;
   return true;
 }
 
 async function loadActivity(since, target) {
-  const body = await fetchFresh(`/api/rules/activity?since=${since}`, target);
+  const body = await fetchFresh(`/api/rules/activity?since=${since}${repositoryFilter()}`, target);
   if (body === undefined) return false;
   data[target] = body.rules;
   return true;
 }
 
 async function loadFindings(since) {
-  const body = await fetchFresh(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=0`, "findings");
+  const body = await fetchFresh(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=0${repositoryFilter()}`, "findings");
   if (body === undefined) { data.findingsSince = since; return false; }
   // Keep pages the user asked for beyond the first, but only if they still belong to this range.
   const tail = data.findings.length > FINDINGS_PAGE && data.findingsSince === since ? data.findings.slice(FINDINGS_PAGE) : [];
@@ -64,15 +136,16 @@ export async function loadMoreFindings() {
   const since = sinceFor();
   const offset = data.findings.length;
   if (offset >= data.findingsTotal) return false;
-  const { body } = await get(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=${offset}`);
-  if (data.findingsSince !== since) return false;
+  const started = generation;
+  const { body } = await get(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=${offset}${repositoryFilter()}`);
+  if (data.findingsSince !== since || started !== generation) return false;
   data.findings = data.findings.concat(body.violations);
   data.findingsTotal = body.total;
   return body.violations.length > 0;
 }
 
 async function loadSessions() {
-  const body = await fetchFresh("/api/sessions");
+  const body = await fetchFresh(`/api/sessions?${repositoryFilter().slice(1)}`, "sessions");
   if (body === undefined) return false;
   data.sessions = body.sessions.slice().sort((a, b) => b.startedAt - a.startedAt || a.sessionId.localeCompare(b.sessionId));
   return true;
@@ -161,24 +234,37 @@ function pumpTitles() {
   }
 }
 
-async function poll() {
-  const since = sinceFor();
-  const jobs = [loadRules(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
+/** Everything the scoped repository's views need; its context first when the key is not known yet. */
+async function scopedJobs(since) {
+  const context = data.repository === null ? [await loadContext()] : [loadContext()];
+  const jobs = [...context, loadRules(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
   jobs.push(since === 0 ? Promise.resolve(false) : loadActivity(0, "activityAll"));
   if (ui.selectedSession && ui.view === "sessions") jobs.push(loadSession(ui.selectedSession));
+  return jobs;
+}
+
+async function poll() {
+  const since = sinceFor();
+  const started = generation;
   try {
-    const results = await Promise.all(jobs);
+    const results = await Promise.all(ui.scope === null ? [loadRepositories()] : await scopedJobs(since));
+    if (started !== generation) return;
     if (since === 0) data.activityAll = data.activity;
     data.updatedAt = Date.now();
     data.disconnected = false;
+    data.missing = false;
     data.loaded = true;
     backoff = INTERVAL;
     onChange(results.some(Boolean));
   } catch (error) {
-    data.disconnected = true;
-    backoff = Math.min(MAX_BACKOFF, backoff * 2);
-    console.warn("poll failed", error);
-    onChange(false);
+    if (started !== generation) return;
+    // A repository or checkout the daemon does not know is an answer, not a lost connection.
+    data.missing = /answered 404$/u.test(error.message);
+    data.disconnected = !data.missing;
+    data.loaded = data.missing;
+    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
+    if (!data.missing) console.warn("poll failed", error);
+    onChange(data.missing);
   }
 }
 
@@ -210,9 +296,20 @@ export async function refreshNow() {
   schedule();
 }
 
-export async function loadRepo() {
-  try {
-    const { body } = await get("/api/rule-context");
-    data.repo = body.context.projectName;
-  } catch { data.repo = ""; }
+/**
+ * Show another repository (`scope` from `readScope`, or `null` for the picker): drop everything fetched for the
+ * previous one, and poll now. A response still in flight for the previous scope is discarded.
+ */
+export function changeScope(scope) {
+  generation += 1;
+  etags.clear();
+  setScope(scope);
+  ui.selectedRule = null;
+  ui.selectedSession = null;
+  Object.assign(data, {
+    repository: null, checkout: null, unavailable: [], rules: new Map(), activity: {}, activityAll: {},
+    findings: [], findingsTotal: 0, sessions: [], loaded: false, missing: false,
+  });
+  data.sessionDetail.clear();
+  refreshNow();
 }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
-import { lstat, mkdtemp, opendir, readFile, realpath, rm } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -320,7 +320,7 @@ export class CodeRuleBridge {
     this.#auditor.updateSettings?.(settings);
   }
 
-  async audit(input: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[] }): Promise<readonly string[]> {
+  async audit(input: Parameters<NonNullable<CodeRuleAuditor["audit"]>>[1]): Promise<readonly string[]> {
     const discovery = this.#requireDiscovery();
     const sessionId = this.#requireSession();
     if (this.#auditor.audit === undefined) throw new Error("Policy evaluator does not support scans");
@@ -459,6 +459,8 @@ export class CodeRuleBridge {
       for (const path of pending.preimages.keys()) pendingPaths.add(path);
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
+      // The walk covers the session folder only: a path a tool wrote outside it is never observed missing here.
+      if (path === ".." || path.startsWith("../")) continue;
       // A begin/finish after scan launch wins even when its bytes happen to match the old snapshot.
       if (discovery.versions.get(path) !== versions.get(path) || pendingPaths.has(path)) continue;
       const edit = this.#discoveredEdit(discovery, path, previous.get(path), current.get(path), baseline);
@@ -621,31 +623,52 @@ export class CodeRuleBridge {
     }
   }
 
+  /** Paths outside the session folder are kept, keyed relative to it (`../sibling/x.ts`); the auditor decides. */
   #sourceLocation(root: string, configuredPath: string): SourceLocation | undefined {
     const absolute = isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath);
-    const path = relative(root, absolute).replaceAll("\\", "/");
-    if (path.startsWith("../") || path === ".." || isAbsolute(path)) return undefined;
+    const path = relative(root, absolute).split(sep).join("/");
+    if (path === "" || isAbsolute(path)) return undefined;
     const language = languageOfPath(SOURCE_LANGUAGES, path);
     if (language === undefined || !this.#auditor.acceptsPath(path)) return undefined;
     return { absolute, path, language };
   }
 
+  /**
+   * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
+   * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
+   * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
+   * finds no owner for is not read.
+   */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
-    const info = await lstat(location.absolute);
-    if (info.isSymbolicLink()) return undefined;
-    if (!info.isFile()) return { path: location.path, language: location.language, readError: "Source is not a regular file" };
-    const canonical = await realpath(location.absolute);
-    if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return undefined;
-    if (info.size > MAX_SOURCE_BYTES)
-      return { path: location.path, language: location.language, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` };
-    const source = await readFile(canonical);
-    if (source.length > MAX_SOURCE_BYTES || source.includes(0))
-      return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
-    return {
-      path: location.path, language: location.language, text: source.toString("utf8"),
-      stamp: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
-      digest: createHash("sha256").update(source).digest("hex"),
-    };
+    let handle: FileHandle;
+    try {
+      handle = await open(location.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ELOOP") return undefined;
+      throw error;
+    }
+    try {
+      const info = await handle.stat();
+      if (!info.isFile()) return { path: location.path, language: location.language, readError: "Source is not a regular file" };
+      const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
+      if (owner === undefined) return undefined;
+      const canonical = await realpath(location.absolute);
+      if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return undefined;
+      const named = await lstat(canonical);
+      if (named.dev !== info.dev || named.ino !== info.ino) return undefined;
+      if (info.size > MAX_SOURCE_BYTES)
+        return { path: location.path, language: location.language, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` };
+      const source = await handle.readFile();
+      if (source.length > MAX_SOURCE_BYTES || source.includes(0))
+        return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
+      return {
+        path: location.path, language: location.language, text: source.toString("utf8"),
+        stamp: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
+        digest: createHash("sha256").update(source).digest("hex"),
+      };
+    } finally {
+      await handle.close();
+    }
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {

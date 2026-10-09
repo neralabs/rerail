@@ -23,6 +23,7 @@ import {
   type AuditSettings,
   type CodeRuleSourceLanguage,
   type RuleSteerDelivery,
+  type RepositoryAuditHooks,
 } from "./code-rule.js";
 import {
   AUDIT_COVERAGE_STATUSES,
@@ -71,7 +72,7 @@ export const IGNORED_DIRECTORIES = new Set([
   "vendor",
 ]);
 /** A repository index honours the walk's bounds, ignored directories and source languages. */
-const REPOSITORY_INDEX_OPTIONS: NativeRepositoryIndexOptions = {
+const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
   maxFileBytes: MAX_SOURCE_BYTES,
@@ -161,6 +162,8 @@ const repositoryIndexChunkSchema = z.strictObject({
   readFiles: z.number().int().nonnegative(),
   readBytes: z.number().int().nonnegative(),
   reusableDirectories: z.number().int().nonnegative(),
+  /** Folders the walk skipped because each is a checkout of its own, relative to the workspace root. */
+  nestedCheckouts: z.array(z.string()),
 });
 const storedEditSchema = z.object({
   path: z.string(),
@@ -191,7 +194,9 @@ type PreparedWorkspace = {
   storage: Promise<boolean>;
 };
 type ByteRange = { start: number; end: number };
-type ScopeAuditState = { bytes: number; deadline: number; files: number; stopped: boolean };
+/** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
+type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
+type ScopeAuditState = { bytes: number; deadline: number; files: number; stopped: boolean; nested: NestedCheckoutWalk };
 type ScopeAuditCompletion = {
   workspace: NativeCodeRuleDslWorkspace;
   auditId: string | undefined;
@@ -206,6 +211,11 @@ type ScopeAuditCompletion = {
   indexed: boolean;
 };
 type ScopeAuditSources = { sourcePaths: string[]; stopped: boolean };
+/** A repository audit's run of this checkout, and the checkouts nested in it that it left to their own rules. */
+export interface RepositoryAuditReport {
+  readonly auditId: string | undefined;
+  readonly nestedCheckouts: readonly string[];
+}
 
 function generatedRanges(previousText: string, generatedText: string): ByteRange[] {
   const ranges: ByteRange[] = [];
@@ -277,6 +287,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #steerDelivery: RuleSteerDelivery;
   readonly #audits: AuditRecorder;
   readonly #ownedAudits: SqliteAuditStore | undefined;
+  /** How a path relative to the workspace root is shown to the session (steering text and delivery scope). */
+  readonly #presentPath: (path: string) => string;
+  /** Folders below the workspace root that are checkouts of their own, as the owner of this lane decides. */
+  readonly #nestedCheckouts: () => readonly string[];
   #scope: AuditScope;
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
@@ -319,6 +333,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       audits?: AuditRecorder;
       scope?: AuditScope;
       mode?: AuditMode;
+      presentPath?: (path: string) => string;
+      /**
+       * Folders below the workspace root that are separate checkouts judged by their own rules; repository walks
+       * skip them. Any other folder is walked, whether or not it holds a `.git` entry. None by default.
+       */
+      nestedCheckouts?: () => readonly string[];
     },
   ) {
     this.#catalog = catalog;
@@ -327,6 +347,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#scope = options.scope ?? "touched-files";
     this.#mode = options.mode ?? "steer";
     this.#responseMode = this.#mode;
+    this.#presentPath = options.presentPath ?? (path => path);
+    this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -376,7 +398,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (this.#sessionId !== undefined || this.#closing)
       throw new Error("Executable policy enforcer cannot be reopened");
     this.#sessionId = sessionId;
-    this.#record(() => this.#audits.interrupt(sessionId));
     this.#reportQuarantined();
     let prepared: PreparedWorkspace | undefined;
     try {
@@ -498,7 +519,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   async audit(
     sessionId: string,
-    options: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[] },
+    options: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
   ): Promise<readonly string[]> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
     const paths = options.paths ?? [];
@@ -506,6 +527,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       throw new Error("Repository scope always covers the full repository");
     if (options.scope === "touched-files" && paths.length === 0)
       throw new Error("Touched-files policy scan requires paths");
+    if (options.scope === "repository") {
+      if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot)) return [];
+      const { auditId } = await this.auditRepository(sessionId, options.mode);
+      options.audit?.finish(this.#workspaceRoot, auditId);
+      return auditId === undefined ? [] : [auditId];
+    }
     const scope = paths.map((path) => {
       const absolute = resolve(this.#workspaceRoot, path);
       if (!withinCheckout(this.#workspaceRoot, absolute)) throw new Error("Policy scan path escapes workspace");
@@ -515,6 +542,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#trackAudit(task);
     const auditId = await task;
     return auditId === undefined ? [] : [auditId];
+  }
+
+  /** Audit this whole checkout; the checkouts nested in it are skipped and reported, for their own rules to judge. */
+  async auditRepository(sessionId: string, mode: AuditMode): Promise<RepositoryAuditReport> {
+    if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
+    const nestedCheckouts: string[] = [];
+    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts);
+    this.#trackAudit(task);
+    const auditId = await task;
+    return { auditId, nestedCheckouts: [...new Set(nestedCheckouts)].sort(compareDeterministicStrings) };
   }
 
   interrupt(): void {
@@ -580,7 +617,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
     let storage: Promise<boolean>;
     try {
-      for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable);
+      for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
       storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason }) => {
         // Reuse is a cache: losing it costs time, never results, so a cause Git reports is logged, not raised.
         if (!attached && reason && reason !== this.#reuseDisabledReport) {
@@ -787,12 +824,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     mode: AuditMode,
     paths: string[] = [],
     generatedEdit = false,
+    /** Receives the nested checkouts the walk reached and skipped. */
+    reached: string[] = [],
   ): Promise<string | undefined> {
     this.refreshCodeRules();
     const revision = this.#revision;
     let auditId: string | undefined;
     const failures: AuditFailure[] = [];
     let workspace: NativeCodeRuleDslWorkspace | undefined;
+    const nested: NestedCheckoutWalk = { pruned: new Set(this.#nestedCheckouts()), reached };
     try {
       await yieldToHost();
       if (this.#closing) return auditId;
@@ -801,8 +841,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       auditId = this.#startAudit(scope, mode, revision, paths, prepared);
       const indexed = scope === "repository" && (await prepared.storage);
       const walked = indexed
-        ? await this.#indexRepository(workspace, auditId, failures)
-        : await this.#walkAuditSources(workspace, auditId, paths, failures);
+        ? await this.#indexRepository(workspace, auditId, failures, nested)
+        : await this.#walkAuditSources(workspace, auditId, paths, failures, nested);
       if (this.#closing) return auditId;
       await this.#finishScopeAudit({
         workspace,
@@ -841,6 +881,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     workspace: NativeCodeRuleDslWorkspace,
     auditId: string | undefined,
     failures: AuditFailure[],
+    nested: NestedCheckoutWalk,
   ): Promise<ScopeAuditSources> {
     const deadline = Date.now() + AUDIT_MAX_DURATION_MS;
     while (!this.#closing) {
@@ -850,7 +891,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       await this.#waitForEvaluationIdle();
       if (this.#closing) break;
-      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace)));
+      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested)));
       this.#workspaceRevisions.set(workspace, chunk.revision);
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
       const evaluation = chunk.evaluation;
@@ -869,18 +910,21 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
         return { sourcePaths: [], stopped: true };
       }
-      if (chunk.done) return { sourcePaths: [], stopped: false };
+      if (chunk.done) {
+        nested.reached.push(...chunk.nestedCheckouts);
+        return { sourcePaths: [], stopped: false };
+      }
       await yieldToHost();
     }
     return { sourcePaths: [], stopped: true };
   }
 
   /** One index chunk, retried while an interactive apply holds the evaluation slot. */
-  async #indexChunk(workspace: NativeCodeRuleDslWorkspace): Promise<string> {
+  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
     let backoff = 2;
     while (!this.#closing) {
       try {
-        return await workspace.indexRepositoryAsync(REPOSITORY_INDEX_OPTIONS);
+        return await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [...nested.pruned] });
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
         await pause(backoff);
@@ -895,15 +939,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     auditId: string | undefined,
     paths: readonly string[],
     failures: AuditFailure[],
+    nested: NestedCheckoutWalk,
   ): Promise<ScopeAuditSources> {
     let files: WorkspaceFile[] = [];
     let bytes = 0;
     const sourcePaths: string[] = [];
-    const budget = {
+    const budget: ScopeAuditState = {
       bytes: 0,
       deadline: Date.now() + AUDIT_MAX_DURATION_MS,
       files: 0,
       stopped: false,
+      nested,
     };
     for await (const file of this.#auditFiles(workspace, paths, failures, budget)) {
       if (this.#closing) return { sourcePaths, stopped: true };
@@ -1003,7 +1049,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         return;
       }
       const absolute = stack.pop()!;
-      const file = await this.#auditFileAtPath(workspace, canonicalRoot, absolute, stack, seen, failures);
+      const file = await this.#auditFileAtPath(workspace, canonicalRoot, absolute, stack, seen, failures, state.nested);
       if (failures.length >= AUDIT_MAX_FAILURES) {
         failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
         state.stopped = true;
@@ -1030,6 +1076,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     stack: string[],
     seen: Set<string>,
     failures: AuditFailure[],
+    nested: NestedCheckoutWalk,
   ): Promise<WorkspaceFile | undefined> {
     const path = relative(canonicalRoot, absolute).split(sep).join("/");
     try {
@@ -1037,7 +1084,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (info.isSymbolicLink()) return undefined;
       if (!(await this.#isAuditPathContained(canonicalRoot, absolute, path, failures))) return undefined;
       if (info.isDirectory()) {
-        await this.#enqueueAuditDirectory(workspace, canonicalRoot, absolute, stack);
+        await this.#enqueueAuditDirectory(workspace, canonicalRoot, absolute, stack, nested);
         return undefined;
       }
       return await this.#readAuditFile(workspace, absolute, path, info, seen, failures);
@@ -1063,23 +1110,31 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     canonicalRoot: string,
     absolute: string,
     stack: string[],
+    nested: NestedCheckoutWalk,
   ): Promise<void> {
     for await (const entry of await opendir(absolute)) {
       if (this.#closing) return;
-      if (!this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry)) continue;
+      if (!this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested)) continue;
       stack.push(join(absolute, entry.name));
     }
   }
 
+  /** A folder the lane's owner names as a checkout of its own is skipped and reported, so its own rules judge it. */
   #shouldWalkDirectoryEntry(
     workspace: NativeCodeRuleDslWorkspace,
     canonicalRoot: string,
     directory: string,
     entry: Dirent,
+    nested: NestedCheckoutWalk,
   ): boolean {
     if (entry.isSymbolicLink() || (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name))) return false;
-    if (entry.isDirectory()) return true;
-    const path = relative(canonicalRoot, join(directory, entry.name)).split(sep).join("/");
+    const absolute = join(directory, entry.name);
+    const path = relative(canonicalRoot, absolute).split(sep).join("/");
+    if (entry.isDirectory()) {
+      if (!nested.pruned.has(path)) return true;
+      nested.reached.push(path);
+      return false;
+    }
     return entry.isFile() && languageFor(path) !== undefined && workspace.acceptsPath(path);
   }
 
@@ -1270,8 +1325,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         : sourceScope.some((path) => (this.#versions.get(path) ?? 0) > revision)
     )
       return;
-    const scope = [...sourceScope].sort(compareDeterministicStrings);
-    const steerable = violations.filter((violation) => steers(violation.mode));
+    const scope = sourceScope.map(path => this.#presentPath(path)).sort(compareDeterministicStrings);
+    const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
     if (steerable.length === 0) return;
     const steer = buildSteer(steerable);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
@@ -1287,12 +1342,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const violations = this.#reportableViolations;
     return {
       revision,
-      violations: violations,
-      failures: [...this.#evaluation.failures, ...this.#readFailures.values()],
+      violations: violations.map(violation => this.#presented(violation)),
+      failures: [...this.#evaluation.failures, ...this.#readFailures.values()].map(item => this.#presented(item)),
       disposition: this.#responseMode === "steer" && violations.some((violation) => steers(violation.mode))
         ? "steer"
         : "continue",
     };
+  }
+
+  /** A violation or failure with its path as the session sees it; audit records keep the workspace-relative path. */
+  #presented<T extends { path?: string | undefined }>(item: T): T {
+    return item.path === undefined ? item : { ...item, path: this.#presentPath(item.path) };
   }
 
   #record(operation: () => void): void {

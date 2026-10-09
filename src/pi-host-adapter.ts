@@ -13,7 +13,7 @@ import {
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
 import { registerRerailCommands } from "./rerail-command.js";
-import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote } from "./rerail-steer.js";
+import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "./rerail-steer.js";
 import { dashboardOrigin } from "./session-presentation.js";
 import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
 
@@ -45,6 +45,8 @@ export interface PiHostAdapterRuntime {
   started(cwd: string): boolean;
   /** A database configured in place of the Rerail home's, which `/rerail-start` and `/rerail-stop` must change. */
   configuredDatabase?(cwd: string): string | undefined;
+  /** What the session-start note says about `session`'s rules. */
+  sessionNoteRules(session: AdapterSession): Promise<SessionNoteRules>;
 }
 
 function streamId(message: PiMessage): string {
@@ -153,7 +155,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     const session = await runtime.sessionFor();
     if (session === undefined || notedSessions.has(session.sessionId)) return;
     notedSessions.add(session.sessionId);
-    const content = sessionStartNote(await dashboardOrigin(session.cwd), "pi", session.sessionId);
+    const content = sessionStartNote(await dashboardOrigin(session.cwd), "pi", session.sessionId, await runtime.sessionNoteRules(session));
     return { message: { customType: SESSION_NOTE_MESSAGE_TYPE, content, display: false } };
   });
   pi.on("message_update", async event => {

@@ -32,12 +32,56 @@ pub(super) struct Capabilities {
 pub(super) struct CodeRuleScope {
     pub(super) include: GlobSet,
     pub(super) exclude: GlobSet,
+    /// Where a workspace places its resident copy of the code rule, per folder of the checkout;
+    /// `None` places it everywhere its globs match, at its rule mode.
+    pub(super) placement: Option<Placement>,
 }
 
 impl CodeRuleScope {
+    /// Whether the code rule evaluates `path`: its globs select it and, when placed, the deepest
+    /// placement folder holding it runs the code rule there.
     pub(super) fn matches(&self, path: &str) -> bool {
-        self.include.is_match(path) && !self.exclude.is_match(path)
+        self.include.is_match(path)
+            && !self.exclude.is_match(path)
+            && self.placement.as_deref().is_none_or(|placement| {
+                placed(placement, path).is_some_and(|entry| entry.mode.is_some())
+            })
     }
+
+    /// The mode the placement gives `path`; `None` when the code rule is not placed or off there.
+    pub(super) fn mode_at(&self, path: &str) -> Option<RuleMode> {
+        placed(self.placement.as_deref()?, path)?.mode
+    }
+}
+
+/// One folder of a placement. `folder` is relative to the checkout root in POSIX form (`""` is the
+/// whole checkout); `mode` is `None` where the code rule is off.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PlacementEntry {
+    pub(super) folder: String,
+    pub(super) mode: Option<RuleMode>,
+}
+
+/// A placement's entries, sorted by folder, no folder twice.
+pub(super) type Placement = Arc<[PlacementEntry]>;
+
+/// The entry that decides `path`: the deepest folder that contains it, if any. `web` contains
+/// `web` and `web/x`, never `web2/x`.
+pub(super) fn placed<'a>(
+    placement: &'a [PlacementEntry],
+    path: &str,
+) -> Option<&'a PlacementEntry> {
+    placement
+        .iter()
+        .filter(|entry| folder_contains(&entry.folder, path))
+        .max_by_key(|entry| entry.folder.len())
+}
+
+fn folder_contains(folder: &str, path: &str) -> bool {
+    folder.is_empty()
+        || path
+            .strip_prefix(folder)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 #[derive(Clone)]
@@ -476,7 +520,7 @@ pub(super) struct CompiledClause {
     pub(super) decision: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum RuleMode {
     Log,
     Steer,
@@ -484,6 +528,15 @@ pub(super) enum RuleMode {
 }
 
 impl RuleMode {
+    pub(super) fn parse(mode: &str) -> Option<Self> {
+        match mode {
+            "log" => Some(Self::Log),
+            "steer" => Some(Self::Steer),
+            "block" => Some(Self::Block),
+            _ => None,
+        }
+    }
+
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Log => "log",

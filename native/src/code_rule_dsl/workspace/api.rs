@@ -24,6 +24,7 @@ use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
+use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, model::Query, profile};
 use crate::content_store::WorkspaceCompletion;
@@ -98,8 +99,16 @@ impl CodeRuleDslWorkspace {
         })
     }
 
+    /// Registers `compiled` with this workspace. `placement`, when given, is the JSON array of
+    /// `{"folder", "mode"}` entries that places this workspace's copy of the code rule per folder
+    /// of the checkout (`mode: null` is off there); the compiled code rule itself is never changed.
     #[napi]
-    pub fn add_code_rule(&mut self, compiled: &CompiledCodeRuleDsl) -> Result<()> {
+    pub fn add_code_rule(
+        &mut self,
+        compiled: &CompiledCodeRuleDsl,
+        placement: Option<String>,
+    ) -> Result<()> {
+        let placement = placement.as_deref().map(parse_placement).transpose()?;
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
@@ -134,6 +143,9 @@ impl CodeRuleDslWorkspace {
             .cloned()
             .collect::<Vec<_>>();
         let mut resident = Arc::clone(&compiled.inner);
+        if placement.is_some() {
+            Arc::make_mut(&mut resident).scope.placement = placement;
+        }
         if !globals.is_empty() {
             let code_rule = Arc::make_mut(&mut resident);
             for clause in &globals {
@@ -165,7 +177,7 @@ impl CodeRuleDslWorkspace {
         self.scopes
             .lock()
             .map_err(|_| invalid("policy workspace is unavailable"))?
-            .push(compiled.inner.scope.clone());
+            .push(resident.scope.clone());
         #[cfg(feature = "code-rule-profile")]
         for clause in &resident.clauses {
             if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {

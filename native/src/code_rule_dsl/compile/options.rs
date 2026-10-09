@@ -440,20 +440,29 @@ fn when_source_types(value: &Value, path: &str) -> Result<Vec<SourceType>> {
     })
 }
 
+/// Which of an ast query's `file` keys its language's family reads (`Adapter::PACKAGES`,
+/// `Adapter::DECLARATION_FILES`).
+pub(super) struct FileKeys {
+    /// The module path keys: `module`, `moduleName`, `package`, `inPackage`.
+    pub(super) packages: bool,
+    /// `declaration`.
+    pub(super) declarations: bool,
+}
+
 /// An ast query's `file`: conditions on the file. Every language has `path`, a `regex` that must
-/// match the path the host sends, a `notRegex` that must not, or both. TypeScript has
-/// `declaration`, whether the path names a declaration file. Python has its module path, the
-/// host's `module` or the stem fallback: `module`, `moduleName` and `package` hold text conditions
-/// over the dotted names, the last one and the first one (in a package), and `inPackage` whether
-/// the host sent the path.
+/// match the path the host sends, a `notRegex` that must not, or both. A family with declaration
+/// files has `declaration`, whether the path names one. A family naming modules from package
+/// markers has its module path, the host's `module` or the stem fallback: `module`, `moduleName`
+/// and `package` hold text conditions over the dotted names, the last one and the first one (in a
+/// package), and `inPackage` whether the host sent the path.
 pub(super) fn compile_file_condition(
     value: &Value,
     path: &str,
     language: &str,
+    keys: FileKeys,
     max_regex_bytes: usize,
 ) -> Result<FileCondition> {
     let path = format!("{path}/file");
-    let python = language == "python";
     let file = object(value, &path)?;
     reject_unknown(
         file,
@@ -468,19 +477,19 @@ pub(super) fn compile_file_condition(
         &path,
     )?;
     for key in ["module", "moduleName", "package", "inPackage"] {
-        if !python && file.contains_key(key) {
+        if !keys.packages && file.contains_key(key) {
             return Err(invalid(format!(
                 "{path}/{key}: module paths are Python's; {language} has none"
             )));
         }
     }
-    if python && file.contains_key("declaration") {
+    if !keys.declarations && file.contains_key("declaration") {
         return Err(invalid(format!(
             "{path}/declaration: declaration files are TypeScript's; {language} has none"
         )));
     }
     if file.is_empty() {
-        return Err(invalid(if python {
+        return Err(invalid(if keys.packages {
             format!(
                 "{path} must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`"
             )

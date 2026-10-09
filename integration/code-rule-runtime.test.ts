@@ -6,9 +6,9 @@ import { NativeCodeRuleEnforcer } from "../src/code-rule-enforcer.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
 import { defaultRerailDatabasePath } from "../src/database.js";
 import { SqliteAuditReader } from "../src/audit-store.js";
-import { bootstrapCodeRuleDslCatalog, bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
 import { codeRuleSchema } from "../src/code-rule-schema.js";
-import { SqliteRuleStore } from "../src/rule-store.js";
+import { testCodeRuleCatalog } from "../test/support/repository-rules.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -126,11 +126,7 @@ async function fixture(
   );
   Object.assign(capabilities.limits, limits);
   await writeFile(capabilitiesPath, JSON.stringify(capabilities));
-  const databasePath = join(root, ".rerail", "code-rules.sqlite");
-  const store = new SqliteRuleStore(databasePath);
-  store.upsertCodeRule(codeRuleSchema.parse(codeRule));
-  store.close();
-  const catalog = bootstrapCodeRuleDslCatalog({ capabilitiesPath, databasePath });
+  const catalog = testCodeRuleCatalog([codeRuleSchema.parse(codeRule)], capabilitiesPath);
   const deliveries: string[] = [];
   const enforcer = new NativeCodeRuleEnforcer(catalog, {
     workspaceRoot: root,
@@ -141,13 +137,13 @@ async function fixture(
     },
     ...options,
   });
-  return { catalog, deliveries, enforcer };
+  return { deliveries, enforcer };
 }
 describe("Rerail code rule runtime", () => {
   it("starts generation without waiting for, or inheriting violations from, the initial repository audit", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "existing.py"), "print('existing')\n");
-    const { catalog, deliveries, enforcer } = await fixture(root, { scope: "touched-files", mode: "steer" });
+    const { deliveries, enforcer } = await fixture(root, { scope: "touched-files", mode: "steer" });
     try {
       await enforcer.openWorkspace("generation");
       const repositoryAudit = enforcer.audit("generation", { scope: "repository", mode: "log" });
@@ -164,13 +160,12 @@ describe("Rerail code rule runtime", () => {
       expect(deliveries).toHaveLength(1);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("removes a violation when captured generated code deletes it", async () => {
     const root = await rootDirectory();
-    const { catalog, enforcer } = await fixture(root);
+    const { enforcer } = await fixture(root);
     try {
       await enforcer.openWorkspace("deletion");
       await enforcer.auditGeneratedEdits("deletion", {
@@ -187,7 +182,6 @@ describe("Rerail code rule runtime", () => {
       expect((await settled(enforcer)).violations).toEqual([]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -201,7 +195,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { scope: "ai-output", audits: recorder });
+    const { enforcer } = await fixture(root, { scope: "ai-output", audits: recorder });
     try {
       await enforcer.openWorkspace("ai-output");
       await enforcer.auditGeneratedEdits("ai-output", {
@@ -214,8 +208,8 @@ describe("Rerail code rule runtime", () => {
         expect.objectContaining({
           ruleId: "test:print",
           revision: 1,
-          applicability: "project",
-          origin: "user",
+          source: { kind: "library_rule", id: "test:print", packId: null },
+          placement: [expect.objectContaining({ folder: "", on: true, mode: "steer" })],
         }),
       ]);
       expect(audits.find(({ input }) => input.scope === "ai-output")?.result?.violations).toEqual([
@@ -223,7 +217,6 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -238,7 +231,7 @@ describe("Rerail code rule runtime", () => {
       ));
     }
     await writeFile(join(root, "api", "route.py"), "print('in scope')\n");
-    const { catalog, deliveries, enforcer } = await fixture(root, {}, { maxSourceBytes: 64 });
+    const { deliveries, enforcer } = await fixture(root, {}, { maxSourceBytes: 64 });
     const reader = new SqliteAuditReader(defaultRerailDatabasePath());
     try {
       await enforcer.openWorkspace("scope-budget");
@@ -270,13 +263,12 @@ describe("Rerail code rule runtime", () => {
     } finally {
       await enforcer.close();
       reader.close();
-      catalog.close();
     }
   }, 60_000);
 
   it("records a scope failure rather than treating an unavailable preimage as new AI output", async () => {
     const root = await rootDirectory();
-    const { catalog, deliveries, enforcer } = await fixture(root, { scope: "ai-output" });
+    const { deliveries, enforcer } = await fixture(root, { scope: "ai-output" });
     const reader = new SqliteAuditReader(defaultRerailDatabasePath());
     try {
       await enforcer.openWorkspace("missing-preimage");
@@ -300,14 +292,13 @@ describe("Rerail code rule runtime", () => {
     } finally {
       await enforcer.close();
       reader.close();
-      catalog.close();
     }
   });
 
   it("records repository audits and only delivers them in steer mode", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "existing.py"), "print('existing')\n");
-    const { catalog, deliveries, enforcer } = await fixture(root);
+    const { deliveries, enforcer } = await fixture(root);
     try {
       await enforcer.openWorkspace("diagnostic");
       await enforcer.audit("diagnostic", { scope: "repository", mode: "log" });
@@ -316,7 +307,6 @@ describe("Rerail code rule runtime", () => {
       expect(deliveries).toHaveLength(1);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -330,7 +320,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { audits: recorder });
+    const { enforcer } = await fixture(root, { audits: recorder });
     try {
       await enforcer.openWorkspace("large-source");
       await enforcer.audit("large-source", { scope: "repository", mode: "log" });
@@ -341,7 +331,6 @@ describe("Rerail code rule runtime", () => {
       });
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -359,7 +348,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { audits: recorder });
+    const { enforcer } = await fixture(root, { audits: recorder });
     try {
       await enforcer.openWorkspace("bounded-audit");
       await enforcer.audit("bounded-audit", { scope: "repository", mode: "log" });
@@ -384,7 +373,6 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -400,7 +388,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { audits: recorder }, { maxVisitedNodes: 1 });
+    const { enforcer } = await fixture(root, { audits: recorder }, { maxVisitedNodes: 1 });
     try {
       await enforcer.openWorkspace("bounded-ast-audit");
       await enforcer.audit("bounded-ast-audit", { scope: "repository", mode: "log" });
@@ -417,7 +405,6 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -436,7 +423,7 @@ describe("Rerail code rule runtime", () => {
       finishResultPages() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { audits: recorder }, { maxVisitedNodes: 1 });
+    const { enforcer } = await fixture(root, { audits: recorder }, { maxVisitedNodes: 1 });
     try {
       await enforcer.openWorkspace("paged-bounded-audit");
       await enforcer.audit("paged-bounded-audit", { scope: "repository", mode: "log" });
@@ -453,21 +440,19 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
   it("records touched-files audits without delivery in log mode", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "existing.py"), "print('existing')\n");
-    const { catalog, deliveries, enforcer } = await fixture(root);
+    const { deliveries, enforcer } = await fixture(root);
     try {
       await enforcer.openWorkspace("diagnostic");
       await enforcer.audit("diagnostic", { scope: "touched-files", mode: "log", paths: ["api/existing.py"] });
       expect(deliveries).toEqual([]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -484,7 +469,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { scope: "repository", audits: recorder }, {}, componentStoryCodeRule);
+    const { enforcer } = await fixture(root, { scope: "repository", audits: recorder }, {}, componentStoryCodeRule);
     try {
       await enforcer.openWorkspace("stories");
       await enforcer.audit("stories", { scope: "repository", mode: "log" });
@@ -510,7 +495,6 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 
@@ -528,7 +512,7 @@ describe("Rerail code rule runtime", () => {
       progress() {},
       interrupt() {},
     };
-    const { catalog, enforcer } = await fixture(root, { scope: "repository", audits: recorder }, {}, asyncBlockingCodeRule);
+    const { enforcer } = await fixture(root, { scope: "repository", audits: recorder }, {}, asyncBlockingCodeRule);
     try {
       await enforcer.openWorkspace("calls");
       await enforcer.audit("calls", { scope: "repository", mode: "log" });
@@ -554,7 +538,6 @@ describe("Rerail code rule runtime", () => {
       ]);
     } finally {
       await enforcer.close();
-      catalog.close();
     }
   });
 });

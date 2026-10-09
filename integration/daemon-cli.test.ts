@@ -97,8 +97,9 @@ describe("Rerail daemon CLI", () => {
         );
         return stdout.trim();
       };
-      expect(await state("--database", configured)).toBe("started");
-      expect(await state()).toBe("never");
+      // Started but not set up in the configured database; the home's database knows nothing of it.
+      expect(await state("--database", configured)).toBe("not-set-up");
+      expect(await state()).toBe("stopped");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

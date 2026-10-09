@@ -1,13 +1,12 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
-import { readStoredCodeRule, reportQuarantinedRule, storedDocumentDigest, type QuarantinedRule } from "./rule-quarantine.js";
+import { readStoredCodeRule, reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
 import { storableCodeRule } from "./code-rule-compile.js";
 import type { CodeRule } from "./code-rule-schema.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
 import { RULE_KINDS, RULE_SCOPES, rules, type NewRuleRow, type RuleKind, type RuleRow, type RuleScope } from "./schema.js";
-import { ruleDocumentDigest } from "./stable-json.js";
 
 interface StoredRuleBase {
   enabled: boolean;
@@ -34,14 +33,6 @@ export type StoredRule = StoredCodeRule | StoredConversationRule;
 /** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
 export type RuleDocument = { kind: "file"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
 
-/** A bundled document; `enabledByDefault: false` (opt-in packs) makes the first seed insert it disabled. */
-export type BundledRuleDocument = RuleDocument & { readonly enabledByDefault?: boolean };
-
-/** The rule body of a bundled entry, without its seeding metadata. */
-export function bundledRuleBody(document: BundledRuleDocument): RuleDocument {
-  return document.kind === "file" ? { kind: "file", rule: document.rule } : { kind: "conversation", rule: document.rule };
-}
-
 export interface RuleWriteOptions {
   enabled?: boolean;
   scope?: RuleScope;
@@ -51,14 +42,6 @@ export interface RuleWriteOptions {
   /** Bundled provenance; omit to keep what the row already records. */
   sourceDigest?: string | null;
 }
-
-export interface SeedReport {
-  inserted: number;
-  refreshed: number;
-  /** Rows left alone: modified by the user, or seeded from the same document already. */
-  kept: number;
-}
-
 
 export interface RuleQuery {
   kind?: RuleKind;
@@ -260,78 +243,6 @@ export class SqliteRuleStore {
     return document.kind === "file"
       ? this.upsertCodeRule(document.rule, options)
       : this.upsertConversationRule(document.rule, options);
-  }
-
-  /** Bundled and restored documents were validated when they were read; a restore must not fail on an engine change. */
-  #writeDocument(document: RuleDocument, options: RuleWriteOptions): StoredRule {
-    return document.kind === "file" ? this.#writeCodeRule(document.rule, options) : this.upsertConversationRule(document.rule, options);
-  }
-
-  /**
-   * Seed bundled documents without clobbering the user's edits. A new id is
-   * inserted with its bundled digest; a row whose content still equals the
-   * digest it was seeded from follows the bundled document when that changes;
-   * a row the user edited (content differs from its seed) or created (no seed
-   * digest) is left exactly as it is. A new row takes `enabledByDefault`; after that `enabled` and `scope` are
-   * never touched.
-   */
-  seed(documents: readonly BundledRuleDocument[], now = Date.now()): SeedReport {
-    const report: SeedReport = { inserted: 0, refreshed: 0, kept: 0 };
-    this.#database.transaction(() => {
-      for (const entry of documents) {
-        const document = bundledRuleBody(entry);
-        const bundled = ruleDocumentDigest(document);
-        const row = this.#row(document.rule.id);
-        if (row === undefined) {
-          const revision = document.kind === "conversation" ? { revision: 1 } : {};
-          this.#writeDocument(document, { now, sourceDigest: bundled, enabled: entry.enabledByDefault ?? true, ...revision });
-          report.inserted += 1;
-          continue;
-        }
-        const read = readRuleRow(row);
-        if (!read.ok) {
-          // An untouched bundled row the schema now rejects is replaced by its bundled document; a user's row is kept.
-          const untouched = row.sourceDigest !== null && row.kind === document.kind
-            && storedDocumentDigest(row.kind, storedBody(row)) === row.sourceDigest;
-          if (untouched) {
-            this.#writeDocument(document, { now, sourceDigest: bundled });
-            report.refreshed += 1;
-          } else {
-            report.kept += 1;
-          }
-          continue;
-        }
-        const existing = read.stored;
-        const unchanged = existing.sourceDigest === bundled;
-        const modified = existing.sourceDigest === null
-          || existing.kind !== document.kind
-          || ruleDocumentDigest({ kind: existing.kind, rule: existing.rule } as RuleDocument) !== existing.sourceDigest;
-        if (unchanged || modified) {
-          report.kept += 1;
-          continue;
-        }
-        this.#writeDocument(document, { now, sourceDigest: bundled });
-        report.refreshed += 1;
-      }
-    });
-    return report;
-  }
-
-  /** Write rows back exactly as another store exported them (timestamps, provenance, and state included). */
-  restore(stored: readonly StoredRule[]): number {
-    this.#database.transaction(() => {
-      for (const entry of stored) {
-        this.#writeDocument({ kind: entry.kind, rule: entry.rule } as RuleDocument, {
-          enabled: entry.enabled,
-          scope: entry.scope,
-          revision: entry.revision,
-          now: entry.updatedAt,
-          sourceDigest: entry.sourceDigest,
-        });
-        this.#database.update(rules).set({ createdAt: entry.createdAt }).where(eq(rules.id, entry.rule.id)).run();
-      }
-    });
-    return stored.length;
   }
 
   count(): number {

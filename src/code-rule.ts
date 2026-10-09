@@ -1252,6 +1252,12 @@ export interface AuditSettings {
   mode?: AuditMode;
 }
 
+/** A repository audit records one per checkout: each checkout's audit is claimed first and reported when it ends. */
+export interface RepositoryAuditHooks {
+  /** False when another live session is already auditing `checkoutRoot`; that checkout is then skipped. */
+  claim(checkoutRoot: string): boolean;
+  finish(checkoutRoot: string, auditId: string | undefined): void;
+}
 
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
@@ -1259,7 +1265,13 @@ export interface CodeRuleAuditor {
   refreshCodeRules?(): void;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
+  /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
   acceptsPath(path: string): boolean;
+  /**
+   * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
+   * when undefined or absent.
+   */
+  sourceRoot?(path: string): string | undefined;
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
@@ -1267,6 +1279,7 @@ export interface CodeRuleAuditor {
     scope: "repository" | "touched-files";
     mode: AuditMode;
     paths?: string[];
+    audit?: RepositoryAuditHooks;
   }): Promise<readonly string[]>;
   /** Stop outstanding evaluation promptly when its session closes. */
   interrupt?(): void;

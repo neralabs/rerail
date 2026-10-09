@@ -12,7 +12,7 @@ import {
   type HookOutput,
 } from "./hook-adapter.js";
 import { sessionStartNote, steerHeadlines } from "./rerail-steer.js";
-import { dashboardOrigin, linkDeliveries } from "./session-presentation.js";
+import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "./session-presentation.js";
 
 const CLAUDE_EVENTS: EventTable = {
   SessionStart: true,
@@ -72,6 +72,6 @@ export async function handleClaudeEvent(
   }
   // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
   const cwd = claudeWorkspace(input.cwd);
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId) : undefined;
+  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
   return claudeHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS), cwd), note);
 }

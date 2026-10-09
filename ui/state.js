@@ -3,11 +3,35 @@
  * `app.js` (user actions) and `poll.js` (fetches) write. Rules are keyed by id so a poll can
  * patch the row that changed and nothing else.
  */
-import { isLog, isPreset, searchText, ruleTitle, isNew, originOf, rulePrefix } from "./derive.js";
+import { isLog, isPreset, searchText, ruleTitle, rulePrefix, originOf } from "./derive.js";
 import { startOfDay } from "./format.js";
 
+/**
+ * The repository the page shows, from `?repository=<key>&checkout=<path>` (either names it; the checkout also
+ * names the worktree whose own settings the page can change). `null` without either: the page lists repositories.
+ */
+export function readScope(search) {
+  const params = new URLSearchParams(search);
+  const repository = params.get("repository") || undefined;
+  const checkout = params.get("checkout") || undefined;
+  return repository === undefined && checkout === undefined ? null : { repository, checkout };
+}
+
+/** Show `scope`; a change made on the page belongs to its worktree when the scope names one, else to the repository. */
+export function setScope(scope) {
+  ui.scope = scope;
+  ui.owner = scope?.checkout === undefined ? "repository" : "checkout";
+}
+
 export const data = {
-  repo: "",
+  /** The scoped repository (`repository_context_get`): name, key, set up, started; `null` until loaded. */
+  repository: null,
+  /** The scoped checkout as the daemon resolved it (`{checkoutPath, folder, state}`), or `null`. */
+  checkout: null,
+  /** Every repository Rerail knows, for the picker shown without a scope. */
+  repositories: [],
+  /** Attachments whose rule or pack cannot be found. */
+  unavailable: [],
   /** id → stored rule, insertion order = catalog order. */
   rules: new Map(),
   /** id → activity for the selected range, and for all time (`since=0`). */
@@ -25,12 +49,19 @@ export const data = {
   /** Freshness: last successful poll, and whether the last attempt failed. */
   updatedAt: 0,
   disconnected: false,
+  /** The daemon answered that it does not know the scoped repository or checkout. */
+  missing: false,
   loaded: false,
 };
 
 export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [9999, "Since install"]];
 
 export const ui = {
+  /** Set by `setScope` before the first poll; `null` lists repositories. */
+  scope: null,
+  /** Who a rule change belongs to: this worktree or the repository. */
+  owner: "repository",
+  settingUp: false,
   view: "rules",
   range: 7,
   filter: "all",
@@ -84,7 +115,7 @@ export const rerails = id => activityOf(id).rerails;
 export const rulesArray = () => [...data.rules.values()];
 
 export function matches(stored) {
-  const id = stored.rule.id, origin = stored.catalogOrigin;
+  const id = stored.rule.id, origin = stored.origin;
   const f = ui.filter;
   if (f === "added" && origin !== "user") return false;
   if (f === "preset" && origin !== "rerail") return false;
@@ -96,15 +127,13 @@ export function matches(stored) {
 }
 
 const az = (a, b) => ruleTitle(a).localeCompare(ruleTitle(b));
-const newest = (a, b) => b.createdAt - a.createdAt;
 
 export function sortRules(list) {
   const c = [...list];
   switch (ui.sort) {
     case "az": return c.sort(az);
-    case "newest": return c.sort((a, b) => newest(a, b) || az(a, b));
     case "recent": return c.sort((a, b) => (activityOf(b.rule.id).lastSeenAt ?? 0) - (activityOf(a.rule.id).lastSeenAt ?? 0) || az(a, b));
-    default: return c.sort((a, b) => fires(b.rule.id) - fires(a.rule.id) || (isNew(b) ? 1 : 0) - (isNew(a) ? 1 : 0) || az(a, b));
+    default: return c.sort((a, b) => fires(b.rule.id) - fires(a.rule.id) || az(a, b));
   }
 }
 

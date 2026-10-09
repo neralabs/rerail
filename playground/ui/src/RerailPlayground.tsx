@@ -59,7 +59,7 @@ const PlaygroundControls = (state: RerailPlaygroundState) => (
               {state.rules.map((rule) => (
                 <SelectItem key={rule.id} value={rule.id}>
                   {rule.id} · {rule.kind}
-                  {rule.enabled ? "" : " · saved disabled"}
+                  {rule.source === "rerail" ? " · By Rerail" : " · Created by you"}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -296,11 +296,11 @@ const PlaygroundInspector = (state: RerailPlaygroundState) => (
             Edit the rule through your LLM’s DB tools. This detail refreshes regularly from the daemon.
           </Text>
           <Text variant="caption">{state.ruleSummary}</Text>
-          <Badge variant={state.selectedRule?.enabled ? "success-soft" : "neutral-soft"}>
-            {state.selectedRule?.enabled ? "Enabled in DB" : "Disabled in DB"}
+          <Badge variant="neutral-soft">
+            {state.selectedRule?.source === "rerail" ? "By Rerail" : "Created by you"}
           </Badge>
           <Text variant="caption">
-            Only this rule is activated in the fresh sandbox—even when saved disabled. The DB is not modified.
+            Only this rule runs, in a fresh sandbox with its own database. Your rules and repositories are not modified.
           </Text>
           <Text
             variant="code-block"
