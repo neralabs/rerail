@@ -412,11 +412,14 @@ pub(crate) fn rule_pattern(
     source: PatternSource<'_>,
     language: GrammarDialect,
 ) -> Result<(Pattern, GrammarDialect), PatternError> {
-    let php = match (Family::of(language), &source) {
-        (Family::Blade, PatternSource::Plain(text)) => blade_text(text),
-        (Family::Blade, PatternSource::Contextual { context, .. }) => blade_text(context),
-        (Family::Python | Family::Ecma | Family::Php, _) => false,
+    let text = match &source {
+        PatternSource::Plain(text) => text,
+        PatternSource::Contextual { context, .. } => context,
     };
+    let php = adapter::with_adapter!(
+        Family::of(language),
+        A => <A as adapter::SyntaxRules>::embeds_pattern(text)
+    );
     if !php {
         let pattern = match source {
             PatternSource::Plain(text) => Pattern::try_new(text, language)?,

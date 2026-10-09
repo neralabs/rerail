@@ -35,6 +35,9 @@ struct Expect {
     value: value_kit::Expect,
     /// What the family's calls answer.
     calls: super::calls::kit::Calls,
+    arguments: super::arguments::kit::Expect,
+    format_args: super::format_args::kit::Expect,
+    syntax: super::syntax::kit::Expect,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -100,6 +103,11 @@ fn kit<A: Adapter>(expect: &Expect) {
     );
     value_kit::check::<A>(&expect.value, expect.dialect, tape);
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
+    super::arguments::kit::check::<A>(&expect.arguments, expect.dialect, |s| {
+        tape(s, expect.dialect)
+    });
+    super::format_args::kit::check::<A>(&expect.format_args);
+    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
 }
 
 #[test]
@@ -134,6 +142,46 @@ fn python() {
             unread: Some("pkg.mod"),
             label: ("pkg.C.m", "pkg.C.m"),
             keys: &[("pkg.f", 0, &["pkg.f", "alt.f"]), ("pkg.f", 64, &[])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["call"],
+            features: [
+                None,
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments`; use language or syntactic for Python",
+                ),
+            ],
+            passed: ("f(1, b=2)\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [
+                None,
+                None,
+                Some(
+                    "`printf` reads PHP's printf-family calls; Python's printf formats are style `percent`",
+                ),
+                Some("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats"),
+            ],
+        },
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Python,
+            dollar_names: true,
+            language_options: None,
+            parse: [
+                None,
+                None,
+                None,
+                Some("`eslintDirective` parses TypeScript comments"),
+                Some(
+                    "`printfFormat` parses PHP strings; Python's printf formats are `percentFormat`",
+                ),
+                Some("`scanfFormat` parses PHP strings; Python has no scanf formats"),
+                Some("`phpDoc` parses PHP doc comments"),
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("# c\nx = 1\n", 1),
         },
     });
 }
@@ -177,6 +225,39 @@ fn ecma() {
             unread: None,
             label: ("pkg.f", "pkg.f"),
             keys: &[("pkg.f", 0, &[])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["call_expression", "new_expression"],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; JavaScript passes arguments by position only",
+                ),
+                Some(
+                    "`syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords",
+                ),
+                None,
+            ],
+            passed: ("f(1, ...xs);\n", ["1", "?"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
+        },
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: false,
+            language_options: None,
+            parse: [
+                Some("`percentFormat` parses Python literals"),
+                Some("`braceFormat` parses Python literals"),
+                Some("`annotation` parses Python literals"),
+                None,
+                Some("`printfFormat` parses PHP strings"),
+                Some("`scanfFormat` parses PHP strings"),
+                Some("`phpDoc` parses PHP doc comments"),
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("// c\nlet x = 1;\n", 1),
         },
     });
 }
@@ -234,6 +315,60 @@ fn php() {
             unread: None,
             label: ("\\app\\c.m", "app\\c::m"),
             keys: &[("\\App\\F", 0, &["\\app\\f"]), ("\\f", 64, &["\\f"])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; PHP has no positional-only or keyword-only parameters",
+                ),
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
+                ),
+            ],
+            passed: ("<?php f(1, b: 2);\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: true,
+            styles: [
+                Some(
+                    "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
+                ),
+                Some(
+                    "`percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
+                ),
+                None,
+                None,
+            ],
+        },
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: true,
+            language_options: Some("`languageOptions` is not available for php policies"),
+            parse: [
+                Some(
+                    "`percentFormat` parses Python literals; PHP's printf formats are `printfFormat`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; PHP has no str.format templates (its printf formats are `printfFormat`)",
+                ),
+                Some(
+                    "`annotation` parses Python literals; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
+                ),
+                Some("`eslintDirective` parses TypeScript comments"),
+                None,
+                None,
+                None,
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("<?php /** d */ // c\n", 2),
         },
     });
 }
@@ -295,6 +430,60 @@ fn blade() {
             unread: None,
             label: ("\\app\\c.m", "app\\c::m"),
             keys: &[("\\App\\F", 0, &["\\app\\f"]), ("\\f", 64, &["\\f"])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &[
+                "function_call_expression",
+                "member_call_expression",
+                "nullsafe_member_call_expression",
+                "scoped_call_expression",
+                "object_creation_expression",
+            ],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; PHP has no positional-only or keyword-only parameters",
+                ),
+                None,
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
+                ),
+            ],
+            passed: ("{{ f(1, b: 2) }}\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: true,
+            styles: [
+                Some(
+                    "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
+                ),
+                Some(
+                    "`percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
+                ),
+                None,
+                None,
+            ],
+        },
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: false,
+            language_options: Some("`languageOptions` is not available for blade policies"),
+            parse: [
+                Some(
+                    "`percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; blade embeds PHP, which has no str.format templates (its printf formats are `printfFormat`)",
+                ),
+                Some(
+                    "`annotation` parses Python literals; blade embeds PHP, which holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
+                ),
+                Some("`eslintDirective` parses TypeScript comments"),
+                None,
+                None,
+                None,
+            ],
+            embeds: &[("sprintf($F, $$$A)", true), ("<p>{{ $x }}</p>", false)],
+            php_comments: ("{{-- a --}}\n@php /** b */ @endphp\n", 1),
         },
     });
 }
