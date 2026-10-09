@@ -294,7 +294,7 @@
    },
    "violation": {
     "anchor": "capture.IF",
-    "code": "NO_LONELY_IF",
+    "code": "no-lonely-if",
     "message": "Unexpected if as the only statement in an else block.",
     "fix": "$IF"
    }
@@ -580,7 +580,7 @@
    },
    "violation": {
     "anchor": "capture.IF",
-    "code": "NO_LONELY_IF",
+    "code": "no-lonely-if",
     "message": "Unexpected if as the only statement in an else block.",
     "fix": " $IF"
    }
@@ -861,7 +861,7 @@
    },
    "violation": {
     "anchor": "capture.IF",
-    "code": "NO_LONELY_IF",
+    "code": "no-lonely-if",
     "message": "Unexpected if as the only statement in an else block."
    }
   }

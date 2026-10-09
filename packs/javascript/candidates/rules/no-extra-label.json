@@ -152,7 +152,7 @@
       },
       "violation": {
         "anchor": "capture.L",
-        "code": "NO_EXTRA_LABEL",
+        "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
         "fix": "break;"
       }
@@ -300,7 +300,7 @@
       },
       "violation": {
         "anchor": "capture.L",
-        "code": "NO_EXTRA_LABEL",
+        "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
         "fix": "break"
       }
@@ -446,7 +446,7 @@
       },
       "violation": {
         "anchor": "capture.L",
-        "code": "NO_EXTRA_LABEL",
+        "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
         "fix": "continue;"
       }
@@ -594,7 +594,7 @@
       },
       "violation": {
         "anchor": "capture.L",
-        "code": "NO_EXTRA_LABEL",
+        "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
         "fix": "continue"
       }
@@ -736,7 +736,7 @@
       },
       "violation": {
         "anchor": "capture.L",
-        "code": "NO_EXTRA_LABEL",
+        "code": "no-extra-label",
         "message": "This label '$L' is unnecessary."
       }
     }

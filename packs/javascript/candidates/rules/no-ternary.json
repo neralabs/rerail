@@ -23,7 +23,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_TERNARY",
+        "code": "no-ternary",
         "message": "Ternary operator used."
       }
     }

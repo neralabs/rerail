@@ -224,7 +224,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "PREFER_CONST",
+        "code": "prefer-const",
         "message": "This binding is never reassigned. Use const instead.",
         "suppress": {
           "eslint": {

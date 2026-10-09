@@ -276,7 +276,7 @@
    },
    "violation": {
     "anchor": "capture.PROP",
-    "code": "NO_EXTRA_BIND",
+    "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
     "fix": "$OBJ"
    }
@@ -550,7 +550,7 @@
    },
    "violation": {
     "anchor": "capture.PROP",
-    "code": "NO_EXTRA_BIND",
+    "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
     "fix": "($OBJ)"
    }
@@ -855,7 +855,7 @@
    },
    "violation": {
     "anchor": "capture.PROP",
-    "code": "NO_EXTRA_BIND",
+    "code": "no-extra-bind",
     "message": "The function binding is unnecessary."
    }
   }

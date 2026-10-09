@@ -9,7 +9,7 @@
     {
       "id": "octal-literal",
       "forbid": { "ast": { "language": "typescript", "rule": { "kind": "number", "regex": "^0[0-9]" } } },
-      "violation": { "anchor": "witness.span", "code": "NO_OCTAL", "message": "Octal literals should not be used." }
+      "violation": { "anchor": "witness.span", "code": "no-octal", "message": "Octal literals should not be used." }
     }
   ]
 }

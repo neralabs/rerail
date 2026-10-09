@@ -29,7 +29,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_NONOCTAL_DECIMAL_ESCAPE",
+        "code": "no-nonoctal-decimal-escape",
         "message": "Don't use '$ESC' escape sequence."
       }
     }

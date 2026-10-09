@@ -250,7 +250,7 @@
    },
    "violation": {
     "anchor": "capture.L",
-    "code": "NO_UNUSED_LABELS",
+    "code": "no-unused-labels",
     "message": "'$L:' is defined but never used.",
     "fix": "$BODY"
    }
@@ -473,7 +473,7 @@
    },
    "violation": {
     "anchor": "capture.L",
-    "code": "NO_UNUSED_LABELS",
+    "code": "no-unused-labels",
     "message": "'$L:' is defined but never used."
    }
   },
@@ -519,7 +519,7 @@
    },
    "violation": {
     "anchor": "capture.L",
-    "code": "NO_UNUSED_LABELS",
+    "code": "no-unused-labels",
     "message": "'$L:' is defined but never used.",
     "fix": "$V"
    }

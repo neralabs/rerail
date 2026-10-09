@@ -46,7 +46,7 @@
    },
    "violation": {
     "anchor": "capture.PROP",
-    "code": "NO_PROTOTYPE_BUILTINS",
+    "code": "no-prototype-builtins",
     "message": "Do not access Object.prototype method '$PROP' from target object."
    }
   },
@@ -101,7 +101,7 @@
    },
    "violation": {
     "anchor": "capture.PROP",
-    "code": "NO_PROTOTYPE_BUILTINS",
+    "code": "no-prototype-builtins",
     "message": "Do not access Object.prototype method '$NAME' from target object."
    }
   }

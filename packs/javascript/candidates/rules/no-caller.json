@@ -43,7 +43,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_CALLER",
+        "code": "no-caller",
         "message": "Avoid arguments.$PROP."
       }
     }

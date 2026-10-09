@@ -76,7 +76,7 @@
    },
    "violation": {
     "anchor": "witness.span",
-    "code": "NO_CASE_DECLARATIONS",
+    "code": "no-case-declarations",
     "message": "Unexpected lexical declaration in case block."
    }
   }

@@ -42,7 +42,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "NO_AWAIT_IN_LOOP", "message": "Unexpected `await` inside a loop." }
+      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop." }
     }
   ]
 }

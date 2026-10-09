@@ -40,7 +40,7 @@
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "NO_EQ_NULL",
+        "code": "no-eq-null",
         "message": "Use '===' to compare with null."
       }
     }
