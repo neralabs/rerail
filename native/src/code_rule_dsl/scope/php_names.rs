@@ -15,7 +15,7 @@
 //! is the global name in the global namespace, and in a namespace PHP tries the namespaced name
 //! first and falls back to the global one at run time. That fallback is read as the namespaced
 //! name where this file declares it (a function, a `const`, or the global `define` of a constant
-//! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.json`), and as
+//! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
 use super::{BuildError, NodeRef};
@@ -1066,7 +1066,7 @@ fn same_name(entry: &str, name: &str, kind: NameKind) -> bool {
     }
 }
 
-/// PHP 8.5.11's builtin names (`data/generate_php_builtins.php`).
+/// PHP 8.5.11's builtin names (`scripts/generate/scope/php-builtins.php`).
 #[derive(Deserialize)]
 struct BuiltinsFile {
     functions: HashSet<String>,
@@ -1074,8 +1074,8 @@ struct BuiltinsFile {
 }
 
 static BUILTINS: LazyLock<BuiltinsFile> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("data/php_builtins.json"))
-        .expect("php_builtins.json is valid")
+    serde_json::from_str(include_str!("data/php_builtins.generated.json"))
+        .expect("php_builtins.generated.json is valid")
 });
 
 /// Whether PHP 8.5.11 defines the function, by its lowercased name.

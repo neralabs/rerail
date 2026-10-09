@@ -767,7 +767,7 @@ const nativePaths = [
 ];
 const watcher = watch(
   [
-    ...["src", "code-rule-dsl", ...nativePaths].map((path) => join(checkoutRoot, path)),
+    ...["src", ...nativePaths].map((path) => join(checkoutRoot, path)),
     join(playgroundRoot, "src"),
   ],
   {

@@ -16,14 +16,6 @@ export const RULES_DUMP_FILE = "rules.json";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * `<package>/code-rule-dsl/rules`: core's own rule documents, seeded enabled into every project database. None ship
- * today, so the directory may be absent.
- */
-export function bundledRulesDirectory(): string {
-  return join(PACKAGE_ROOT, "code-rule-dsl", "rules");
-}
-
-/**
  * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: TSLint and
  * complexity.
  * Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`); its `rules/` documents are seeded
@@ -65,21 +57,16 @@ function readRuleDirectory(directory: string): { path: string; document: RuleDoc
 }
 
 /**
- * Core's own rule documents in `directory`, sorted by file name, then each pack's `rules/*.json` (in `packs` order,
- * then by file name) marked `enabledByDefault: false`; ids must be unique across all of them.
+ * Every bundled rule document: each pack's `rules/*.json` (in `packs` order, then by file name), marked
+ * `enabledByDefault: false`; ids must be unique across all of them. Core has no rules of its own: every rule it ships
+ * is in a pack.
  */
-export function loadBundledRules(directory = bundledRulesDirectory(), packs: readonly string[] = corePackDirectories()): BundledRuleDocument[] {
-  const entries: { path: string; document: BundledRuleDocument }[] = [
-    ...readRuleDirectory(directory),
-    ...packs
-      .flatMap(pack => readRuleDirectory(join(pack, "rules")))
-      .map(({ path, document }) => ({ path, document: { ...document, enabledByDefault: false } })),
-  ];
+export function loadBundledRules(packs: readonly string[] = corePackDirectories()): BundledRuleDocument[] {
   const seen = new Set<string>();
-  return entries.map(({ path, document }) => {
+  return packs.flatMap(pack => readRuleDirectory(join(pack, "rules"))).map(({ path, document }) => {
     if (seen.has(document.rule.id)) throw new Error(`Duplicate bundled rule id: ${document.rule.id} (${path})`);
     seen.add(document.rule.id);
-    return document;
+    return { ...document, enabledByDefault: false };
   });
 }
 

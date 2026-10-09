@@ -71,9 +71,9 @@ jobs:
           npm run check:reference
 
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
-  # read code-rule-dsl/, conformance/, fixtures/, the packs' rules and the language registry (languages/
-  # and its generated TS module); package.json holds the cargo commands. Pushes to
-  # main run everything (the filter step is skipped and the output is empty).
+  # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
+  # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
+  # engine embeds. Pushes to main run everything (the filter step is skipped and the output is empty).
   changes:
     name: Detect engine changes
     runs-on: ubuntu-24.04
@@ -91,7 +91,6 @@ jobs:
           filters: |
             rust:
               - 'native/**'
-              - 'code-rule-dsl/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -103,6 +102,8 @@ jobs:
               - '.cargo/**'
               - 'package.json'
               - '.github/workflows/ci.yml'
+              - '.gitattributes'
+              - '.github/actions/lfs/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
@@ -133,6 +134,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -171,6 +174,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - id: rust-toolchain
         name: Read pinned Rust toolchain
@@ -248,6 +253,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
@@ -266,6 +273,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - uses: ./.github/actions/node-deps
         with:
@@ -290,6 +299,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - uses: ./.github/actions/node-deps
         with:
@@ -351,6 +362,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - uses: ./.github/actions/node-deps
         with:
@@ -419,6 +432,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
         uses: actions/setup-node@v6

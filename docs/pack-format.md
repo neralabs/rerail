@@ -7,9 +7,8 @@ in its `files`, read from `CORE_RULE_PACKS` in `src/rule-bootstrap.ts`; see [rul
 is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
 one, see [language packs](language-packs.md#start-a-pack).
 
-Core's own built-in rules are not a pack: they would live in `code-rule-dsl/rules/` beside the engine's
-`capabilities.json` and be seeded enabled. None ship today. Packs hold every other rule document; their rules are
-seeded disabled.
+Core has no rules of its own: every rule document it ships is in a pack, and pack rules are seeded disabled. The
+engine's `capabilities.json`, which every code rule compiles against, is `native/src/code_rule_dsl/capabilities.json`.
 
 ## Principles
 
@@ -138,11 +137,11 @@ Precisely:
 
 1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each document must
    be a valid code rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
-   `code-rule-dsl/capabilities.json`, as the catalog compiles it.
+   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
-3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (the `bundled-rules`
-   test's path). Its path must be in the rule's scope, and it must produce no engine failure. A violation counts when
-   its code is one of the rule's clauses' codes.
+3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
+   `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A
+   violation counts when its code is one of the rule's clauses' codes.
 4. The fixture tier of the conformance runner (`conformance/languages/runner.ts`, the `language-conformance` test's),
    over the production workspace path: an unexplained false positive fails on every source, an unexplained false
    negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.

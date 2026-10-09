@@ -7,7 +7,7 @@ use std::cell::OnceCell;
 use std::collections::HashSet;
 use tokenizers::Tokenizer;
 
-/// Mirrors `maxRegexPatternBytes` in `code-rule-dsl/capabilities.json`.
+/// Mirrors `maxRegexPatternBytes` in `code_rule_dsl/capabilities.json`.
 const MAX_REGEX_PATTERN_BYTES: usize = 16_384;
 const MAX_CONDITION_DEPTH: usize = 16;
 

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
 
 let capabilities: string | undefined;
-/** Core's `code-rule-dsl/capabilities.json`, as the catalog compiles code rules against it. */
+/** The engine's `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles code rules against it. */
 export function capabilitiesJson(): string {
   capabilities ??= readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
   return capabilities;

@@ -27,7 +27,7 @@ describe("codeRuleMessageVariables", () => {
 
 describe("code rule language mirror", () => {
   it("matches the executable DSL capabilities language keys", () => {
-    const capabilities = JSON.parse(readFileSync(new URL("../code-rule-dsl/capabilities.json", import.meta.url), "utf8")) as {
+    const capabilities = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8")) as {
       ast: { languages: Record<string, string> };
     };
     expect(Object.keys(capabilities.ast.languages).sort()).toEqual([...CODE_RULE_AST_LANGUAGES].sort());

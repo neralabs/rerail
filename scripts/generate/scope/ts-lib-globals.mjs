@@ -1,9 +1,9 @@
-// Writes ts_lib_globals.json: the global variables typescript-eslint's scope manager defines for
-// each TypeScript `lib` (`parserOptions.lib`), with the namespaces each one is valid in, and the
-// libs each lib includes. Read from @typescript-eslint/scope-manager's generated lib definitions
-// (dist/lib), which typescript-eslint derives from TypeScript's lib files. Run offline, not in CI:
+// Writes native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json: the global variables typescript-eslint's
+// scope manager defines for each TypeScript `lib` (`parserOptions.lib`), with the namespaces each one is valid in, and
+// the libs each lib includes. Read from @typescript-eslint/scope-manager's generated lib definitions (dist/lib), which
+// typescript-eslint derives from TypeScript's lib files. Run offline, not in CI:
 //   npm install --prefix <dir> @typescript-eslint/scope-manager@8.70.1
-//   node generate_ts_lib_globals.mjs <dir>/node_modules/@typescript-eslint/scope-manager
+//   node scripts/generate/scope/ts-lib-globals.mjs <dir>/node_modules/@typescript-eslint/scope-manager
 // A different version is refused; bump PIN and regenerate to move the table.
 import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -12,7 +12,7 @@ import { join } from "node:path";
 const PIN = "8.70.1";
 const manager = process.argv[2];
 if (manager === undefined) {
-  throw new Error("usage: node generate_ts_lib_globals.mjs <path to node_modules/@typescript-eslint/scope-manager>");
+  throw new Error("usage: node scripts/generate/scope/ts-lib-globals.mjs <path to node_modules/@typescript-eslint/scope-manager>");
 }
 const require = createRequire(join(manager, "noop.js"));
 const { version } = require(join(manager, "package.json"));
@@ -37,4 +37,7 @@ for (const name of [...lib.keys()].sort()) {
   libs[name] = { libs: includes, variables };
 }
 const table = { source: `@typescript-eslint/scope-manager@${version} dist/lib`, libs };
-writeFileSync(join(import.meta.dirname, "ts_lib_globals.json"), `${JSON.stringify(table, null, 1)}\n`);
+writeFileSync(
+  join(import.meta.dirname, "../../../native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json"),
+  `${JSON.stringify(table, null, 1)}\n`,
+);

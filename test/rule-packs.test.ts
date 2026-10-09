@@ -80,7 +80,7 @@ async function withRepositoryPack(): Promise<readonly RulePack[]> {
   return readRulePacks([...corePackDirectories(), acme]);
 }
 
-const capabilities = readFileSync(fileURLToPath(new URL("../code-rule-dsl/capabilities.json", import.meta.url)), "utf8");
+const capabilities = readFileSync(fileURLToPath(new URL("../native/src/code_rule_dsl/capabilities.json", import.meta.url)), "utf8");
 const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 
 /** Whether the file rule `ruleId`, evaluated on `text` at `path`, reports a violation. */

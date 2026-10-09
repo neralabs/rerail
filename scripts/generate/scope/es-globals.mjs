@@ -1,7 +1,8 @@
-// Writes es_globals.json: ESLint's globals for each ecmaVersion and for sourceType "commonjs", as
-// `languageOptions` resolves them (conf/globals.js, conf/ecma-version.js). Run offline, not in CI:
+// Writes native/src/code_rule_dsl/scope/data/es_globals.generated.json: ESLint's globals for each ecmaVersion and for
+// sourceType "commonjs", as `languageOptions` resolves them (conf/globals.js, conf/ecma-version.js). Run offline, not
+// in CI:
 //   npm install --prefix <dir> eslint@10.11.0
-//   node generate_es_globals.mjs <dir>/node_modules/eslint
+//   node scripts/generate/scope/es-globals.mjs <dir>/node_modules/eslint
 // A different ESLint version is refused; bump PIN and regenerate to move the table.
 import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -9,7 +10,7 @@ import { join } from "node:path";
 
 const PIN = "10.11.0";
 const eslint = process.argv[2];
-if (eslint === undefined) throw new Error("usage: node generate_es_globals.mjs <path to node_modules/eslint>");
+if (eslint === undefined) throw new Error("usage: node scripts/generate/scope/es-globals.mjs <path to node_modules/eslint>");
 const require = createRequire(join(eslint, "noop.js"));
 const { version } = require(join(eslint, "package.json"));
 if (version !== PIN) throw new Error(`eslint ${version} found; the table is pinned to eslint ${PIN}`);
@@ -29,4 +30,7 @@ const table = {
   commonjs: settings(globals.commonjs),
   versions,
 };
-writeFileSync(join(import.meta.dirname, "es_globals.json"), `${JSON.stringify(table, null, 1)}\n`);
+writeFileSync(
+  join(import.meta.dirname, "../../../native/src/code_rule_dsl/scope/data/es_globals.generated.json"),
+  `${JSON.stringify(table, null, 1)}\n`,
+);

@@ -6,7 +6,6 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../src/database.js";
-import { loadBundledRules } from "../src/rule-bootstrap.js";
 import { MOCK_CONVERSATION_RULES, seedRerailDatabase } from "../src/seed.js";
 import {
   isRerailStarted,
@@ -60,8 +59,8 @@ describe("repository start state", () => {
     const first = recorder();
     const setUp = await startRerail(main, first, { databasePath });
     expect(setUp).toMatchObject({ previous: "never", repositoryName: "acme-web" });
-    // Core seeds only its enabled-by-default bundled rules; the opt-in packs stay off.
-    expect(setUp.ruleCount).toBe(loadBundledRules().filter(document => document.enabledByDefault !== false).length);
+    // Every bundled rule is in an opt-in pack, so a new repository starts with none on.
+    expect(setUp.ruleCount).toBe(0);
     expect(first.lines).toEqual([`● Rerail is on in acme-web. ${setUp.ruleCount} rules are on.`]);
 
     const stop = recorder();

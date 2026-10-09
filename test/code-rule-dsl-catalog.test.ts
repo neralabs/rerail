@@ -1257,10 +1257,10 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   });
 
   it("pins the latest ecmaVersion and the Python versions of the engine's builtins tables", () => {
-    const table = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/es_globals.json", import.meta.url), "utf8")) as { latest: number; versions: Record<string, unknown> };
+    const table = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/es_globals.generated.json", import.meta.url), "utf8")) as { latest: number; versions: Record<string, unknown> };
     expect(table.latest).toBe(CODE_RULE_LATEST_ECMA_VERSION);
     expect(Object.keys(table.versions)).toContain(String(CODE_RULE_LATEST_ECMA_VERSION));
-    const python = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/python_builtins.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
+    const python = JSON.parse(readFileSync(new URL("../native/src/code_rule_dsl/scope/data/python_builtins.generated.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
     expect(Object.keys(python.versions)).toEqual([...CODE_RULE_PYTHON_VERSIONS]);
   });
 

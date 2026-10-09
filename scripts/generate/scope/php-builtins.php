@@ -1,18 +1,18 @@
 <?php
-// Writes php_builtins.json: the global names PHP 8.5.11 defines before any application code runs,
-// read from a `php -n` process (no ini file, so only the extensions compiled into the binary):
-// internal functions (lowercased, as PHP compares them), constants (their canonical spelling,
-// compared case-sensitively), and classes, interfaces, traits and enums (lowercased). The
-// unqualified function or constant fallback in a namespace reads it (scope/php_names.rs). It
-// refuses to run unless PHP's version and loaded extensions are php_runtime.json's, the runtime
-// the PHP tables are generated with (scope/php/generate_by_reference.php checks it too). Run
-// offline, never in CI, from this directory:
-//   /opt/homebrew/Cellar/php/8.5.11/bin/php -n generate_php_builtins.php
+// Writes native/src/code_rule_dsl/scope/data/php_builtins.generated.json: the global names PHP 8.5.11
+// defines before any application code runs, read from a `php -n` process (no ini file, so only the
+// extensions compiled into the binary): internal functions (lowercased, as PHP compares them),
+// constants (their canonical spelling, compared case-sensitively), and classes, interfaces, traits
+// and enums (lowercased). The unqualified function or constant fallback in a namespace reads it
+// (scope/php_names.rs). It refuses to run unless PHP's version and loaded extensions are
+// php-runtime.json's, the runtime the PHP tables are generated with (php-by-reference.php checks
+// it too). Run offline, never in CI:
+//   /opt/homebrew/Cellar/php/8.5.11/bin/php -n scripts/generate/scope/php-builtins.php
 
 declare(strict_types=1);
 
 $runtime = json_decode(
-    (string) file_get_contents(__DIR__ . '/php_runtime.json'),
+    (string) file_get_contents(__DIR__ . '/php-runtime.json'),
     true,
     flags: JSON_THROW_ON_ERROR,
 );
@@ -26,7 +26,7 @@ $extensions = get_loaded_extensions();
 sort($extensions, SORT_STRING);
 if ($extensions !== $runtime['extensions']) {
     throw new RuntimeException(sprintf(
-        'loaded extensions differ from php_runtime.json: missing [%s], extra [%s]',
+        'loaded extensions differ from php-runtime.json: missing [%s], extra [%s]',
         implode(', ', array_diff($runtime['extensions'], $extensions)),
         implode(', ', array_diff($extensions, $runtime['extensions'])),
     ));
@@ -50,6 +50,6 @@ $data = [
     'enums' => $lower(array_values(array_filter(get_declared_classes(), 'enum_exists'))),
 ];
 file_put_contents(
-    __DIR__ . '/php_builtins.json',
+    __DIR__ . '/../../../native/src/code_rule_dsl/scope/data/php_builtins.generated.json',
     json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n",
 );

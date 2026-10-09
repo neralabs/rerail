@@ -91,6 +91,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - name: Set up Node.js v24
         uses: actions/setup-node@v6
         with:
@@ -206,6 +208,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
         uses: actions/setup-node@v6

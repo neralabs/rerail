@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// ESLint's globals per `ecmaVersion` and for `commonjs`, generated offline from a pinned ESLint
-/// (`data/generate_es_globals.mjs`).
-const ES_GLOBALS_JSON: &str = include_str!("data/es_globals.json");
+/// (`scripts/generate/scope/es-globals.mjs`).
+const ES_GLOBALS_JSON: &str = include_str!("data/es_globals.generated.json");
 
 #[derive(Deserialize)]
 struct EsGlobalsFile {
@@ -32,7 +32,7 @@ impl EsGlobals {
         static TABLE: OnceLock<EsGlobals> = OnceLock::new();
         TABLE.get_or_init(|| {
             let file: EsGlobalsFile =
-                serde_json::from_str(ES_GLOBALS_JSON).expect("es_globals.json is valid");
+                serde_json::from_str(ES_GLOBALS_JSON).expect("es_globals.generated.json is valid");
             EsGlobals {
                 latest: file.latest,
                 commonjs: file.commonjs,
@@ -52,8 +52,8 @@ impl EsGlobals {
 }
 
 /// typescript-eslint's lib globals per TypeScript `lib`, generated offline from its pinned scope
-/// manager (`data/generate_ts_lib_globals.mjs`).
-const TS_LIB_GLOBALS_JSON: &str = include_str!("data/ts_lib_globals.json");
+/// manager (`scripts/generate/scope/ts-lib-globals.mjs`).
+const TS_LIB_GLOBALS_JSON: &str = include_str!("data/ts_lib_globals.generated.json");
 
 #[derive(Deserialize)]
 struct TsLibsFile {
@@ -72,8 +72,8 @@ struct TsLib {
 fn ts_libs() -> &'static BTreeMap<String, TsLib> {
     static TABLE: OnceLock<BTreeMap<String, TsLib>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        let file: TsLibsFile =
-            serde_json::from_str(TS_LIB_GLOBALS_JSON).expect("ts_lib_globals.json is valid");
+        let file: TsLibsFile = serde_json::from_str(TS_LIB_GLOBALS_JSON)
+            .expect("ts_lib_globals.generated.json is valid");
         file.libs
     })
 }
@@ -223,8 +223,8 @@ impl LanguageOptions {
 }
 
 /// Ruff's module-level builtins and magic globals per Python minor version, generated offline
-/// from a pinned Ruff (`data/generate_python_builtins.py`).
-const PYTHON_BUILTINS_JSON: &str = include_str!("data/python_builtins.json");
+/// from a pinned Ruff (`scripts/generate/scope/python_builtins.py`).
+const PYTHON_BUILTINS_JSON: &str = include_str!("data/python_builtins.generated.json");
 
 #[derive(Deserialize)]
 struct PythonBuiltinsFile {
@@ -235,8 +235,8 @@ struct PythonBuiltinsFile {
 pub(crate) fn python_builtins() -> &'static BTreeMap<u8, BTreeSet<String>> {
     static TABLE: OnceLock<BTreeMap<u8, BTreeSet<String>>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        let file: PythonBuiltinsFile =
-            serde_json::from_str(PYTHON_BUILTINS_JSON).expect("python_builtins.json is valid");
+        let file: PythonBuiltinsFile = serde_json::from_str(PYTHON_BUILTINS_JSON)
+            .expect("python_builtins.generated.json is valid");
         file.versions
             .into_iter()
             .map(|(version, names)| {

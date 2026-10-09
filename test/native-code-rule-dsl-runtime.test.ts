@@ -152,7 +152,7 @@ function compileJson(clauses: unknown[], capabilityJson = capabilities()): Nativ
   return nativeRuntime().compile(codeRule(clauses), "json", capabilityJson);
 }
 
-/** Code-rule documents kept as engine-contract fixtures (formerly bundled defaults; the shipped set lives in code-rule-dsl/). */
+/** Code-rule documents kept as engine-contract fixtures (formerly bundled defaults; every shipped rule is in a pack). */
 function compileCodeRuleFile(name: string): NativeCompiledCodeRule {
   const source = readFileSync(new URL(`./fixtures/code-rule-dsl/${name}.json`, import.meta.url), "utf8");
   return nativeRuntime().compile(source, "json", capabilities());

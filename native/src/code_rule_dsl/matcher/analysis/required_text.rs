@@ -9,7 +9,7 @@
 //! literals rather than the file) need nothing. A file or node without the text cannot match the
 //! rule, so it need not be tested at all.
 
-use super::{AstMatcher, UtilRef};
+use super::super::{AstMatcher, UtilRef};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::PatternNode;
 use regex_syntax::hir::literal::Extractor;
@@ -36,7 +36,7 @@ impl RequiredText {
 
     /// What a node's own text must contain for `matcher` to match at it: only what the node and
     /// its descendants are tested for counts, not what relations read elsewhere in the file.
-    pub(super) fn of_node(matcher: &AstMatcher) -> Option<Self> {
+    pub(in crate::code_rule_dsl::matcher) fn of_node(matcher: &AstMatcher) -> Option<Self> {
         Self::from_clauses(needs(matcher, &mut Utilities::default(), Reach::Node))
     }
 
@@ -53,7 +53,7 @@ impl RequiredText {
     }
 
     /// Whether `text` satisfies every clause.
-    pub(super) fn holds(&self, text: &str) -> bool {
+    pub(in crate::code_rule_dsl::matcher) fn holds(&self, text: &str) -> bool {
         self.holds_with(text, &mut |text, literal| {
             memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
         })

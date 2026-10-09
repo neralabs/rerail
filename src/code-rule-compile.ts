@@ -32,10 +32,10 @@ export class EngineUnavailableError extends Error {
   }
 }
 
-/** `<package>/code-rule-dsl`: `capabilities.json` and the bundled `rules/` documents live here. */
+/** `<package>/native/src/code_rule_dsl`: the engine's `capabilities.json`, which code rules compile against, lives here. */
 export function bundledCodeRuleDslDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  return resolve(moduleDirectory, "..", "code-rule-dsl");
+  return resolve(moduleDirectory, "..", "native", "src", "code_rule_dsl");
 }
 
 let bundledCapabilities: string | undefined;

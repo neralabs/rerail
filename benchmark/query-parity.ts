@@ -13,7 +13,7 @@ import { isSemanticWorkload, semanticWorkloads, type SemanticWorkload } from "./
 
 const script = fileURLToPath(import.meta.url);
 const rerailRoot = resolve(dirname(script), "..");
-const catalogRoot = resolve(rerailRoot, "code-rule-dsl");
+const catalogRoot = resolve(rerailRoot, "native", "src", "code_rule_dsl");
 const workloads = ["corpus", ...semanticWorkloads, "edits", "relation-order", "select-when"] as const;
 type Workload = typeof workloads[number];
 type Evaluator = "workspace" | "stateless" | "stateless-per-file";
@@ -127,7 +127,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own yet); semantic kinds read `benchmark/<kind>/with`. */
+/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own); semantic kinds read `benchmark/<kind>/with`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];

@@ -6,7 +6,7 @@ the core package at the repository root.
 > Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the TSLint
 > and complexity packs inside its own package (`<id>/pack.json` and `<id>/rules/`). The packs here: `python`, `php`,
 > `blade`, `typescript`, `react`, `node`, `next`, `tslint` and `complexity`. Every rule document Rerail ships lives in
-> a pack; core's own built-in rules, if any, would live in `code-rule-dsl/rules/`.
+> a pack; core has no rules of its own.
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
 - [docs/language-packs.md](../docs/language-packs.md#start-a-pack): how to start a pack, for a supported language, a

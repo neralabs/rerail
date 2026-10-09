@@ -5,7 +5,7 @@
 //! `generate` writes `language_registry.rs` to `OUT_DIR`; `code_rule_dsl::language` includes it. A
 //! registry the engine cannot be built from fails the build here, naming the file and the fault.
 //! The TypeScript host reads the same files through `src/code-rule-language-registry.generated.ts`, which
-//! `scripts/generate-language-registry.ts` writes and the host's tests keep current.
+//! `scripts/generate/languages/registry.ts` writes and the host's tests keep current.
 
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};

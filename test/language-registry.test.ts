@@ -7,7 +7,7 @@ import {
   readLanguageRegistry,
   renderLanguageRegistryModule,
   type LanguageEntry,
-} from "../scripts/generate-language-registry.js";
+} from "../scripts/generate/languages/registry.js";
 import { languageFor } from "../src/code-rule-enforcer.js";
 import { generatedEditPaths } from "../src/code-rule-bridge.js";
 import { LANGUAGE_REGISTRY, CODE_RULE_DIALECTS, codeRuleDialectForPath } from "../src/code-rule-languages.js";

@@ -3,7 +3,7 @@
 
 Run offline by a maintainer, never in CI:
 
-    python3 packs/node/candidates/generate.py [--tools <dir>] [--root <dir>]
+    python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]
 
 --tools defaults to the nearest `.rerail/tools/node` above the repository (eslint-plugin-n 18.4.1 and globals 17.13.0
 installed there; the script refuses other versions). --root (default: the repository) is where the files are
@@ -33,8 +33,8 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
-# The pack's directory, packs/node, relative to the repository.
-PACK = os.path.relpath(os.path.dirname(HERE), REPOSITORY)
+# The pack's directory, relative to the repository.
+PACK = os.path.join("packs", "node")
 PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
