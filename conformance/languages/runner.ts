@@ -3,11 +3,19 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, matchesGlob, relative, sep } from "node:path";
 import { z } from "zod";
-import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
-import { encodeCodeRuleWorkspaceRequest, loadNativeBinding, nativePlatformSuffix, type NativeCompiledCodeRuleDsl } from "../../src/native.js";
-import { CODE_RULE_AST_LANGUAGES, CODE_RULE_DIALECTS, codeRuleLanguageFamily } from "../../src/code-rule-languages.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  encodeCodeRuleWorkspaceRequest,
+  loadNativeBinding,
+  nativePlatformSuffix,
+  type NativeCompiledCodeRuleDsl,
+  CODE_RULE_AST_LANGUAGES,
+  CODE_RULE_DIALECTS,
+  codeRuleLanguageFamily,
+  compareDeterministicStrings,
+} from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
   corpusRecordingPath,
@@ -15,6 +23,9 @@ import {
   fixturesDirectory,
   fixturesRecordingPath,
   loadRecording,
+  coversFixture,
+  documentPath,
+  isCandidate,
   MINIMUM_RULES,
   RERAIL_ROOT,
   type CorpusRecording,
@@ -289,6 +300,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
+      const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
+      if (unitRules.length === 0) continue;
       const files: SourceFile[] = [];
       for (const path of paths) {
         const language = languageFor(path);
@@ -301,10 +314,10 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
       const evaluation = await evaluateWorkspace(
-        rules.map(entry => entry.compiled),
+        unitRules.map(entry => entry.compiled),
         files,
       );
-      collectActual(rules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+      collectActual(unitRules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
       for (const file of files) scored.add(`${tool}\0${file.path}`);
       summary.units += 1;
       summary.files += files.length;
@@ -422,7 +435,7 @@ function engineInfo(): { path: string; version: string } {
   return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
-function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Divergence[], used: Set<Divergence>, errors: string[]): RuleRow | undefined {
+function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
   const { rule } = entry;
   const recording = run.recordings.get(rule.upstream.tool);
   if (recording === undefined) return undefined;
@@ -442,6 +455,8 @@ function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Diver
   const expected: Point[] = [];
   for (const finding of recording.findings) {
     if (finding.rule !== rule.upstream.rule) continue;
+    // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
+    if (run.name === "fixtures" && !coversFixture(rule, finding.path)) continue;
     if (!run.scored.has(`${rule.upstream.tool}\0${finding.path}`)) {
       // A corpus recording covers the whole checkout; a fixtures recording lists every file it ran on.
       if (run.name === "fixtures") errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
@@ -460,11 +475,13 @@ function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Diver
   const claimed = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
   const actual = claimed.filter(analysed);
   left += claimed.length - actual.length;
-  const applicable = divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
+  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
   const score = scoreSource(expected, actual, rule.match, applicable);
   for (const entry of score.explained) used.add(entry.divergence);
   return {
     rule: rule.id,
+    candidate: isCandidate(rule),
+    examples: loaded.exampled.has(documentPath(rule.policy)),
     upstream: rule.upstream,
     capabilities: rule.capabilities,
     source: run.label,
@@ -506,7 +523,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
   }
 
   const used = new Set<Divergence>();
-  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded.divergences, used, errors) ?? []));
+  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded, used, errors) ?? []));
   const scoredSources = new Set(runs.map(run => run.name));
   const allSources = ["fixtures", ...pack.corpora.map(corpus => corpus.name)];
   const selectedIds = new Set(selected.map(rule => rule.id));
@@ -553,15 +570,20 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 
 /**
  * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
- * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall.
+ * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall. A
+ * shipped port with no fixture TP fails unless pack.json gives its rule examples: divergences can excuse every
+ * finding of its fixtures, and a port that matches nothing must still show it catches something. A candidate's row
+ * (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
     ...report.errors,
     ...report.rules.flatMap(row => {
       const problems: string[] = [];
+      if (row.candidate) return problems;
       if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
       if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+      if (row.tp === 0 && row.source === "fixtures" && !row.examples) problems.push(`${row.rule} (${row.source}): 0 TP and no examples in pack.json; nothing shows it catches anything`);
       if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
       return problems;
     }),

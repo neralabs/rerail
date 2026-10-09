@@ -2,19 +2,15 @@ import { appendFile, mkdtemp, mkdir, readdir, realpath, rm, writeFile } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ingestEngineEvent, startEngineService } from "../src/engine-service.js";
-import { runCodexHook } from "../src/codex-hook.js";
-import { RerailDaemon } from "../src/daemon.js";
-import { runCursorHook } from "../src/cursor-hook.js";
-import { stopDaemon } from "../src/daemon-control.js";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
-import { SqliteSessionReader } from "../src/session-store.js";
-import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./contract-code-rule.js";
-import { cursorRelayed, steerText } from "./steer-text.js";
-import { steerHeadlines } from "../src/rerail-steer.js";
+import { ingestEngineEvent, startEngineService, stopDaemon, SqliteSessionReader } from "../src/runtime/index.js";
+import { runCodexHook } from "../src/hosts/codex/index.js";
+import { RerailDaemon } from "../src/daemon/index.js";
+import { runCursorHook } from "../src/hosts/cursor/index.js";
+import { type AdapterDelivery, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
+import { cursorRelayed, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
-import { parseConversationRule } from "../src/rule-schema.js";
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 

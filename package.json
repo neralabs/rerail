@@ -21,19 +21,23 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/engine/schemas.d.ts",
+      "import": "./dist/engine/schemas.js"
     }
   },
   "bin": {
-    "rerail": "dist/cli.js"
+    "rerail": "dist/cli/cli.js"
   },
   "omp": {
     "extensions": [
-      "./dist/default-extension.js"
+      "./dist/hosts/omp/default-extension.js"
     ]
   },
   "pi": {
     "extensions": [
-      "./dist/pi-extension.js"
+      "./dist/hosts/pi/pi-extension.js"
     ]
   },
   "keywords": [
@@ -48,7 +52,7 @@
     "dist",
     "native/*.node",
     "model",
-    "code-rule-dsl/capabilities.json",
+    "native/src/code_rule_dsl/capabilities.json",
     "LICENSE",
     "NOTICE",
     ".claude-plugin",
@@ -57,9 +61,6 @@
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "code-rule-dsl/rules",
-    "packs/tslint/pack.json",
-    "packs/tslint/rules",
     "packs/complexity/pack.json",
     "packs/complexity/rules"
   ],
@@ -67,44 +68,46 @@
     "build": "npm run build:clean && npm run build:native && npm run build:js",
     "build:js": "npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build:ui": "node scripts/copy-ui.mjs",
-    "ensure:sqlite": "node scripts/ensure-sqlite.mjs",
-    "build:native": "node scripts/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
-    "build:ts": "tsc -p tsconfig.build.json && esbuild src/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/session-presentation.js",
-    "build:omp": "esbuild src/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/default-extension.js",
-    "build:test-host": "esbuild integration/fixtures/omp-host.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
-    "build:events": "esbuild src/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/event-stream.js",
-    "build:cursor": "esbuild src/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/cursor-hook.js",
-    "build:claude": "esbuild src/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/claude-hook.js",
-    "build:codex": "esbuild src/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/codex-hook.js",
-    "check": "tsc --noEmit",
+    "build:ui": "node scripts/build/copy-ui.mjs",
+    "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
+    "build:native": "node scripts/build/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
+    "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/omp/default-extension.js",
+    "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
+    "build:events": "esbuild src/harness/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/harness/event-stream.js",
+    "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/cursor/cursor-hook.js",
+    "build:claude": "esbuild src/hosts/claude/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/claude/claude-hook.js",
+    "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/codex/codex-hook.js",
+    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure",
+    "check:boundaries": "node scripts/check/check-boundaries.mjs",
     "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
     "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
-    "check:licenses": "node scripts/check-licenses.mjs",
-    "check:reference": "node scripts/code-rule-dsl-reference.mjs grammar",
-    "check:ui-tokens": "node scripts/check-ui-tokens.mjs",
+    "check:licenses": "node scripts/check/check-licenses.mjs",
+    "check:reference": "node scripts/generate/docs/code-rule-dsl-reference.mjs grammar",
+    "check:structure": "node scripts/check/check-structure.mjs",
+    "check:ui-tokens": "node scripts/check/check-ui-tokens.mjs",
     "test": "vitest run --dir test",
-    "test:conformance": "node --import tsx conformance/tslint/cli.ts fetch && vitest run --dir conformance && npm run conformance:languages:check",
+    "test:conformance": "npm run conformance:languages:check",
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
-    "test:code-rule-dsl-runtime": "vitest run test/native-code-rule-dsl-runtime.test.ts",
-    "bench:code-rule-dsl": "node --import tsx scripts/code-rule-dsl-bench.ts",
+    "test:code-rule-dsl-runtime": "vitest run test/engine/native/native-code-rule-dsl-runtime.test.ts",
+    "bench:code-rule-dsl": "node --import tsx scripts/dsl/code-rule-dsl-bench.ts",
     "test:integration:built": "npm run build:test-host && vitest run --dir integration",
     "test:integration:code-rule-runtime": "vitest run integration/code-rule-runtime.test.ts",
     "test:integration": "npm run build && npm run test:integration:built",
-    "test:e2e:host": "npm run build && node --import tsx scripts/host-smoke.ts",
-    "test:e2e:lifecycle": "npm run build:ts && node --import tsx scripts/host-lifecycle.ts omp",
-    "test:e2e:lifecycle:pi": "npm run build:ts && node --import tsx scripts/host-lifecycle.ts pi",
+    "test:e2e:host": "npm run build && node --import tsx scripts/host/host-smoke.ts",
+    "test:e2e:lifecycle": "npm run build:ts && node --import tsx scripts/host/host-lifecycle.ts omp",
+    "test:e2e:lifecycle:pi": "npm run build:ts && node --import tsx scripts/host/host-lifecycle.ts pi",
     "test:all": "npm run build && npm test && npm run test:conformance && npm run test:scripts && npm run test:reference && npm run test:native && npm run test:integration:built",
-    "test:reference": "node --import tsx scripts/code-rule-dsl-reference.mjs examples",
-    "test:scripts": "vitest run scripts/rerail-setup.test.mjs scripts/rerail-restore.test.mjs scripts/rerail-nuke.test.mjs scripts/rerail-dev.test.mjs && node --test scripts/ensure-sqlite.test.mjs",
+    "test:reference": "node --import tsx scripts/generate/docs/code-rule-dsl-reference.mjs examples",
+    "test:scripts": "node --test test/scripts/ensure-sqlite.test.mjs && python3 test/docs/test_transducer_design.py",
     "test:watch": "vitest --dir test",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
-    "generate:schema": "node --import tsx scripts/generate-schema-sql.ts",
-    "generate:languages": "node --import tsx scripts/generate-language-registry.ts",
+    "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
+    "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "package:check": "npm run build && npm pack --dry-run",
-    "prepack": "node scripts/stamp-plugin-versions.mjs stamp",
-    "postpack": "node scripts/stamp-plugin-versions.mjs restore"
+    "prepack": "node scripts/build/stamp-plugin-versions.mjs stamp",
+    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",

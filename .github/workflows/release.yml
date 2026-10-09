@@ -91,6 +91,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - name: Set up Node.js v24
         uses: actions/setup-node@v6
         with:
@@ -135,11 +137,11 @@ jobs:
       - name: Check Windows engine has no Visual C++ runtime dependency
         if: endsWith(matrix.target, '-windows-msvc')
         shell: bash
-        run: node scripts/check-windows-runtime.mjs native/rerail_engine.*.node
+        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node
 
       - name: Smoke Windows rerail CLI install planning
         if: matrix.windows_runtime_smoke
-        run: node dist/cli.js install --root . --project . --harness omp,pi,claude-code,codex,cursor --dry-run
+        run: node dist/cli/cli.js install --root . --project . --harness omp,pi,claude-code,codex,cursor --dry-run
 
       - name: Provision Linux Secret Service
         if: startsWith(matrix.runner, 'ubuntu')
@@ -176,15 +178,15 @@ jobs:
 
       - name: Smoke native engine
         if: matrix.target != 'aarch64-pc-windows-msvc'
-        run: ./node_modules/.bin/vitest run test/native-health.test.ts
+        run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
 
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke
-        run: ./node_modules/.bin/vitest run test/updater.test.ts test/harness-registration.test.ts -t "Windows.*junction"
+        run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"
 
       - name: Smoke Windows daemon launch handle isolation
         if: matrix.windows_runtime_smoke
-        run: ./node_modules/.bin/vitest run test/windows-daemon-launch.test.ts
+        run: ./node_modules/.bin/vitest run test/runtime/windows-daemon-launch.test.ts
 
       - name: Upload native engine
         uses: actions/upload-artifact@v7
@@ -206,6 +208,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
         uses: actions/setup-node@v6
@@ -312,7 +316,7 @@ jobs:
 
       - name: Install the release with npx @neralabs/rerail setup
         shell: pwsh
-        run: ./scripts/windows-install-smoke.ps1 -Tarball "release/${{ needs.package.outputs.tarball }}"
+        run: ./scripts/host/windows-install-smoke.ps1 -Tarball "release/${{ needs.package.outputs.tarball }}"
 
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,

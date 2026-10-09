@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DAEMON_STATE_FILE } from "../src/daemon-control.js";
-import { RerailDaemon, type DaemonState } from "../src/daemon.js";
+import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
+import { RerailDaemon } from "../src/daemon/index.js";
 
 let root: string | undefined;
 let daemon: RerailDaemon | undefined;
@@ -31,7 +31,7 @@ it("bridges real MCP writes with split UTF-8 input and no response to notificati
     port: 0,
     stateFile: join(root, "home", DAEMON_STATE_FILE),
   });
-  const child = spawn(process.execPath, [resolve("dist/cli.js"), "mcp-bridge"], {
+  const child = spawn(process.execPath, [resolve("dist/cli/cli.js"), "mcp-bridge"], {
     cwd: root,
     env: { ...process.env, RERAIL_ENGINE_PATH: join(root, "no-host-addon.node") },
     stdio: ["pipe", "pipe", "pipe"],
@@ -98,7 +98,7 @@ it.each([
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "bridge-test", version: "1" } } },
     { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "work_links_add", arguments: { sessionId: "stale-home", kind: "git-branch", reference: "stale" } } },
   ];
-  const child = spawn(process.execPath, [resolve("dist/cli.js"), "mcp-bridge"], {
+  const child = spawn(process.execPath, [resolve("dist/cli/cli.js"), "mcp-bridge"], {
     cwd: root,
     env: { ...process.env, RERAIL_ENGINE_PATH: join(root, "no-host-addon.node") },
     stdio: ["pipe", "pipe", "pipe"],

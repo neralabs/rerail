@@ -1,5 +1,5 @@
-// Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs once a pack has moved,
-// fixtures/<id>/rules/<tool>/generate.mjs before): pins, the corpus file set the conformance runner scores, and
+// Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the corpus file set the
+// conformance runner scores, and
 // ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 // Run offline by a maintainer, never in CI.
 import { execFileSync } from "node:child_process";
@@ -10,19 +10,14 @@ import { fileURLToPath } from "node:url";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts). */
+/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/engine/code-rule/code-rule-enforcer.ts). */
 const IGNORED = new Set([".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
-/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/code-rule-languages.ts). */
+/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/engine/code-rule/code-rule-languages.ts). */
 export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
-/**
- * The conformance pack manifest: `packs/<name>/conformance.json` once the pack has moved, else
- * `conformance/languages/<name>/pack.json` (`packDirectory`, rerail/conformance/languages/pack.ts).
- */
+/** The conformance pack manifest, `packs/<name>/conformance.json`. */
 export function pack(name) {
-  const moved = join(REPOSITORY, "packs", name, "conformance.json");
-  const path = existsSync(moved) ? moved : join(REPOSITORY, "conformance", "languages", name, "pack.json");
-  return JSON.parse(readFileSync(path, "utf8"));
+  return JSON.parse(readFileSync(join(REPOSITORY, "packs", name, "conformance.json"), "utf8"));
 }
 
 /** `require` resolving from a tools directory (`.rerail/tools/<pack>`), after checking every pinned package's version. */

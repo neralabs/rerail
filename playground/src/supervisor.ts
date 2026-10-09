@@ -27,22 +27,27 @@ import type {
   PlaygroundRunInput,
   PlaygroundTrace,
 } from "./protocol.js";
-import { libraryRuleRecordSchema, rerailRuleSchema } from "../../dist/api/repository-contracts.js";
-import { ruleDocumentDigest } from "../../dist/stable-json.js";
-import type { RuleDocument } from "../../dist/rule-store.js";
+import {
+  codeRuleSchema,
+  defaultRerailDatabasePath,
+  libraryRuleRecordSchema,
+  loadBundledCatalog,
+  openRerailDatabase,
+  parseConversationRule,
+  recordCheckout,
+  rerailRuleSchema,
+  ruleDocumentDigest,
+  type RuleDocument,
+  setRepositoryStarted,
+  setUpRepository,
+  startDaemon,
+  stopDaemon,
+  upsertLibraryRule,
+} from "../../dist/index.js";
 import { createSandbox, managedProcess, spawnProcess, spawnPty, ompExecutable } from "./process.js";
 import type { ManagedProcess, PlaygroundProcess, Sandbox } from "./process.js";
 import { createWorkerChannel } from "./ipc.js";
 import type { WorkerChannel } from "./ipc.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../../dist/database.js";
-import { loadBundledCatalog } from "../../dist/bundled-rules.js";
-import { recordCheckout } from "../../dist/repository-registry.js";
-import { setRepositoryStarted } from "../../dist/repository-start.js";
-import { setUpRepository } from "../../dist/rule-configuration.js";
-import { upsertLibraryRule } from "../../dist/rule-library.js";
-import { parseConversationRule } from "../../dist/rule-schema.js";
-import { codeRuleSchema } from "../../dist/code-rule-schema.js";
-import { startDaemon, stopDaemon } from "../../dist/daemon-control.js";
 import { prepareReplay, REAL_AGENT_LIFETIME_MS } from "./real-agent.js";
 import { createExperimentStore, validateScenarioFixtures } from "./experiments.js";
 import { generateScenarios } from "./generation.js";
@@ -783,7 +788,7 @@ const nativePaths = [
 ];
 const watcher = watch(
   [
-    ...["src", "code-rule-dsl", ...nativePaths].map((path) => join(checkoutRoot, path)),
+    ...["src", ...nativePaths].map((path) => join(checkoutRoot, path)),
     join(playgroundRoot, "src"),
   ],
   {

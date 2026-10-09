@@ -11,7 +11,7 @@ import type {
   CustomerProfile,
   FlattenedJws,
   SignedActivationRequest,
-} from "../src/customer-profile.js";
+} from "../src/activation/index.js";
 
 interface CommandResult {
   code: number;
@@ -20,7 +20,7 @@ interface CommandResult {
 }
 
 async function runRerail(home: string, args: readonly string[]): Promise<CommandResult> {
-  const child = spawn("node", ["dist/cli.js", ...args], {
+  const child = spawn("node", ["dist/cli/cli.js", ...args], {
     env: { ...process.env, RERAIL_HOME: home, RERAIL_DEVICE_SECRET_STORE: "file" },
     stdio: ["ignore", "pipe", "pipe"],
   });

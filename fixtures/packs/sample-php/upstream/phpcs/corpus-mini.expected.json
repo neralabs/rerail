@@ -1,0 +1,23 @@
+{
+  "tool": "phpcs",
+  "version": "4.0.4",
+  "source": {
+    "kind": "corpus",
+    "name": "mini",
+    "repository": "fixtures/packs/sample-php/corpora/mini",
+    "commit": "fixture",
+    "rules": [
+      "Generic.PHP.ForbiddenFunctions.Found",
+      "Generic.PHP.ForbiddenFunctions.FoundWithAlternative"
+    ],
+    "skipped": []
+  },
+  "findings": [
+    {
+      "rule": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+      "path": "src/Size.php",
+      "line": 9,
+      "column": 16
+    }
+  ]
+}

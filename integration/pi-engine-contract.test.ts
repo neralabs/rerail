@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./contract-code-rule.js";
-import { steerText } from "./steer-text.js";
+import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./support/contract-code-rule.js";
+import { steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -12,7 +12,7 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { createPiConversationRulesExtension } from "../src/pi-extension.js";
+import { createPiConversationRulesExtension } from "../src/hosts/pi/index.js";
 
 const temporaryDirectories: string[] = [];
 const originalRerailHome = process.env.RERAIL_HOME;

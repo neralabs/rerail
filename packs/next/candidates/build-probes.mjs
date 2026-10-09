@@ -1,4 +1,4 @@
-// Builds packs/next/candidates/probes, a runnable pack of the Next fact model's probes: probes/pack.json,
+// Builds packs/next/candidates/probes, a runnable pack of the Next fact model's probes: probes/conformance.json,
 // probes/rules/<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures are a
 // small Next.js project (both routers) at the workspace root; every label below is chosen by hand from Next.js 16's
 // documented semantics, located by a unique substring of its fixture. Run offline by a maintainer, never in CI; the
@@ -338,7 +338,7 @@ writeFileSync(
 );
 const capabilities = probe => ["syntax", ...(JSON.stringify(probe.ast).includes('"resolves"') ? ["scope"] : []), ...(JSON.stringify(probe.ast).includes('"value"') ? ["value"] : [])];
 writeFileSync(
-  join(ROOT, "pack.json"),
+  join(ROOT, "conformance.json"),
   `${JSON.stringify(
     {
       pack: "next-probes",

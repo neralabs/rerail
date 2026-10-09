@@ -1,13 +1,13 @@
 /**
- * What every conformance harness (conformance/tslint, conformance/languages, the pack validator and the T1 census)
- * shares about the engine it scores: core's capabilities and which engine failure codes are not failures.
+ * What every conformance harness (conformance/languages, the pack validator and the T1 census) shares about the engine
+ * it scores: core's capabilities and which engine failure codes are not failures.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bundledCodeRuleDslDirectory } from "../src/code-rule-dsl-catalog.js";
+import { bundledCodeRuleDslDirectory } from "../src/engine/index.js";
 
 let capabilities: string | undefined;
-/** Core's `code-rule-dsl/capabilities.json`, as the catalog compiles code rules against it. */
+/** The engine's `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles code rules against it. */
 export function capabilitiesJson(): string {
   capabilities ??= readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
   return capabilities;

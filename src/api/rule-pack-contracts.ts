@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { RULE_MODES } from "../rule-mode.js";
-import { RULE_PACK_CATEGORIES } from "../rule-packs.js";
-import { RULE_KINDS } from "../schema.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
+import { RULE_KINDS } from "../engine/storage/schema.js";
 
 const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string() }).strict();
 
@@ -16,7 +16,7 @@ export const rulePackSchema = z.object({
     id: z.string(),
     kind: z.enum(RULE_KINDS).describe("A code rule checks source files; a conversation rule watches the coding agent's tool calls."),
     title: z.string(),
-    group: z.string().describe("The group the rule is filed under inside its pack, e.g. TSLint or api."),
+    group: z.string().describe("The group the rule is filed under inside its pack, e.g. Complexity or api."),
     mode: z.enum(RULE_MODES).describe("The rule mode the pack starts it in."),
     on: z.boolean().describe("Whether the pack starts the rule on."),
     examples: z.object({ caught: ruleExampleSchema, passes: ruleExampleSchema }).strict().optional()

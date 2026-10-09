@@ -2,9 +2,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { inspectOutcome } from "../scripts/host-smoke.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { SqliteSessionStore } from "../src/session-store.js";
+import { inspectOutcome } from "../scripts/host/host-smoke.js";
+import { defaultRerailDatabasePath } from "../src/engine/index.js";
+import { SqliteSessionStore } from "../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -68,8 +68,8 @@ it("counts extension errors from this package's extension or engine and ignores 
     await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr }, "transport");
     return assertions.find((assertion) => assertion.name === "extension stayed silent")?.passed;
   };
-  expect(await silent("Extension error (/checkout/package/dist/default-extension.js): handler timed out after 5000ms")).toBe(false);
-  expect(await silent("Extension error (/checkout/package/dist/pi-extension.js): boom")).toBe(false);
+  expect(await silent("Extension error (/checkout/package/dist/hosts/omp/default-extension.js): handler timed out after 5000ms")).toBe(false);
+  expect(await silent("Extension error (/checkout/package/dist/hosts/pi/pi-extension.js): boom")).toBe(false);
   expect(await silent("Extension error (/elsewhere/index.js): cannot load rerail_engine.darwin-arm64.node")).toBe(false);
   expect(await silent("Extension error (/elsewhere/other-extension.js): unrelated failure")).toBe(true);
 });

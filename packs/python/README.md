@@ -5,7 +5,7 @@ the tool's own findings on the tool's test fixtures, through the engine's produc
 disagreement declared in `divergences.json` (none today).
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
-checked by `npx vitest run test/packs.test.ts`.
+checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|

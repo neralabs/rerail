@@ -38,7 +38,7 @@ jobs:
 
       # Only allowlisted (permissive) licences in LICENSES/, and no copyleft production dependency.
       - name: Licence allowlist and copyleft gate
-        run: node scripts/check-licenses.mjs
+        run: node scripts/check/check-licenses.mjs
 
   # Type checks and generated-reference checks need neither Rust nor a build.
   lint:
@@ -62,17 +62,18 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # The UI token reference check and the policy DSL reference grammar check.
-      - name: Type-check and check generated references
+      # `npm run check` type-checks and runs the structure gate (docs/repository-structure.md); then the UI
+      # token reference check and the policy DSL reference grammar check.
+      - name: Type-check, structure gate, and generated references
         run: |
           npm run check
           npm run check:ui-tokens
           npm run check:reference
 
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
-  # read code-rule-dsl/, conformance/, fixtures/, the packs' rules and the language registry (languages/
-  # and its generated TS module); package.json holds the cargo commands. Pushes to
-  # main run everything (the filter step is skipped and the output is empty).
+  # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
+  # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
+  # engine embeds. Pushes to main run everything (the filter step is skipped and the output is empty).
   changes:
     name: Detect engine changes
     runs-on: ubuntu-24.04
@@ -90,18 +91,19 @@ jobs:
           filters: |
             rust:
               - 'native/**'
-              - 'code-rule-dsl/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
-              - 'src/code-rule-language-registry.generated.ts'
+              - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - 'package.json'
               - '.github/workflows/ci.yml'
+              - '.gitattributes'
+              - '.github/actions/lfs/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
@@ -132,6 +134,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -170,6 +174,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - id: rust-toolchain
         name: Read pinned Rust toolchain
@@ -247,6 +253,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
@@ -266,13 +274,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
 
       - name: Provision pinned standalone OMP host
         run: |
-          host="$(node scripts/install-omp-host.mjs)"
+          host="$(node scripts/host/install-omp-host.mjs)"
           printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
 
       - name: Integration tests
@@ -290,6 +300,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
@@ -299,8 +311,8 @@ jobs:
           npm run test:scripts
           npm run test:reference
 
-      # Fetches TSLint's rule tests at the pinned commit, runs the conformance harnesses' own tests
-      # (conformance/**/*.test.ts: the TSLint golden and rename gates) and conformance:languages:check.
+      # Offline: conformance:languages:check scores every pack's ported rules against its recordings. The
+      # identifier-rename gate (test/conformance/) runs with the unit tests.
       - name: Conformance harnesses
         run: npm run test:conformance
 
@@ -351,13 +363,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: ./.github/actions/lfs
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
 
       - name: Provision pinned standalone OMP host
         run: |
-          host="$(node scripts/install-omp-host.mjs)"
+          host="$(node scripts/host/install-omp-host.mjs)"
           printf 'RERAIL_OMP_EXECUTABLE=%s\n' "$host" >> "$GITHUB_ENV"
 
       - name: Exercise OMP and Pi real-session runtime paths
@@ -366,10 +380,10 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           results="$RUNNER_TEMP/rerail-harness-smoke"
           mkdir -p "$results"
-          node --import tsx scripts/host-lifecycle.ts omp -- \
+          node --import tsx scripts/host/host-lifecycle.ts omp -- \
             --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" > "$results/omp.log" 2>&1 &
           omp_pid=$!
-          node --import tsx scripts/host-lifecycle.ts pi -- \
+          node --import tsx scripts/host/host-lifecycle.ts pi -- \
             --provider azure-openai-responses --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
           pi_pid=$!
           status=0
@@ -418,6 +432,8 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
         uses: actions/setup-node@v6
@@ -495,11 +511,11 @@ jobs:
           set -euo pipefail
           results="$RUNNER_TEMP/rerail-provider-smoke"
           mkdir -p "$results"
-          node --import tsx scripts/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
+          node --import tsx scripts/host/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
           claude_pid=$!
-          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
+          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
           codex_pid=$!
-          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
+          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
           cursor_pid=$!
           status=0
           if ! wait "$claude_pid"; then status=1; fi

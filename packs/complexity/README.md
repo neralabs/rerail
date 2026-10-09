@@ -21,7 +21,7 @@ the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript and
 JavaScript `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`. So are dependency, virtual-environment, build-output and
-generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ...), as in the TSLint pack.
+generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ...).
 
 ## What counts
 
@@ -97,13 +97,14 @@ unknown, so they never report a guessed number (8 of hono's 165 files).
 
 ## Parity corpus
 
-`test/fixtures/complexity/{python,typescript,javascript}/` holds small source files that cover every counted
+`upstream/lizard/fixtures/{python,typescript,javascript}/` holds small source files that cover every counted
 decision, a function at exactly 6 and one at 7 for several kinds, nested functions, Python lambdas and comprehensions,
 `match`/`case` and `switch`/`case`, TypeScript optional parameters and properties, every deviation above, files with
-only simple functions, and test files that lizard scores over the limit. `lizard-1.24.0.tsv` beside it records lizard's
-score for every function (path relative to the corpus, function name as lizard prints it, start line, CCN).
+only simple functions, and test files that lizard scores over the limit. Rerail wrote them; nothing is copied from
+lizard (`upstream/lizard/UPSTREAM.md`). `upstream/lizard/lizard-1.24.0.tsv` records lizard's score for every function
+(path relative to the corpus, function name as lizard prints it, start line, CCN).
 
-`test/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
+`test/engine/code-rule/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
 that:
 
 - each rule reports exactly the in-scope functions lizard scores above 6, with lizard's number in the message;
@@ -118,9 +119,9 @@ lizard is never a runtime or CI dependency: the TSV is checked in.
 After changing the corpus, rerun lizard (needs [uv](https://docs.astral.sh/uv/) on `PATH`) and commit the TSV:
 
 ```sh
-node scripts/record-lizard-complexity.mjs
+node packs/complexity/upstream/lizard/generate.mjs
 ```
 
-It runs `uvx --from lizard==1.24.0 lizard --csv test/fixtures/complexity/` and rewrites
-`test/fixtures/complexity/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
+It runs `uvx --from lizard==1.24.0 lizard --csv` on `upstream/lizard/fixtures/` and rewrites
+`upstream/lizard/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
 list and a line under "Deviations" above.

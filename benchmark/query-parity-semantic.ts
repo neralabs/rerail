@@ -1,4 +1,4 @@
-/** Query-parity workloads that evaluate `benchmark/<name>/with` (semantic-resolution rule catalogs) over the corpus. */
+/** Query-parity workloads that evaluate `fixtures/host/benchmark/<name>` (semantic-resolution rule catalogs) over the corpus. */
 export const semanticWorkloads = ["resolves", "usage"] as const;
 export type SemanticWorkload = (typeof semanticWorkloads)[number];
 

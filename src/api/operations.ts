@@ -2,22 +2,22 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../code-rule.js";
-import type { AuditFailure } from "../audit.js";
-import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../audit-store.js";
-import { withinCheckout } from "../checkout-control.js";
-import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../schema.js";
+import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
+import type { AuditFailure } from "../engine/audit/audit.js";
+import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
+import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
   auditSettingsPatchSchema,
   repositoryAuditSchema,
   auditRequestInputSchema,
   auditRequestSchema,
-} from "../audit-control-schema.js";
-import { RULE_MODES } from "../rule-mode.js";
-import { loadRulePacks } from "../rule-packs.js";
+} from "../engine/audit/audit-control-schema.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { loadRulePacks } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT } from "../session-store.js";
+import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { activityRules, historyRepositoryIds, repositoryOperations } from "./repository-operations.js";
 import { inactiveField, inactiveOf } from "./repository-contracts.js";

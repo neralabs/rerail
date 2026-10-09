@@ -3,15 +3,13 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RerailRuntime } from "../src/runtime.js";
+import { decodeRerailEventFrame, RerailRuntime } from "../src/runtime/index.js";
+import { codeRuleSchema, type AdapterDelivery } from "../src/engine/index.js";
 import {
   CONTRACT_CURSOR_EXECUTE_CODE_RULE, CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot,
-} from "./contract-code-rule.js";
-import { codeRuleSchema } from "../src/code-rule-schema.js";
+} from "./support/contract-code-rule.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
-import { steerText } from "./steer-text.js";
-import { decodeRerailEventFrame } from "../src/event-protocol.js";
-import type { AdapterDelivery } from "../src/adapter-contract.js";
+import { steerText } from "./support/steer-text.js";
 
 
 const originalRerailHome = process.env.RERAIL_HOME;

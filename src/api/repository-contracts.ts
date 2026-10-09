@@ -4,13 +4,13 @@
  */
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../code-rule-language-support.js";
-import { codeRuleSchema } from "../code-rule-schema.js";
-import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../repository-model.js";
-import { RULE_MODES } from "../rule-mode.js";
-import { conversationRuleSchema } from "../rule-schema.js";
-import { engineRegexIssues } from "../rule-regexes.js";
-import { RULE_KINDS } from "../schema.js";
+import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
+import { codeRuleSchema } from "../engine/code-rule/code-rule-schema.js";
+import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../engine/catalog/repository-model.js";
+import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
+import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
+import { RULE_KINDS } from "../engine/storage/schema.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 

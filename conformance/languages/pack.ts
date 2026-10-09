@@ -1,18 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { CODE_RULE_LANGUAGE_FAMILIES } from "../../src/code-rule-languages.js";
-import { compareDeterministicStrings } from "../../src/stable-json.js";
+import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings } from "../../src/engine/index.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
 /** Rule packs in their own packages (docs/pack-format.md); a ported pack holds its conformance pack as conformance.json. */
 export const PACKS_ROOT = join(RERAIL_ROOT, "packs");
-/** A pack moved to `packs/<id>/` names its conformance pack this; one still under conformance/languages/, `pack.json`. */
+/** A conformance pack's manifest: `packs/<id>/conformance.json`, and the same in a pack's `candidates/` and probes. */
 export const CONFORMANCE_FILE = "conformance.json";
-/** The conformance fixtures: `RERAIL_ORACLES_DIR` (relative to the repository root) or the repository's `fixtures/`. */
-export const ORACLES_ROOT = resolve(RERAIL_ROOT, process.env.RERAIL_ORACLES_DIR || "fixtures");
 /** Where `--write` puts reports: `.rerail/` is gitignored, so reports are never committed. */
 export const REPORTS_DIRECTORY = join(RERAIL_ROOT, ".rerail", "reports");
 
@@ -37,12 +34,28 @@ const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 const ruleSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u, "rule ids are lowercase kebab-case"),
   upstream: z.strictObject({ tool: nonEmpty, rule: nonEmpty }),
-  /** `rules/<id>.json`, relative to the pack directory. */
+  /** `rules/<id>.json` (shipped, gated) or `candidates/…` (scored, never gated), relative to the pack directory. */
   policy: nonEmpty,
   capabilities: z.array(nonEmpty).min(1),
   match: z.enum(["line", "line+column"]),
+  /**
+   * `path.matchesGlob` patterns over the tool's fixture paths: the rule is evaluated and scored only on the fixture
+   * units they match, the tests its upstream configuration ran on (one rule option variant, say). Default: every
+   * unit. Corpora are always scored whole.
+   */
+  fixtures: z.array(nonEmpty).min(1).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
+
+/** Whether `rule` is evaluated and scored on the fixture at `path` (see `fixtures`). */
+export function coversFixture(rule: PackRule, path: string): boolean {
+  return rule.fixtures === undefined || rule.fixtures.some(pattern => matchesGlob(path, pattern));
+}
+
+/** A port still being evaluated (`candidates/`): scored and reported, but its FPs, FNs and engine failures fail nothing. */
+export function isCandidate(rule: PackRule): boolean {
+  return !documentPath(rule.policy).startsWith("rules/");
+}
 
 /**
  * A declared capability no reference linter has a rule for that reads it like-for-like, so T4 cannot port one. It
@@ -71,7 +84,7 @@ export const packSchema = z
     corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
-    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json, else `<fixtures>/<pack>/upstream`. */
+    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
   .superRefine((pack, context) => {
@@ -162,12 +175,28 @@ const divergenceSchema = z.strictObject({
 export type Divergence = z.infer<typeof divergenceSchema>;
 export const divergencesSchema = z.array(divergenceSchema);
 
+/**
+ * The rule pack beside a conformance pack (`pack.json`, docs/pack-format.md), read only for which documents carry
+ * `examples`; the pack's own validation (conformance/pack-validation.ts) checks the rest.
+ */
+const rulePackExamplesSchema = z.object({ rules: z.array(z.object({ document: nonEmpty, examples: z.unknown().optional() })) });
+
 export interface LoadedPack {
   pack: Pack;
   directory: string;
   /** Root of the per-tool recordings: `<oracles>/<tool>/{fixtures,corpus-<name>}.expected.json`. */
   oraclesDirectory: string;
   divergences: Divergence[];
+  /**
+   * Documents (`rules/<id>.json`) that pack.json lists with `examples`: a caught case the pack checks prove fires, so
+   * the port has evidence it catches something even without a fixture TP. Empty without a pack.json.
+   */
+  exampled: ReadonlySet<string>;
+}
+
+/** A rule document's path relative to its pack directory, as pack.json and a port's `policy` both spell it. */
+export function documentPath(path: string): string {
+  return path.replace(/^\.\//u, "");
 }
 
 function parseJson<T>(path: string, schema: z.ZodType<T>): T {
@@ -176,54 +205,31 @@ function parseJson<T>(path: string, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
-/** `packs/<name>/` once the pack has moved there (it holds conformance.json), else `conformance/languages/<name>/`. */
-export function packDirectory(name: string): string {
-  const moved = join(PACKS_ROOT, name);
-  return existsSync(join(moved, CONFORMANCE_FILE)) ? moved : join(HARNESS_DIRECTORY, name);
-}
-
-/**
- * The conformance pack in `directory`: `packs/<id>/` (conformance.json, recordings under `upstream/` by default) or
- * `conformance/languages/<name>/` (pack.json, recordings under `<fixtures>/<pack>/upstream` by default).
- */
+/** The conformance pack in `directory` (its conformance.json; recordings under `upstream/` unless it sets `oracles`). */
 export function loadPack(directory: string): LoadedPack {
-  const moved = existsSync(join(directory, CONFORMANCE_FILE));
-  const pack = parseJson(join(directory, moved ? CONFORMANCE_FILE : "pack.json"), packSchema);
+  const pack = parseJson(join(directory, CONFORMANCE_FILE), packSchema);
   const divergencesPath = join(directory, "divergences.json");
   const divergences = existsSync(divergencesPath) ? parseJson(divergencesPath, divergencesSchema) : [];
   const ids = new Set(pack.rules.map(rule => rule.id));
   for (const divergence of divergences) {
     if (!ids.has(divergence.rule)) throw new Error(`${divergencesPath}: divergence names unknown rule ${divergence.rule}`);
   }
-  const defaultOracles = moved ? join(directory, "upstream") : join(ORACLES_ROOT, pack.pack, "upstream");
+  const rulePackPath = join(directory, "pack.json");
+  const listed = existsSync(rulePackPath) ? parseJson(rulePackPath, rulePackExamplesSchema).rules : [];
   return {
     pack,
     directory,
-    oraclesDirectory: pack.oracles === undefined ? defaultOracles : resolve(directory, pack.oracles),
+    oraclesDirectory: resolve(directory, pack.oracles ?? "upstream"),
     divergences,
+    exampled: new Set(listed.filter(rule => rule.examples !== undefined).map(rule => documentPath(rule.document))),
   };
 }
 
-/** Every pack still under conformance/languages/: a directory holding a pack.json. */
-export function listPacks(): string[] {
-  return readdirSync(HARNESS_DIRECTORY, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && existsSync(join(HARNESS_DIRECTORY, entry.name, "pack.json")))
-    .map(entry => entry.name)
-    .sort(compareDeterministicStrings);
-}
-
-/**
- * Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json in this runner's
- * schema. A conformance.json with a `format` is another harness's (the TSLint pack's golden manifest,
- * conformance/tslint/golden.ts). Their tests are test/packs.test.ts.
- */
+/** Every pack under packs/ whose rules this runner scores: a directory holding a conformance.json. Their tests are test/engine/catalog/packs.test.ts. */
 export function listPortedPacks(): string[] {
   if (!existsSync(PACKS_ROOT)) return [];
   return readdirSync(PACKS_ROOT, { withFileTypes: true })
-    .filter(entry => {
-      const path = join(PACKS_ROOT, entry.name, CONFORMANCE_FILE);
-      return entry.isDirectory() && existsSync(path) && !z.looseObject({ format: z.string() }).safeParse(JSON.parse(readFileSync(path, "utf8"))).success;
-    })
+    .filter(entry => entry.isDirectory() && existsSync(join(PACKS_ROOT, entry.name, CONFORMANCE_FILE)))
     .map(entry => entry.name)
     .sort(compareDeterministicStrings);
 }

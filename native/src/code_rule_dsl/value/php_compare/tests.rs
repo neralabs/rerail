@@ -1,4 +1,4 @@
-//! Agreement with the PHP compare oracle (`fixtures/php/compare/generate_php.php`): keys,
+//! Agreement with the PHP compare oracle (`fixtures/php/value/compare/generate_php.php`): keys,
 //! members, names and references as nikic/PHP-Parser 5.9.0 parses the code and PHP 8.5 evaluates
 //! and looks up what it names.
 
@@ -9,7 +9,7 @@ use crate::code_rule_dsl::scope::ScopeTable;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
 
-const ORACLE: &str = oracle!("php/compare/php.expected.json");
+const ORACLE: &str = oracle!("php/value/compare/php.expected.json");
 
 fn oracle() -> Json {
     let oracle: Json = serde_json::from_str(ORACLE).expect("oracle JSON");

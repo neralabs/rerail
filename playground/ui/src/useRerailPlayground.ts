@@ -18,7 +18,7 @@ import {
   formatRuleJson,
   RULES_REFRESH_INTERVAL_MS,
   rulesQueryKey,
-} from "./rulesApi";
+} from "./rules-api";
 
 import { usePlaygroundTerminal } from "./usePlaygroundTerminal";
 

@@ -1,0 +1,29 @@
+{
+  "tool": "examplelint",
+  "version": "1.0.0",
+  "source": {
+    "kind": "fixtures",
+    "origin": "https://example.com/examplelint@0000000",
+    "rules": [
+      "EX101"
+    ],
+    "files": [
+      "asserts.py",
+      "clean.py"
+    ]
+  },
+  "findings": [
+    {
+      "rule": "EX101",
+      "path": "asserts.py",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "rule": "EX101",
+      "path": "asserts.py",
+      "line": 3,
+      "column": 1
+    }
+  ]
+}
