@@ -20,6 +20,7 @@ pub(crate) use lookup::Lookup;
 
 use crate::code_rule_dsl::identifier::{name_in, nfkc};
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{self, Adapter};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::value::{Followed, NodeRef};
 use ast_grep_core::{Doc, Node};
@@ -554,8 +555,8 @@ impl ScopeTable {
             crate::code_rule_dsl::language::Family::Php => php::visit_program(&mut builder, &root)?,
             // The PHP the template embeds, as the compiled view runs it (`blade::view`).
             crate::code_rule_dsl::language::Family::Blade => {
-                if let Some(program) = crate::code_rule_dsl::blade::program(&root) {
-                    php::visit_blade_program(&mut builder, &program)?;
+                for region in adapter::Blade::regions(&root) {
+                    php::visit_blade_program(&mut builder, &region.root)?;
                 }
             }
         }
