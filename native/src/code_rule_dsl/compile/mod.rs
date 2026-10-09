@@ -4,7 +4,7 @@ mod ast_rule;
 mod binding_tests;
 mod binds;
 mod compare;
-mod config;
+pub(crate) mod config;
 mod define;
 mod dialect;
 mod evidence;
@@ -13,7 +13,7 @@ mod examples_tests;
 mod format_args;
 mod layout;
 mod nth_child;
-mod options;
+pub(crate) mod options;
 mod order;
 #[cfg(test)]
 mod params_tests;
@@ -608,9 +608,8 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (grammars, grammar) = language_capability(language_name, capabilities)?;
-            use super::language::adapter::{OptionKeys, SyntaxFeature, SyntaxRules, with_adapter};
+            use super::language::adapter::{SyntaxFeature, SyntaxRules, with_adapter};
             let family = code_rule_language.family();
-            let keys = with_adapter!(family, A => <A as SyntaxRules>::OPTION_KEYS);
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
                 Some(value) => {
@@ -618,35 +617,22 @@ fn compile_query_as(
                         &format!("{path}/ast/languageOptions"),
                         with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
                     )?;
-                    match keys {
-                        OptionKeys::Python => (
-                            None,
-                            Some(Arc::new(options::compile_python_options(
-                                value,
-                                &format!("{path}/ast"),
-                            )?)),
-                        ),
-                        OptionKeys::Ecma => (
-                            Some(Arc::new(options::compile_language_options(
-                                value,
-                                &format!("{path}/ast"),
-                            )?)),
-                            None,
-                        ),
-                    }
+                    with_adapter!(family, A => <A as SyntaxRules>::compile_language_options(
+                        value,
+                        &format!("{path}/ast"),
+                    ))?
                 }
             };
             let applies = ast
                 .get("when")
                 .map(|when| {
-                    options::compile_when(
+                    with_adapter!(family, A => <A as SyntaxRules>::compile_when(
                         when,
                         &format!("{path}/ast"),
-                        keys == OptionKeys::Python,
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    )
+                    ))
                 })
                 .transpose()?
                 .unwrap_or(true);
