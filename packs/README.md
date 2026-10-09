@@ -3,9 +3,9 @@
 Rule packs for Rerail. Each pack is published to npm as its own package, versioned and released separately from
 the core package at the repository root.
 
-> Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the TSLint
-> and complexity packs inside its own package (`<id>/pack.json` and `<id>/rules/`). The packs here: `python`, `php`,
-> `blade`, `typescript`, `react`, `node`, `next`, `tslint` and `complexity`. Every rule document Rerail ships lives in
+> Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the
+> complexity pack inside its own package (`complexity/pack.json` and `complexity/rules/`). The packs here: `python`,
+> `php`, `blade`, `typescript`, `react`, `node`, `next` and `complexity`. Every rule document Rerail ships lives in
 > a pack; core has no rules of its own.
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.

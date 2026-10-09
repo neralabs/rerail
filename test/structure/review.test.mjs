@@ -30,10 +30,10 @@ describe("#23 shipped rules", () => {
     const result = shippedRules(
       memoryRepo({
         "package.json": JSON.stringify({
-          files: ["dist", "packs/tslint/pack.json", "packs/tslint/rules", "code-rule-dsl/rules", "builtin"],
+          files: ["dist", "packs/example/pack.json", "packs/example/rules", "code-rule-dsl/rules", "builtin"],
         }),
-        "packs/tslint/pack.json": "{}",
-        "packs/tslint/rules/a.json": rule("tslint:a"),
+        "packs/example/pack.json": "{}",
+        "packs/example/rules/a.json": rule("example:a"),
         "builtin/b.json": rule("core:b"),
       }),
     );
@@ -41,7 +41,7 @@ describe("#23 shipped rules", () => {
       'files entry "builtin" ships rules from outside packs/<id>/',
       'files entry "code-rule-dsl/rules" ships rules from outside packs/<id>/',
     ]);
-    expect(result.actual).toBe("builtin, code-rule-dsl/rules, packs/tslint");
+    expect(result.actual).toBe("builtin, code-rule-dsl/rules, packs/example");
   });
 });
 

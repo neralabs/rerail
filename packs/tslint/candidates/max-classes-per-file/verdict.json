@@ -1,7 +1,0 @@
-{
-  "audit": {
-    "class": "requires-config",
-    "note": "Port genuine per threshold, but the threshold is TSLint's required argument (bare `true` compares against undefined and never fires); the default doc bakes the fixture's 1. Exact document-order count via recursive utils: after-K holds when a class with K-1 classes before it (an ancestor, or at/inside an earlier sibling of the node or any ancestor) precedes the node, to any depth; each threshold is its own doc."
-  },
-  "requiresConfiguration": "the class limit is a required argument (maxClassesPerFileRule.ts:39, minLength 1 at :55); bare `true` compares against undefined and never fires (:70-71, :89)"
-}

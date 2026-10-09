@@ -1,7 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "primitive": "control-flow",
-    "note": "\"always\" override checks only literal break/return/throw/continue as the clause's last statement, no recursive endsControlFlow; confirmed `case 0: if(a){throw x}else{throw y}` is flagged though TSLint's endsControlFlow means it should not be."
-  }
-}

@@ -13,14 +13,14 @@ describe("#16 rules/ directories", () => {
   it("flags anything but rule documents in a rules/ dir, outside upstream data", () => {
     const result = rulesDirs(
       memoryRepo({
-        "packs/tslint/rules/a.json": rule("tslint:a"),
-        "packs/tslint/rules/a.verdict.json": "{}",
+        "packs/example/rules/a.json": rule("example:a"),
+        "packs/example/rules/a.verdict.json": "{}",
         "packs/php/rules/README.md": "",
         "packs/php/upstream/phpcs/rules/Foo.php": "",
         "fixtures/rust/upstream/clippy/rules/x.rs": "",
       }),
     );
-    expect(paths(result)).toEqual(["packs/php/rules/README.md", "packs/tslint/rules/a.verdict.json"]);
+    expect(paths(result)).toEqual(["packs/example/rules/a.verdict.json", "packs/php/rules/README.md"]);
     expect(result.actual).toBe("2");
   });
 });

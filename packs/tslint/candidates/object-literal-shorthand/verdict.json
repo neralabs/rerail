@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "pair_pattern/shorthand_property_identifier_pattern kinds are shared with destructuring; confirmed `const { a: a } = x;` is flagged as longhand-property though TSLint's PropertyAssignment-based walk never touches destructuring."
-  }
-}

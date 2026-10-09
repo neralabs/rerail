@@ -38,17 +38,15 @@ function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
   });
 }
 
-/** A sanity floor, not the exact count. */
-const MINIMUM_BUNDLED_RULES = 10;
-
 describe("bundled rules", () => {
-  it("ships only the packs core carries: every document parses as a file rule with a unique <pack>:<rule> id", () => {
+  it("ships only the complexity pack core carries: every document is a file rule, read by file name", () => {
     const documents = loadBundledRules();
-    expect(documents.length).toBeGreaterThan(MINIMUM_BUNDLED_RULES);
-    expect(new Set(documents.map(document => document.rule.id)).size).toBe(documents.length);
+    expect(documents.map(document => document.rule.id)).toEqual([
+      "complexity:cyclomatic-javascript",
+      "complexity:cyclomatic-python",
+      "complexity:cyclomatic-typescript",
+    ]);
     expect(documents.every(document => document.kind === "file")).toBe(true);
-    expect(documents.every(document => /^(?:complexity|tslint):[a-z0-9-]+$/u.test(document.rule.id))).toBe(true);
-    expect(documents.map(document => document.rule.id)).not.toContain("tslint:file-header");
   });
 
   it("reads each pack's rules/ in pack order and by file name, ignoring non-JSON files and a pack without rules/, and rejects a duplicate id", async () => {

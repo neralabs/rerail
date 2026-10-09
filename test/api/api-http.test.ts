@@ -236,7 +236,7 @@ describe("Rerail API over HTTP", () => {
     expect(repeated.status).toBe(304);
     expect(await repeated.text()).toBe("");
 
-    const written = await putJson("/api/repository/settings", { repository: WEB, owner: "repository", targets: [{ kind: "pack", id: "tslint" }], on: false });
+    const written = await putJson("/api/repository/settings", { repository: WEB, owner: "repository", targets: [{ kind: "pack", id: "complexity" }], on: false });
     expect(written.status).toBe(200);
     const refreshed = await app.request(path, { headers: { "if-none-match": tag! } });
     expect(refreshed.status).toBe(200);

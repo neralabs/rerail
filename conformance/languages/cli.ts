@@ -18,7 +18,8 @@ const USAGE = `Language-pack rule conformance (T4).
   --write               write .rerail/reports/<pack>-t4-rules-<date>.json (gitignored)
   --date <YYYY-MM-DD>   report date (default today, UTC)
   --check               CI gate: fixtures of every pack (or --pack); exit 1 on any unexplained FP/FN, engine
-                        failure, stale fixture divergence or recording error`;
+                        failure, stale fixture divergence, recording error, or shipped port with no fixture TP
+                        and no pack.json examples`;
 
 function formatRatio(value: number | null): string {
   return (value === null ? "-" : value.toFixed(3)).padStart(5);

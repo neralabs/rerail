@@ -388,8 +388,8 @@ mod tests {
             ),
             (
                 "typescript",
-                json!({ "tslint": {} }),
-                format!("unknown field `tslint` at {at}"),
+                json!({ "jshint": {} }),
+                format!("unknown field `jshint` at {at}"),
             ),
             (
                 "typescript",

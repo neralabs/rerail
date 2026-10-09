@@ -35,6 +35,8 @@ export const ruleRowSchema = z.object({
   rule: z.string(),
   /** A port under `candidates/`: scored and reported, never failing the run (`reportFailures`). */
   candidate: z.boolean(),
+  /** pack.json lists the port's rule with examples; a shipped port with no fixture TP needs them (`reportFailures`). */
+  examples: z.boolean(),
   upstream: z.object({ tool: z.string(), rule: z.string() }),
   capabilities: z.array(z.string()),
   /** `fixtures` or `corpus:<name>`. */

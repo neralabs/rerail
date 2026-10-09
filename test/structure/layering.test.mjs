@@ -1,5 +1,8 @@
 // Structure gate, layering metrics (#12-#15): each predicate on a tiny in-memory tree.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { memoryRepo } from "../../scripts/check/check-structure/repo.mjs";
 import { check as flatDirectories } from "../../scripts/check/check-structure/metrics/12-flat-directory-size.mjs";
@@ -26,8 +29,8 @@ describe("#12 flat directory size", () => {
         ...many("test", 20, ".json"),
         "test/a.test.ts": "",
         ...many("test/more", 6, ".json"),
-        ...many("packs/tslint/rules", 80, ".json"),
-        ...many("packs/tslint/upstream/tslint/fixtures/x", 40, ".ts"),
+        ...many("packs/example/rules", 80, ".json"),
+        ...many("packs/example/upstream/tool/fixtures/x", 40, ".ts"),
         ...many("fixtures/php/scope", 40, ".php"),
       }),
     );
@@ -37,25 +40,32 @@ describe("#12 flat directory size", () => {
   });
 });
 
-describe("#13 import direction (fallback scan)", () => {
-  it("flags engine→host, host→host, src outward, and outside imports of src/ internals", async () => {
-    const result = await importDirection(
-      memoryRepo({
-        "src/engine/a.ts": 'import { h } from "../hosts/omp/h.js";\nimport { b } from "./b.js";',
-        "src/engine/b.ts": "",
-        "src/engine/index.ts": 'export * from "./b.js";',
-        "src/hosts/omp/h.ts": 'import { p } from "../pi/p.js";\nimport { b } from "../../engine/index.js";',
-        "src/hosts/pi/p.ts": 'import pkg from "../../../package.json" with { type: "json" };',
-        "package.json": "{}",
-        "integration/x.test.ts": 'import { b } from "../src/engine/b.js";\nimport { e } from "../src/engine/index.js";',
-        "test/engine/b.test.ts": 'import { b } from "../../src/engine/b.js";',
-      }),
-    );
-    expect(result.findings.map((item) => `${item.path}:${item.line} ${item.message.split("]")[0]}]`)).toEqual([
-      "integration/x.test.ts:1 [public-api]",
-      "src/engine/a.ts:1 [engine-to-host]",
-      "src/hosts/omp/h.ts:1 [host-to-host]",
-      "src/hosts/pi/p.ts:1 [src-outward]",
+describe("#13 import direction", () => {
+  it("is the boundary lint's result over the tracked files", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rerail-import-direction-"));
+    try {
+      mkdirSync(join(root, "scripts/check"), { recursive: true });
+      const lint = `export function checkBoundaries(root, { files }) {
+  return { violations: files.filter((file) => file.startsWith("src/")).map((file) => ({ file, line: 2, rule: "layer-order", message: "x" })) };
+}`;
+      writeFileSync(join(root, "scripts/check/check-boundaries.mjs"), lint);
+      const result = await importDirection(
+        memoryRepo({ "scripts/check/check-boundaries.mjs": lint, "src/a.ts": "", "src/b.ts": "", "test/c.ts": "" }, root),
+      );
+      expect(result.actual).toBe("2 in 2 files");
+      expect(result.findings).toEqual([
+        { path: "src/a.ts", line: 2, message: "[layer-order] x" },
+        { path: "src/b.ts", line: 2, message: "[layer-order] x" },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails without the boundary lint", async () => {
+    const result = await importDirection(memoryRepo({ "src/engine/a.ts": 'import { h } from "../hosts/omp/h.js";' }));
+    expect(result.findings).toEqual([
+      { path: "scripts/check/check-boundaries.mjs", message: "missing: the layer boundary lint this metric runs" },
     ]);
   });
 });
@@ -80,11 +90,24 @@ describe("#14 fixtures root", () => {
     expect(result.findings[0]).toEqual({ path: "src/engine/x.ts", line: 1, message: "production code resolves fixtures/" });
   });
 
+  it.each([
+    ["dot segments before it", 'const p = join(here, "..", "..", "fixtures", "php");', 1],
+    ["a call as the root", 'const p = resolve(process.cwd(), "fixtures");', 1],
+    ["a qualified join with a call root", 'const p = path.join(repoRoot(), "fixtures");', 1],
+    ["a call split over lines", 'const p = join(\n  root,\n  "fixtures",\n);', 3],
+    ["a root holding a string with parens and commas", 'const p = join(pick("a,(b"), ".", "fixtures");', 1],
+  ])("finds the bare segment first after a root: %s", (_, source, line) => {
+    expect(fixturesRoot(memoryRepo({ "src/engine/x.ts": source })).findings).toEqual([
+      { path: "src/engine/x.ts", line, message: "production code resolves fixtures/" },
+    ]);
+  });
+
   it("ignores directory-name lists, comparisons, and nested upstream fixtures/ dirs", () => {
     const result = fixturesRoot(
       memoryRepo({
         "src/matcher.ts": 'const SKIP = new Set(["fixtures", "__fixtures__"]);\nif (path.startsWith("fixtures/") || x) {}',
-        "scripts/build-probes.mjs": 'const dir = join(ROOT, "labels", "fixtures");',
+        "scripts/build-probes.mjs": 'const dir = join(ROOT, "labels", "fixtures");\nconst up = join(\n  ROOT,\n  "labels",\n  "fixtures",\n);',
+        "scripts/names.mjs": 'const dirs = join(root, ["fixtures"]);\nconst n = join(a, b) + f("fixtures");',
         "native/src/oracle_tests.rs": 'read(oracle_root().join("fixtures").join(name))',
       }),
     );
@@ -96,20 +119,20 @@ describe("#15 duplicate concepts", () => {
   it("allows option variants under candidates/<rule>/ and flags a rule id defined twice otherwise", () => {
     const result = duplicates(
       memoryRepo({
-        "packs/tslint/rules/quotemark.json": rule("tslint:quotemark"),
-        "packs/tslint/candidates/quotemark/single.json": rule("tslint:quotemark"),
-        "packs/tslint/candidates/quotemark/jsx/double.json": rule("tslint:quotemark"),
-        "packs/tslint/rules/typedef.json": rule("tslint:typedef"),
-        "packs/tslint/candidates/typedef.json": rule("tslint:typedef"),
+        "packs/example/rules/quotemark.json": rule("example:quotemark"),
+        "packs/example/candidates/quotemark/single.json": rule("example:quotemark"),
+        "packs/example/candidates/quotemark/jsx/double.json": rule("example:quotemark"),
+        "packs/example/rules/typedef.json": rule("example:typedef"),
+        "packs/example/candidates/typedef.json": rule("example:typedef"),
         "packs/php/rules/a.json": rule("shared:a"),
         "packs/python/rules/a.json": rule("shared:a"),
       }),
     );
     expect(paths(result)).toEqual([
+      "packs/example/candidates/typedef.json",
+      "packs/example/rules/typedef.json",
       "packs/php/rules/a.json",
       "packs/python/rules/a.json",
-      "packs/tslint/candidates/typedef.json",
-      "packs/tslint/rules/typedef.json",
     ]);
   });
 
@@ -119,29 +142,29 @@ describe("#15 duplicate concepts", () => {
       memoryRepo({
         "packs/php/conformance.json": runner,
         "packs/python/conformance.json": runner,
-        "packs/tslint/conformance.json": JSON.stringify({ format: "rerail-tslint-golden/v1", rules: [] }),
+        "packs/example/conformance.json": JSON.stringify({ format: "rerail-example-golden/v1", rules: [] }),
         "fixtures/packs/broken/conformance.json": JSON.stringify({ format: "nonsense" }),
       }),
     );
     expect(result.findings).toEqual([
-      { path: "packs/tslint/conformance.json", message: "[conformance-format] format rerail-tslint-golden/v1; the others use untagged" },
+      { path: "packs/example/conformance.json", message: "[conformance-format] format rerail-example-golden/v1; the others use untagged" },
     ]);
   });
 
   it("flags shared code importing a pack-specific harness, not the pack's own code", () => {
     const result = duplicates(
       memoryRepo({
-        "packs/tslint/pack.json": "{}",
-        "test/conformance/tslint/runner.ts": "",
-        "test/conformance/tslint/golden.test.ts": 'import { run } from "./runner.js";',
-        "test/conformance/languages/runner.ts": 'import { run } from "../tslint/runner.js";',
+        "packs/example/pack.json": "{}",
+        "test/conformance/example/runner.ts": "",
+        "test/conformance/example/golden.test.ts": 'import { run } from "./runner.js";',
+        "test/conformance/languages/runner.ts": 'import { run } from "../example/runner.js";',
       }),
     );
     expect(result.findings).toEqual([
       {
         path: "test/conformance/languages/runner.ts",
         line: 1,
-        message: "[harness-import] imports test/conformance/tslint/, a pack-specific harness",
+        message: "[harness-import] imports test/conformance/example/, a pack-specific harness",
       },
     ]);
   });

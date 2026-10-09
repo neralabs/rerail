@@ -1,6 +1,7 @@
 /**
- * The identifier-poisoning gate: every ECMA pack whose recording lists protected identifiers (today the TSLint pack) is
- * scored again on its fixtures with every user-chosen identifier renamed (conformance/languages/identifier-rename.ts).
+ * The identifier-poisoning gate: every ECMA pack whose recording lists protected identifiers (a pack opts in with
+ * `protected-identifiers.json` beside its fixtures recording) is scored again on its fixtures with every user-chosen
+ * identifier renamed (conformance/languages/identifier-rename.ts).
  * A shipped port that implements structure scores identically; one that matches names only the tool's tests use loses
  * TPs or gains FPs. Candidates are not gated, as in the conformance gate.
  */

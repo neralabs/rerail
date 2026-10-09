@@ -112,7 +112,7 @@ The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for ru
 
 The package ships its rules as **By Rerail** rules: the rules of the packs core ships, under `packs/<id>/rules/`; core has no rules of its own. They are read from the package and never copied into the database; they run only where a repository adds them or a pack that holds them. Rules people write are **Created by you**, stored once per machine in the library. Editing a By Rerail rule stores a copy in the library, added where the original was with the original switched off there. `rerail rules export` writes the library and every repository's configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`), and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
 
-Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and an optional match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships two: **TSLint**, 75 TSLint ports proven against TSLint's own tests, and **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a checkout's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count, the reason and the folder to add it in; a pack without a match definition, such as complexity, is never recommended. Setting a repository up adds its recommended packs. See [Rule packs](docs/rule-packs.md).
+Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and an optional match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships one: **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a checkout's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count, the reason and the folder to add it in; a pack without a match definition, such as complexity, is never recommended. Setting a repository up adds its recommended packs, so with complexity the only shipped pack it adds none. See [Rule packs](docs/rule-packs.md).
 
 A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native engine evaluates, each with the violation it reports. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
 
@@ -662,7 +662,7 @@ Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime;
 
 `scripts/generate/model/prepare_model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`. Every generated file in the repository, with its generator and the command that rewrites it, is listed in [scripts/generate/README.md](scripts/generate/README.md).
 
-`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`, TSLint's included) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in `npm run test:conformance`, part of `test:all` in CI.
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in `npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 
@@ -678,7 +678,7 @@ The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists th
 | `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
 | `just rerail-playground` | The development rule playground beside the dev daemon (attended macOS only; see [playground/README.md](playground/README.md)). |
 | `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore` and `install --remove` in a sandbox `HOME` (`KEEP=1` keeps it). |
-| `just rerail-language-conformance` | Language-pack conformance, TSLint's included (`--pack <id>`, `--check`). |
+| `just rerail-language-conformance` | Language-pack conformance (`--pack <id>`, `--check`). |
 | `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |
 
 `npm run test:scripts` runs the recipes' tests.
@@ -713,7 +713,7 @@ The browser view lives in `ui/` and has no toolchain: `index.html`, `app.css`, a
 
 ## Licence
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material bundled with Rerail — the `minishlab/potion-base-8M` model (MIT), the TSLint-derived opt-in rule pack (Apache-2.0), and the vendored grammar and data tables — is listed with its licence in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material bundled with Rerail — the `minishlab/potion-base-8M` model (MIT) and the vendored grammar and data tables — is listed with its licence in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
 ## Contributing and security
 

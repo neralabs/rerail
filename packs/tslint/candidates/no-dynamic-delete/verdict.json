@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "Narrow ASCII regex stands in for isValidPropertyAccess; confirmed `delete obj[\"café\"]` is not flagged though TSLint would flag it."
-  }
-}

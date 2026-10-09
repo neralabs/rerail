@@ -54,7 +54,7 @@ export function coversFixture(rule: PackRule, path: string): boolean {
 
 /** A port still being evaluated (`candidates/`): scored and reported, but its FPs, FNs and engine failures fail nothing. */
 export function isCandidate(rule: PackRule): boolean {
-  return !rule.policy.replace(/^\.\//u, "").startsWith("rules/");
+  return !documentPath(rule.policy).startsWith("rules/");
 }
 
 /**
@@ -175,12 +175,28 @@ const divergenceSchema = z.strictObject({
 export type Divergence = z.infer<typeof divergenceSchema>;
 export const divergencesSchema = z.array(divergenceSchema);
 
+/**
+ * The rule pack beside a conformance pack (`pack.json`, docs/pack-format.md), read only for which documents carry
+ * `examples`; the pack's own validation (conformance/pack-validation.ts) checks the rest.
+ */
+const rulePackExamplesSchema = z.object({ rules: z.array(z.object({ document: nonEmpty, examples: z.unknown().optional() })) });
+
 export interface LoadedPack {
   pack: Pack;
   directory: string;
   /** Root of the per-tool recordings: `<oracles>/<tool>/{fixtures,corpus-<name>}.expected.json`. */
   oraclesDirectory: string;
   divergences: Divergence[];
+  /**
+   * Documents (`rules/<id>.json`) that pack.json lists with `examples`: a caught case the pack checks prove fires, so
+   * the port has evidence it catches something even without a fixture TP. Empty without a pack.json.
+   */
+  exampled: ReadonlySet<string>;
+}
+
+/** A rule document's path relative to its pack directory, as pack.json and a port's `policy` both spell it. */
+export function documentPath(path: string): string {
+  return path.replace(/^\.\//u, "");
 }
 
 function parseJson<T>(path: string, schema: z.ZodType<T>): T {
@@ -198,11 +214,14 @@ export function loadPack(directory: string): LoadedPack {
   for (const divergence of divergences) {
     if (!ids.has(divergence.rule)) throw new Error(`${divergencesPath}: divergence names unknown rule ${divergence.rule}`);
   }
+  const rulePackPath = join(directory, "pack.json");
+  const listed = existsSync(rulePackPath) ? parseJson(rulePackPath, rulePackExamplesSchema).rules : [];
   return {
     pack,
     directory,
     oraclesDirectory: resolve(directory, pack.oracles ?? "upstream"),
     divergences,
+    exampled: new Set(listed.filter(rule => rule.examples !== undefined).map(rule => documentPath(rule.document))),
   };
 }
 

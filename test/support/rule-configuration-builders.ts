@@ -64,7 +64,7 @@ export function conversation(id: string): ConversationRule {
 }
 
 /**
- * A small bundle: pack `tslint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
+ * A small bundle: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
  * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise.
  */
 export function testBundle(overrides: { noConsoleRevision?: number } = {}): BundledCatalog {
@@ -75,16 +75,16 @@ export function testBundle(overrides: { noConsoleRevision?: number } = {}): Bund
     { kind: "conversation", rule: conversation("talk") },
   ];
   const pack: RulePack = {
-    id: "tslint",
-    name: "TSLint",
+    id: "lint",
+    name: "Lint",
     category: "language",
     covers: "TypeScript",
     reason: "TypeScript files",
     match: { any: [{ files: ["**/*.ts"], label: "TypeScript" }] },
     honourSuppressionComments: true,
     rules: [
-      { id: "no-console", kind: "file", title: "No console", group: "TSLint", mode: "steer", on: true },
-      { id: "no-var", kind: "file", title: "No var", group: "TSLint", mode: "log", on: false },
+      { id: "no-console", kind: "file", title: "No console", group: "Lint", mode: "steer", on: true },
+      { id: "no-var", kind: "file", title: "No var", group: "Lint", mode: "log", on: false },
     ],
   };
   return {

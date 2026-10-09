@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "Exemption regex requires only whitespace between `as` and the keyword; `{} as /* keep */ any` breaks the match and is wrongly flagged (confirmed)."
-  }
-}

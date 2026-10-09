@@ -6,7 +6,7 @@
 // Predicate:
 //   - the manifest exists whenever any tracked file is named `*.generated.*`;
 //   - every row's generated path is a tracked file, or for a directory row holds at least one;
-//   - every row's generator is a tracked file;
+//   - every row's generator is a tracked file (#6 checks that it lives under `scripts/generate/`);
 //   - every `*.generated.*` file is covered by a row (its own, or a directory row above it);
 //   - when a generated file's header names its generator, the header and the row name the same file.
 

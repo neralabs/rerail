@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   languageFor,
+  loadBundledRules,
   loadNativeBinding,
   resolveNativeBindingPath,
   type NativeBinding,
@@ -133,7 +134,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every document a project is seeded with (the TSLint pack core ships; core has no rules of its own); semantic kinds read `fixtures/host/benchmark/<kind>`. */
+/** `bundled` is every file rule a project can add (the packs core ships; core has no rules of its own); semantic kinds read `fixtures/host/benchmark/<kind>`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];
@@ -144,8 +145,14 @@ function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocu
       }) }],
     };
   }
-  const root = kind === "bundled" ? resolve(rerailRoot, "packs", "tslint", "rules") : fixturesPath("host", "benchmark", kind);
-  return { capabilities: capabilities(), documents: readDocuments(root).sort((a, b) => compare(a.path, b.path)) };
+  if (kind === "bundled") {
+    const documents = loadBundledRules().flatMap(document => document.kind === "file" ? [document.rule] : []).map(rule => {
+      const source = JSON.stringify(rule);
+      return { path: `${rule.id}.json`, source, clauses: clausesSchema.parse(rule).clauses };
+    });
+    return { capabilities: capabilities(), documents: documents.sort((a, b) => compare(a.path, b.path)) };
+  }
+  return { capabilities: capabilities(), documents: readDocuments(fixturesPath("host", "benchmark", kind)).sort((a, b) => compare(a.path, b.path)) };
 }
 export function coverage(documents: RuleDocument[], failures: readonly z.infer<typeof failureSchema>[]) {
   const byClause = new Map<string, z.infer<typeof failureSchema>[]>();
@@ -240,7 +247,15 @@ async function evaluate(files: SourceFile[], catalogKind: CatalogKind, mode: Eva
 async function evaluateOnce(files: SourceFile[], catalogKind: CatalogKind, mode: Evaluator): Promise<Summary> {
   return (await evaluate(files, catalogKind, mode))[0]!;
 }
-/** Incremental applies over the corpus: a comment edit to its first file, then a TypeScript file the bundled TSLint ports flag. */
+/** A function of cyclomatic complexity 7, above the bundled complexity rules' limit of 6. */
+const COMPLEX_FUNCTION = [
+  "export function run(a: number): number {",
+  ...[1, 2, 3, 4, 5, 6].map(limit => `  if (a > ${limit}) return ${limit};`),
+  "  return 0;",
+  "}",
+  "",
+].join("\n");
+/** Incremental applies over the corpus: a comment edit to its first file, then a TypeScript function the bundled complexity rule flags. */
 function editScript(files: SourceFile[]): Edit[] {
   const real = files[0]; if (real === undefined) throw new Error("Empty corpus");
   const comment = real.language === "python" ? "# parity comment\n" : "// parity comment\n";
@@ -250,7 +265,7 @@ function editScript(files: SourceFile[]): Edit[] {
   return [
     { name: "comment-add", files: [{ ...real, source: `${comment}${real.source}` }], removed: [] },
     { name: "comment-remove", files: [real], removed: [] },
-    { name: "violation-add", files: [file(added, "export function run(): void {\n  debugger;\n}\n")], removed: [] },
+    { name: "violation-add", files: [file(added, COMPLEX_FUNCTION)], removed: [] },
     { name: "violation-remove", files: [file(added, "export function run(): void {}\n")], removed: [] },
     { name: "syntax-break", files: [file(added, "export function run( {\n")], removed: [] },
     { name: "syntax-repair", files: [file(added, "export function run(): void {}\n")], removed: [] },

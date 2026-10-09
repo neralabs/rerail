@@ -12,6 +12,7 @@ import {
   lookupCheckout,
   recordCheckout,
   listRepositoryRules,
+  addAttachment,
   setRuleSetting,
   loadRulePacks,
 } from "../../src/engine/index.js";
@@ -59,7 +60,8 @@ function recorder(lane: RepositorySetupIo["lane"] = "agent"): RepositorySetupIo 
   return { lane, lines, say: text => { lines.push(text); } };
 }
 
-const tslintRuleCount = loadRulePacks().find(pack => pack.id === "tslint")!.rules.length;
+const complexityRuleCount = loadRulePacks().find(pack => pack.id === "complexity")!.rules.length;
+const NO_PACK_FITS = "  No rule pack fits this repository yet. Add rules on the rules page";
 
 function writeFiles(root: string, files: Record<string, string>): void {
   for (const [path, content] of Object.entries(files)) {
@@ -95,40 +97,38 @@ describe("repository start state", () => {
 
     const first = recorder();
     const setUp = await startRerail(main, first, { databasePath });
-    expect(setUp).toMatchObject({ previous: "stopped", repositoryName: "acme-web", ruleCount: tslintRuleCount, addedPacks: [{ packId: "tslint", folder: "src" }] });
-    expect(first.lines).toEqual([[
-      `● Rerail is on in acme-web. ${tslintRuleCount} rules are on.`,
-      "  Rule packs added:",
-      `  · TSLint in src (${tslintRuleCount} rules): matches *.ts files in src`,
-    ].join("\n")]);
+    // No pack core ships has a match definition, so set-up adds none.
+    expect(setUp).toMatchObject({ previous: "stopped", repositoryName: "acme-web", ruleCount: 0, addedPacks: [] });
+    expect(first.lines).toEqual([`● Rerail is on in acme-web. 0 rules are on.\n${NO_PACK_FITS} (/rerail-ui).`]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
     expect(readOnlyStartState(main, databasePath)).toBe("started");
-    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: tslintRuleCount });
+    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: 0 });
 
     const stop = recorder();
     expect(stopRerail(main, stop, { databasePath })).toBe("started");
     expect(stop.lines[0]).toMatch(/^○ Rerail is stopped in acme-web\. /u);
     expect(workspaceStartState(main, databasePath)).toBe("stopped");
 
-    // A rule switched off while stopped stays off: starting again does not run the set-up a second time.
+    // A pack added and a rule switched off while stopped stay as left: starting again does not run the set-up a second time.
     const database = openRerailDatabase(databasePath);
     try {
       const { repositoryKey } = lookupCheckout(database, main)!;
-      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "src", targetKind: "rule", targetId: "tslint:no-debugger", on: false, mode: null });
+      addAttachment(database, { repositoryKey, folder: "src", sourceKind: "pack", sourceId: "complexity" });
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "src", targetKind: "rule", targetId: "complexity:cyclomatic-typescript", on: false, mode: null });
     } finally {
       database.$client.close();
     }
     writeFiles(main, { "api/acme_api/app.py": "app = None\n" });
     const again = recorder("terminal");
     const restarted = await startRerail(main, again, { databasePath });
-    expect(restarted).toMatchObject({ previous: "stopped", ruleCount: tslintRuleCount - 1, addedPacks: [] });
-    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${tslintRuleCount - 1} rules are on, as you left them.`]);
-    expect(attachedPacks(main, databasePath)).toEqual(["tslint@src"]);
+    expect(restarted).toMatchObject({ previous: "stopped", ruleCount: complexityRuleCount - 1, addedPacks: [] });
+    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount - 1} rules are on, as you left them.`]);
+    expect(attachedPacks(main, databasePath)).toEqual(["complexity@src"]);
     // The session-start note counts the rules on in this checkout, as the person left them.
-    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: tslintRuleCount - 1 });
+    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: complexityRuleCount - 1 });
   });
 
-  it("sets a repository up with each recommended pack at the folder holding its evidence", async () => {
+  it("sets a TypeScript repository up with no pack, since no pack core ships is recommended", async () => {
     const root = await temporary("rerail-start-packs-");
     const databasePath = join(root, "rerail.sqlite");
     const main = gitRepository(join(root, "acme"));
@@ -136,18 +136,15 @@ describe("repository start state", () => {
     writeFiles(main, {
       "web/admin/package.json": typescriptManifest,
       "web/site/package.json": typescriptManifest,
+      "web/site/src/index.ts": "export {};\n",
     });
 
     const io = recorder("terminal");
     const report = await startRerail(main, io, { databasePath });
-    // TSLint goes where both manifests are.
-    expect(report.addedPacks).toEqual([{ packId: "tslint", folder: "web" }]);
-    expect(attachedPacks(main, databasePath)).toEqual(["tslint@web"]);
-    expect(io.lines).toEqual([[
-      `● Rerail is on in acme. ${tslintRuleCount} rules are on.`,
-      "  Rule packs added:",
-      `  · TSLint in web (${tslintRuleCount} rules): matches the typescript dependency in web/admin/package.json`,
-    ].join("\n")]);
+    expect(report).toMatchObject({ ruleCount: 0, addedPacks: [] });
+    expect(attachedPacks(main, databasePath)).toEqual([]);
+    expect(io.lines).toEqual([`● Rerail is on in acme. 0 rules are on.\n${NO_PACK_FITS} (rerail ui).`]);
+    expect(workspaceStartState(main, databasePath)).toBe("started");
   });
 
   it("sets a repository up with no packs when the person picks rule packs themselves, and does not set it up again", async () => {
@@ -166,7 +163,7 @@ describe("repository start state", () => {
     expect(attachedPacks(main, databasePath)).toEqual([]);
   });
 
-  it("sets a repository up without asking with its recommended packs, starting it only when nobody started or stopped it", async () => {
+  it("sets a repository up without asking with its recommended packs (none core ships), starting it only when nobody started or stopped it", async () => {
     const root = await temporary("rerail-start-auto-");
     const databasePath = join(root, "rerail.sqlite");
     const fresh = gitRepository(join(root, "fresh"));
@@ -177,14 +174,14 @@ describe("repository start state", () => {
 
     const database = openRerailDatabase(databasePath);
     try {
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([{ packId: "tslint", folder: "web/src" }]);
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([{ packId: "tslint", folder: "web/src" }]);
+      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([]);
+      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([]);
     } finally {
       database.$client.close();
     }
     expect(workspaceStartState(fresh, databasePath)).toBe("started");
     expect(workspaceStartState(stopped, databasePath)).toBe("stopped");
-    expect(attachedPacks(fresh, databasePath)).toEqual(["tslint@web/src"]);
+    expect(attachedPacks(fresh, databasePath)).toEqual([]);
   });
 
   it("takes a checkout's own value, then the nearest containing checkout's, then the repository's", async () => {

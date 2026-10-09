@@ -61,8 +61,6 @@
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "packs/tslint/pack.json",
-    "packs/tslint/rules",
     "packs/complexity/pack.json",
     "packs/complexity/rules"
   ],

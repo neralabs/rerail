@@ -103,7 +103,7 @@ export interface RulePackRule {
   readonly kind: RuleDocument["kind"];
   /** Plain-language name, e.g. "Use === and !== in TypeScript". */
   readonly title: string;
-  /** The smaller group the rule is filed under inside its pack, e.g. "TSLint" or "api". */
+  /** The smaller group the rule is filed under inside its pack, e.g. "Complexity" or "api". */
   readonly group: string;
   /** The rule mode it starts in when its pack is added; the seeded document carries it. */
   readonly mode: RuleMode;

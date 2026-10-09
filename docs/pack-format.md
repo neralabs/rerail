@@ -1,9 +1,9 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `tslint`. Core does not load
-installed packs yet: it ships the TSLint pack inside its own package (`packs/tslint/pack.json` and `packs/tslint/rules/`
-in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)), and no pack
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `complexity`. Core does not load
+installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
+`packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)), and no pack
 is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
 one, see [language packs](language-packs.md#start-a-pack).
 
@@ -50,9 +50,9 @@ packs/<id>/
 
 ```json
 {
-  "name": "@neralabs/rerail-pack-tslint",
+  "name": "@neralabs/rerail-pack-typescript",
   "version": "0.1.0",
-  "license": "Apache-2.0",
+  "license": "Apache-2.0 AND MIT",
   "files": ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"],
   "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
@@ -78,7 +78,7 @@ self-contained. `document` is required (`rulePackFileSchema` in `src/engine/cata
 from the pack:
 
 ```json
-{ "id": "tslint:triple-equals", "document": "rules/triple-equals.json", "title": "Requires === and !==", "group": "TSLint" }
+{ "id": "complexity:cyclomatic-python", "document": "rules/cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
 ```
 
 An example's `path` is required in a pack: it decides the file's language and must be inside the rule's scope.
@@ -94,11 +94,11 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   `candidates/` is scored and reported but never fails a check. A port may set `fixtures`, `path.matchesGlob`
   patterns over the tool's fixture paths: it is then evaluated and scored only on the fixtures they match, the tests
   its upstream configuration ran on. That is how a tool whose tests run each rule with several option sets is
-  scored: one document per option set, each on its own tests (TSLint's `<rule>/<variant>/` directories).
+  scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
   and on each pinned corpus, produced by the recorder in the same directory. Recorders are run by hand against the
   pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
-  tool's tests state their expected findings (TSLint's `.lint` markup), the recorder reads them instead of running the
+  tool's tests state their expected findings (as markup in the test files), the recorder reads them instead of running the
   tool: the tool's own test suite requires it to report exactly those.
 - `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
   `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
@@ -208,10 +208,7 @@ repository allowlist are accepted.
 
 | Today | Becomes |
 |---|---|
-| Core's shipped TSLint rule pack and its documents | `packs/tslint/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
-| `conformance/tslint/rules/**` (option variants, ports not shipped) | `packs/tslint/candidates/<rule>/` |
-| `conformance/tslint/golden.json`, the PASS audit and the TSLint harness | `packs/tslint/conformance.json` and `divergences.json` in the common schemas, scored by the common runner; the audit's notes in each candidate's `verdict.json` |
-| TSLint's upstream tests, fetched at a pinned commit | `packs/tslint/upstream/tslint/`, recorded |
+| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
 | `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |
@@ -222,8 +219,7 @@ repository allowlist are accepted.
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-TSLint moved to `packs/tslint/` and still ships inside core's package; its tests are recorded and scored like every
-other tool's, and its harness is gone. The complexity rules moved to `packs/complexity/` the same way; their lizard
+The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
 parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. Not moved yet: `rust`, `sql` and `vue`, which have upstream
 recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
 (`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,

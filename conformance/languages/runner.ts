@@ -24,6 +24,7 @@ import {
   fixturesRecordingPath,
   loadRecording,
   coversFixture,
+  documentPath,
   isCandidate,
   MINIMUM_RULES,
   RERAIL_ROOT,
@@ -434,7 +435,7 @@ function engineInfo(): { path: string; version: string } {
   return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
-function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Divergence[], used: Set<Divergence>, errors: string[]): RuleRow | undefined {
+function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
   const { rule } = entry;
   const recording = run.recordings.get(rule.upstream.tool);
   if (recording === undefined) return undefined;
@@ -474,12 +475,13 @@ function rowFor(entry: CompiledRule, run: SourceRun, divergences: readonly Diver
   const claimed = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
   const actual = claimed.filter(analysed);
   left += claimed.length - actual.length;
-  const applicable = divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
+  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
   const score = scoreSource(expected, actual, rule.match, applicable);
   for (const entry of score.explained) used.add(entry.divergence);
   return {
     rule: rule.id,
     candidate: isCandidate(rule),
+    examples: loaded.exampled.has(documentPath(rule.policy)),
     upstream: rule.upstream,
     capabilities: rule.capabilities,
     source: run.label,
@@ -521,7 +523,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
   }
 
   const used = new Set<Divergence>();
-  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded.divergences, used, errors) ?? []));
+  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded, used, errors) ?? []));
   const scoredSources = new Set(runs.map(run => run.name));
   const allSources = ["fixtures", ...pack.corpora.map(corpus => corpus.name)];
   const selectedIds = new Set(selected.map(rule => rule.id));
@@ -569,7 +571,9 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 /**
  * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
  * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall. A
- * candidate's row (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
+ * shipped port with no fixture TP fails unless pack.json gives its rule examples: divergences can excuse every
+ * finding of its fixtures, and a port that matches nothing must still show it catches something. A candidate's row
+ * (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
@@ -579,6 +583,7 @@ export function reportFailures(report: T4Report): string[] {
       if (row.candidate) return problems;
       if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
       if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+      if (row.tp === 0 && row.source === "fixtures" && !row.examples) problems.push(`${row.rule} (${row.source}): 0 TP and no examples in pack.json; nothing shows it catches anything`);
       if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
       return problems;
     }),

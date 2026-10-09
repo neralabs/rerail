@@ -16,7 +16,7 @@ export const rulePackSchema = z.object({
     id: z.string(),
     kind: z.enum(RULE_KINDS).describe("A file rule checks code; a conversation rule watches the coding agent's tool calls."),
     title: z.string(),
-    group: z.string().describe("The group the rule is filed under inside its pack, e.g. TSLint or api."),
+    group: z.string().describe("The group the rule is filed under inside its pack, e.g. Complexity or api."),
     mode: z.enum(RULE_MODES).describe("The rule mode the pack starts it in."),
     on: z.boolean().describe("Whether the pack starts the rule on."),
     examples: z.object({ caught: ruleExampleSchema, passes: ruleExampleSchema }).strict().optional()

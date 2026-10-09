@@ -131,7 +131,8 @@ describe("query parity command", () => {
 
   it("finds two sides running the same engine equal over a temporary corpus", async () => {
     const { root, manifest } = await corpus({
-      "src/app.ts": "export function run(): void {\n  debugger;\n}\n",
+      // Cyclomatic complexity 7, above the bundled complexity rule's limit of 6.
+      "src/app.ts": `export function grade(a: number): number {\n${[1, 2, 3, 4, 5, 6].map(limit => `  if (a > ${limit}) return ${limit};\n`).join("")}  return 0;\n}\n`,
       "src/util.ts": "export const value = 1;\n",
     });
     const output = join(dirname(root), "report");
@@ -145,9 +146,9 @@ describe("query parity command", () => {
     expect(stderr).toContain("rerail-query-parity: equal across 2 sides");
 
     const report: unknown = JSON.parse(await readFile(join(output, "report.json"), "utf8"));
-    const debuggerFinding = expect.objectContaining({ ruleId: "tslint:no-debugger", path: "src/app.ts" });
+    const complexityFinding = expect.objectContaining({ ruleId: "complexity:cyclomatic-typescript", path: "src/app.ts" });
     const workloads = {
-      corpus: { files: 2, findings: { value: expect.arrayContaining([debuggerFinding]) } },
+      corpus: { files: 2, findings: { value: expect.arrayContaining([complexityFinding]) } },
       // The initial apply, then one per scripted edit.
       edits: { files: 2, applies: Array.from({ length: 9 }, () => expect.objectContaining({ findings: expect.anything() })) },
     };

@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "The numeric-literal regex also matches BigInt literals; `1n + a` is a false positive (confirmed)."
-  }
-}

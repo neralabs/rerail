@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "Exemption list includes pair and parenthesized_expression; confirmed `var cfg = { b: require(\"b\") }; var c = (require(\"c\"));` -> no findings although TSLint would flag both."
-  }
-}

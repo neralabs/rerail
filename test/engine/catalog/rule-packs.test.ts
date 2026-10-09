@@ -51,11 +51,10 @@ const packs = loadRulePacks();
 const bundled = loadBundledRules();
 const pack = (id: string): RulePack => packs.find(candidate => candidate.id === id)!;
 const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
-const tslint = pack("tslint");
 const complexity = pack("complexity");
-const optInIds = bundled.map(document => document.rule.id).sort();
-const tslintIds = optInIds.filter(id => id.startsWith("tslint:"));
-const complexityIds = optInIds.filter(id => !id.startsWith("tslint:"));
+const complexityIds = ["complexity:cyclomatic-javascript", "complexity:cyclomatic-python", "complexity:cyclomatic-typescript"];
+/** A shipped file rule the synthetic packs below reuse under their own ids. */
+const typescriptRule = bundled.find(document => document.rule.id === "complexity:cyclomatic-typescript")!;
 
 /**
  * A pack directory (`<root>/<id>/pack.json`, documents in `<id>/rules/`) written from a definition and its documents.
@@ -70,19 +69,31 @@ function writePack(root: string, definition: { readonly id: string } & Readonly<
 }
 
 /**
- * The shipped packs plus a neutral repository pack, `acme-api`, of one example rule: core ships no repository pack, so
- * the repository-pack tests bring their own.
+ * The shipped packs plus a TypeScript language pack, `lang-ts`, matched as a TypeScript pack is, and with
+ * `repository` a neutral repository pack, `acme-api`; each has one example rule. No pack core ships has a match
+ * definition, so the recommendation tests bring their own.
  */
-async function withRepositoryPack(): Promise<readonly RulePack[]> {
-  const root = await temporaryDirectory("rerail-repository-pack-");
-  const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
+async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
+  const root = await temporaryDirectory("rerail-test-packs-");
+  const typescript = writePack(root, {
+    format: "rerail.rule-pack/v1", id: "lang-ts", name: "TypeScript", category: "language",
+    covers: "TypeScript sources.", reason: "matches TypeScript",
+    match: {
+      any: [
+        { npmDependencies: ["typescript"] },
+        { files: ["**/*.ts", "**/*.mts", "**/*.cts"], exclude: ["**/*.d.ts"], label: "*.ts files" },
+        { files: ["**/*.tsx"], label: "*.tsx files" },
+      ],
+    },
+    rules: [{ id: "lang-ts:cyclomatic", document: "rules/cyclomatic.json", title: "Keep functions simple", group: "TypeScript" }],
+  }, { "rules/cyclomatic.json": { ...typescriptRule.rule, id: "lang-ts:cyclomatic" } });
   const acme = writePack(root, {
     format: "rerail.rule-pack/v1", id: "acme-api", name: "acme-api", category: "repository",
     covers: "The conventions of the acme API.", reason: "matches acme-api",
     match: { any: [{ files: ["api/acme_api/**"], label: "the acme_api package" }] },
-    rules: [{ id: "acme-api:no-debugger", document: "rules/no-debugger.json", title: "No debugger statements", group: "api" }],
-  }, { "rules/no-debugger.json": { ...debuggerRule.rule, id: "acme-api:no-debugger" } });
-  return readRulePacks([...corePackDirectories(), acme]);
+    rules: [{ id: "acme-api:cyclomatic", document: "rules/cyclomatic.json", title: "Keep functions simple", group: "api" }],
+  }, { "rules/cyclomatic.json": { ...typescriptRule.rule, id: "acme-api:cyclomatic" } });
+  return readRulePacks([...corePackDirectories(), typescript, ...(repository ? [acme] : [])]);
 }
 
 const capabilities = readFileSync(fileURLToPath(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url)), "utf8");
@@ -100,12 +111,11 @@ function fires(ruleId: string, path: string, text: string): boolean {
 }
 
 describe("shipped rule packs", () => {
-  it("are the complexity pack and the TSLint pack of the shipped TSLint ports, and nothing else", () => {
-    expect(packs.map(candidate => candidate.id)).toEqual(["complexity", "tslint"]);
-    expect(ids(tslint)).toEqual(tslintIds);
+  it("are the complexity pack alone, with no match definition, so none is ever recommended", () => {
+    expect(packs.map(candidate => candidate.id)).toEqual(["complexity"]);
     expect(ids(complexity)).toEqual(complexityIds);
-    expect(complexityIds).toEqual(["complexity:cyclomatic-javascript", "complexity:cyclomatic-python", "complexity:cyclomatic-typescript"]);
-    expect(bundled.map(document => document.rule.id).sort()).toEqual(optInIds);
+    expect(bundled.map(document => document.rule.id).sort()).toEqual(complexityIds);
+    expect(complexity.match).toBeUndefined();
   });
 
   it("start every rule in the mode its own document has", () => {
@@ -122,18 +132,17 @@ describe("shipped rule packs", () => {
   });
 
   it("are the packs core ships, whose rules are exactly the documents seeded disabled", () => {
-    expect(corePackDirectories()).toEqual(["tslint", "complexity"].map(id => fileURLToPath(new URL(`../../../packs/${id}`, import.meta.url))));
+    expect(corePackDirectories()).toEqual([fileURLToPath(new URL("../../../packs/complexity", import.meta.url))]);
     expect(packs.flatMap(found => found.rules).every(rule => bundled.some(document => document.rule.id === rule.id))).toBe(true);
   });
 });
 
 describe("rule pack definitions", () => {
   const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "test:talk" };
-  const debuggerRule = bundled.find(document => document.rule.id === "tslint:no-debugger")!;
-  const fileRule = { ...debuggerRule.rule, id: "test:no-debugger" };
+  const fileRule = { ...typescriptRule.rule, id: "test:cyclomatic" };
   async function packFolder(definitions: readonly { id: string; rules: readonly { id: string; document: string }[] }[]): Promise<string[]> {
     const directory = await temporaryDirectory("rerail-rule-pack-def-");
-    const documents: Record<string, object> = { "test:no-debugger": fileRule, "test:talk": conversation };
+    const documents: Record<string, object> = { "test:cyclomatic": fileRule, "test:talk": conversation };
     return definitions.map(definition =>
       writePack(directory, definition, Object.fromEntries(definition.rules.flatMap(rule => (documents[rule.id] === undefined ? [] : [[rule.document, documents[rule.id]!]])))),
     );
@@ -144,17 +153,17 @@ describe("rule pack definitions", () => {
   });
 
   it("reject a rule listed by two packs", async () => {
-    const directories = await packFolder([definition("one", "test:no-debugger"), definition("two", "test:no-debugger")]);
-    expect(() => readRulePacks(directories)).toThrow("Rule test:no-debugger is in both rule packs one and two");
+    const directories = await packFolder([definition("one", "test:cyclomatic"), definition("two", "test:cyclomatic")]);
+    expect(() => readRulePacks(directories)).toThrow("Rule test:cyclomatic is in both rule packs one and two");
   });
 
   it("reject a rule whose document does not exist, or carries another id", async () => {
     const missing = await packFolder([definition("one", "test:missing")]);
     expect(() => readRulePacks(missing)).toThrow("Rule pack one lists test:missing, whose document rules/missing.json does not exist");
-    const debuggerPack = definition("one", "test:no-debugger");
-    const misnamed = await packFolder([{ ...debuggerPack, rules: [{ ...debuggerPack.rules[0]!, document: "rules/talk.json" }] }]);
+    const filePack = definition("one", "test:cyclomatic");
+    const misnamed = await packFolder([{ ...filePack, rules: [{ ...filePack.rules[0]!, document: "rules/talk.json" }] }]);
     writeFileSync(join(misnamed[0]!, "rules", "talk.json"), JSON.stringify(conversation));
-    expect(() => readRulePacks(misnamed)).toThrow("Rule pack one lists test:no-debugger, but rules/talk.json has id test:talk");
+    expect(() => readRulePacks(misnamed)).toThrow("Rule pack one lists test:cyclomatic, but rules/talk.json has id test:talk");
   });
 
   it("reject a conversation rule example that names a file", async () => {
@@ -164,16 +173,16 @@ describe("rule pack definitions", () => {
   });
 
   it("reject a pack whose globs do not compile, naming the pack, when the packs are read", async () => {
-    const nested = { ...definition("one", "test:no-debugger"), match: { any: [{ files: ["**/*.{ts,{js,jsx}}"], label: "code" }] } };
+    const nested = { ...definition("one", "test:cyclomatic"), match: { any: [{ files: ["**/*.{ts,{js,jsx}}"], label: "code" }] } };
     const directories = await packFolder([nested]);
     expect(() => readRulePacks(directories)).toThrow("Rule pack one: Nested { in glob **/*.{ts,{js,jsx}}: braces do not nest");
   });
 
   it("list a rule in the mode its pack gives it, and otherwise in its document's mode", async () => {
-    const directories = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:no-debugger")]);
+    const directories = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:cyclomatic")]);
     const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
-    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "file", mode: debuggerRule.rule.mode, on: true });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "file", mode: typescriptRule.rule.mode, on: true });
   });
 });
 
@@ -202,10 +211,10 @@ describe("globPattern", () => {
 });
 
 describe("recommendRulePacks", () => {
-  const reasons = (root: string, from: readonly RulePack[] = packs) =>
+  const reasons = (root: string, from: readonly RulePack[]) =>
     recommendRulePacks(root, from).map(({ pack: found, ruleCount, reason, folder }) => [found.name, ruleCount, reason, folder]);
 
-  it("picks TSLint for a TypeScript repository from its files and package.json, with the reason", async () => {
+  it("picks a TypeScript pack for a TypeScript repository from its files and package.json, with the reason", async () => {
     const root = await temporaryDirectory("rerail-acme-web-");
     writeFiles(root, {
       "package.json": JSON.stringify({ name: "acme-web", dependencies: { react: "^19.0.0" }, devDependencies: { typescript: "^5.9.0" } }),
@@ -216,7 +225,9 @@ describe("recommendRulePacks", () => {
     });
     execFileSync("git", ["init", "-q", root]);
 
-    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches the typescript dependency in package.json and *.ts files in src", ""]]);
+    expect(reasons(root, await withTestPacks())).toEqual([["TypeScript", 1, "matches the typescript dependency in package.json and *.ts files in src", ""]]);
+    // Of the packs core ships, none fits even a TypeScript repository.
+    expect(reasons(root, packs)).toEqual([]);
   });
 
   it("picks a repository pack only for the repository it matches, after the language packs, for the whole repository", async () => {
@@ -226,14 +237,14 @@ describe("recommendRulePacks", () => {
       "api/acme_api/routes/users.py": "router = None\n",
       "web/src/main.tsx": "export {};\n",
     });
-    const withAcme = await withRepositoryPack();
+    const withAcme = await withTestPacks(true);
 
     // A language pack goes where its evidence is; a repository pack covers the whole repository.
     expect(reasons(root, withAcme)).toEqual([
-      ["TSLint", tslint.rules.length, "matches *.tsx files in web/src", "web/src"],
+      ["TypeScript", 1, "matches *.tsx files in web/src", "web/src"],
       ["acme-api", 1, "matches the acme_api package in api/acme_api", ""],
     ]);
-    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches *.tsx files in web/src", "web/src"]]);
+    expect(reasons(root, await withTestPacks())).toEqual([["TypeScript", 1, "matches *.tsx files in web/src", "web/src"]]);
   });
 
   it("places a pack at the folder holding every manifest that matched, naming the shallowest in the reason", async () => {
@@ -246,15 +257,16 @@ describe("recommendRulePacks", () => {
       "api/app.py": "print(1)\n",
     });
 
-    expect(reasons(root)).toEqual([["TSLint", tslint.rules.length, "matches the typescript dependency in packages/web/package.json", "packages/web"]]);
+    const from = await withTestPacks();
+    expect(reasons(root, from)).toEqual([["TypeScript", 1, "matches the typescript dependency in packages/web/package.json", "packages/web"]]);
     writeFiles(root, { "tools/build.ts": "export {};\n" });
-    expect(recommendRulePacks(root).map(({ folder }) => folder)).toEqual([""]);
+    expect(recommendRulePacks(root, from).map(({ folder }) => folder)).toEqual([""]);
   });
 
   it("recommends nothing for a stack no matching pack covers, not even the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
     const root = await temporaryDirectory("rerail-python-");
     writeFiles(root, { "app/main.py": "print(1)\n", "pyproject.toml": "[project]\n", ".venv/lib/site.ts": "export {};\n", "go.mod": "module shop\n" });
-    expect(recommendRulePacks(root)).toEqual([]);
+    expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
   });
 
   it("ignores tracked files deleted from the worktree", async () => {
@@ -264,13 +276,13 @@ describe("recommendRulePacks", () => {
     execFileSync("git", ["-C", root, "add", "."]);
     rmSync(join(root, "legacy/index.ts"));
 
-    expect(recommendRulePacks(root)).toEqual([]);
+    expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
   });
 
   it("ignores tracked files a sparse checkout leaves off disk, and counts them once the checkout includes them", async () => {
     const root = await temporaryDirectory("rerail-sparse-");
     writeFiles(root, { "README.md": "hi\n", "api/acme_api/app.py": "app = None\n", "web/src/main.ts": "export {};\n" });
-    const withAcme = await withRepositoryPack();
+    const withAcme = await withTestPacks(true);
     const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
     git("init", "-q");
     git("add", ".");
@@ -285,11 +297,11 @@ describe("recommendRulePacks", () => {
   it("lets the daemon reuse a repository's recommendations for a minute, then scans it again", async () => {
     const root = await temporaryDirectory("rerail-recommend-cache-");
     writeFiles(root, { "app/main.py": "print(1)\n" });
-    const ids = (now: number) => cachedRecommendRulePacks(root, now).map(({ pack: found }) => found.id);
-    expect(ids(0)).toEqual([]);
-    writeFiles(root, { "src/main.ts": "export {};\n" });
-    expect(ids(RECOMMENDATION_CACHE_MS - 1)).toEqual([]);
-    expect(ids(RECOMMENDATION_CACHE_MS)).toEqual(["tslint"]);
+    const first = cachedRecommendRulePacks(root, 0);
+    expect(cachedRecommendRulePacks(root, RECOMMENDATION_CACHE_MS - 1)).toBe(first);
+    const rescanned = cachedRecommendRulePacks(root, RECOMMENDATION_CACHE_MS);
+    expect(rescanned).not.toBe(first);
+    expect(cachedRecommendRulePacks(root, 2 * RECOMMENDATION_CACHE_MS - 1)).toBe(rescanned);
   });
 
   it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {
@@ -309,14 +321,15 @@ describe("recommendRulePacks", () => {
     execFileSync("git", ["init", "-q", root]);
     execFileSync("git", ["-C", root, "add", "."]);
 
-    expect(recommendRulePacks(root)).toEqual([]);
+    const from = await withTestPacks();
+    expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
-    expect(recommendRulePacks(root).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["tslint", "matches the typescript dependency in package.json"]]);
+    expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);
   });
 });
 
 describe("rule pack API", () => {
-  it("lists the packs, recommends packs with their folders for a checkout, and tags By Rerail rules with their pack", async () => {
+  it("lists the packs, recommends none of them for a TypeScript checkout, and tags By Rerail rules with their pack", async () => {
     const root = realpathSync(await temporaryDirectory("rerail-rule-pack-api-"));
     const checkout = join(root, "web-app");
     writeFiles(checkout, { "src/main.ts": "export {};\n" });
@@ -339,20 +352,21 @@ describe("rule pack API", () => {
     try {
       const listed = await get("/api/rule-packs", rulePackListSchema);
       expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
-        .toEqual([["complexity", "language", complexity.rules.length], ["tslint", "language", tslint.rules.length]]);
-      const tripleEquals = tslint.rules.find(rule => rule.id === "tslint:triple-equals")!;
-      expect(listed.packs.find(found => found.id === "tslint")!.rules.find(rule => rule.id === "tslint:triple-equals"))
-        .toEqual({ id: "tslint:triple-equals", kind: "file", title: tripleEquals.title, group: "TSLint", mode: "steer", on: true, examples: tripleEquals.examples });
+        .toEqual([["complexity", "language", complexityIds.length]]);
+      const cyclomatic = complexity.rules.find(rule => rule.id === "complexity:cyclomatic-typescript")!;
+      expect(listed.packs.find(found => found.id === "complexity")!.rules.find(rule => rule.id === "complexity:cyclomatic-typescript"))
+        .toEqual({ id: "complexity:cyclomatic-typescript", kind: "file", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
+      expect(cyclomatic.examples).toBeDefined();
 
       const recommended = await get(`/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`, rulePackRecommendationsSchema);
       expect(recommended).toEqual({
         repositoryKey, checkoutPath: checkout,
-        recommendations: [{ packId: "tslint", ruleCount: tslint.rules.length, reason: "matches *.ts files in src", folder: "src" }],
+        recommendations: [],
       });
 
       const { rules } = await get("/api/rerail-rules", rerailRules);
       const packOf = Object.fromEntries(rules.map(listedRule => [listedRule.rule.id, listedRule.packId]));
-      expect(packOf["tslint:triple-equals"]).toBe("tslint");
+      expect(packOf["complexity:cyclomatic-typescript"]).toBe("complexity");
     } finally {
       stores.close();
     }

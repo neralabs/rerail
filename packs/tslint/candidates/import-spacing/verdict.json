@@ -1,7 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "primitive": "regex-ast-context",
-    "note": "Spacing checks run as unscoped file.content regex with no import_statement guard; confirmed a re-export `export { X } from\"./y\";` is flagged though TSLint's ImportDeclaration-only walker never inspects export-from statements."
-  }
-}

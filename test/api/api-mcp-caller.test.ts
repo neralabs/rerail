@@ -170,10 +170,10 @@ describe("MCP callers and the agent guard", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         repository: parentKey,
-        add: [{ sourceKind: "pack", sourceId: "tslint", folder: "web" }],
+        add: [{ sourceKind: "pack", sourceId: "complexity", folder: "web" }],
         settings: [
-          { folder: "web", targetKind: "pack", targetId: "tslint", on: false },
-          { folder: "web", targetKind: "pack", targetId: "tslint", mode: "log" },
+          { folder: "web", targetKind: "pack", targetId: "complexity", on: false },
+          { folder: "web", targetKind: "pack", targetId: "complexity", mode: "log" },
         ],
       }),
     });
@@ -218,19 +218,19 @@ describe("MCP callers and the agent guard", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    expect((await put("/api/repository/settings", { checkout: parent, owner: "repository", targets: [{ kind: "pack", id: "tslint" }], on: false })).status).toBe(200);
+    expect((await put("/api/repository/settings", { checkout: parent, owner: "repository", targets: [{ kind: "pack", id: "complexity" }], on: false })).status).toBe(200);
     expect((await put("/api/repository/attachments", {
       repository: parentKey, add: [{ sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[1]!.id, folder: "web" }],
     })).status).toBe(200);
     // A checkout and a repository that disagree are refused rather than guessed between.
-    const mismatch = await put("/api/repository/settings", { checkout: nested, repository: parentKey, owner: "repository", targets: [{ kind: "pack", id: "tslint" }], on: false });
+    const mismatch = await put("/api/repository/settings", { checkout: nested, repository: parentKey, owner: "repository", targets: [{ kind: "pack", id: "complexity" }], on: false });
     expect(mismatch.status).toBe(400);
     expect(await mismatch.json()).toMatchObject({ error: "target-mismatch" });
 
     // The API never records a checkout: an unseen one and a missing path get the same answer, and nothing is written.
     const unseen = gitRepository(join(root, "unseen"), "https://github.com/acme/unseen.git");
     const answers = await Promise.all([unseen, join(root, "missing")].map(async checkout => {
-      const response = await put("/api/repository/settings", { checkout, owner: "checkout", targets: [{ kind: "pack", id: "tslint" }], on: false });
+      const response = await put("/api/repository/settings", { checkout, owner: "checkout", targets: [{ kind: "pack", id: "complexity" }], on: false });
       return { status: response.status, body: await response.json() as { error: string; message: string } };
     }));
     expect(answers.map(answer => [answer.status, answer.body.error])).toEqual([[404, "checkout-not-found"], [404, "checkout-not-found"]]);
@@ -242,7 +242,7 @@ describe("MCP callers and the agent guard", () => {
     const sibling = gitRepository(join(root, "sibling"), "https://github.com/acme/sibling.git");
     recordCheckout(stores.database(), sibling);
     const caller = from(parent);
-    const off = { owner: "checkout", targets: [{ kind: "pack", id: "tslint" }], on: false };
+    const off = { owner: "checkout", targets: [{ kind: "pack", id: "complexity" }], on: false };
     expect((await call("repository_settings_set", { ...off, checkout: nested }, caller)).result).toMatchObject({ settings: [{ ownerId: nested }] });
     expect((await call("repository_settings_set", { ...off, checkout: sibling }, caller)).result).toMatch(/^agent-not-permitted/u);
     expect((await call("repository_stop", { checkout: sibling, scope: "checkout" }, caller)).result).toMatch(/^agent-not-permitted/u);

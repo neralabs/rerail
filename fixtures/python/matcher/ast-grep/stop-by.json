@@ -1,6 +1,6 @@
 {
   "upstream": "ast-grep 0.45.3",
-  "about": "Cases that pin Rerail's `stopBy: <rule>` to upstream ast-grep 0.45.3 (`rule/stop_by.rs`, `rule/relational_rule.rs`): `inside`/`precedes`/`follows` walk their axis up to and including the first node the stop rule matches; `has` tests a descendant the stop rule matches but does not enter it. The stop rule matches in a fresh environment. Each case runs through the CLI and both Rerail paths (the indexed path plans the unbounded relation as a superset). The no-invalid-this cases are TSLint's boundary: functions rebind `this`, arrow functions and methods' class bodies do not.",
+  "about": "Cases that pin Rerail's `stopBy: <rule>` to upstream ast-grep 0.45.3 (`rule/stop_by.rs`, `rule/relational_rule.rs`): `inside`/`precedes`/`follows` walk their axis up to and including the first node the stop rule matches; `has` tests a descendant the stop rule matches but does not enter it. The stop rule matches in a fresh environment. Each case runs through the CLI and both Rerail paths (the indexed path plans the unbounded relation as a superset).",
   "cases": [
     {
       "id": "stop-rule-in-python",

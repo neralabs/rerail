@@ -21,7 +21,7 @@ the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript and
 JavaScript `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`. So are dependency, virtual-environment, build-output and
-generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ...), as in the TSLint pack.
+generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ...).
 
 ## What counts
 

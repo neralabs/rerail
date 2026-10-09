@@ -30,10 +30,10 @@ import {
 const bundle = testBundle();
 const CHECKOUT = "/work/app";
 
-async function repositoryWithTslint(folders: readonly string[]) {
+async function repositoryWithLintPack(folders: readonly string[]) {
   const db = await temporaryDatabase();
   addRepository(db, REPOSITORY);
-  setUpRepository(db, REPOSITORY, { packs: folders.map(folder => ({ packId: "tslint", folder })) });
+  setUpRepository(db, REPOSITORY, { packs: folders.map(folder => ({ packId: "lint", folder })) });
   return db;
 }
 
@@ -48,7 +48,7 @@ describe("library rules", () => {
   });
 
   it("bumps a conversation rule's revision on each write and removes everything that points at a rule", async () => {
-    const db = await repositoryWithTslint([""]);
+    const db = await repositoryWithLintPack([""]);
     upsertLibraryRule(db, bundle, conversation("chat"), "conversation");
     expect(upsertLibraryRule(db, bundle, conversation("chat"), "conversation").revision).toBe(2);
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "library_rule", sourceId: "chat" });
@@ -77,7 +77,7 @@ describe("library rules", () => {
 
 describe("copyRerailRuleToLibrary", () => {
   it("adds the copy wherever the original is present and switches the original off there", async () => {
-    const db = await repositoryWithTslint(["web", "api"]);
+    const db = await repositoryWithLintPack(["web", "api"]);
     const edited = codeRule("ignored", { message: "No print, ever" });
 
     const copied = copyRerailRuleToLibrary(db, bundle, REPOSITORY, "no-console", edited);
@@ -95,7 +95,7 @@ describe("copyRerailRuleToLibrary", () => {
   });
 
   it("leaves the original following the bundle", async () => {
-    const db = await repositoryWithTslint([""]);
+    const db = await repositoryWithLintPack([""]);
     copyRerailRuleToLibrary(db, bundle, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
 
     const updated = testBundle({ noConsoleRevision: 2 });
@@ -105,7 +105,7 @@ describe("copyRerailRuleToLibrary", () => {
   });
 
   it("lets a library rule win over a later bundled rule with its id", async () => {
-    const db = await repositoryWithTslint([]);
+    const db = await repositoryWithLintPack([]);
     writeLibraryRule(db, testBundle(), { kind: "file", rule: codeRule("shared", { mode: "log" }) });
     const later = testBundle();
     const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "file" as const, rule: codeRule("shared") }]]) };
@@ -121,11 +121,11 @@ describe("copyRerailRuleToLibrary", () => {
 
 describe("rules dump", () => {
   it("round-trips the library and repository configuration, keeping this machine's start state", async () => {
-    const source = await repositoryWithTslint(["web"]);
+    const source = await repositoryWithLintPack(["web"]);
     upsertLibraryRule(source, bundle, codeRule("mine"), "file");
     addAttachment(source, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "library_rule", sourceId: "mine" });
-    setRuleSetting(source, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "web", targetKind: "pack", targetId: "tslint", on: null, mode: "log" });
-    setRuleSetting(source, { owner: { kind: "checkout", checkoutPath: CHECKOUT }, folder: "", targetKind: "pack", targetId: "tslint", on: false, mode: null });
+    setRuleSetting(source, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: "log" });
+    setRuleSetting(source, { owner: { kind: "checkout", checkoutPath: CHECKOUT }, folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null });
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
 
     const target = await temporaryDatabase();
@@ -155,7 +155,7 @@ describe("rules dump", () => {
   });
 
   it("imports a repository listed under one of this machine's aliases into the repository that holds the alias", async () => {
-    const source = await repositoryWithTslint(["web"]);
+    const source = await repositoryWithLintPack(["web"]);
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
     const target = await temporaryDatabase();
     addRepository(target, "remote:github.com/acme/app-renamed");

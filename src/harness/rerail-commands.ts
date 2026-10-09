@@ -60,7 +60,7 @@ export interface CreateRuleInstructionsInput {
  * showing anything, reads it back in six rows, and adds it only once the person says yes.
  */
 export function createRuleInstructions({ cli, packageRoot, request }: CreateRuleInstructionsInput): string {
-  const examples = `${packageRoot}/packs/complexity/rules and ${packageRoot}/packs/tslint/rules`;
+  const examples = `${packageRoot}/packs/complexity/rules`;
   const grammar = `${packageRoot}/native/src/code_rule_dsl/capabilities.json`;
   return [
     `Create a Rerail rule for this repo from the person's own words: ${request}`,

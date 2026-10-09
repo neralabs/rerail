@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "option-baked",
-    "note": "Structure genuine (name-blind call/property-chain text match, wildcard handled) but TSLint's default list is empty; the doc bakes the fixture's list."
-  }
-}

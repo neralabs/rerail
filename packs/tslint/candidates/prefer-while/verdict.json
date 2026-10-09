@@ -1,6 +1,0 @@
-{
-  "audit": {
-    "class": "fixture-fit",
-    "note": "Text regex on the for_statement header stands in for an AST field check; confirmed a comment inside the header (`for (/* i */; i<10;) {}`) breaks the match and the violation is missed."
-  }
-}

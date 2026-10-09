@@ -1,7 +1,0 @@
-{
-  "audit": {
-    "class": "requires-config",
-    "note": "Port genuine per option, but TSLint requires one of array/generic/array-simple (bare `true` flags both T[] and Array<T>); the default doc bakes the fixture's \"array\". array-simple's isSimpleType (parens, nested Array<T>) is a recursive util, unbounded; verified 5-deep nesting matches TSLint."
-  },
-  "requiresConfiguration": "one of array/generic/array-simple must be provided (arrayTypeRule.ts:34); bare `true` flags both T[] and Array<T> (arrayTypeRule.ts:77, :101)"
-}

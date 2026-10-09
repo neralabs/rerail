@@ -1,7 +1,0 @@
-{
-  "audit": {
-    "class": "requires-config",
-    "note": "Port faithful: bare `true` allows no comment kind, so the default doc flags every comment. An absurd ban; the rule needs an allowed-kinds list. Four mutually-exclusive regexes on raw comment text mirror TSLint's own text-prefix branching."
-  },
-  "requiresConfiguration": "the options list the allowed comment kinds (commentTypeRule.ts:44); bare `true` allows none, so every comment is flagged (commentTypeRule.ts:74-85)"
-}

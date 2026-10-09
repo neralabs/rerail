@@ -12,8 +12,8 @@
  *   shadowing and name-equality relation in the file is preserved without modelling scopes.
  * - Protected: keywords and contextual keywords used as identifiers, the ES standard library (globals and every
  *   member declared in TypeScript's lib.es*.d.ts), a curated host list (DOM/Node/React/module names), and what the
- *   tool's recording lists in `protected-identifiers.json` (for TSLint: identifier-like literals in each rule's
- *   implementation and the words and patterns of each test's options). Intrinsic JSX tags and attributes on intrinsic
+ *   tool's recording lists in `protected-identifiers.json` (identifier-like literals in each rule's implementation and
+ *   the words and patterns of each test's options). Intrinsic JSX tags and attributes on intrinsic
  *   elements are protected; so is any name with an occurrence that cannot be rewritten in place (unicode escapes).
  *   String/number literal contents and comments are never touched.
  */
@@ -211,7 +211,7 @@ function isIntrinsicTag(name: ts.JsxTagNameExpression): boolean {
 
 /**
  * A string literal naming a property or member: a declared name (`"a"() {}`, `{ "a": 1 }`), a computed name (`["a"]`)
- * or an element access (`o["a"]`). TSLint compares these with identifier names, so they follow the identifier's rename.
+ * or an element access (`o["a"]`). A rule may compare these with identifier names, so they follow the identifier's rename.
  */
 function isNameLiteral(node: ts.StringLiteral): boolean {
   const parent = node.parent;

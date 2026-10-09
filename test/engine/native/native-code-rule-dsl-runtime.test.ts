@@ -2122,7 +2122,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
         .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
     // A missing comma, which TypeScript rejects too, so the error region stays whatever the grammar fixes.
-    const missingComma = 'const m = importOriginal(1 load("../../api"));\ndebugger;\n';
+    const missingComma = 'const m = importOriginal(1 load("./api"));\ndebugger;\n';
     const jsxAmpersand = "export const View = () => <p>Domain & capability map</p>;\ndebugger;\n";
 
     it.each([

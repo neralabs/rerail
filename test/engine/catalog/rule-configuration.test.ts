@@ -38,14 +38,14 @@ function ruleAt(db: RerailDatabase, checkoutPath: string, path: string, id: stri
   return loadCheckoutRuleSet(db, bundle, checkout(checkoutPath), RUNNING, parents).rulesFor(path).find(rule => rule.document.rule.id === id);
 }
 
-/** The proposal §5 worked example: TSLint in `web/`, pack Log for the repository, `no-console` off in `web/legacy/`, Steer in this worktree. */
+/** The proposal §5 worked example: the lint pack in `web/`, pack Log for the repository, `no-console` off in `web/legacy/`, Steer in this worktree. */
 async function workedExample(): Promise<RerailDatabase> {
   const db = await temporaryDatabase();
   addRepository(db, REPOSITORY);
   setUpRepository(db, REPOSITORY, {
-    packs: [{ packId: "tslint", folder: "web/" }],
+    packs: [{ packId: "lint", folder: "web/" }],
     settings: [
-      repositorySetting("", "pack", "tslint", { on: null, mode: "log" }),
+      repositorySetting("", "pack", "lint", { on: null, mode: "log" }),
       repositorySetting("web/legacy", "rule", "no-console", { on: false, mode: null }),
     ],
   }, 10);
@@ -58,9 +58,9 @@ describe("loadCheckoutRuleSet precedence", () => {
     const db = await workedExample();
 
     const here = ruleAt(db, WORKTREE, "web/src/app.ts", "no-console");
-    expect(here).toMatchObject({ on: true, mode: "steer", attachmentFolder: "web", source: { kind: "pack", id: "tslint", packId: "tslint" } });
+    expect(here).toMatchObject({ on: true, mode: "steer", attachmentFolder: "web", source: { kind: "pack", id: "lint", packId: "lint" } });
     expect(here?.decidedBy).toEqual({
-      on: { by: "pack-start", packId: "tslint" },
+      on: { by: "pack-start", packId: "lint" },
       mode: { by: "checkout", checkoutPath: WORKTREE, folder: "", target: "rule" },
     });
     expect(here?.document.rule.mode).toBe("steer");
@@ -87,7 +87,7 @@ describe("loadCheckoutRuleSet precedence", () => {
   it("applies an owner's pack setting before a later owner's rule setting", async () => {
     const db = await workedExample();
     setRuleSetting(db, repositorySetting("", "rule", "no-var", { on: true, mode: null }));
-    setRuleSetting(db, checkoutSetting(WORKTREE, "", "pack", "tslint", { on: false, mode: null }));
+    setRuleSetting(db, checkoutSetting(WORKTREE, "", "pack", "lint", { on: false, mode: null }));
 
     expect(ruleAt(db, WORKTREE, "web/a.ts", "no-var")?.on).toBe(false);
     expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-var")?.on).toBe(true);
@@ -108,7 +108,7 @@ describe("loadCheckoutRuleSet precedence", () => {
     const db = await workedExample();
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "no-console" });
 
-    expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-console")).toMatchObject({ source: { kind: "pack", packId: "tslint" }, mode: "log" });
+    expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-console")).toMatchObject({ source: { kind: "pack", packId: "lint" }, mode: "log" });
     expect(ruleAt(db, OTHER_CHECKOUT, "api/a.ts", "no-console")).toMatchObject({
       source: { kind: "rerail_rule", id: "no-console", packId: null },
       attachmentFolder: "",
@@ -171,17 +171,17 @@ describe("loadCheckoutRuleSet precedence", () => {
 describe("rule configuration writes", () => {
   it("normalises folders and removes a setting when both fields are cleared", async () => {
     const db = await workedExample();
-    expect(removeAttachment(db, { repositoryKey: REPOSITORY, folder: "./web/", sourceKind: "pack", sourceId: "tslint" })).toBe(true);
+    expect(removeAttachment(db, { repositoryKey: REPOSITORY, folder: "./web/", sourceKind: "pack", sourceId: "lint" })).toBe(true);
     expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-console")).toBeUndefined();
 
-    addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "pack", sourceId: "tslint" });
-    setRuleSetting(db, repositorySetting("", "pack", "tslint", { on: null, mode: null }));
-    expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-console")?.decidedBy.mode).toEqual({ by: "pack-start", packId: "tslint" });
+    addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "pack", sourceId: "lint" });
+    setRuleSetting(db, repositorySetting("", "pack", "lint", { on: null, mode: null }));
+    expect(ruleAt(db, OTHER_CHECKOUT, "web/a.ts", "no-console")?.decidedBy.mode).toEqual({ by: "pack-start", packId: "lint" });
   });
 
   it("rejects folders outside the repository", async () => {
     const db = await workedExample();
-    expect(() => addAttachment(db, { repositoryKey: REPOSITORY, folder: "../x", sourceKind: "pack", sourceId: "tslint" })).toThrow(/inside the repository/u);
+    expect(() => addAttachment(db, { repositoryKey: REPOSITORY, folder: "../x", sourceKind: "pack", sourceId: "lint" })).toThrow(/inside the repository/u);
   });
 
   it("sets up a repository with nothing added and refuses an unknown one", async () => {
@@ -199,8 +199,8 @@ describe("ruleConfigurationSignature", () => {
     addRepository(db, OTHER_REPOSITORY);
     const before = ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE]);
 
-    setRuleSetting(db, { owner: { kind: "repository", repositoryKey: OTHER_REPOSITORY }, folder: "", targetKind: "pack", targetId: "tslint", on: false, mode: null });
-    setRuleSetting(db, checkoutSetting("/elsewhere", "", "pack", "tslint", { on: false, mode: null }));
+    setRuleSetting(db, { owner: { kind: "repository", repositoryKey: OTHER_REPOSITORY }, folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null });
+    setRuleSetting(db, checkoutSetting("/elsewhere", "", "pack", "lint", { on: false, mode: null }));
     expect(ruleConfigurationSignature(db, bundle, REPOSITORY, [WORKTREE])).toBe(before);
 
     setRuleSetting(db, checkoutSetting(WORKTREE, "web", "rule", "no-var", { on: true, mode: null }));
@@ -216,11 +216,11 @@ describe("ruleConfigurationSignature", () => {
   it("reports a pack rule a library rule shadows, and changes when that library rule goes", async () => {
     const db = await workedExample();
     writeLibraryRule(db, testBundle(), { kind: "file", rule: codeRule("shared") });
-    const pack = bundle.packs.get("tslint")!;
+    const pack = bundle.packs.get("lint")!;
     const withShared: BundledCatalog = {
       ...bundle,
       documents: new Map([...bundle.documents, ["shared", { kind: "file", rule: codeRule("shared") }]]),
-      packs: new Map([["tslint", { ...pack, rules: [...pack.rules, { ...pack.rules[0]!, id: "shared" }] }]]),
+      packs: new Map([["lint", { ...pack, rules: [...pack.rules, { ...pack.rules[0]!, id: "shared" }] }]]),
     };
 
     const rules = loadCheckoutRuleSet(db, withShared, checkout(OTHER_CHECKOUT), RUNNING, []);

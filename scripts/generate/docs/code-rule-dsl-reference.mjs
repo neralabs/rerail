@@ -33,9 +33,9 @@
 //     the search behind the reference's examples. `features` lists every feature with its count;
 //     `show SUITE:PATH[#PTR]` prints a document's clauses, or the value at a pointer.
 //
-// The TSLint pack's candidates and shipped rules (the bundled code rules) are read from this checkout, and the engine's
-// worked examples from the fixtures (`fixtures/<family>/compile/examples/`).
-// Ruff and ESLint conformance ports are not part of this repository; `--ruff` and `--eslint` add
+// Every pack's rule documents (`packs/*/rules`), the bundled code rules (the complexity pack core ships) and the
+// engine's worked examples (`fixtures/<family>/compile/examples/`) are read from this checkout.
+// The full Ruff and ESLint conformance suites are not part of this checkout; `--ruff` and `--eslint` add
 // them as a directory of ports, or as a git ref of this repository that has them under
 // `conformance/<suite>/rules`. Regenerate in this order: fill, figures, coverage --write; then
 // check with grammar and examples.
@@ -136,8 +136,8 @@ function suites(options) {
   const list = [
     source("ruff", "Ruff", options.ruff),
     source("eslint", "ESLint", options.eslint),
-    { id: "tslint", label: "TSLint", dir: join(RERAIL, "packs/tslint/candidates") },
-    { id: "bundled", label: "Bundled", dir: join(RERAIL, "packs/tslint/rules") },
+    { id: "packs", label: "Packs", dir: join(RERAIL, "packs"), within: "rules" },
+    { id: "bundled", label: "Bundled", dir: join(RERAIL, "packs/complexity/rules") },
     { id: "worked", label: "Worked", dir: fixturesPath(), within: "compile/examples" },
   ].filter(suite => suite !== undefined);
   for (const suite of list) {

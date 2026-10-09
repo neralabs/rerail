@@ -1,5 +1,0 @@
-// ensure that we don't treat \r\n as two line breaks
-let obj = {
-    foo: 1,
-    bar: 2,
-}
