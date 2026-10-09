@@ -130,31 +130,36 @@
       "id": "typescript-eslint-no-namespace",
       "document": "rules/typescript-eslint-no-namespace.json",
       "title": "typescript-eslint no-namespace: Disallow TypeScript namespaces",
-      "group": "typescript-eslint"
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-no-duplicate-enum-values",
       "document": "rules/typescript-eslint-no-duplicate-enum-values.json",
       "title": "typescript-eslint no-duplicate-enum-values: Disallow duplicate enum member values",
-      "group": "typescript-eslint"
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-prefer-as-const",
       "document": "rules/typescript-eslint-prefer-as-const.json",
       "title": "typescript-eslint prefer-as-const: Enforce the use of as const over literal type",
-      "group": "typescript-eslint"
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-no-unsafe-function-type",
       "document": "rules/typescript-eslint-no-unsafe-function-type.json",
       "title": "typescript-eslint no-unsafe-function-type: Disallow using the unsafe built-in Function type",
-      "group": "typescript-eslint"
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-no-wrapper-object-types",
       "document": "rules/typescript-eslint-no-wrapper-object-types.json",
       "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
-      "group": "typescript-eslint"
+      "group": "typescript-eslint",
+      "on": false
     }
   ]
 }
