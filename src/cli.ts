@@ -21,10 +21,11 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "./customer-profile.js";
 import {
-  readOnlyStartState, startRerail, stopRerail, workspaceStartState, type RepositorySetupIo,
+  readOnlyStartState, stopRerail, workspaceStartState,
 } from "./repository-start.js";
 import type { RepositoryStartState } from "./repository-model.js";
 import { repositoryName } from "./repository-identity.js";
+import { checkSetupAnswer, parseCodingAgents, startRerail } from "./repository-setup.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "./daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "./database.js";
 import {
@@ -45,7 +46,7 @@ import { loadBundledCatalog } from "./bundled-rules.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
-import { parseHostNames, runInstallCommand, runSetupCommand } from "./setup-cli.js";
+import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { defaultRerailHome } from "./rerail-home.js";
 import {
   ManagedUpdater,
@@ -108,9 +109,9 @@ function selectedChannel(args: readonly string[]): string | undefined {
 function usage(): string {
   return [
     "Usage:",
-    "  rerail setup [--project <dir>] [--harness omp,pi,claude-code,codex,cursor] [--port <n>] [--skip-start] [--skip-register] [--dry-run]",
-    "  rerail install [--root <package>] [--harness <list>] [--remove] [--dry-run]",
-    "  rerail start [--repo <dir>] [--repository] [--no-packs] [--agents <list>] [--database <file>]",
+    "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--database <file>]",
+    "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--database <file>]",
     "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--repo <dir>] [--database <file>]",
     "  rerail status",
@@ -361,42 +362,54 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
 
 /**
  * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory and the worktrees inside
- * it, or with `--repository` on every checkout of its repository. A start that sets the repository up adds its
- * recommended rule packs, or none with `--no-packs`. Without a
- * terminal the caller is a coding agent relaying the output, so the text names its slash commands.
+ * it, or with `--repository` on every checkout of its repository. Starting a repository that is not set up runs
+ * set-up there: its questions are answered with `--answer`, then `rerail setup`. Without a terminal the caller is a
+ * coding agent relaying the output, so the text names its slash commands. `--json` prints one set-up step.
  * `--database` names the database an extension was configured with, as `rerail state` takes it.
  */
-async function runRepositoryCommand(command: "start" | "stop", args: readonly string[]): Promise<number> {
-  const { flags, options } = parseArguments(
-    args,
-    {
-      flags: command === "start" ? ["--repository", "--no-packs"] : ["--repository"],
-      options: command === "start" ? ["--repo", "--agents", "--database"] : ["--repo", "--database"],
-    },
-    argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
-  );
-  const workspace = resolve(options.get("--repo") ?? process.cwd());
-  const database = options.get("--database");
-  const databasePath = database === undefined ? undefined : resolve(database);
-  const repository = flags.has("--repository");
-  const io: RepositorySetupIo = {
-    lane: process.stdout.isTTY ? "terminal" : "agent",
-    say: text => { process.stdout.write(`${text}\n`); },
-  };
-  if (command === "stop") {
-    stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+async function runRepositoryCommand(command: "start" | "stop", args: readonly string[], context: SetupContext): Promise<number> {
+  const io = setupIo();
+  try {
+    if (command === "start" && args.includes(JSON_FLAG)) {
+      const step = await startStep(args, context, machinePlace(context));
+      io.say(JSON.stringify(step));
+      return step.step === "error" ? 1 : 0;
+    }
+    const { flags, options } = parseArguments(
+      args,
+      {
+        flags: ["--repository"],
+        options: command === "start" ? ["--repo", "--agents", "--answer", "--database"] : ["--repo", "--database"],
+      },
+      argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
+    );
+    const workspace = resolve(options.get("--repo") ?? process.cwd());
+    const database = options.get("--database");
+    const databasePath = database === undefined ? undefined : resolve(database);
+    const repository = flags.has("--repository");
+    if (command === "stop") {
+      stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+      return 0;
+    }
+    const agents = options.get("--agents");
+    const answer = checkSetupAnswer(options.get("--answer"));
+    const setupCommand = setupAnswerCommand(context, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+    const report = await startRerail(workspace, io, {
+      ...(databasePath === undefined ? {} : { databasePath }),
+      ...(agents === undefined ? {} : { agents: parseCodingAgents(agents) }),
+      ...(answer === undefined ? {} : { answer }),
+      ...(setupCommand === undefined ? {} : { setupCommand }),
+      repository,
+      environment: setupEnvironment(context),
+    });
+    // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
+    if (report.setUpRan) return report.cancelled ? 1 : 0;
+    const page = await readRulesDashboard({ cwd: workspace });
+    if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
     return 0;
+  } finally {
+    io.close();
   }
-  const agents = options.get("--agents");
-  await startRerail(workspace, io, {
-    ...(databasePath === undefined ? {} : { databasePath }),
-    rulePacks: flags.has("--no-packs") ? "none" : "recommended",
-    repository,
-    ...(agents === undefined ? {} : { agents: parseHostNames(agents.split(",").map(name => name.trim()).filter(Boolean)) }),
-  });
-  const page = await readRulesDashboard({ cwd: workspace });
-  if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
-  return 0;
 }
 
 /**
@@ -493,7 +506,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
-  if (command === "start" || command === "stop") return await runRepositoryCommand(command, args);
+  if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;

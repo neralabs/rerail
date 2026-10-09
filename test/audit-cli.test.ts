@@ -15,6 +15,9 @@ import { SqliteAuditControlStore } from "../src/audit-control.js";
 import { auditRequestSchema } from "../src/audit-control-schema.js";
 import { registerRerailCommands, type RerailCommandHost } from "../src/rerail-command.js";
 import { isRerailStarted, workspaceStartState } from "../src/repository-start.js";
+import { startRerail } from "../src/repository-setup.js";
+import { fakeSetupEnvironment } from "./fake-setup-environment.js";
+import { SETUP_CANCELLED } from "../src/setup-picker.js";
 
 const NO_PRINT = codeRuleSchema.parse({
   format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",
@@ -74,9 +77,10 @@ describe("rerail scan and settings CLI", () => {
       cwd: () => root,
       reattach: async () => { reattached += 1; },
     });
+    const asked: string[] = [];
     const ui = {
       notify(message: string) { notices.push(message); },
-      select: async () => undefined,
+      select: async (title: string) => { asked.push(title); return undefined; },
       input: async () => undefined,
       confirm: async () => false,
     };
@@ -86,12 +90,13 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with /rerail-start.`);
     expect(workspaceStartState(root)).toBe("stopped");
 
+    // Where the repository is not set up, start runs the set-up, which asks before reading; closing the question changes nothing.
     await commands.get("rerail-start")!.handler("", { ui });
-    // A repository Rerail never set up is set up on its first start, with the rule packs recommended for it (none here).
-    expect(notices.at(-1)).toBe([
-      `● Rerail is on in ${name}. 0 rules are on.`,
-      "  No rule pack fits this repository yet. Add rules on the rules page (/rerail-ui).",
-    ].join("\n"));
+    expect(asked).toEqual([`You’re working in ${name}. Can Rerail read it to pick the rule packs that look right?`]);
+    expect(notices.at(-1)).toBe(SETUP_CANCELLED);
+    expect(workspaceStartState(root)).toBe("stopped");
+    // The person's "start" answer, run as the coding agent relays it.
+    await startRerail(root, { lane: "agent", say: () => {} }, { answer: "start", environment: fakeSetupEnvironment() });
     expect(isRerailStarted(root)).toBe(true);
 
     await commands.get("rerail-stop")!.handler("", { ui });
@@ -105,8 +110,8 @@ describe("rerail scan and settings CLI", () => {
     await commands.get("rerail-start")!.handler("", { ui });
     expect(notices.at(-1)).toMatch(/rules are on, as you left them\.$/u);
     expect(isRerailStarted(root)).toBe(true);
-    // Every command rebuilds the runtime, which attaches only where Rerail is started.
-    expect(reattached).toBe(4);
+    // Every command that changed something rebuilds the runtime; the cancelled set-up changed nothing.
+    expect(reattached).toBe(3);
   }, 60_000);
 
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {

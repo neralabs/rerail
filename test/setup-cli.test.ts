@@ -16,7 +16,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInstallCommand, runSetupCommand, type SetupContext } from "../src/setup-cli.js";
+import { runInstallCommand, type SetupContext } from "../src/setup-cli.js";
 import { ManagedUpdater } from "../src/updater.js";
 
 const temporaryDirectories: string[] = [];
@@ -61,7 +61,7 @@ describe("rerail install --root", () => {
     const { context, packageRoot } = await fixture();
     const { updater } = context;
 
-    expect(await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context)).toBe(0);
 
     expect(await readlink(updater.currentLink)).toBe(packageRoot);
     expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
@@ -77,7 +77,7 @@ describe("rerail install --root", () => {
     const settingsPath = join(hostConfigHome, ".claude", "settings.json");
     const hookPath = join(context.updater.currentLink, "dist", "claude-hook.js");
 
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
 
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
       hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
@@ -90,7 +90,7 @@ describe("rerail install --root", () => {
       join(context.updater.currentLink, "dist", "cli.js"),
     );
 
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code", "--remove"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code", "--remove"], context);
 
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({});
     expect(existsSync(join(hostConfigHome, ".claude", "commands", "rerail.md"))).toBe(false);
@@ -109,11 +109,11 @@ describe("rerail install --root", () => {
 
   it("backs up rules and history on uninstall, and keeps them when only one coding agent is removed", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const files = { "rerail.sqlite": "rules and history", "rerail.sqlite-wal": "wal" };
     for (const [name, text] of Object.entries(files)) await writeFile(join(context.home, name), text);
 
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code", "--remove"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code", "--remove"], context);
     for (const name of Object.keys(files)) expect(existsSync(join(context.home, name))).toBe(true);
 
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
@@ -134,7 +134,7 @@ describe("rerail install --root", () => {
 
   it("backs up every file a running daemon leaves once it has stopped and checkpointed its write-ahead log", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const files = { "rerail.sqlite": "rules and history", "rerail.sqlite-wal": "wal", "rerail.sqlite-shm": "shm" };
     for (const [name, text] of Object.entries(files)) await writeFile(join(context.home, name), text);
     // SQLite deletes the sidecars when the daemon's last connection closes.
@@ -152,7 +152,7 @@ describe("rerail install --root", () => {
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
-    await runInstallCommand(["--root", packageRoot, "--harness", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     await writeFile(join(context.home, "rerail.sqlite"), "live database");
     // The undo names that checkout, not the managed install `current` points at.
     const checkoutRoot = join(hostConfigHome, "..", "checkout");
@@ -162,20 +162,5 @@ describe("rerail install --root", () => {
 
     expect(await readFile(join(context.home, "rerail.sqlite"), "utf8")).toBe("live database");
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
-  });
-});
-
-describe("rerail setup --dry-run", () => {
-  it("plans the coding-agent registration from the running package before anything is installed", async () => {
-    const { context, hostConfigHome, packageRoot } = await fixture();
-    await mkdir(join(hostConfigHome, ".codex"), { recursive: true });
-    await mkdir(join(packageRoot, "skills", "rerail"), { recursive: true });
-    await writeFile(join(packageRoot, "skills", "rerail", "SKILL.md"), "Run RERAIL_COMMAND.\n");
-
-    expect(await runSetupCommand(["--dry-run"], context)).toBe(0);
-
-    expect(existsSync(context.home)).toBe(false);
-    expect(existsSync(join(hostConfigHome, ".codex", "skills"))).toBe(false);
-    expect(existsSync(join(hostConfigHome, ".claude", "settings.json"))).toBe(false);
   });
 });

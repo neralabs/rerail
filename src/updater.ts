@@ -252,14 +252,18 @@ async function repairManagedInstallation(packageRoot: string): Promise<SqliteRep
 
 const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stopped", "not-set-up", "never"]);
 
-/** Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. */
+/**
+ * Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. The repository
+ * is not set up, so start runs set-up, which asks first: "I'll pick rule packs myself" turns it on reading no code,
+ * and the scratch `HOME` gives it no coding agent to connect.
+ */
 async function startHealthRepository(cli: string, workspace: string, env: NodeJS.ProcessEnv): Promise<void> {
   const run = (args: readonly string[]) => promisify(execFile)(
     process.execPath, [cli, ...args], { cwd: workspace, env, timeout: EVENT_HEALTH_TIMEOUT_MS },
   );
   const state = (await run(["state", "--repo", workspace])).stdout.trim();
   if (!REPOSITORY_START_STATES.has(state)) throw new Error(`rerail state answered ${JSON.stringify(state)}`);
-  await run(["start", "--repo", workspace]);
+  await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
 }
 
 export async function validateManagedInstallation(installation: Installation): Promise<void> {
@@ -290,12 +294,20 @@ export async function validateManagedInstallation(installation: Installation): P
     throw new Error("Installed native runtime health check failed");
   }
 
-  // The round-trip runs in a scratch repository with its own home, so it neither autostarts a daemon from a
-  // staging directory nor writes into a database shared with anything else.
+  // The round-trip runs in a scratch repository with its own homes, so it neither autostarts a daemon from a
+  // staging directory, connects a coding agent, nor writes into a database shared with anything else.
   const root = await mkdtemp(join(tmpdir(), "rerail-update-health-"));
   const workspace = join(root, "workspace");
   const storageRoot = join(root, "sessions");
-  const env = { ...process.env, RERAIL_HOME: join(root, "home"), RERAIL_STORAGE_ROOT: storageRoot, RERAIL_AUTOSTART: "0" };
+  const env = {
+    ...process.env,
+    HOME: join(root, "user"),
+    USERPROFILE: join(root, "user"),
+    BROWSER: "none",
+    RERAIL_HOME: join(root, "home"),
+    RERAIL_STORAGE_ROOT: storageRoot,
+    RERAIL_AUTOSTART: "0",
+  };
   try {
     await mkdir(workspace);
     await startHealthRepository(join(installation.packageRoot, "dist", "cli.js"), workspace, env);

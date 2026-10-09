@@ -15,6 +15,7 @@ vi.mock("../src/daemon-control.js", async () => ({
 }));
 import { RERAIL_COMMANDS } from "../src/rerail-commands.js";
 import { registerRerailCommands, type RerailCommandHost, type RerailCommandContext, type RerailCommandOptions } from "../src/rerail-command.js";
+import { SETUP_CANCELLED } from "../src/setup-picker.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -238,27 +239,49 @@ describe("/rerail-rage-quit", () => {
 });
 
 describe("/rerail-start", () => {
-  /** A launcher that answers `state` with `state` and echoes every other command's arguments. */
-  const launcher = (state: string) => launcherPackage(`if [ "$1" = state ]; then printf '${state}\\n'; else printf 'ran %s\\n' "$*"; fi`);
+  /** A launcher that answers `start --json` with `step` and echoes every other command's arguments. */
+  const launcher = (step: object) => launcherPackage(
+    `if [ "$1 \${2:-}" = "start --json" ]; then printf '%s\\n' '${JSON.stringify(step)}'; else printf 'ran %s\\n' "$*"; fi`,
+  );
+  const question = {
+    step: "read-repo",
+    screen: "You’re working in acme-web.",
+    question: {
+      id: "read-repo",
+      prompt: "Can Rerail read it?",
+      options: [{ answer: "yes", label: "Yes, read acme-web", detail: null, next: { args: ["setup", "--json", "--answer", "yes"] }, input: null }],
+    },
+  };
 
-  it.each([
-    { choice: "Add the recommended rules", ran: "ran start" },
-    { choice: "I'll pick rules myself", ran: "ran start --no-packs" },
-  ])("asks how to set up a repository that is not set up: $choice", async ({ choice, ran }) => {
-    const root = await launcher("not-set-up");
+  it("runs set-up's steps through the launcher and re-attaches once one ends with Rerail on", async () => {
+    const root = await launcher({ step: "done", screen: "● Rerail is on in acme-web. 3 rules are on, as you left them.", question: null });
     const reattach = vi.fn();
-    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root, reattach }, choice);
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root, reattach });
     await run("rerail-start");
-    expect(selections).toEqual([["Add the recommended rules", "I'll pick rules myself"]]);
-    expect(notices).toEqual([{ message: ran, level: "info" }]);
+    expect(selections).toEqual([]);
+    expect(notices).toEqual([{ message: "● Rerail is on in acme-web. 3 rules are on, as you left them.", level: "info" }]);
     expect(reattach).toHaveBeenCalledOnce();
   });
 
-  it("starts a stopped repository without asking", async () => {
-    const root = await launcher("stopped");
-    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root });
+  it("changes nothing and does not re-attach when the person closes set-up's first question", async () => {
+    const root = await launcher(question);
+    const reattach = vi.fn();
+    const { run, notices, selections } = commandHarness({ packageRoot: root, cwd: () => root, reattach });
     await run("rerail-start");
-    expect(selections).toEqual([]);
-    expect(notices).toEqual([{ message: "ran start", level: "info" }]);
+    expect(selections).toEqual([["Yes, read acme-web"]]);
+    expect(notices.at(-1)).toEqual({ message: SETUP_CANCELLED, level: "info" });
+    expect(reattach).not.toHaveBeenCalled();
+  });
+
+  it("hands over to the launcher's text without a UI (print mode)", async () => {
+    const root = await launcher(question);
+    const reattach = vi.fn();
+    const { commands } = commandHarness({ packageRoot: root, cwd: () => root, reattach });
+    const notices: string[] = [];
+    const ui = { notify: (message: string) => { notices.push(message); }, select: vi.fn(), input: vi.fn(), confirm: vi.fn() };
+    await commands.get("rerail-start")!.handler("", { hasUI: false, ui });
+    expect(notices).toEqual(["ran start"]);
+    expect(ui.select).not.toHaveBeenCalled();
+    expect(reattach).toHaveBeenCalledOnce();
   });
 });

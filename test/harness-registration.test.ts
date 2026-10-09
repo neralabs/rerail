@@ -540,7 +540,7 @@ describe("Claude Code status-line ownership", () => {
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const home = join(options.home, ".rerail");
     const updater = new ManagedUpdater({ home, packageRoot: options.root, packageVersion: "1.0.0" });
-    await runInstallCommand(["--root", options.root, "--harness", "claude-code"], { home, packageRoot: options.root, updater });
+    await runInstallCommand(["--root", options.root, "--agents", "claude-code"], { home, packageRoot: options.root, updater });
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
   });
 
