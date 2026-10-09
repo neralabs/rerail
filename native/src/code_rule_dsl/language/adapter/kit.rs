@@ -30,6 +30,7 @@ struct Expect {
     regions: &'static [Document],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    syntax: super::syntax::kit::Expect,
 }
 
 /// A tape of `source` in `dialect`, as files are read.
@@ -93,6 +94,7 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::module_path(&package.0.join(format!("pkg/mod{suffix}"))),
         module.map(|module| serde_json::Value::String(module.to_owned()))
     );
+    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
 }
 
 #[test]
@@ -105,6 +107,24 @@ fn python() {
         name: "file",
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Python,
+            dollar_names: true,
+            language_options: None,
+            parse: [
+                None,
+                None,
+                None,
+                Some("`eslintDirective` parses TypeScript comments"),
+                Some(
+                    "`printfFormat` parses PHP strings; Python's printf formats are `percentFormat`",
+                ),
+                Some("`scanfFormat` parses PHP strings; Python has no scanf formats"),
+                Some("`phpDoc` parses PHP doc comments"),
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("# c\nx = 1\n", 1),
+        },
     });
 }
 
@@ -118,6 +138,22 @@ fn ecma() {
         name: "ﬁle",
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: false,
+            language_options: None,
+            parse: [
+                Some("`percentFormat` parses Python literals"),
+                Some("`braceFormat` parses Python literals"),
+                Some("`annotation` parses Python literals"),
+                None,
+                Some("`printfFormat` parses PHP strings"),
+                Some("`scanfFormat` parses PHP strings"),
+                Some("`phpDoc` parses PHP doc comments"),
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("// c\nlet x = 1;\n", 1),
+        },
     });
 }
 
@@ -131,6 +167,28 @@ fn php() {
         name: "ﬁle",
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: true,
+            language_options: Some("`languageOptions` is not available for php policies"),
+            parse: [
+                Some(
+                    "`percentFormat` parses Python literals; PHP's printf formats are `printfFormat`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; PHP has no str.format templates (its printf formats are `printfFormat`)",
+                ),
+                Some(
+                    "`annotation` parses Python literals; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
+                ),
+                Some("`eslintDirective` parses TypeScript comments"),
+                None,
+                None,
+                None,
+            ],
+            embeds: &[("sprintf($F, $$$A)", false)],
+            php_comments: ("<?php /** d */ // c\n", 2),
+        },
     });
 }
 
@@ -147,6 +205,28 @@ fn blade() {
             ("<p>x</p>\n", &[]),
         ],
         module: (".blade.php", None),
+        syntax: super::syntax::kit::Expect {
+            option_keys: super::OptionKeys::Ecma,
+            dollar_names: false,
+            language_options: Some("`languageOptions` is not available for blade policies"),
+            parse: [
+                Some(
+                    "`percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; blade embeds PHP, which has no str.format templates (its printf formats are `printfFormat`)",
+                ),
+                Some(
+                    "`annotation` parses Python literals; blade embeds PHP, which holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
+                ),
+                Some("`eslintDirective` parses TypeScript comments"),
+                None,
+                None,
+                None,
+            ],
+            embeds: &[("sprintf($F, $$$A)", true), ("<p>{{ $x }}</p>", false)],
+            php_comments: ("{{-- a --}}\n@php /** b */ @endphp\n", 1),
+        },
     });
 }
 
