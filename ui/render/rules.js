@@ -1,267 +1,205 @@
-import { h, setAttr, setText, setClass, setStyle, chevron, syncChildren, clearKeyed } from "../dom.js";
-import { fmt, plural, whenLabel, clock, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { originOf, ruleTitle } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, rerails, isMeasured, activityOf, activityAllOf, ruleFindings, originGroups, prefixGroups } from "../state.js";
+/**
+ * W1: Created rules first, then one section per rule pack added here with its groups, then any rules by
+ * Rerail added on their own. Sections, group bands and rows are reconciled in place on every poll.
+ */
+import { h, setAttr, setText, setClass, chevron, icon, syncChildren } from "../dom.js";
+import { fmt, plural, whenLabel } from "../format.js";
+import { isByRerail } from "../derive.js";
+import { isMeasured, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
 
-const SORTS = [["triggered", "Most triggered"], ["recent", "Most recently triggered"], ["az", "A to Z"]];
+export const CREATE_COMMAND = "/rerail-create";
 
-function sortControl() {
-  return h("label.sortctl", null, h("span", null, "Sort"),
-    h("select", { "data-sort": "rules", "aria-label": "Sort" }, SORTS.map(([v, l]) => h("option", { value: v }, l))));
-}
+/* ---------- rows ---------- */
 
-const listHead = () => h("div.lhead", null, h("span"), h("span", null, "Rule"), h("span.hs", null, h("span", null, "Activity"), h("span", null, "On")));
-
-/** One rule row, built once; `updateRow` patches it on every render. */
-function createRow(stored, compact) {
+function createRow(stored) {
   const id = stored.rule.id;
-  const row = h("div.row", { "data-id": id, "data-open": "false" });
-  const caret = compact ? h("span") : h("button.caret", { "data-act": "rtoggle", "data-i": id, "aria-expanded": "false", "aria-label": "Show findings" }, chevron());
   const title = h("button.t", { "data-act": "detail", "data-i": id });
-  const folder = h("span.mono");
   const count = h("span.count.num");
-  const bar = h("span.bar", null, h("i"));
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const origin = h("span.badge");
+  const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
-  const main = h("div.rmain.exp", null, caret, h("div.rtitle", null, title),
-    h("div.rside", null, count, bar, sw),
-    h("div.rmeta", null, origin, h("span.mono", null, id), folder, last));
-  row.append(main);
-  const children = compact ? null : h("div.children");
-  if (children) row.append(children);
-  row._r = { caret, title, folder, count, bar: bar.firstChild, barWrap: bar, sw, origin, last, children };
+  const row = h("div.row", { "data-id": id },
+    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw), h("div.rmeta", null, origin, h("span.mono", null, id), folder, last)));
+  row._r = { title, count, sw, origin, folder, last };
   return row;
 }
 
-function countContent(id, f, all) {
-  if (!isMeasured(id)) return [h("span.dim", null, "not measured")];
-  if (f) return [h("b", null, fmt(f)), ` ${plural(f, "trigger")}`];
-  if (all) return [h("span.dim", null, h("b.dim", null, "0"), ui.range === 0 ? " today" : " in range")];
-  return [h("span.dim", null, "never triggered")];
+/** The violation count: a number, 0 when audited and clean, a dash when it has never been audited. */
+function countContent(id, stored) {
+  if (!isMeasured(id)) return { text: "–", zero: true, tip: "Conversation rules are not counted here yet." };
+  const f = fires(id);
+  if (f) return { text: fmt(f), zero: false, tip: `${fmt(f)} ${plural(f, "violation")} logged ${rangeLabel()}` };
+  if (stored.enabled || allFires(id)) return { text: "0", zero: true, tip: `None logged ${rangeLabel()}` };
+  return { text: "–", zero: true, tip: "Not audited yet: this rule has not been on" };
 }
 
 function updateRow(row, stored) {
-  const id = stored.rule.id, r = row._r, f = fires(id), all = allFires(id), rr = rerails(id), runs = activityOf(id).audits;
-  const title = ruleTitle(stored);
+  const id = stored.rule.id, r = row._r, title = titleOf(stored);
   setClass(row, "off", !stored.enabled);
-  setAttr(row, "aria-selected", ui.selectedRule === id ? "true" : null);
-  const open = r.children !== null && ui.openRows.has(id);
-  setAttr(row, "data-open", String(open));
-  if (r.caret.tagName === "BUTTON") setAttr(r.caret, "aria-expanded", String(open));
+  setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
+  const count = countContent(id, stored);
+  const b = r.count.firstChild ?? r.count.appendChild(h("b"));
+  setText(b, count.text);
+  setClass(b, "zero", count.zero);
+  setAttr(r.count, "title", count.tip);
+  setAttr(r.sw, "aria-checked", String(stored.enabled));
+  setAttr(r.sw, "aria-label", `Turn ${title} ${stored.enabled ? "off" : "on"}`);
+  setAttr(r.origin, "class", `badge ${isByRerail(stored) ? "rerail" : "mine"}`);
+  setText(r.origin, originChip(stored));
+  // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));
-  const sig = `${isMeasured(id)}|${f}|${all}|${ui.range}`;
-  if (r.count.dataset.sig !== sig) { r.count.dataset.sig = sig; r.count.replaceChildren(...countContent(id, f, all)); }
-  setAttr(r.barWrap, "hidden", !isMeasured(id));
-  // Share of runs in range that evaluated the rule and reported a violation, not a rank against the busiest rule.
-  const share = runs ? Math.min(100, Math.round((100 * f) / runs)) : 0;
-  setAttr(r.barWrap, "title", runs ? `${f} ${plural(f, "violation")} in ${runs} ${plural(runs, "run")} (${share}%)` : "not run in range");
-  setStyle(r.bar, "width", `${share}%`);
-  setAttr(r.sw, "aria-checked", String(stored.enabled));
-  setAttr(r.sw, "aria-label", `Toggle ${title}`);
-  const ob = originOf(stored);
-  setAttr(r.origin, "class", `badge ${ob.cls}`);
-  setText(r.origin, ob.label);
   const lastSeen = activityAllOf(id).lastSeenAt;
-  const lastText = lastSeenText(rr, all, lastSeen);
+  const lastText = allFires(id) && lastSeen ? `last logged ${whenLabel(lastSeen)}` : "";
   setText(r.last, lastText);
   setAttr(r.last, "hidden", lastText === "");
-  if (r.children !== null) updateChildren(r.children, stored, f, all, lastSeen, open);
 }
 
-function lastSeenText(rr, all, lastSeen) {
-  if (rr) {
-    const tail = lastSeen ? ` · last re-rail ${whenLabel(lastSeen)}` : "";
-    return `${fmt(rr)} ${plural(rr, "re-rail")}${tail}`;
+/* ---------- group bands ---------- */
+
+const groupKey = (section, group) => `${section.key}|${group.name}`;
+const groupIsOpen = (section, group) => filtering() || (ui.groupOpen.get(groupKey(section, group)) ?? !ui.foldedSections.has(section.key));
+
+function createBand(item) {
+  const key = item.key.slice(5);
+  return h("div.lsub", { "data-open": "true" },
+    h("span.lbl", null, h("button.caret", { "data-act": "gfold", "data-i": key }, chevron()), h("span.name"), h("span.n")),
+    h("span.lside", null, h("span.count.num", null, h("b"), h("span.u")),
+      h("button.sw", { role: "switch", "data-act": "gtoggle", "data-i": key })));
+}
+
+function updateBand(node, { section, group }) {
+  const open = groupIsOpen(section, group);
+  const onN = group.all.filter(r => r.enabled).length, total = group.all.length;
+  setAttr(node, "data-open", String(open));
+  const caret = node.querySelector(".caret");
+  setAttr(caret, "aria-expanded", String(open));
+  setAttr(caret, "aria-label", `${open ? "Collapse" : "Expand"} ${group.name}`);
+  setText(node.querySelector(".name"), group.name);
+  const badge = node.querySelector(".n");
+  setText(badge, group.shown.length < total ? `${fmt(group.shown.length)} of ${fmt(total)} shown` : `${fmt(onN)} of ${fmt(total)} on`);
+  setClass(badge, "mix", onN < total);
+  const n = group.all.reduce((sum, r) => sum + fires(r.rule.id), 0);
+  const counted = group.all.some(r => isMeasured(r.rule.id));
+  setText(node.querySelector(".count b"), counted ? fmt(n) : "–");
+  setClass(node.querySelector(".count b"), "zero", n === 0);
+  setText(node.querySelector(".count .u"), counted ? `${plural(n, "violation")} logged` : "");
+  setAttr(node.querySelector(".count"), "title", counted ? null : "Conversation rules are not counted here yet.");
+  const state = onN === 0 ? "false" : onN === total ? "true" : "mixed";
+  const sw = node.querySelector(".sw");
+  setAttr(sw, "aria-checked", state);
+  setAttr(sw, "aria-label", `Turn every rule in ${group.name} ${state === "true" ? "off" : "on"}`);
+}
+
+/* ---------- sections ---------- */
+
+function sectionTitle(section) {
+  if (section.kind === "mine") return "Created rules";
+  if (section.kind === "legacy") return "Other rules by Rerail";
+  return section.pack.name;
+}
+
+function sectionLead(section) {
+  if (section.kind === "mine") return ["Written with your coding agent through ", h("span.mono", null, CREATE_COMMAND), "."];
+  if (section.kind === "legacy") return ["Rules by Rerail added to this repo on their own, not through a rule pack it uses."];
+  return [section.pack.covers];
+}
+
+function emptyMine() {
+  return h("div.empty.mine", null,
+    h("p", null, h("b", null, "Nothing created yet")),
+    h("p", null, "Rule packs cover the common ground. The rules that matter most are the ones only your team would write. Run ",
+      h("span.mono", null, CREATE_COMMAND), " in a session to write one."),
+    h("p", null, h("button.btn.sm", { "data-act": "newrule" }, icon("plus"), "Create a rule")));
+}
+
+function createSection(section) {
+  const name = h("span.name"), n2 = h("span.n2"), share = h("span.share");
+  const lead = h("p");
+  const foldGroups = h("button.btn.sm.ghost.link", { "data-act": "gfoldall", "data-i": section.key });
+  const hide = h("button.btn.sm.ghost.link", { "data-act": "layer", "data-i": section.key });
+  const list = h("div.list");
+  const node = h("section.group.layer", null, h("div.ghead", null, h("h2", null, name, n2, share), lead, h("div.act", null, foldGroups, hide)), list);
+  node._s = { name, n2, share, lead, foldGroups, hide, list };
+  lead.append(...sectionLead(section));
+  return node;
+}
+
+function listItems(section) {
+  if (section.kind === "mine") {
+    const [group] = section.groups;
+    if (group.all.length === 0) return [{ key: "empty" }];
+    return group.shown.map(r => ({ key: r.rule.id, r }));
   }
-  if (all && lastSeen) return `last triggered ${whenLabel(lastSeen)}`;
-  return "";
-}
-
-function pathLabel(x) {
-  if (!x.path) return "";
-  const line = x.span?.startLine ? `:${x.span.startLine}` : "";
-  return `${x.path}${line}`;
-}
-
-function findingRow(x) {
-  return h("div.ev", { "data-key": `${x.auditId}:${x.id}` },
-    h("span.when", null, dayLabel(daysAgo(x.at)) === "Today" ? clock(x.at) : whenLabel(x.at)),
-    h("div.what", null, x.message, h("small.mono", { hidden: !x.path }, pathLabel(x))),
-    h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, sessionHost(x.sessionId))));
-}
-const sessionHost = id => data.sessions.find(s => s.sessionId === id)?.host;
-
-function emptyChildText(stored, all, lastSeen) {
-  if (!stored.enabled) return "Off. Not checking.";
-  if (!isMeasured(stored.rule.id)) return "Conversation rule. Triggers are not measured yet.";
-  if (!all) return "On and in scope. No triggers so far.";
-  const last = lastSeen ? `; last ${whenLabel(lastSeen)}` : "";
-  return `No triggers ${rangeLabel()}. ${fmt(all)} before that${last}.`;
-}
-
-function childItems(stored, f, all, lastSeen) {
-  if (!f) return [{ key: "empty", text: emptyChildText(stored, all, lastSeen) }];
-  const list = ruleFindings(stored.rule.id).slice(0, 3);
-  const items = list.map(x => ({ key: `${x.auditId}:${x.id}`, x }));
-  if (list.length < f) items.push({ key: "more", more: f - list.length });
+  const items = [];
+  for (const group of section.groups) {
+    if (group.shown.length === 0) continue;
+    items.push({ key: `band:${groupKey(section, group)}`, section, group });
+    if (groupIsOpen(section, group)) for (const r of group.shown) items.push({ key: r.rule.id, r });
+  }
   return items;
 }
 
-function createChild(i, id) {
-  if (i.x) return findingRow(i.x);
-  if (i.more !== undefined) {
-    return h("div.ev", null, h("span.when"), h("div.what.dim", null, "and ", h("span.n-more"), " earlier · ", h("button.open", { "data-act": "detail", "data-i": id }, "open the rule")), h("span"));
-  }
-  return h("div.ev", null, h("span.when"), h("div.what.dim"), h("span"));
+function updateSection(node, section, total) {
+  const s = node._s, all = section.groups.flatMap(g => g.all), onN = all.filter(r => r.enabled).length;
+  const visible = !ui.hiddenSections.has(section.key) || filtering();
+  setText(s.name, sectionTitle(section));
+  setText(s.n2, all.length ? `${fmt(onN)} of ${fmt(all.length)} on` : "0");
+  setClass(s.n2, "mix", onN < all.length);
+  const n = all.reduce((sum, r) => sum + fires(r.rule.id), 0);
+  setAttr(s.share, "hidden", total === 0 || all.length === 0);
+  setText(s.share, `${fmt(n)} of ${fmt(total)} violations logged`);
+  setAttr(s.share, "title", `Violations logged in this section, of all violations ${rangeLabel()}`);
+  setAttr(s.foldGroups, "hidden", !visible || section.kind === "mine");
+  setText(s.foldGroups, ui.foldedSections.has(section.key) ? "Expand groups" : "Collapse groups");
+  setText(s.hide, visible ? "Hide" : "Show");
+  setAttr(s.hide, "aria-expanded", String(visible));
+  setAttr(s.list, "hidden", !visible);
+  const items = visible ? listItems(section) : [];
+  syncChildren(s.list, items, i => i.key,
+    i => (i.key === "empty" ? emptyMine() : i.group ? createBand(i) : createRow(i.r)),
+    (el, i) => { if (i.group) updateBand(el, i); else if (i.r) updateRow(el, i.r); });
 }
 
-function updateChild(node, i) {
-  if (i.more !== undefined) setText(node.querySelector(".n-more"), fmt(i.more));
-  else if (i.text !== undefined) setText(node.querySelector(".what"), i.text);
+/* ---------- the view ---------- */
+
+let pane = null;
+
+function build() {
+  const sections = h("div.sections");
+  const noMatch = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No matches"), h("p", null, "Try a different search or filter.")));
+  const noPacks = h("section.group.layer", { hidden: true },
+    h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, "0 added")), h("p", null, "Rule packs by Rerail are off until you add them.")),
+    h("div.list", null, h("div.empty", null, h("h3", null, "No rule packs added yet"),
+      h("p", null, h("button.btn.sm", { "data-act": "catalog" }, icon("plus"), "Add rule packs")))));
+  pane = h("div.rules", null, sections, noMatch, noPacks);
+  pane._p = { sections, noMatch, noPacks };
 }
 
-function updateChildren(el, stored, f, all, lastSeen, open) {
-  if (!open) {
-    if (el.childElementCount) clearKeyed(el);
-    return;
-  }
-  const id = stored.rule.id;
-  syncChildren(el, childItems(stored, f, all, lastSeen), i => i.key, i => createChild(i, id), updateChild);
-}
-
-function syncRows(container, rules, compact) {
-  syncChildren(container, rules, r => r.rule.id, r => createRow(r, compact), updateRow);
-}
-
-/* ---------- panes ---------- */
-
-let tabs = null, originPane = null, prefixPane = null;
-
-function buildTabs() {
-  tabs = h("div.rtabs", { role: "tablist" },
-    h("button", { role: "tab", "aria-selected": "true", "data-act": "rtab", "data-i": "rules" }, "Rules ", h("span.n")),
-    h("button", { role: "tab", "aria-selected": "false", "data-act": "rtab", "data-i": "recent" }, "Recent findings ", h("span.n")),
-    h("span.groupby", null, h("span", null, "Group by"),
-      h("span.seg2", { role: "group", "aria-label": "Group rules by" },
-        h("button", { "data-act": "groupby", "data-i": "origin", "aria-pressed": "true" }, "Origin"),
-        h("button", { "data-act": "groupby", "data-i": "prefix", "aria-pressed": "false" }, "Prefix"))));
-  return tabs;
-}
-
-function groupSection(title, lead, act) {
-  const rows = h("div.rows");
-  const empty = h("div.empty", { hidden: true }, h("h3", null, "No matches"), h("p", null, "Try a different search or filter."));
-  const section = h("section.group", null,
-    h("div.ghead", null, h("h2", null, title), h("p", null, lead), h("div.act", null, act)),
-    h("div.list", null, listHead(), rows, empty));
-  section._rows = rows; section._empty = empty;
-  return section;
-}
-
-function buildOriginPane() {
-  const mine = groupSection("Created by you", "Rules you created and added to this repository.", sortControl());
-  const presets = groupSection("By Rerail", "Rules that come with Rerail, from the rule packs added to this repository.", h("button.btn.sm", { "data-act": "presets-on" }, "Turn on all shown"));
-  originPane = h("div", null, mine, presets);
-  originPane._mine = mine; originPane._presets = presets;
-  return originPane;
-}
-
-function buildPrefixPane() {
-  const groups = h("div");
-  const empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No matches"), h("p", null, "Try a different search or filter.")));
-  prefixPane = h("div", null,
-    h("div.ghead", null, h("h2", null, "By prefix"), h("p"), h("div.act", null, sortControl())),
-    groups, empty);
-  prefixPane._groups = groups; prefixPane._empty = empty; prefixPane._lead = prefixPane.querySelector(".ghead p");
-  return prefixPane;
-}
-
-function createGroup(g) {
-  const rows = h("div.rows");
-  const section = h("section.group.topic", null, h("div.list", null,
-    h("div.thead", null, h("span"), h("h3", null, h("span.name"), " ", h("span.n")),
-      h("div.tside", null, h("span.tc", null, h("b.on"), " of ", h("span.total"), " on", h("span.act")),
-        h("button.sw", { role: "checkbox", "data-act": "gtoggle", "data-i": g.key }))),
-    rows));
-  section._rows = rows;
-  return section;
-}
-
-function groupState(g) {
-  if (g.onN === 0) return "false";
-  if (g.onN === g.all.length) return "true";
-  return "mixed";
-}
-
-function updateGroup(section, g) {
-  const head = section.querySelector(".thead");
-  setText(head.querySelector(".name"), g.key);
-  setText(head.querySelector(".n"), fmt(g.all.length));
-  setText(head.querySelector("b.on"), fmt(g.onN));
-  setText(head.querySelector(".total"), fmt(g.all.length));
-  const act = head.querySelector(".act");
-  if (g.act) { act.replaceChildren(" · ", h("b", null, fmt(g.act)), ` ${plural(g.act, "trigger")}`); } else act.replaceChildren();
-  const sw = head.querySelector(".sw");
-  const state = groupState(g);
-  setAttr(sw, "aria-checked", state);
-  const partial = state === "mixed" ? `, ${fmt(g.onN)} of ${fmt(g.all.length)} on` : "";
-  setAttr(sw, "aria-label", `Turn ${g.key} rules ${state === "true" ? "off" : "on"}${partial}`);
-  syncRows(section._rows, g.shown, true);
-}
-
-function syncTabs(root, sum) {
-  if (root.firstChild !== tabs) root.prepend(tabs);
-  const [tRules, tRecent] = tabs.querySelectorAll("[role=tab]");
-  setAttr(tRules, "aria-selected", String(ui.tab === "rules"));
-  setAttr(tRecent, "aria-selected", String(ui.tab === "recent"));
-  setText(tRules.querySelector(".n"), fmt(sum.rules.length));
-  setText(tRecent.querySelector(".n"), fmt(data.findingsTotal));
-  setAttr(tabs.querySelector(".groupby"), "hidden", ui.tab !== "rules");
-  for (const b of tabs.querySelectorAll("[data-act=groupby]")) setAttr(b, "aria-pressed", String(b.dataset.i === ui.groupBy));
-  for (const s of root.querySelectorAll("select[data-sort]")) if (s.value !== ui.sort) s.value = ui.sort;
-}
-
-function renderOriginPane() {
-  const { mine, presets } = originGroups();
-  syncRows(originPane._mine._rows, mine, false);
-  const filtered = ui.filter !== "all" || ui.query !== "";
-  const empty = originPane._mine._empty;
-  setAttr(empty, "hidden", mine.length > 0);
-  setText(empty.querySelector("h3"), filtered ? "No matches" : "Nothing of yours yet");
-  setText(empty.querySelector("p"), filtered ? "Try a different search or filter." : "Rules you create, or your agent creates for you, show here once they are added to this repository.");
-  setAttr(originPane._mine.querySelector(".lhead"), "hidden", mine.length === 0);
-  syncRows(originPane._presets._rows, presets, false);
-  setAttr(originPane._presets, "hidden", presets.length === 0);
-}
-
-function renderPrefixPane(sum) {
-  const groups = prefixGroups();
-  setText(prefixPane._lead, `${groups.length} ${plural(groups.length, "prefix", "prefixes")} · ${fmt(sum.on.length)} of ${fmt(sum.rules.length)} rules on.`);
-  syncChildren(prefixPane._groups, groups, g => g.key, createGroup, updateGroup);
-  setAttr(prefixPane._empty, "hidden", groups.length > 0);
-}
-
-/** Render the rules tab into `root`; `sum` is the per-render summary. */
 export function renderRules(root, sum) {
-  if (tabs === null) buildTabs();
-  if (originPane === null) buildOriginPane();
-  if (prefixPane === null) buildPrefixPane();
-  syncTabs(root, sum);
-  const byOrigin = ui.groupBy === "origin";
-  const pane = byOrigin ? originPane : prefixPane;
-  const other = byOrigin ? prefixPane : originPane;
-  if (other.parentNode === root) other.remove();
-  if (pane.parentNode !== root) tabs.after(pane);
-  setAttr(pane, "hidden", ui.tab !== "rules");
-  if (ui.tab !== "rules") return;
-  if (byOrigin) renderOriginPane();
-  else renderPrefixPane(sum);
+  if (pane === null) build();
+  if (pane.parentNode !== root) root.replaceChildren(pane);
+  const p = pane._p, active = filtering();
+  const sections = ruleSections().filter(s => !active || s.groups.some(g => g.shown.length));
+  syncChildren(p.sections, sections, s => s.key, createSection, (node, s) => updateSection(node, s, sum.triggers));
+  setAttr(p.noMatch, "hidden", !active || sections.length > 0);
+  setAttr(p.noPacks, "hidden", active || !data.loaded || sections.some(s => s.kind !== "mine"));
 }
 
-/** Detach the tab strip and panes from `root`; state is kept so the next render re-attaches them. */
-export function unmountRules(root) {
-  for (const el of [tabs, originPane, prefixPane]) if (el !== null && el.parentNode === root) el.remove();
+/** "Collapse all groups" folds every section's groups; "Expand all groups" opens them again. */
+export function allGroupsFolded() {
+  const keys = ruleSections().filter(s => s.kind !== "mine").map(s => s.key);
+  return keys.length > 0 && keys.every(k => ui.foldedSections.has(k));
+}
+
+export function sectionKeys() {
+  return ruleSections().filter(s => s.kind !== "mine").map(s => s.key);
+}
+
+/** Every rule in one group band, by its `section|group` key. */
+export function groupRules(key) {
+  const [sectionKey, name] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
+  return ruleSections().find(s => s.key === sectionKey)?.groups.find(g => g.name === name)?.all ?? [];
 }

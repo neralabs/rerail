@@ -3,7 +3,7 @@
  * `app.js` (user actions) and `poll.js` (fetches) write. Rules are keyed by id so a poll can
  * patch the row that changed and nothing else.
  */
-import { isLog, isPreset, searchText, ruleTitle, rulePrefix, originOf } from "./derive.js";
+import { isLog, isByRerail, ruleTitle, rulePrefix, scopeText, categoryLabel } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -28,12 +28,14 @@ export const data = {
   repository: null,
   /** The scoped checkout as the daemon resolved it (`{checkoutPath, folder, state}`), or `null`. */
   checkout: null,
-  /** Every repository Rerail knows, for the picker shown without a scope. */
+  /** Every repository Rerail knows (`GET /api/repositories`): the picker and Settings. */
   repositories: [],
   /** Attachments whose rule or pack cannot be found. */
   unavailable: [],
   /** id → stored rule, insertion order = catalog order. */
   rules: new Map(),
+  /** Pack id → the folders it is attached at in the scoped repository: the packs added here. */
+  attachedPacks: new Map(),
   /** id → activity for the selected range, and for all time (`since=0`). */
   activity: {},
   activityAll: {},
@@ -46,6 +48,18 @@ export const data = {
   sessionDetail: new Map(),
   /** sessionId → first useful user prompt (null while unknown). */
   titles: new Map(),
+  /** Every rule pack that comes with Rerail (`GET /api/rule-packs`), languages first, then frameworks. */
+  packs: [],
+  /** `/healthz`: version, database path; `null` until the daemon answers once. */
+  health: null,
+  /** Coding agents found and connected (`GET /api/coding-agents`); loaded for Settings. */
+  agents: null,
+  /** The database-wide status line preference: "compact" (Show) or "silent" (Do not show). */
+  presence: null,
+  /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
+  recommendations: null,
+  /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
+  agentsError: null,
   /** Freshness: last successful poll, and whether the last attempt failed. */
   updatedAt: 0,
   disconnected: false,
@@ -66,14 +80,27 @@ export const ui = {
   range: 7,
   filter: "all",
   query: "",
-  sort: "triggered",
-  groupBy: "origin",
-  tab: "rules",
-  openRows: new Set(),
-  selectedRule: null,
+  sort: "violations",
+  /** The side panel: `{ kind: "rule", id }`, `{ kind: "pack", id }`, `{ kind: "create" }`, or null. */
+  panel: null,
+  /** Where Back goes from a rule opened inside a pack's panel. */
+  backToPack: null,
   askOpen: false,
   askIntent: "ask",
   recentShown: 50,
+  /** Activity filters: one rule pack, then one rule. */
+  actPack: "",
+  actRule: null,
+  /** Rules view folds: sections hidden, and groups folded ("section:group" → open?). */
+  hiddenSections: new Set(),
+  groupOpen: new Map(),
+  foldedSections: new Set(),
+  /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
+  catView: "list",
+  removeAsk: null,
+  /** W0: "loading" while recommendations load, "shown" once asked, "dismissed" after Not now. */
+  recommend: "idle",
+  welcomeDismissed: false,
   selectedSession: null,
   sessQuery: "",
   sessFilter: "all",
@@ -86,6 +113,7 @@ export const ui = {
   openFolds: new Set(),
   resumeOpen: false,
   theme: "",
+  wide: false,
 };
 
 /**
@@ -114,19 +142,78 @@ export const rerails = id => activityOf(id).rerails;
 
 export const rulesArray = () => [...data.rules.values()];
 
+/* ---------- the scoped repository ---------- */
+
+/** The scoped repository's name, once its context has loaded. */
+export const repoName = () => data.repository?.name ?? "";
+/** Rerail's state where the page looks: the checkout's effective state, else the repository's own. */
+export const stateHere = () => data.checkout?.state ?? data.repository?.state;
+/** The repository has a configuration: something was attached, or it was set up with none. */
+export const isSetUp = () => data.repository?.setUp === true;
+
+/* ---------- rule packs ---------- */
+
+let packIndex = { packs: null, byId: new Map(), rules: new Map() };
+/** Pack id → pack, and rule id → `{ pack, rule }` from the pack data, rebuilt when the packs change. */
+function packs() {
+  if (packIndex.packs !== data.packs) {
+    const byId = new Map(), rules = new Map();
+    for (const pack of data.packs) {
+      byId.set(pack.id, pack);
+      for (const rule of pack.rules) rules.set(rule.id, { pack, rule });
+    }
+    packIndex = { packs: data.packs, byId, rules };
+  }
+  return packIndex;
+}
+export const packById = id => packs().byId.get(id);
+/** The pack's own entry for a rule: title, group and its caught and passing examples. */
+export const packRuleOf = id => packs().rules.get(id);
+/** The rule pack a By Rerail rule ships in, whether or not that pack is added here. */
+export const packOfRule = stored => packRuleOf(stored.rule.id)?.pack;
+/** The added pack a rule is present through; `undefined` for a rule added on its own. */
+export const attachedPackOf = stored => (stored.source?.kind === "pack" ? packById(stored.source.id) : undefined);
+/** A pack is added here when the repository has an attachment for it, at any folder. */
+export const isAttached = pack => data.attachedPacks.has(pack.id);
+export const packGroups = pack => [...new Set(pack.rules.map(r => r.group))];
+/** The folder set-up adds a pack in: its recommended folder, else the whole repository. */
+export const packFolder = id => data.recommendations?.find(r => r.packId === id)?.folder ?? "";
+
+/** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
+export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);
+/** "By Rerail · <the pack's category>", "By Rerail", or "Created by you". */
+export function originChip(stored) {
+  if (!isByRerail(stored)) return "Created by you";
+  const category = categoryLabel(packOfRule(stored)?.category);
+  return category ? `By Rerail · ${category}` : "By Rerail";
+}
+
+const haystacks = new WeakMap();
+/** Text the search box runs over: title, id, description, scope, pack and group. */
+function searchText(stored) {
+  let hay = haystacks.get(stored);
+  if (hay === undefined) {
+    const entry = packRuleOf(stored.rule.id);
+    hay = [titleOf(stored), stored.rule.id, stored.rule.description ?? "", scopeText(stored), entry?.pack.name ?? "", entry?.rule.group ?? ""].join(" ").toLowerCase();
+    haystacks.set(stored, hay);
+  }
+  return hay;
+}
+
 export function matches(stored) {
-  const id = stored.rule.id, origin = stored.origin;
+  const id = stored.rule.id;
   const f = ui.filter;
-  if (f === "added" && origin !== "user") return false;
-  if (f === "preset" && origin !== "rerail") return false;
+  if (f === "mine" && isByRerail(stored)) return false;
+  if (f === "rerail" && !isByRerail(stored)) return false;
   if (f === "on" && !stored.enabled) return false;
   if (f === "off" && stored.enabled) return false;
   if (f === "fired" && fires(id) === 0) return false;
   if (ui.query && !searchText(stored).includes(ui.query)) return false;
   return true;
 }
+export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
-const az = (a, b) => ruleTitle(a).localeCompare(ruleTitle(b));
+const az = (a, b) => titleOf(a).localeCompare(titleOf(b));
 
 export function sortRules(list) {
   const c = [...list];
@@ -137,29 +224,64 @@ export function sortRules(list) {
   }
 }
 
+/**
+ * The Rules view's sections, in order: Created rules, one per rule pack added here, then every other
+ * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
+ * every rule (`all`) and the ones the filters let through (`shown`).
+ */
+export function ruleSections() {
+  const mine = [], byPack = new Map(), other = new Map();
+  for (const r of data.rules.values()) {
+    if (!isByRerail(r)) { mine.push(r); continue; }
+    const pack = attachedPackOf(r);
+    if (pack === undefined) {
+      const key = packOfRule(r)?.name ?? rulePrefix(r.rule.id);
+      if (!other.has(key)) other.set(key, []);
+      other.get(key).push(r);
+      continue;
+    }
+    if (!byPack.has(pack.id)) byPack.set(pack.id, new Map(packGroups(pack).map(g => [g, []])));
+    const group = packRuleOf(r.rule.id)?.rule.group ?? "Other";
+    const groups = byPack.get(pack.id);
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(r);
+  }
+  const group = (name, all) => ({ name, all, shown: sortRules(all.filter(matches)) });
+  const sections = [{ key: "mine", kind: "mine", groups: [group("Created by you", mine)] }];
+  for (const pack of data.packs) {
+    const groups = byPack.get(pack.id);
+    if (groups === undefined) continue;
+    sections.push({ key: `pack:${pack.id}`, kind: "pack", pack, groups: [...groups].filter(([, all]) => all.length).map(([g, all]) => group(g, all)) });
+  }
+  if (other.size) {
+    sections.push({ key: "legacy", kind: "legacy", groups: [...other].sort(([a], [b]) => a.localeCompare(b)).map(([g, all]) => group(g, all)) });
+  }
+  return sections;
+}
+
 /** Every per-render aggregate, computed once. */
 export function summary() {
   const rules = rulesArray();
   const on = rules.filter(r => r.enabled);
-  let triggers = 0, rerailTotal = 0, steerRules = 0, firedN = 0, firedOn = 0;
-  const sessionLower = new Set();
+  let triggers = 0, rerailTotal = 0, steerRules = 0, firedN = 0, firedOn = 0, logged = 0;
   let maxRuleSessions = 0;
   for (const r of rules) {
     const id = r.rule.id, f = fires(id), a = activityOf(id);
     triggers += f;
     rerailTotal += a.rerails;
+    if (isLog(r)) logged += f;
     if (a.rerails > 0) steerRules += 1;
     if (f > 0) { firedN += 1; if (r.enabled) firedOn += 1; }
     if (a.sessions > maxRuleSessions) maxRuleSessions = a.sessions;
   }
   const since = sinceFor();
+  const sessionLower = new Set();
   for (const x of data.findings) if (x.at >= since) sessionLower.add(x.sessionId);
   const sessionsInRange = data.sessions.filter(s => s.startedAt >= since);
+  const logOn = on.filter(isLog).length;
   return {
-    rules, on,
-    presetsOff: rules.filter(r => isPreset(r) && !r.enabled).length,
-    neverTriggered: on.filter(r => isMeasured(r.rule.id) && allFires(r.rule.id) === 0).length,
-    triggers, rerails: rerailTotal, steerRules, flagged: Math.max(0, triggers - rerailTotal),
+    rules, on, logOn, steerOn: on.length - logOn,
+    triggers, rerails: rerailTotal, steerRules, logged,
     firedN, firedOn,
     sessionsInRange: sessionsInRange.length,
     // Lower bound: distinct sessions across fetched findings, or the busiest rule's own count.
@@ -170,27 +292,5 @@ export function summary() {
 /** Findings in range for one rule, newest first, from the fetched pages. */
 export const ruleFindings = id => data.findings.filter(x => x.ruleId === id);
 
-export const originGroups = () => {
-  const mine = [], presets = [];
-  for (const r of data.rules.values()) if (matches(r)) (isPreset(r) ? presets : mine).push(r);
-  return { mine: sortRules(mine), presets: sortRules(presets) };
-};
-
-export function prefixGroups() {
-  const groups = new Map();
-  for (const r of data.rules.values()) {
-    const key = rulePrefix(r.rule.id);
-    let g = groups.get(key);
-    if (g === undefined) { g = { key, all: [], shown: [], onN: 0, act: 0 }; groups.set(key, g); }
-    g.all.push(r);
-    if (r.enabled) g.onN += 1;
-    g.act += fires(r.rule.id);
-    if (matches(r)) g.shown.push(r);
-  }
-  return [...groups.values()].filter(g => g.shown.length)
-    .map(g => ({ ...g, shown: sortRules(g.shown) }))
-    .sort((a, b) => b.act - a.act || a.key.localeCompare(b.key));
-}
-
-export const originLabel = stored => originOf(stored).label;
-export { isLog };
+/** The rule a panel shows, when the panel shows one. */
+export const panelRuleId = () => (ui.panel?.kind === "rule" ? ui.panel.id : null);

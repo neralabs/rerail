@@ -5,6 +5,8 @@ const DAY = 86_400_000;
 export const fmt = n => Number(n).toLocaleString("en-US");
 export const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
 export const collapse = s => String(s ?? "").replace(/\s+/g, " ").trim();
+/** "Claude Code", "Claude Code and Cursor", "Claude Code, Codex and Cursor". */
+export const andList = names => (names.length <= 1 ? names[0] ?? "" : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 
 /** Local-midnight epoch for the day containing `t`. */
 export function startOfDay(t = Date.now()) {

@@ -1,7 +1,7 @@
 import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js";
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
-import { ruleTitle, modeLabel } from "../derive.js";
-import { data, ui, sinceFor, rangeLabel } from "../state.js";
+import { isLog } from "../derive.js";
+import { data, ui, sinceFor, rangeLabel, titleOf } from "../state.js";
 import { openState, lastEventAt, outputText, describeInput } from "../sessions-model.js";
 
 const EF = () => (ui.showAll ? ui.evFilter : "corrections");
@@ -30,8 +30,8 @@ let t = null;
 
 function build(tl) {
   t = {
-    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No rules triggered"), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
-    loading: h("div.empty", { hidden: true }, h("p", null, "Loading the transcript…")),
+    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged"), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
+    loading: h("div.empty", { hidden: true }, h("p", null, "Loading…")),
     start: h("div.bound", null, "Session started"),
     turns: h("div.turns"),
     end: h("div.bound"),
@@ -81,8 +81,8 @@ function commandOrDiff(ev, i) {
 }
 
 function rawPayload(ev) {
-  const pair = ev.resSeq === null ? "" : ` and #${ev.resSeq} tool-result`;
-  return h("details", null, h("summary", null, `Raw payload · #${ev.callSeq} tool-call${pair}`),
+  const pair = ev.resSeq === null ? "" : ` · Result #${ev.resSeq}`;
+  return h("details", null, h("summary", null, `Raw · Call #${ev.callSeq}${pair}`),
     h("div.in", null, ev.raw.map(e => h("pre", null, describeInput(e)))));
 }
 
@@ -136,8 +136,8 @@ function updateEvent(node, ev) {
   if (oc.dataset.sig !== sig) { oc.dataset.sig = sig; oc.replaceChildren(...outcome(ev)); }
   const tn = eh.querySelector(".tn"); setText(tn, ev.toolName); setAttr(tn, "title", ev.toolName);
   const sq = eh.querySelector(".sq"); setText(sq, ev.resSeq === null ? `#${ev.callSeq}` : `#${ev.callSeq}–${ev.resSeq}`);
-  const resultRef = ev.resSeq === null ? "" : `, tool-result #${ev.resSeq}`;
-  setAttr(sq, "title", `tool-call #${ev.callSeq}${resultRef}`);
+  const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
+  setAttr(sq, "title", `Call #${ev.callSeq}${resultRef}`);
   const took = ev.dur ? ` · ${ev.dur}s` : "";
   setText(eh.querySelector(".tm"), `${clockSeconds(ev.callTime)}${took}`);
   const pay = node.lastChild;
@@ -147,22 +147,22 @@ function updateEvent(node, ev) {
 
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
-    h("div.ch", null, h("b"), h("span.mono"), h("span.badge"), h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Rule"))),
-    h("dl.beats", null, h("dt", null, "Nera said"), h("dd.said"), h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
+    h("div.ch", null, h("b"), h("span.mono"), h("span.badge"), h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
+    h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"), h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
 }
 
 /** `path:line` of a finding, or `""` when it has no path. */
 function whereText(f) {
   if (!f.path) return "";
-  const line = f.span?.startLine ? `:${f.span.startLine}` : "";
+  const line = f.span ? `:${f.span.startLine + 1}` : "";
   return `${f.path}${line}`;
 }
 
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
-  setText(node.querySelector("b"), ruleTitle(c.rule));
+  setText(node.querySelector("b"), titleOf(c.rule));
   setText(node.querySelector(".mono"), c.rule.rule.id);
-  setText(node.querySelector(".badge"), modeLabel(c.rule));
+  setText(node.querySelector(".badge"), isLog(c.rule) ? "Logged" : "Steered");
   setAttr(node.querySelector("[data-act=detail]"), "data-i", c.rule.rule.id);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
@@ -234,8 +234,8 @@ export function renderTimeline(tl, rail, sess, turns, cs, loaded) {
   const quietEmpty = !ui.showAll && cs.length === 0;
   setAttr(t.empty, "hidden", !(loaded && quietEmpty));
   setText(t.empty.querySelector("p"), findingsCover(sess)
-    ? `Nera watched all ${fmt(sess.eventCount)} events in this session and had nothing to flag.`
-    : `No rule triggers ${rangeLabel()} · change the range on the Rules view`);
+    ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
+    : `No violations logged ${rangeLabel()} · change the range on Rules`);
   setAttr(t.loading, "hidden", loaded);
   setAttr(rail, "hidden", quietEmpty || !loaded);
   setAttr(t.start, "hidden", quietEmpty || !loaded);
@@ -252,7 +252,7 @@ export function placeTicks(rail, tl) {
   const top = tl.getBoundingClientRect().top;
   for (const old of rail.querySelectorAll(".tick")) old.remove();
   for (const card of tl.querySelectorAll(".corr")) {
-    const tick = h("button.tick", { "aria-label": "Jump to rule trigger", "data-act": "jump", "data-i": card.dataset.key });
+    const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key });
     tick.style.top = `${card.getBoundingClientRect().top - top + 14}px`;
     rail.append(tick);
   }

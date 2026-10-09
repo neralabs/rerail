@@ -50,8 +50,26 @@ declare module "*/ui/sessions-model.js" {
 
 declare module "*/ui/poll.js" {
   export function titleFromPrompts(prompts: readonly string[]): string | null;
+  export function attachedPacksOf(
+    entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
+    unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
+  ): Map<string, string[]>;
 }
 
 declare module "*/ui/state.js" {
   export function sinceFor(range?: number): number;
+  export const data: {
+    rules: Map<string, unknown>;
+    packs: unknown[];
+    attachedPacks: Map<string, string[]>;
+    repository: { setUp: boolean } | null;
+    recommendations: Array<{ packId: string }> | null;
+  };
+  export const ui: { filter: string; query: string };
+  export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
+  export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
+}
+
+declare module "*/ui/render/packs.js" {
+  export function keptPacks(): readonly string[];
 }

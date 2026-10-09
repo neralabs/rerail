@@ -2,8 +2,8 @@
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable. Data lands in the
  * store; the caller re-renders and reconciles in place. With a repository in scope the page
- * polls its context, its rules and its activity, violations and sessions; without one, only
- * the repository list.
+ * polls its context, its rules (and the packs attached to it), the rule packs, its activity,
+ * violations and sessions; with or without one, the repository list and the daemon's health.
  */
 import { get } from "./api.js";
 import { data, ui, sinceFor, setScope } from "./state.js";
@@ -97,12 +97,64 @@ function toStoredRules(entries) {
   return rules;
 }
 
+/**
+ * The packs added to the repository: pack id → every folder it is attached at, from the rules present
+ * through a pack and the pack attachments reported unavailable.
+ */
+export function attachedPacksOf(entries, unavailable) {
+  const packs = new Map();
+  const add = (id, folder) => {
+    const folders = packs.get(id) ?? [];
+    if (!folders.includes(folder)) packs.set(id, [...folders, folder]);
+  };
+  for (const entry of entries) if (entry.source.kind === "pack") add(entry.source.id, entry.folder);
+  for (const reference of unavailable) if (reference.sourceKind === "pack") add(reference.sourceId, reference.folder);
+  return packs;
+}
+
 async function loadRules() {
   const body = await fetchFresh(`/api/repository/rules?${scopeQuery()}`, "rules");
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
   data.unavailable = body.unavailable;
+  data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
   return true;
+}
+
+async function loadPacks() {
+  const body = await fetchFresh("/api/rule-packs", "packs");
+  if (body === undefined) return false;
+  data.packs = body.packs;
+  return true;
+}
+
+async function loadHealth() {
+  const { body } = await get("/healthz");
+  const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
+  data.health = body;
+  return changed;
+}
+
+/** Settings: which coding agents are found and connected. A dry run on the daemon, so only on demand. */
+export async function loadAgents() {
+  const { body } = await get("/api/coding-agents");
+  data.agents = body.agents;
+}
+
+/** Settings: the database-wide status line preference; no row means Show. */
+export async function loadPresence() {
+  const { body } = await get("/api/presentation-preferences");
+  data.presence = body.preferences.find(p => p.repository === "" && p.host === "")?.presence ?? "compact";
+}
+
+/**
+ * The packs that fit the scoped repository, each with the folder to add it in: W0, Review, and the folder
+ * Add pack uses. Reads the repository, so only when the page needs them.
+ */
+export async function loadRecommendations() {
+  const started = generation;
+  const { body } = await get(`/api/rule-packs/recommendations?${scopeQuery()}`);
+  if (started === generation) data.recommendations = body.recommendations;
 }
 
 async function loadActivity(since, target) {
@@ -229,7 +281,7 @@ function pumpTitles() {
 /** Everything the scoped repository's views need; its context first when the key is not known yet. */
 async function scopedJobs(since) {
   const context = data.repository === null ? [await loadContext()] : [loadContext()];
-  const jobs = [...context, loadRules(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
+  const jobs = [...context, loadRules(), loadPacks(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
   jobs.push(since === 0 ? Promise.resolve(false) : loadActivity(0, "activityAll"));
   if (ui.selectedSession && ui.view === "sessions") jobs.push(loadSession(ui.selectedSession));
   return jobs;
@@ -239,7 +291,8 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const results = await Promise.all(ui.scope === null ? [loadRepositories()] : await scopedJobs(since));
+    const shared = [loadRepositories(), loadHealth()];
+    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) data.activityAll = data.activity;
     data.updatedAt = Date.now();
@@ -296,11 +349,13 @@ export function changeScope(scope) {
   generation += 1;
   etags.clear();
   setScope(scope);
-  ui.selectedRule = null;
+  ui.panel = null;
+  ui.backToPack = null;
+  ui.removeAsk = null;
   ui.selectedSession = null;
   Object.assign(data, {
-    repository: null, checkout: null, unavailable: [], rules: new Map(), activity: {}, activityAll: {},
-    findings: [], findingsTotal: 0, sessions: [], loaded: false, missing: false,
+    repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
+    findings: [], findingsTotal: 0, sessions: [], recommendations: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();
