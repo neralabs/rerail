@@ -23,7 +23,7 @@ use std::{
 
 const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
 /// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in
-/// code-rule-enforcer.ts): dialect sources and the text files regex clauses read.
+/// code-rule-languages.ts): dialect sources and the text files regex clauses read.
 const SOURCE_SUFFIXES: &[&str] = &[
     "bash", "cjs", "css", "cts", "html", "js", "json", "jsx", "md", "mdx", "mjs", "mts", "php",
     "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "yaml",
