@@ -1162,7 +1162,6 @@ export interface CodeRuleDslAstCount {
 export type CodeRuleCheckpoint = "edit" | "function" | "turn" | "final";
 export type CodeRuleSourceLanguage =
   | CodeRuleDialectLabel
-  | "rust"
   | "json"
   | "yaml"
   | "toml"

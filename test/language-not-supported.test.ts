@@ -113,7 +113,7 @@ describe("a rule for a planned language", () => {
     }
   });
 
-  it("makes a repository audit over .vue, .sql and .rs files evaluate nothing and fail nothing", async () => {
+  it("makes a repository audit read .vue, .sql and .rs files as text: their planned languages' rules evaluate nothing, a regex rule reads them, and nothing fails", async () => {
     const workspaceRoot = join(root, "workspace");
     for (const [path, text] of [["ui/App.vue", "<script>const a = 1</script>\n"], ["db/schema.sql", "select a from b;\n"], ["src/main.rs", "fn main() { let a = 1; }\n"]] as const) {
       await mkdir(dirname(join(workspaceRoot, path)), { recursive: true });
@@ -123,6 +123,11 @@ describe("a rule for a planned language", () => {
     const store = new SqliteRuleStore(databasePath);
     for (const language of CODE_RULE_PLANNED_LANGUAGES) store.upsertCodeRule(astCodeRule(`planned:${language}`, language));
     store.upsertCodeRule(astCodeRule("supported:python", "python"));
+    store.upsertCodeRule(codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "text:a", revision: 1, mode: "steer",
+      scope: { include: ["**/*"], exclude: [] },
+      clauses: [{ id: "a", violation: { code: "A", anchor: "witness.span", message: "an a" }, forbid: { regex: { source: "file.content", pattern: "\\ba\\b" } } }],
+    }));
     store.close();
     const catalog = bootstrapCodeRuleDslCatalog({ databasePath });
     const audits = new Map<string, AuditInput & { result?: AuditResult }>();
@@ -136,7 +141,9 @@ describe("a rule for a planned language", () => {
     try {
       await enforcer.openWorkspace("planned");
       const [auditId] = await enforcer.audit("planned", { scope: "repository", mode: "log" });
-      expect(audits.get(auditId!)?.result).toEqual(expect.objectContaining({ status: "completed", violations: [], failures: [] }));
+      const result = audits.get(auditId!)?.result;
+      expect(result).toEqual(expect.objectContaining({ status: "completed", failures: [] }));
+      expect((result?.violations ?? []).map(violation => [violation.path, violation.ruleId]).sort()).toEqual([["db/schema.sql", "text:a"], ["src/main.rs", "text:a"], ["ui/App.vue", "text:a"]]);
       expect([...audits.values()].flatMap(audit => audit.result?.failures ?? [])).toEqual([]);
       expect(enforcer.snapshotStatus().failures).toEqual([]);
     } finally {

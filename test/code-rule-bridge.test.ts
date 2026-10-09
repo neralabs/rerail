@@ -395,7 +395,7 @@ describe("CodeRuleBridge", () => {
       checkpoints: ["edit", "function"],
       edits: [
         { path: "src/a.py", language: "python", previousText: "before\n", generatedText: "after\n" },
-        { path: "src/b.rs", language: "rust", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
+        { path: "src/b.rs", language: "text", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
       ],
     });
   });

@@ -88,9 +88,8 @@ export const codeRuleLanguageImplements = (language: CodeRuleAstLanguage, capabi
   codeRuleLanguageCapability(language, capability) === "supported";
 export const codeRuleLanguageSuppressions = (language: CodeRuleAstLanguage): readonly CodeRuleSuppression[] => ENTRIES[language].suppressions as readonly CodeRuleSuppression[];
 
-/** Files audits read as text only (regex rules over their content); never parsed, whatever language their suffix suggests. */
+/** Files audits read as text only (regex rules over their content): formats that are no registry language. */
 const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
-  [".rs", "rust"],
   [".json", "json"],
   [".yaml", "yaml"],
   [".yml", "yaml"],
@@ -99,7 +98,6 @@ const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Ma
   [".mdx", "markdown"],
   [".rst", "text"],
   [".txt", "text"],
-  [".sql", "text"],
   [".sh", "text"],
   [".bash", "text"],
   [".zsh", "text"],
@@ -108,12 +106,15 @@ const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Ma
   [".scss", "text"],
 ]);
 
+/** Each planned language's suffixes: their files are read as text until the engine reads the language. */
+const PLANNED_SUFFIXES: readonly string[] = LANGUAGE_REGISTRY.flatMap(entry => (entry.status === "planned" ? entry.dialects.flatMap(dialect => dialect.suffixes) : []));
+
 /**
- * The suffixes audits and the bridge read and the file label each selects: every supported dialect's, and the text
- * files'. A supported dialect's suffix wins over a text one; a planned language's suffix selects no dialect. The
- * native repository index receives the same map.
+ * The suffixes audits and the bridge read and the file label each selects: every supported dialect's, each planned
+ * language's (as text), and the other text files'. A supported dialect's suffix wins over a text one. The native
+ * repository index receives the same map.
  */
 export const SOURCE_LANGUAGES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
   ...CODE_RULE_DIALECT_SUFFIXES,
-  ...[...TEXT_SOURCE_SUFFIXES].filter(([suffix]) => !CODE_RULE_DIALECT_SUFFIXES.has(suffix)),
+  ...[...PLANNED_SUFFIXES.map(suffix => [suffix, "text"] as const), ...TEXT_SOURCE_SUFFIXES].filter(([suffix]) => !CODE_RULE_DIALECT_SUFFIXES.has(suffix)),
 ]);
