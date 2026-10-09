@@ -1,14 +1,21 @@
-import { loadBundledCatalog } from "../../src/bundled-rules.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../../src/database.js";
-import { CheckoutCodeRuleCatalog, loadCodeRuleCapabilities } from "../../src/code-rule-dsl-catalog.js";
-import type { CodeRule } from "../../src/code-rule-schema.js";
-import type { CheckoutRuleSet, EffectiveRule, RepositoryKey } from "../../src/repository-model.js";
-import { recordCheckout } from "../../src/repository-registry.js";
-import { setRepositoryStarted } from "../../src/repository-start.js";
-import { setUpRepository } from "../../src/rule-configuration.js";
-import { upsertLibraryRule } from "../../src/rule-library.js";
-import type { RuleDocument } from "../../src/rule-store.js";
-import { ruleDocumentDigest, stableJsonText } from "../../src/stable-json.js";
+import {
+  loadBundledCatalog,
+  defaultRerailDatabasePath,
+  openRerailDatabase,
+  CheckoutCodeRuleCatalog,
+  loadCodeRuleCapabilities,
+  type CodeRule,
+  type CheckoutRuleSet,
+  type EffectiveRule,
+  type RepositoryKey,
+  recordCheckout,
+  setUpRepository,
+  upsertLibraryRule,
+  type RuleDocument,
+  ruleDocumentDigest,
+  stableJsonText,
+} from "../../src/engine/index.js";
+import { setRepositoryStarted } from "../../src/runtime/index.js";
 
 export interface TestRepositoryRules {
   /** Stored in the library and added to the repository. */

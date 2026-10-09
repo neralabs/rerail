@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { join } from "node:path";
-import { createClaudeEventHandler } from "../src/claude-event-adapter.js";
-import { createCodexEventHandler } from "../src/codex-event-adapter.js";
-import { RerailRuntime } from "../src/runtime.js";
-import { temporaryDirectories, testEmbedder } from "../test/hook-fixtures.js";
+import { createClaudeEventHandler } from "../src/hosts/claude/index.js";
+import { createCodexEventHandler } from "../src/hosts/codex/index.js";
+import { RerailRuntime } from "../src/runtime/index.js";
+import { temporaryDirectories, testEmbedder } from "../test/support/hook-events.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-adapter-parity-");
 

@@ -17,16 +17,6 @@ use serde_json::{Value, json};
 use std::sync::{Arc as StdArc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-mod file_filter_sql_spike {
-    use super::super::api::CodeRuleDslWorkspace;
-    use super::super::evaluate::candidate_grammar;
-    use super::super::ingest::make_file;
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
-    use crate::code_rule_dsl::model::{ClauseKind, Query};
-
-    include!("../../file_filter_sql_spike.rs");
-}
-
 pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
@@ -1519,7 +1509,7 @@ fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
     }
 }
 
-const CAPABILITIES: &str = include_str!("../../../../code-rule-dsl/capabilities.json");
+const CAPABILITIES: &str = include_str!("../capabilities.json");
 
 fn clause(id: &str, rule: Value) -> Value {
     json!({

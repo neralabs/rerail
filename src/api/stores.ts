@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
-import { loadBundledCatalog } from "../bundled-rules.js";
-import { openRerailDatabase, type RerailDatabase } from "../database.js";
-import { SqliteAuditReader } from "../audit-store.js";
-import { SqlitePresentationPreferenceStore } from "../presentation-preference-store.js";
-import type { BundledCatalog, CheckoutContext, RepositoryStartState } from "../repository-model.js";
-import { createCheckoutResolver } from "../repository-registry.js";
-import { workspaceStartState, startStateReader } from "../repository-start.js";
-import { SqliteAuditControlStore } from "../audit-control.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../session-store.js";
+import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { SqliteAuditReader } from "../engine/audit/audit-store.js";
+import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
+import type { BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import { createCheckoutResolver } from "../engine/catalog/repository-registry.js";
+import { workspaceStartState, startStateReader } from "../runtime/repository-start.js";
+import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { RerailApiStores } from "./operation.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 

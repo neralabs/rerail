@@ -44,15 +44,15 @@ pub(crate) enum CompareOp {
 }
 
 /// How texts are ordered. Every collation compares UTF-16 code units after its fold, as
-/// JavaScript's `<` does, so TSLint's orderings port exactly.
+/// JavaScript's `<` does, so JavaScript linters' orderings port exactly.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Collation {
     Ordinal,
-    /// `toLowerCase()` first (TSLint member-ordering, object-literal-sort-keys `ignore-case`).
+    /// `toLowerCase()` first.
     FoldLower,
-    /// `toUpperCase()` first (TSLint ordered-imports `case-insensitive`).
+    /// `toUpperCase()` first.
     FoldUpper,
-    /// ASCII letters swap case first, so lowercase sorts before uppercase (ordered-imports `lowercase-first`).
+    /// ASCII letters swap case first, so lowercase sorts before uppercase.
     LowercaseFirst,
     /// The natural-compare package's order (ESLint sort-keys `natural`): digit runs by number.
     Natural,
@@ -441,7 +441,7 @@ mod tests {
         let source = "const o = { b, a, C, _x, B };\n";
         assert_eq!(key_order("gt", "ordinal", source), ["a", "C", "B"]);
         // `a` > `C` only by code unit; folded to lower case `_x` sorts before letters, folded
-        // to upper case after them (TSLint's two case-insensitive orders differ exactly here).
+        // to upper case after them (the two case-insensitive orders differ exactly here).
         assert_eq!(key_order("gt", "fold-lower", source), ["a", "_x"]);
         assert_eq!(key_order("gt", "fold-upper", source), ["a", "B"]);
         // Lowercase first swaps ASCII case: `b a C _x B` compare as `B A c _X b`.

@@ -1009,8 +1009,8 @@ mod tests {
     fn kindless_rules_are_accepted_and_test_anonymous_tokens() {
         // ast-grep 0.45.3 rejects a rule with no inferable kinds ("Rule must specify a set of AST
         // kinds to match"). Rerail keeps accepting it: it is the only way to report an anonymous
-        // token (`kind` names named kinds only), and TSLint's golden ports anchor on `==`, `,`
-        // and `default` that way. Such a rule tests every node, so it can report punctuation.
+        // token (`kind` names named kinds only), such as `==`, `,` or `default`. Such a rule tests
+        // every node, so it can report punctuation.
         let compiled = compile_typescript_rule(json!({
             "inside": { "kind": "parenthesized_expression" },
             "not": { "kind": "number" },

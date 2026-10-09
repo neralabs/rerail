@@ -2,9 +2,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { inspectOutcome } from "../scripts/host-smoke.js";
-import { defaultRerailDatabasePath } from "../src/database.js";
-import { SqliteSessionStore } from "../src/session-store.js";
+import { inspectOutcome } from "../scripts/host/host-smoke.js";
+import { defaultRerailDatabasePath } from "../src/engine/index.js";
+import { SqliteSessionStore } from "../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 
