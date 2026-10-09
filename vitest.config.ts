@@ -9,7 +9,7 @@ export default defineConfig({
     // The setup file mutates process.env to give every test file its own catalog home. Forked
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
-    setupFiles: ["./test/setup-rerail-home.ts"],
+    setupFiles: ["./test/support/setup-rerail-home.ts"],
     // Not vitest suites: upstream tools' copied tests are fixture data for conformance recordings, and
     // ensure-sqlite's test runs under `node --test` (`npm run test:scripts`).
     exclude: [
@@ -18,7 +18,7 @@ export default defineConfig({
       "fixtures/**",
       "packs/*/upstream/**",
       "packs/*/candidates/**",
-      "scripts/ensure-sqlite.test.mjs",
+      "**/scripts/ensure-sqlite.test.mjs",
     ],
   },
 });

@@ -1,0 +1,4 @@
+# Binaries are stored in Git LFS: install git-lfs before cloning (CONTRIBUTING.md). CI pulls them through
+# .github/actions/lfs.
+model/model.safetensors filter=lfs diff=lfs merge=lfs -text
+native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text

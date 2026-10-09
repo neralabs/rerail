@@ -1115,7 +1115,7 @@ mod tests {
     use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
     use super::*;
 
-    const CAPABILITIES: &str = include_str!("../../../code-rule-dsl/capabilities.json");
+    const CAPABILITIES: &str = include_str!("capabilities.json");
 
     fn compile(forbid: Value, violation: Value) -> Result<CompiledCodeRuleDsl> {
         compile_clause(json!({ "id": "c", "forbid": forbid, "violation": violation }))
@@ -1841,8 +1841,7 @@ mod each_limit_tests {
     #[test]
     fn same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
         let mut capabilities: Value =
-            serde_json::from_str(include_str!("../../../code-rule-dsl/capabilities.json"))
-                .expect("capabilities");
+            serde_json::from_str(include_str!("capabilities.json")).expect("capabilities");
         capabilities["limits"]["maxWitnesses"] = json!(1);
         let compiled = CodeRuleDslRuntime::compile(
             json!({

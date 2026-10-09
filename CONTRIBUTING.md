@@ -2,6 +2,17 @@
 
 Thank you for helping. A few rules keep the project open source and its licensing clean.
 
+## Getting the code
+
+Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
+(`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
+compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
+the engine build nor the model works. In a checkout made without it, run `git lfs pull`. Then `npm ci` and
+`npm run build`.
+
+Generated files are listed, with the command that rewrites each, in
+[scripts/generate/README.md](scripts/generate/README.md); edit the generator, not its output.
+
 ## Licence of contributions
 
 Rerail is licensed under the Apache License 2.0. By submitting a contribution you agree that it is licensed under
@@ -18,7 +29,7 @@ Do not paste code, data or rules from another project without recording it:
 3. Annotate the path in `REUSE.toml`.
 
 `reuse lint` must pass. Only permissively licensed material is accepted, anywhere in the repository: the licence
-texts in `LICENSES/` must be on the allowlist in `scripts/licence-allowlist.json` (Apache-2.0, MIT, BSD-2-Clause,
+texts in `LICENSES/` must be on the allowlist in `scripts/check/licence-allowlist.json` (Apache-2.0, MIT, BSD-2-Clause,
 BSD-3-Clause, ISC, Zlib, 0BSD, CC0-1.0, Unicode-3.0), so no copyleft file can be committed.
 
 Fixtures (`fixtures/`) and rule packs (`packs/`) follow the same rules; see their READMEs.

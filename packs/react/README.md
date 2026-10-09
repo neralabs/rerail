@@ -5,7 +5,7 @@
 production workspace path, with every disagreement declared in `divergences.json` (none today).
 
 The pack follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
-`npx vitest run test/packs.test.ts -t "pack react"`.
+`npx vitest run test/engine/catalog/packs.test.ts -t "pack react"`.
 
 | Path | What |
 |---|---|

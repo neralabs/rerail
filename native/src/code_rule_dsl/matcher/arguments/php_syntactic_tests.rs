@@ -1,5 +1,5 @@
 //! `arguments` with `mode: "syntactic"` for PHP, against nikic/PHP-Parser 5.9.0
-//! (`fixtures/php/arguments/generate_php_syntactic.php`).
+//! (`fixtures/php/matcher/arguments/generate_php_syntactic.php`).
 
 use super::{Arguments, Passed, SlotKind};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -11,8 +11,9 @@ use serde_json::Value as Json;
 /// PHP-Parser's `args`, or none; a first-class callable is no call.
 #[test]
 fn php_slots_are_found_as_find_argument_finds_them() {
-    let oracle: Json = serde_json::from_str(oracle!("php/arguments/php-syntactic.expected.json"))
-        .expect("oracle JSON");
+    let oracle: Json =
+        serde_json::from_str(oracle!("php/matcher/arguments/php-syntactic.expected.json"))
+            .expect("oracle JSON");
     assert_eq!(oracle["phpParser"].as_str(), Some("5.9.0"));
     let mut failures = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {

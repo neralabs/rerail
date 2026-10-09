@@ -1,5 +1,5 @@
 //! `formatArgs` with style `printf` against where PHPStan 2.2.16's `PrintfParametersRule` and
-//! `PrintfArrayParametersRule` report on fixtures (`fixtures/php/format_args`) and over whole
+//! `PrintfArrayParametersRule` report on fixtures (`fixtures/php/compile/format-args`) and over whole
 //! corpora (`benchmark_php_format_corpus`).
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
@@ -11,23 +11,32 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-const ORACLE: &str = oracle!("php/format_args/phpstan.expected.json");
+const ORACLE: &str = oracle!("php/compile/format-args/phpstan.expected.json");
 const FIXTURES: &[(&str, &str)] = &[
-    ("calls.php", oracle!("php/format_args/phpstan/calls.php")),
+    (
+        "calls.php",
+        oracle!("php/compile/format-args/phpstan/calls.php"),
+    ),
     (
         "constants.php",
-        oracle!("php/format_args/phpstan/constants.php"),
+        oracle!("php/compile/format-args/phpstan/constants.php"),
     ),
     (
         "defines.php",
-        oracle!("php/format_args/phpstan/defines.php"),
+        oracle!("php/compile/format-args/phpstan/defines.php"),
     ),
-    ("follow.php", oracle!("php/format_args/phpstan/follow.php")),
+    (
+        "follow.php",
+        oracle!("php/compile/format-args/phpstan/follow.php"),
+    ),
     (
         "heredocs.php",
-        oracle!("php/format_args/phpstan/heredocs.php"),
+        oracle!("php/compile/format-args/phpstan/heredocs.php"),
     ),
-    ("shapes.php", oracle!("php/format_args/phpstan/shapes.php")),
+    (
+        "shapes.php",
+        oracle!("php/compile/format-args/phpstan/shapes.php"),
+    ),
 ];
 
 /// The calls `formatArgs` leaves unknown, by the fixture line each starts on (the only call that
@@ -425,7 +434,7 @@ struct Tally {
 }
 
 /// PHPStan's printf-family reports over whole corpora (`RERAIL_PHP_FORMAT`, written by
-/// `fixtures/php/format_args/generate_corpus.py`) against Rerail's verdict on every call of
+/// `fixtures/php/compile/format-args/generate_corpus.py`) against Rerail's verdict on every call of
 /// the family; the report section goes to `RERAIL_PHP_FORMAT_REPORT`. A call Rerail flags where
 /// PHPStan is silent, or PHPStan reports where Rerail says the format and values agree (or
 /// claims the other side), is a contradiction; one PHPStan reports where Rerail is undecided is a

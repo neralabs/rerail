@@ -5,7 +5,7 @@
 and on a pinned corpus (vscode), through the engine's production workspace path, with every disagreement declared in
 `divergences.json`: 14 today, all `rerail-unknown`, each a file the tree-sitter grammars read with a syntax error.
 
-It is checked by `npx vitest run test/packs.test.ts -t "pack typescript"`, against the
+It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack typescript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
 
 | Path | What |

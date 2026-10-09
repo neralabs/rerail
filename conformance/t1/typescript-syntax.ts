@@ -9,9 +9,13 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capabilitiesJson } from "../engine.js";
-import type { CodeRuleSourceLanguage } from "../../src/code-rule.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../../src/code-rule-enforcer.js";
-import { encodeCodeRuleWorkspaceRequest, loadNativeBinding } from "../../src/native.js";
+import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  encodeCodeRuleWorkspaceRequest,
+  loadNativeBinding,
+} from "../../src/engine/index.js";
 
 const [root, pathList, output, unparsedRecording] = process.argv.slice(2);
 if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: typescript-syntax.ts <corpus> <paths> <out.json> [<recording>]");

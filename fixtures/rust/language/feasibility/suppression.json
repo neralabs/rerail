@@ -1,0 +1,177 @@
+{
+ "generator": "fixtures/rust/language/feasibility/generate.py",
+ "tools": {
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "rust-analyzer": "rust-analyzer 1.99.0 (b940084d 2026-09-28)",
+  "clippy-driver": "clippy 0.1.99 (b940084d7e 2026-09-28)",
+  "scanner": {
+   "syn": "2.0.119",
+   "proc-macro2": "1.0.107",
+   "serde_json": "1.0.151"
+  },
+  "rust-clippy": "49e2f89a2605a9a340e04955fdbefa9803e6027a",
+  "rust-analyzer-config": {
+   "cargo": {
+    "features": "all"
+   }
+  }
+ },
+ "corpora": {
+  "ripgrep": {
+   "repository": "https://github.com/BurntSushi/ripgrep",
+   "commit": "3fce3b5bb0236da2df6d99672afb8a719642eca7"
+  },
+  "tokio": {
+   "repository": "https://github.com/tokio-rs/tokio",
+   "commit": "b2636752450484955e7ad334bac678424d51bc4a"
+  }
+ },
+ "corpora_results": {
+  "ripgrep": {
+   "attributes": 26,
+   "lint_names": 26,
+   "by_level": {
+    "allow": 18,
+    "deny": 8
+   },
+   "placement": {
+    "outer": 15,
+    "crate_level_inner": 9,
+    "inner_non_crate": 2,
+    "inside_macro_invocation_tt": 0,
+    "inside_macro_rules_body": 0,
+    "on_macro_invocation": 0,
+    "under_cfg_attr": 0,
+    "with_reason": 0
+   },
+   "by_target": {
+    "crate": 9,
+    "fn": 9,
+    "adt": 4,
+    "inner": 2,
+    "const_static": 1,
+    "impl": 1
+   },
+   "by_lint_namespace": {
+    "rustc_lint": 25,
+    "rustc_group": 1
+   },
+   "cfg_attr_predicates": {},
+   "top_lints": {
+    "dead_code": 12,
+    "missing_docs": 8,
+    "deprecated": 3,
+    "non_snake_case": 2,
+    "warnings": 1
+   },
+   "unknown_lints": []
+  },
+  "tokio": {
+   "attributes": 502,
+   "lint_names": 548,
+   "by_level": {
+    "allow": 297,
+    "warn": 197,
+    "deny": 6,
+    "expect": 2
+   },
+   "placement": {
+    "crate_level_inner": 266,
+    "outer": 234,
+    "under_cfg_attr": 81,
+    "inside_macro_invocation_tt": 33,
+    "inside_macro_rules_body": 21,
+    "inner_non_crate": 2,
+    "with_reason": 1,
+    "on_macro_invocation": 0
+   },
+   "by_target": {
+    "crate": 266,
+    "fn": 70,
+    "adt": 29,
+    "expr": 20,
+    "let": 19,
+    "use": 17,
+    "const_static": 16,
+    "trait": 15,
+    "impl": 11,
+    "field": 10,
+    "type_alias": 10,
+    "variant_or_expr": 8,
+    "mod": 4,
+    "variant": 4,
+    "inner": 2,
+    "macro_rules": 1
+   },
+   "by_lint_namespace": {
+    "rustc_lint": 244,
+    "rustc_group": 225,
+    "clippy_lint": 78,
+    "rustdoc_lint": 1
+   },
+   "cfg_attr_predicates": {
+    "not(feature=\"io\")": 8,
+    "not(feature=\"sync\")": 8,
+    "not(all(tokio_unstable,feature=\"tracing\"))": 6,
+    "not(feature=\"full\")": 6,
+    "not(feature=\"rt\")": 6,
+    "loom": 4,
+    "not(feature=\"net\")": 4,
+    "not(tokio_unstable)": 4,
+    "target_os=\"wasi\"": 4,
+    "any(not(all(tokio_unstable,feature=\"full\")),target_family=\"wasm\")": 3,
+    "any(all(loom,not(test)),test,target_os=\"emscripten\",)": 2,
+    "feature=\"signal\"": 2,
+    "not(all(tokio_unstable,feature=\"rt\"))": 2,
+    "not(feature=\"time\")": 2,
+    "test": 2,
+    "any(loom,not(feature=\"sync\"))": 1,
+    "any(not(feature=\"fs\"),target_os=\"emscripten\")": 1,
+    "any(not(feature=\"full\"),loom)": 1,
+    "any(not(unix),loom)": 1,
+    "any(target_os=\"macos\",target_os=\"ios\",target_os=\"tvos\",target_os=\"watchos\",target_os=\"visionos\")": 1,
+    "docsrs": 1,
+    "feature=\"fs\"": 1,
+    "not(all(feature=\"rt\",feature=\"net\"))": 1,
+    "not(all(feature=\"rt\",feature=\"net\",feature=\"io-uring\",tokio_unstable))": 1,
+    "not(all(feature=\"time\",feature=\"test-util\"))": 1,
+    "not(all(tokio_unstable,feature=\"rt-multi-thread\"))": 1,
+    "not(all(tokio_unstable,feature=\"schedule-latency\"))": 1,
+    "not(feature=\"io-std\")": 1,
+    "not(feature=\"macros\")": 1,
+    "not(feature=\"test-util\")": 1,
+    "target_family=\"wasm\"": 1,
+    "target_os=\"emscripten\"": 1,
+    "windows": 1
+   },
+   "top_lints": {
+    "rust_2018_idioms": 195,
+    "dead_code": 111,
+    "unreachable_pub": 32,
+    "unused": 30,
+    "unused_variables": 17,
+    "unused_imports": 16,
+    "unreachable_code": 12,
+    "deprecated": 8,
+    "missing_debug_implementations": 8,
+    "clippy::blocks_in_conditions": 7,
+    "clippy::let_and_return": 6,
+    "clippy::needless_lifetimes": 6,
+    "missing_docs": 6,
+    "unused_mut": 6,
+    "clippy::async_yields_async": 5,
+    "unused_unsafe": 5,
+    "clippy::cognitive_complexity": 4,
+    "clippy::disallowed_names": 4,
+    "clippy::needless_doctest_main": 4,
+    "unknown_lints": 4,
+    "unsafe_op_in_unsafe_fn": 4,
+    "clippy::diverging_sub_expression": 3,
+    "clippy::redundant_clone": 3,
+    "clippy::too_many_arguments": 3,
+    "non_camel_case_types": 3
+   },
+   "unknown_lints": []
+  }
+ }
+}
