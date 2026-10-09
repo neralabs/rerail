@@ -5,12 +5,12 @@
  * add`, a coding agent, `rules import`), a start and a stop delete it, so a repository set up some other way is never
  * taken for one the review set up.
  */
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import type { RepositoryKey } from "./repository-model.js";
 import { repositories, setupReviews } from "../storage/schema.js";
 
-type Reader = Pick<RerailDatabase, "select">;
+type Reader = Pick<RerailDatabase, "select" | "get">;
 type Deleter = Pick<RerailDatabase, "delete">;
 
 /** Set-up offered the review in `repositoryKey`; nothing is recorded once the repository is set up. */
@@ -23,8 +23,13 @@ export function offerSetupReview(database: RerailDatabase, repositoryKey: Reposi
   }, { behavior: "immediate" });
 }
 
-/** Whether set-up's offer of the review still stands in `repositoryKey`. */
+/**
+ * Whether set-up's offer of the review still stands in `repositoryKey`. A database from before the offer was kept has
+ * no table for it until a writer opens it (read-only opens apply no schema), and no offer either.
+ */
 export function setupReviewOffered(db: Reader, repositoryKey: RepositoryKey): boolean {
+  const kept = db.get<{ name: string } | undefined>(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'setup_reviews'`);
+  if (kept === undefined) return false;
   return db.select({ key: setupReviews.repositoryKey }).from(setupReviews)
     .where(eq(setupReviews.repositoryKey, repositoryKey)).get() !== undefined;
 }

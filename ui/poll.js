@@ -6,7 +6,7 @@
  * violations and sessions; with or without one, the repository list and the daemon's health.
  */
 import { get, send } from "./api.js";
-import { data, ui, sinceFor, setScope } from "./state.js";
+import { data, ui, sinceFor, setScope, activityView } from "./state.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -82,8 +82,9 @@ let lastAttachmentWrite = { token: generation, pending: false, clear: true, sett
  * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
  * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
  * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
- * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load,
- * as when its send fails. A scope switch starts a new queue.
+ * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load, as
+ * when its send fails, and like a send only while the page still shows the scope: a failure after a switch resolves
+ * `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
  */
 export function queueInScope(scope, method, path, body) {
   const before = lastAttachmentWrite;
@@ -96,7 +97,13 @@ export function queueInScope(scope, method, path, body) {
       await before.settled;
       if (!before.clear) return false;
     }
-    const loaded = await ready;
+    let loaded;
+    try {
+      loaded = await ready;
+    } catch (error) {
+      if (inScope(scope)) throw error;
+      return false;
+    }
     return loaded === null ? false : sendInScope(scope, method, path, loaded);
   })();
   const write = { token: scope.token, pending: true, clear: false, settled: null };
@@ -261,6 +268,15 @@ export async function loadMoreFindings() {
   data.findings = data.findings.concat(body.violations);
   data.findingsTotal = body.total;
   return body.violations.length > 0;
+}
+
+/**
+ * Activity's "Show more": 50 more rows of what the filters let through, fetching further pages until
+ * that many matches are loaded or the range runs out (a filter's matches may all lie further back).
+ */
+export async function showMoreActivity() {
+  ui.recentShown += 50;
+  while (activityView().list.length < ui.recentShown && await loadMoreFindings()) { /* next page */ }
 }
 
 async function loadSessions() {

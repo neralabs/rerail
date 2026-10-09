@@ -15,6 +15,7 @@ import {
   renderStarted,
   renderSummary,
   renderTips,
+  shellQuote,
   type CodingAgent,
   type DashboardLink,
   type RecommendedPacksInput,
@@ -132,6 +133,12 @@ describe("T3 / C3 ask before reading", () => {
   it("quotes a repo path the shell would split, and uses the given set-up command", () => {
     const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand: "npx rerail setup" }, "agent");
     expect(text).toContain("1. npx rerail setup --answer yes --repo '/tmp/it'\\''s mine'");
+  });
+
+  it("quotes a Windows path with double quotes, as cmd.exe runs it, and leaves a plain word alone", () => {
+    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "win32")).toBe(String.raw`"C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd"`);
+    expect(shellQuote("--answer", "win32")).toBe("--answer");
+    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "linux")).toBe(String.raw`'C:\Users\Alice O'\''Neil\.rerail\bin\rerail.cmd'`);
   });
 });
 

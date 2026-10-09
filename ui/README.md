@@ -5,7 +5,8 @@ build step and no framework. `npm run build:ui` (`scripts/build/copy-ui.mjs`) co
 serves it with client-side routes falling back to `index.html`. It reads only the daemon's `/api` operations
 (`api.js`).
 
-- `app.js` and `state.js` hold the app and its state, `poll.js` refreshes it, and `render/` holds the views.
+- `app.js` and `state.js` hold the app and its state, `poll.js` refreshes it, `attachments.js` writes its rule pack
+  changes in click order, and `render/` holds the views.
 - `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
   `npm run check:ui-tokens` checks them.
 

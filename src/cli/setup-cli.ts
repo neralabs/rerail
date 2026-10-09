@@ -317,12 +317,13 @@ function carriedArgs(carry: SetupCarry): string[] {
 
 /**
  * What the coding agent runs to answer a set-up question: the launcher setup wrote, which stays put
- * between answers (an `npx` copy may not), with what this run carries. `rerail setup` until the launcher exists.
+ * between answers (an `npx` copy may not), with what this run carries, quoted for `platform`'s shell.
+ * `rerail setup` until the launcher exists.
  */
-export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}): string | undefined {
-  const carried = carriedArgs(carry).map(shellQuote);
+export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}, platform: NodeJS.Platform = process.platform): string | undefined {
+  const carried = carriedArgs(carry).map(arg => shellQuote(arg, platform));
   if (!existsSync(context.updater.launcherPath)) return carried.length === 0 ? undefined : ["rerail", "setup", ...carried].join(" ");
-  return [shellQuote(context.updater.launcherPath), "setup", ...carried].join(" ");
+  return [shellQuote(context.updater.launcherPath, platform), "setup", ...carried].join(" ");
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */
@@ -487,12 +488,15 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
   }
 }
 
-/** `rerail start --json` as one step: the set-up's first question where the repository is not set up, `done` otherwise. */
+/**
+ * `rerail start --json` as one step: the set-up's first question where the repository is not set up, `done` otherwise.
+ * `--relay`, which `/rerail-start` passes, is accepted and `--json` wins: the step is JSON either way.
+ */
 export async function startStep(args: readonly string[], context: SetupContext, place: SetupPlace): Promise<SetupStep> {
   try {
     const { flags, options } = parseArguments(
       args,
-      { flags: [JSON_FLAG, "--repository"], options: ["--repo", "--agents", "--answer", "--database"] },
+      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", "--answer", "--database"] },
       argument => `Unknown start option: ${argument}`,
     );
     const agents = options.get("--agents");

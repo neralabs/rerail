@@ -11,10 +11,17 @@ vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOrigi
   const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
   return { ...actual, corePackDirectories: () => [...actual.corePackDirectories(), typescriptPack] };
 });
+// Passed through, and watched: a run that must read no code never calls the recommender.
+const recommendRulePacks = vi.hoisted(() => vi.fn<(root: string) => unknown>());
+vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
+  const actual = await importOriginal<{ recommendRulePacks(root: string): unknown }>();
+  recommendRulePacks.mockImplementation(actual.recommendRulePacks);
+  return { ...actual, recommendRulePacks };
+});
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
 import { lookupCheckout, recordCheckout } from "../../src/engine/index.js";
-import { parseCodingAgents, runSetup, startRerail, type SetupRequest } from "../../src/cli/repository-setup.js";
+import { parseCodingAgents, runSetup, startRerail, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { onRuleCount, stopRerail, workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { setUpRepository } from "../../src/engine/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
@@ -24,6 +31,8 @@ import { attachedPacks } from "../support/attached-packs.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  recommendRulePacks.mockClear();
+  vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -397,6 +406,33 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
 
+  it("asks the read-repo question again, reading nothing, when picking packs myself names coding agents it does not know", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, environment, { answer: "pick-myself", repo: setup.repo, agentsError: "Unknown coding agent: nope." })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Unknown coding agent: nope.");
+    expect(asked.text()).toContain("You’re working in acme-api. Can Rerail read it");
+    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(environment.connections).toEqual([]);
+    expect(existsSync(setup.databasePath)).toBe(false);
+    expectUntouched(setup);
+  });
+
+  it("refuses the home folder named with --repo, and asks which project instead", async () => {
+    const setup = await fixture();
+    const home = join(setup.root, "user");
+    mkdirSync(home);
+    vi.stubEnv("HOME", home);
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: "~" }))).toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Start Rerail inside a repository, not your home folder.");
+    expect(asked.text()).toContain("Which project do you want to start with?");
+    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(existsSync(setup.databasePath)).toBe(false);
+  });
+
   it("writes nothing when starting fails partway", async () => {
     const setup = await fixture();
     failStarts(setup.databasePath);
@@ -491,6 +527,28 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(existsSync(join(plain, ".rerail"))).toBe(false);
   });
 
+  it("refuses the home folder typed at the folder prompt, from either question that offers one", async () => {
+    const setup = await fixture();
+    const home = join(setup.root, "user");
+    mkdirSync(home);
+    vi.stubEnv("HOME", home);
+    const plain = join(setup.root, "downloads");
+    mkdirSync(plain);
+    const environment = fakeSetupEnvironment();
+
+    // Where there is no repo ("Type the folder…"), and instead of the repo set-up ran in ("Use a different folder").
+    const noRepo = terminalIo(["1", "~"]);
+    expect(await runSetup(noRepo, request(setup, environment, { cwd: plain }))).toEqual({ status: "cancelled" });
+    const otherFolder = terminalIo(["2", home]);
+    expect(await runSetup(otherFolder, request(setup, environment))).toEqual({ status: "cancelled" });
+    for (const io of [noRepo, otherFolder]) {
+      expect(io.text()).toContain("Start Rerail inside a repository, not your home folder.");
+      expect(io.text()).toContain("Which project do you want to start with?");
+    }
+    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(existsSync(setup.databasePath)).toBe(false);
+  });
+
   it("skips for now where there is no repo: connected, on nowhere", async () => {
     const setup = await fixture();
     const plain = join(setup.root, "downloads");
@@ -539,6 +597,55 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(await runSetup(io, request(setup, fakeSetupEnvironment()))).toMatchObject({ status: "stopped" });
     expect(io.text()).toContain("Rerail is set up in acme-api, and stopped there. Start it again with rerail start.");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+});
+
+/** A database written before set-up kept its offer of the review: no `setup_reviews` table, opened read-only. */
+function dropSetupReviews(databasePath: string): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    database.$client.exec("DROP TABLE setup_reviews");
+  } finally {
+    database.$client.close();
+  }
+}
+
+describe("a database from before set-up kept its offer of the review", { timeout: SETUP_TIMEOUT_MS }, () => {
+  it("asks the read-repo question where the checkout is recorded but not set up", async () => {
+    const setup = await fixture();
+    const writer = openRerailDatabase(setup.databasePath);
+    try {
+      recordCheckout(writer, setup.repo);
+    } finally {
+      writer.$client.close();
+    }
+    dropSetupReviews(setup.databasePath);
+    const environment = fakeSetupEnvironment();
+
+    const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
+    expect(step).toMatchObject({ step: "read-repo" });
+    const started = agentIo();
+    expect(await startRerail(setup.repo, started, { databasePath: setup.databasePath, environment })).toMatchObject({ setUpRan: true, status: "waiting" });
+    expect(started.text()).toContain("Can Rerail read it");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("just starts a repository that is set up and was never started", async () => {
+    const setup = await fixture();
+    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo }));
+    const writer = openRerailDatabase(setup.databasePath);
+    try {
+      // Set up some other way (`rerail rules add`) and never started.
+      writer.$client.exec("UPDATE repositories SET started = NULL; UPDATE checkouts SET started = NULL");
+    } finally {
+      writer.$client.close();
+    }
+    dropSetupReviews(setup.databasePath);
+
+    const started = agentIo();
+    expect(await startRerail(setup.repo, started, { databasePath: setup.databasePath, environment: fakeSetupEnvironment() }))
+      .toMatchObject({ setUpRan: false, status: "started" });
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
   });
 });
 

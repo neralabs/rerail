@@ -20,7 +20,7 @@ import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-re
 import type { RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
-type Reader = Pick<RerailDatabase, "select">;
+type Reader = Pick<RerailDatabase, "select" | "get">;
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 

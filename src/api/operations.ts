@@ -209,6 +209,7 @@ const ruleActivitySchema = z.object({
   sessions: z.number().int().nonnegative(),
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
+  loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
 }).strict();
@@ -324,6 +325,7 @@ export const operations: readonly Operation[] = [
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
+          loggedViolations: totals?.loggedViolations ?? 0,
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };

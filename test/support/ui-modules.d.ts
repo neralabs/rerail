@@ -62,23 +62,41 @@ declare module "*/ui/poll.js" {
   export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
+  export function showMoreActivity(): Promise<void>;
+}
+
+declare module "*/ui/derive.js" {
+  export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
 }
 
 declare module "*/ui/state.js" {
   export function sinceFor(range?: number): number;
   export const data: {
     rules: Map<string, unknown>;
+    findings: Array<{ ruleId: string; mode?: string; at: number }>;
+    findingsTotal: number;
+    findingsSince: number;
+    activity: Record<string, unknown>;
+    activityAll: Record<string, unknown>;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
     repository: { setUp: boolean } | null;
-    recommendations: Array<{ packId: string }> | null;
+    recommendations: Array<{ packId: string; folder?: string }> | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string };
+  export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };
+  export function keptPacks(): readonly string[];
+  export function isAudited(id: string): boolean;
+  export function summary(): { logged: number; triggers: number };
+  export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
 
-declare module "*/ui/render/packs.js" {
-  export function keptPacks(): readonly string[];
+declare module "*/ui/attachments.js" {
+  /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
+  export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
+    setUpRecommended(): Promise<void>;
+    keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+  };
 }

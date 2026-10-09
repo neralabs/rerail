@@ -5,7 +5,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp } from "../state.js";
+import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks } from "../state.js";
 import { packAction, packIcon, packKind, startModeText } from "./pack-panel.js";
 
 /** "3 groups · 8 rules", plus how many are on once Rerail is started here: before that, nothing is on. */
@@ -47,15 +47,6 @@ function catalog() {
 }
 
 /* ---------- WR ---------- */
-
-/**
- * The packs kept on: the packs attached to a repository that is set up; before it is, the ones set-up
- * recommends, until the first switch writes the kept set and sets the repository up.
- */
-export function keptPacks() {
-  if (isSetUp()) return [...data.attachedPacks.keys()];
-  return (data.recommendations ?? []).map(r => r.packId);
-}
 
 function reviewRow(pack, reason) {
   const kept = keptPacks().includes(pack.id);

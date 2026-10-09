@@ -5,7 +5,7 @@
 import { h, setAttr, setText, setClass, chevron, icon, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
 import { isByRerail } from "../derive.js";
-import { isMeasured, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
+import { isMeasured, isAudited, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 
@@ -26,12 +26,12 @@ function createRow(stored) {
 }
 
 /** The violation count: a number, 0 when audited and clean, a dash when it has never been audited. */
-function countContent(id, stored) {
+function countContent(id) {
   if (!isMeasured(id)) return { text: "–", zero: true, tip: "Conversation rules are not counted here yet." };
   const f = fires(id);
   if (f) return { text: fmt(f), zero: false, tip: `${fmt(f)} ${plural(f, "violation")} logged ${rangeLabel()}` };
-  if (stored.enabled || allFires(id)) return { text: "0", zero: true, tip: `None logged ${rangeLabel()}` };
-  return { text: "–", zero: true, tip: "Not audited yet: this rule has not been on" };
+  if (isAudited(id)) return { text: "0", zero: true, tip: `None logged ${rangeLabel()}` };
+  return { text: "–", zero: true, tip: "Not audited yet: no audit has run this rule" };
 }
 
 function updateRow(row, stored) {
@@ -39,7 +39,7 @@ function updateRow(row, stored) {
   setClass(row, "off", !stored.enabled);
   setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
-  const count = countContent(id, stored);
+  const count = countContent(id);
   const b = r.count.firstChild ?? r.count.appendChild(h("b"));
   setText(b, count.text);
   setClass(b, "zero", count.zero);

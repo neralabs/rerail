@@ -653,6 +653,22 @@ describe("Claude Code commands", () => {
     expect(start).toContain("run only the one command the output gives for that answer");
   });
 
+  it("grants the answer commands set-up prints on Windows, the launcher double-quoted as cmd.exe runs it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: options });
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
+    await mkdir(dirname(updater.launcherPath), { recursive: true });
+    await writeFile(updater.launcherPath, "");
+
+    const command = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true }, "win32")!;
+    expect(command).toBe(`"${join(rerailHome, "bin", "rerail.cmd")}" setup --relay`);
+    expect(allowed).toContain(`${command} *`);
+  });
+
   it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async () => {
     const { home, root, nodePath } = await fixture();
     await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code", "cursor", "codex"] });

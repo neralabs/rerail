@@ -138,11 +138,22 @@ describe("Rerail API over HTTP", () => {
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, rerails: 0 });
+    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, rerails: 0 });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
     expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, rerails: 0 });
+    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 });
+  });
+
+  it("counts logged-only violations by the mode recorded with each, not the rule's mode now", async () => {
+    addLibraryRules();
+    const codeRule = MOCK_CODE_RULES[0]!;
+    seedAudit({ at: 2_000, violations: [{ ...flagged, mode: "steer" }], audited: [codeRule.id] });
+    seedAudit({ at: 3_000, violations: [{ ...flagged, id: "violation-2", path: "web/src/y.ts", mode: "log" }], audited: [codeRule.id] });
+
+    const body = await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
+
+    expect(body.rules[codeRule.id]).toMatchObject({ distinctViolations: 2, loggedViolations: 1 });
   });
 
   it("separates violations by path, span, and session, and excludes audits before the range", async () => {

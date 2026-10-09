@@ -273,7 +273,7 @@ function commandContext(context: Context): CommandFileContext {
 /** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */
 function setupLauncher(context: Context): string {
   const home = process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
-  return shellQuote(join(home, "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"));
+  return shellQuote(join(home, "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"), context.platform);
 }
 
 function describe(context: Context, detail: string): string {

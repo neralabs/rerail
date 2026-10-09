@@ -6,13 +6,14 @@
 import { send } from "./api.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
-import { data, ui, summary, panelRuleId, titleOf, packById, packOfRule, packFolder, rulesArray, readScope, setScope, repoName, stateHere, isSetUp } from "./state.js";
-import { startPolling, refreshNow, loadSession, loadMoreFindings, loadAgents, loadPresence, loadRecommendations, recommendationsFor, changeScope, captureScope, inScope, queueInScope } from "./poll.js";
+import { data, ui, summary, panelRuleId, titleOf, packOfRule, rulesArray, readScope, setScope, repoName, stateHere, keptPacks, reviewing } from "./state.js";
+import { startPolling, refreshNow, loadSession, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope, captureScope, inScope } from "./poll.js";
+import { attachmentWrites, packName } from "./attachments.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
 import { renderActivity } from "./render/activity.js";
 import { renderBanners, dismissWelcome } from "./render/banners.js";
-import { renderPacks, keptPacks } from "./render/packs.js";
+import { renderPacks } from "./render/packs.js";
 import { renderSettings } from "./render/settings.js";
 import { renderPanel, resetPanelScroll, askPrompt } from "./render/panel.js";
 import { renderSessions, currentSession } from "./render/sessions.js";
@@ -243,116 +244,7 @@ function toggleRule(id) {
     : `Off ${ownerWords()}. Rerail stops auditing “${titleOf(stored)}”.`);
 }
 
-const packName = id => packById(id)?.name ?? id;
-const packAttachment = (id, folder) => ({ sourceKind: "pack", sourceId: id, folder });
-
-/**
- * Packs added by one click, decided at the click so the write keeps its place in the queue: each pack's folder for
- * the shown state, and a promise of the attachments to write (`null` once the page shows another repository). The
- * folders come from the recommendations for the scope the click was in: the page's own when it has them, else
- * fetched for that scope, so a switch while they load never lends the write another repository's folders. While
- * they load, a folder is a promise of it; if they cannot be read, the write fails and the shown state is rolled back.
- */
-function additions(scope, ids) {
-  const loaded = data.recommendations;
-  const recommendations = loaded === null
-    ? recommendationsFor(scope).catch(error => { throw new Error(`could not read the repo (${error.message})`); })
-    : Promise.resolve(loaded);
-  return {
-    folders: ids.map(id => (loaded === null ? recommendations.then(r => packFolder(r, id), () => "") : packFolder(loaded, id))),
-    add: recommendations.then(r => (stillShown(scope) ? ids.map(id => packAttachment(id, packFolder(r, id))) : null)),
-  };
-}
-
-/** True while the page shows the repository the write was started in; else the write is dropped, and said so. */
-function stillShown(scope) {
-  if (inScope(scope)) return true;
-  toast("Nothing saved: the repository changed before the change was sent.");
-  return false;
-}
-
-/**
- * One `PUT /api/repository/attachments` to the repository the action started in, queued at the click behind the
- * attachment writes clicked before it; `body` may still be loading. The shown packs change at once to `attached`
- * (and a `configure` write marks the repository set up). On error they go back to what they were before this click
- * and the poll reads them back; the writes clicked after it are dropped, so that also undoes their changes. Dropped
- * when the page shows another repository before it is sent; once it is, neither the answer nor a rollback touches
- * the page.
- */
-async function setAttachments(scope, { body, attached, configure = false }, message) {
-  const before = { attached: data.attachedPacks, repository: data.repository };
-  data.attachedPacks = attached;
-  if (configure && data.repository !== null) data.repository = { ...data.repository, setUp: true };
-  ui.removeAsk = null;
-  invalidate();
-  let shown;
-  try {
-    shown = await queueInScope(scope, "PUT", "/api/repository/attachments", body);
-  } catch (error) {
-    data.attachedPacks = before.attached;
-    data.repository = before.repository;
-    toast(`Could not save: ${error.message}`);
-    await refreshNow();
-    return;
-  }
-  if (!shown) return;
-  await refreshNow();
-  toast(typeof message === "function" ? message() : message);
-}
-
-/** Add packs, each at its recommended folder, else the whole repository. The first addition sets the repository up. */
-function addPacks(ids, message) {
-  const fresh = ids.filter(id => !data.attachedPacks.has(id));
-  if (fresh.length === 0) return;
-  const scope = captureScope();
-  const { folders, add } = additions(scope, fresh);
-  const attached = new Map([...data.attachedPacks, ...fresh.map((id, i) => [id, [folders[i]]])]);
-  return setAttachments(scope, { body: add.then(a => a && { add: a }), attached }, message);
-}
-
-/**
- * Remove a pack: every attachment it has, at each folder it is added at, in one write. A folder still loading for
- * an add queued before this click is awaited, and that add is sent first.
- */
-function removePack(id, message) {
-  const folders = data.attachedPacks.get(id) ?? [];
-  const attached = new Map([...data.attachedPacks].filter(([packId]) => packId !== id));
-  const body = Promise.all(folders).then(known => ({ remove: known.map(folder => packAttachment(id, folder)) }));
-  return setAttachments(captureScope(), { body, attached }, message);
-}
-
-/** Review in a repository that is not set up: the kept packs at their folders, and set up, in one write. */
-function setUpWithPacks(ids, message) {
-  const scope = captureScope();
-  const { folders, add } = additions(scope, ids);
-  const attached = new Map(ids.map((id, i) => [id, [folders[i]]]));
-  return setAttachments(scope, { body: add.then(a => a && { add: a, configure: true }), attached, configure: true }, message);
-}
-
-/** "Set up with recommended packs": the packs recommended for this checkout, each added at its folder. */
-async function setUpRecommended() {
-  if (ui.settingUp) return;
-  ui.settingUp = true;
-  invalidate();
-  // Recommended for this repository, so added to this repository even if the person switches while the GET runs;
-  // the outcome is told only on its page.
-  const scope = captureScope();
-  try {
-    const recommendations = await recommendationsFor(scope);
-    const add = recommendations.map(({ packId, folder }) => packAttachment(packId, folder));
-    await send("PUT", "/api/repository/attachments", { ...scope.target, add, configure: true });
-    if (inScope(scope)) {
-      toast(add.length === 0
-        ? "Set up with no rule packs: none fits this repository yet."
-        : `Set up with ${add.map(({ sourceId, folder }) => (folder === "" ? packName(sourceId) : `${packName(sourceId)} in ${folder}`)).join(", ")}.`);
-    }
-  } catch (error) {
-    if (inScope(scope)) toast(`Could not set up: ${error.message}`);
-  }
-  ui.settingUp = false;
-  invalidate();
-  refreshNow();
-}
+const { addPacks, removePack, setUpRecommended, keepPack } = attachmentWrites({ toast, invalidate });
 
 /** Start or stop every checkout of a repository (people only; it clears each checkout's own value). */
 async function setRepository(key, verb) {
@@ -487,14 +379,16 @@ function navigate(repositoryKey) {
   window.scrollTo(0, 0);
 }
 
-/** Back and forward between repositories: the URL's scope, when it differs from the page's. */
+/** Back and forward between repositories: the URL's scope, when it differs from the page's, with its view and rule link. */
 window.addEventListener("popstate", () => {
   const scope = readScope(location.search);
   if (scope?.repository === ui.scope?.repository && scope?.checkout === ui.scope?.checkout) return;
   resetRepositoryView();
-  ui.view = routeFromHash().view;
+  const route = routeFromHash();
+  ui.view = route.view;
   changeScope(scope);
   enterView(ui.view);
+  applyRoute(route);
   invalidate();
 });
 
@@ -540,6 +434,9 @@ function foldSection(key) {
   for (const k of [...ui.groupOpen.keys()]) if (k.startsWith(`${key}|`)) ui.groupOpen.delete(k);
 }
 
+/** After a switch in the review. */
+const keptMessage = (id, keep) => `${packName(id)} ${keep ? "kept on" : "switched off"}.`;
+
 /** After a pack is removed: its rules that stay are the ones added to the repository on their own. */
 function removedMessage(id) {
   const kept = rulesArray().filter(r => packOfRule(r)?.id === id).length;
@@ -575,22 +472,18 @@ const ACTIONS = {
   backrules: () => goView("rules"),
   newrule: () => { ui.panel = { kind: "create" }; invalidate(); },
   viewpack: id => { ui.panel = { kind: "pack", id }; ui.backToPack = null; invalidate(); },
-  addpack: id => addPacks([id], `${packName(id)} added. Its rules are on.`),
+  // During the review of a repository not set up yet, the panel's Add and Remove are the review's switch.
+  addpack: id => (reviewing() ? keepPack(id, true, keptMessage(id, true)) : addPacks([id], `${packName(id)} added. Its rules are on.`)),
   removepack: id => {
     if (ui.removeAsk !== id) { ui.removeAsk = id; invalidate(); return; }
-    removePack(id, () => removedMessage(id));
+    if (reviewing()) keepPack(id, false, keptMessage(id, false));
+    else removePack(id, () => removedMessage(id));
   },
   cancelremove: () => { ui.removeAsk = null; invalidate(); },
   catview: v => { ui.catView = v; invalidate(); },
   reviewtoggle: id => {
-    if (data.repository === null) return;
-    const kept = keptPacks(), on = kept.includes(id);
-    const message = on ? `${packName(id)} switched off.` : `${packName(id)} kept on.`;
-    // The first change in a repository that is not set up writes the whole kept set and sets it up; the changes
-    // clicked while it is sent are single-pack writes queued behind it, never sent if it fails.
-    if (!isSetUp()) setUpWithPacks(on ? kept.filter(x => x !== id) : [...kept, id], message);
-    else if (on) removePack(id, message);
-    else addPacks([id], message);
+    const keep = !keptPacks().includes(id);
+    keepPack(id, keep, keptMessage(id, keep));
   },
   recommend: async () => {
     ui.recommend = "loading"; invalidate();
@@ -622,11 +515,7 @@ const ACTIONS = {
   },
   cmdcopy: text => copyText(text, null, `Copied ${text}`),
   range: id => { ui.range = Number(id); ui.recentShown = 50; invalidate(); refreshNow(); },
-  more: async () => {
-    ui.recentShown += 50;
-    if (ui.recentShown > data.findings.length) await loadMoreFindings();
-    invalidate();
-  },
+  more: async () => { await showMoreActivity(); invalidate(); },
   actrule: id => { ui.actRule = id; ui.actPack = ""; ui.recentShown = 50; goView("activity"); invalidate(); },
   actclear: () => { ui.actRule = null; invalidate(); },
   session: id => { closePanel(); goView("sessions"); selectSession(id, () => { const first = document.querySelector(".tl .corr"); if (first) jumpTo(first.dataset.key); }); },

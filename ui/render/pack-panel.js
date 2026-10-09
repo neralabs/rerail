@@ -2,11 +2,14 @@
 import { h, setContent, chevron, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
 import { categoryLabel } from "../derive.js";
-import { data, ui, isAttached, packGroups } from "../state.js";
+import { data, ui, isAttached, packGroups, keptPacks, reviewing } from "../state.js";
+
+/** Whether the pack is on where its button shows: kept, during the review of a repository not set up yet; else added. */
+const packOn = pack => (reviewing() ? keptPacks().includes(pack.id) : isAttached(pack));
 
 /** Add pack; or Remove pack, which asks once in place ("Remove all 74 rules in TSLint?") before it acts. */
 export function packAction(pack, solid = false) {
-  if (!isAttached(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
+  if (!packOn(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
   if (ui.removeAsk !== pack.id) return h("button.btn.sm.danger", { "data-act": "removepack", "data-i": pack.id }, "Remove pack");
   const n = pack.rules.length;
   return h("span.rmask", { role: "alertdialog", "aria-label": `Remove ${pack.name}?` },
@@ -41,7 +44,7 @@ export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`sp
 
 export function renderPackPanel(root, pack) {
   const added = isAttached(pack), groups = packGroups(pack);
-  const sig = `pack|${pack.id}|${added}|${ui.removeAsk === pack.id}|${[...data.rules.keys()].length}`;
+  const sig = `pack|${pack.id}|${added}|${packOn(pack)}|${ui.removeAsk === pack.id}|${[...data.rules.keys()].length}`;
   setContent(root, sig, () => h("div.pwrap", null,
     h("div.phead", null,
       h("div.ptop", null, packIcon(pack), h("div", null, h("div.eyebrow", null, `Rule pack · ${packKind(pack)}`), h("h2", null, pack.name)),

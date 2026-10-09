@@ -63,11 +63,11 @@ person says yes.
    agents to connect, or pick rule packs yourself (the repository is set up
    with no packs and no code is read). See [Rule scoping](rule-scoping.md#set-up)
    for how each answer attaches packs.
-5. **Start, in this checkout only** — the chosen coding agents (all found,
+5. **Start, in this repository** — the chosen coding agents (all found,
    unless named) are connected, the recommended packs (or the ones kept on in
-   the review) are attached to the repository, and the checkout set-up ran in
-   is started with the checkouts
-   inside it. Connecting writes persistent registrations, all pointing at
+   the review) are attached to the repository, and the repository is started:
+   every checkout of it, the one set-up ran in included, that has not been
+   stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
    `~/.rerail/current` so future updates never touch coding agent config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`

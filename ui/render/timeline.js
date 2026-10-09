@@ -1,6 +1,6 @@
 import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js";
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
-import { isLog } from "../derive.js";
+import { violationOutcome } from "../derive.js";
 import { data, ui, sinceFor, rangeLabel, titleOf } from "../state.js";
 import { openState, lastEventAt, outputText, describeInput } from "../sessions-model.js";
 
@@ -162,7 +162,7 @@ function updateCorr(node, item) {
   const c = item.c, f = c.finding;
   setText(node.querySelector("b"), titleOf(c.rule));
   setText(node.querySelector(".mono"), c.rule.rule.id);
-  setText(node.querySelector(".badge"), isLog(c.rule) ? "Logged" : "Steered");
+  setText(node.querySelector(".badge"), violationOutcome(f) === "logged" ? "Logged" : "Steered");
   setAttr(node.querySelector("[data-act=detail]"), "data-i", c.rule.rule.id);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);

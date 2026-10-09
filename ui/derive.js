@@ -54,6 +54,8 @@ export const ruleMode = stored => stored.rule.mode;
 export const MODE_LABEL = { log: "Log", steer: "Steer", block: "Block" };
 export const modeLabel = stored => MODE_LABEL[ruleMode(stored)] ?? ruleMode(stored);
 export const isLog = stored => ruleMode(stored) === "log";
+/** How Rerail handled one past violation: by the mode recorded with it, since the rule may have changed mode. Block shows as Steered (not in this version). */
+export const violationOutcome = finding => (finding.mode === "log" ? "logged" : "steered");
 
 /** One sentence per mode, as the rule panel explains it. */
 export const MODE_PLAIN = {

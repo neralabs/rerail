@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { data, ruleSections, ui } from "../../ui/state.js";
-import { keptPacks } from "../../ui/render/packs.js";
+import { data, keptPacks, ruleSections, ui } from "../../ui/state.js";
 import { attachedPacksOf } from "../../ui/poll.js";
 
 type SourceKind = "pack" | "rerail_rule" | "library_rule";

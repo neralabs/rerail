@@ -134,13 +134,15 @@ export function sinceFor(range = ui.range) {
 const RANGE_LABEL = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;
 export const activityAllOf = id => data.activityAll[id] ?? NONE;
 export const isMeasured = id => activityOf(id).measured !== false;
 /** The number a row shows: distinct violations in range (Q20b). Cosine rules read 0 (Q22a). */
 export const fires = id => (isMeasured(id) ? activityOf(id).distinctViolations : 0);
 export const allFires = id => (isMeasured(id) ? activityAllOf(id).distinctViolations : 0);
+/** Whether any audit since install evaluated or flagged the rule: what makes a zero mean "clean" rather than "never run". */
+export const isAudited = id => isMeasured(id) && (activityAllOf(id).audits > 0 || activityAllOf(id).distinctViolations > 0);
 export const rerails = id => activityOf(id).rerails;
 
 export const rulesArray = () => [...data.rules.values()];
@@ -153,6 +155,16 @@ export const repoName = () => data.repository?.name ?? "";
 export const stateHere = () => data.checkout?.state ?? data.repository?.state;
 /** The repository has a configuration: something was attached, or it was set up with none. */
 export const isSetUp = () => data.repository?.setUp === true;
+/**
+ * The packs kept on: the packs attached to a repository that is set up; before it is, the ones set-up
+ * recommends, until the first switch writes the kept set and sets the repository up.
+ */
+export function keptPacks() {
+  if (isSetUp()) return [...data.attachedPacks.keys()];
+  return (data.recommendations ?? []).map(r => r.packId);
+}
+/** The review of a repository that is not set up yet: a pack is on there when it is kept, and changes write the kept set. */
+export const reviewing = () => ui.view === "review" && !isSetUp();
 
 /* ---------- rule packs ---------- */
 
@@ -272,7 +284,8 @@ export function summary() {
     const id = r.rule.id, f = fires(id), a = activityOf(id);
     triggers += f;
     rerailTotal += a.rerails;
-    if (isLog(r)) logged += f;
+    // Counted by the mode recorded with each violation; the rule may have changed mode since.
+    if (isMeasured(id)) logged += a.loggedViolations ?? 0;
     if (a.rerails > 0) steerRules += 1;
     if (f > 0) { firedN += 1; if (r.enabled) firedOn += 1; }
     if (a.sessions > maxRuleSessions) maxRuleSessions = a.sessions;
@@ -293,6 +306,34 @@ export function summary() {
 }
 
 /** Findings in range for one rule, newest first, from the fetched pages. */
+const OTHER_RULES = "Other rules";
+/** The rule pack a violation files under on Activity: the added pack its rule is present through, else Other or Created rules. */
+export const activityPackOf = stored => (stored ? attachedPackOf(stored)?.name ?? (isByRerail(stored) ? OTHER_RULES : "Created rules") : OTHER_RULES);
+
+/**
+ * What Activity shows under its pack and rule filters. The fetched pages are a prefix of the range, so
+ * while the server has more (`findingsTotal`) a filter's matches may lie further back: `more` stays
+ * available and an empty filtered list is not yet "none".
+ */
+export function activityView() {
+  const filtered = ui.actPack !== "" || ui.actRule !== null;
+  const list = filtered
+    ? data.findings.filter(x => (!ui.actPack || activityPackOf(data.rules.get(x.ruleId)) === ui.actPack) && (ui.actRule === null || x.ruleId === ui.actRule))
+    : data.findings;
+  const serverHasMore = data.findings.length < data.findingsTotal;
+  const shown = list.slice(0, ui.recentShown);
+  const loadedLeft = list.length - shown.length;
+  // Unfiltered, the server's total is the exact count; filtered, only the loaded matches are known.
+  const total = filtered ? list.length : Math.max(data.findingsTotal, list.length);
+  return {
+    filtered, list, shown,
+    none: list.length === 0 && !(filtered && serverHasMore),
+    more: filtered
+      ? (loadedLeft > 0 || serverHasMore) && { count: loadedLeft > 0 ? Math.min(50, loadedLeft) : null, of: serverHasMore ? null : total }
+      : total - shown.length > 0 && { count: Math.min(50, total - shown.length), of: total },
+  };
+}
+
 export const ruleFindings = id => data.findings.filter(x => x.ruleId === id);
 
 /** The rule a panel shows, when the panel shows one. */

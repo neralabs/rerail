@@ -210,10 +210,14 @@ function repositoryAt(folder: string): Repository | undefined {
   return { root: workspaceRoot, name: checkoutName(workspaceRoot, true) };
 }
 
+const HOME_FOLDER_REFUSED = "Start Rerail inside a repository, not your home folder.";
+
+const isHomeFolder = (root: string): boolean => resolve(root) === resolve(homedir());
+
 /** The Git repository set-up ran in, if any. A plain folder, or the home folder, is no repository to offer. */
 function repositoryHere(cwd: string): Repository | undefined {
   const location = repositoryIdentityLocation(cwd);
-  if (!location.git || resolve(location.workspaceRoot) === resolve(homedir())) return undefined;
+  if (!location.git || isHomeFolder(location.workspaceRoot)) return undefined;
   return { root: location.workspaceRoot, name: checkoutName(location.workspaceRoot, true) };
 }
 
@@ -352,7 +356,7 @@ async function connect(run: Run, repository: Repository | undefined, chosen?: re
 }
 
 /**
- * Set the repository up and start Rerail in this checkout. A repository that is not set up adds `packs`, each at
+ * Set the repository up and start Rerail in it: every checkout without its own stop. A repository that is not set up adds `packs`, each at
  * its folder (none for "I'll pick rule packs myself"). One the dashboard's review set up keeps the packs kept on
  * there, or drops every pack for "I'll pick rule packs myself": until Rerail starts, only the person in the
  * dashboard adds packs to it. Returns how many rule packs are added, or undefined when the repository was set up
@@ -474,24 +478,41 @@ async function confirm(run: Run, repository: Repository, answer: string | undefi
   }
 }
 
-/** Steps 3 to 6 for one repository. `chosen`: the person named it, which is the go-ahead to read it. */
+/**
+ * Steps 3 to 6 for one repository. `chosen`: the person named it, which is the go-ahead to read it. The home folder,
+ * named or typed, is no repository: set-up says so and asks which project instead.
+ */
 async function setUpOneRepository(run: Run, repository: Repository, chosen: boolean, answer: string | undefined): Promise<SetupOutcome> {
+  if (isHomeFolder(repository.root)) {
+    say(run.io, HOME_FOLDER_REFUSED);
+    return noRepository(run);
+  }
   const state = setUpState(repository.root, run.databasePath);
   if (state === "set-up") return alreadySetUp(run, repository);
   // The review was offered here: its link again, but no second browser, and never back to the read-repo question.
   const reviewing = state === "awaiting-start" || state === "review-offered";
-  if (run.request.agentsError !== undefined) return confirm(run, repository, reviewing ? "review" : undefined, reviewing);
-  if (answer === "pick-myself") return pickMyself(run, repository);
+  const { agentsError, ...request } = run.request;
+  if (answer === "pick-myself") {
+    if (agentsError === undefined) return pickMyself(run, repository);
+    // "Rerail reads no code": a bad list asks again the question that offers it, and leaves the repository unread.
+    say(run.io, agentsError);
+    return askToRead({ ...run, request }, repository);
+  }
+  if (agentsError !== undefined) return confirm(run, repository, reviewing ? "review" : undefined, reviewing);
   if (reviewing) return confirm(run, repository, answer === "start" || answer === "other" ? answer : "review", true);
   if (chosen || answer === "yes" || answer === "start" || answer === "review" || answer === "other") return confirm(run, repository, answer);
+  return askToRead(run, repository);
+}
+
+/** Step 3: may Rerail read the repository? Each answer goes on as `--answer` would. */
+async function askToRead(run: Run, repository: Repository): Promise<SetupOutcome> {
   const picked = await choose(run, readRepoQuestion({
     repoName: repository.name,
     repoPath: repository.root,
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   }), READ_REPO_ANSWERS);
   if (picked === undefined) return halted(run.io);
-  if (picked === "pick-myself") return pickMyself(run, repository);
-  if (picked === "yes") return confirm(run, repository, undefined);
+  if (picked !== "other-folder") return setUpOneRepository(run, repository, false, picked);
   const other = await askFolder(run.io);
   return other === undefined ? halted(run.io) : setUpOneRepository(run, other, true, undefined);
 }
@@ -537,7 +558,7 @@ export async function runRepositorySetup(workspace: string, io: RepositorySetupI
   const answer = checkSetupAnswer(options.answer);
   const repository = repositoryAt(workspace);
   if (repository === undefined) throw new Error(`There is no folder at ${workspace}. Nothing was read.`);
-  if (repository.root === resolve(homedir())) throw new Error("Start Rerail inside a repository, not your home folder.");
+  if (isHomeFolder(repository.root)) throw new Error(HOME_FOLDER_REFUSED);
   // Read before set-up writes anything: stopped, or started but not set up.
   const previous = workspaceStartState(repository.root, run.databasePath);
   const outcome = await setUpOneRepository(run, repository, false, answer);

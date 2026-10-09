@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureScope, changeScope, inScope, queueInScope, recommendationsFor, sendInScope } from "../../ui/poll.js";
-import { data, setScope } from "../../ui/state.js";
+import { data, keptPacks, setScope, ui } from "../../ui/state.js";
+import { attachmentWrites } from "../../ui/attachments.js";
 
 type Request = { method: string; url: URL; body: unknown; answer: (status: number, body?: unknown) => void };
 
@@ -179,5 +180,82 @@ describe("attachment writes clicked in quick succession", () => {
     writes()[1]!.answer(200, {});
     await expect(inB).resolves.toBe(true);
     expect(writes()).toHaveLength(2);
+  });
+
+  it("resolves false, so nothing is rolled back onto the page, when its body fails after a switch", async () => {
+    const scope = captureScope();
+    const adding = queueInScope(scope, "PUT", attachments, recommendationsFor(scope).then(r => ({ add: r })));
+    switchToB();
+    recommendationsRead().answer(503, { error: "daemon restarting" });
+
+    await expect(adding).resolves.toBe(false);
+    expect(writes()).toEqual([]);
+  });
+});
+
+describe("the page's rule pack writes", () => {
+  const toast = vi.fn();
+  const page = () => attachmentWrites({ toast, invalidate: () => {} });
+  const pack = (id: string, folder: string) => ({ sourceKind: "pack", sourceId: id, folder });
+  const recommended = [{ packId: "tslint", folder: "web" }, { packId: "zod", folder: "" }];
+  const recommendationsRead = () => requests.find(r => r.url.pathname === "/api/rule-packs/recommendations")!;
+
+  beforeEach(() => {
+    toast.mockReset();
+    // A fresh page for repository A: a new write queue, whatever an earlier test left pending.
+    changeScope({ repository: "A" });
+    data.repository = { setUp: false };
+    ui.view = "review";
+    ui.settingUp = false;
+  });
+
+  it("never puts the repository it started in back on another repository's page when it fails after a switch", async () => {
+    const keeping = page().keepPack("zod", true, "Zod kept on.");
+    switchToB();
+    const shownInB = new Map([["eslint", [""]]]);
+    data.attachedPacks = shownInB;
+    data.repository = { setUp: true };
+    recommendationsRead().answer(503, { error: "daemon restarting" });
+
+    await keeping;
+    expect(data.attachedPacks).toBe(shownInB);
+    expect(data.repository).toEqual({ setUp: true });
+    expect(toast).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
+  it("sends Set up with recommended packs before a review switch clicked after it, so the switch is not undone", async () => {
+    data.recommendations = recommended;
+    page().setUpRecommended();
+    page().keepPack("zod", false, "Zod switched off.");
+
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]!.body).toEqual({ repository: "A", add: [pack("tslint", "web"), pack("zod", "")], configure: true });
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]!.body).toEqual({ repository: "A", remove: [pack("zod", "")] });
+    expect([...data.attachedPacks.keys()]).toEqual(["tslint"]);
+  });
+
+  it("shows the recommended packs added once they load, so a switch clicked then is queued behind the set-up", async () => {
+    page().setUpRecommended();
+    recommendationsRead().answer(200, { recommendations: recommended });
+    await vi.waitFor(() => expect(data.repository).toEqual({ setUp: true }));
+    page().keepPack("zod", false, "Zod switched off.");
+
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]!.body).toEqual({ repository: "A", add: [pack("tslint", "web"), pack("zod", "")], configure: true });
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]!.body).toEqual({ repository: "A", remove: [pack("zod", "")] });
+  });
+
+  it("keeps the other recommended packs when a pack is added during the review, as from its panel", async () => {
+    data.recommendations = recommended;
+    page().keepPack("eslint", true, "ESLint kept on.");
+
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]!.body).toEqual({ repository: "A", add: [pack("tslint", "web"), pack("zod", ""), pack("eslint", "")], configure: true });
+    expect(keptPacks()).toEqual(["tslint", "zod", "eslint"]);
   });
 });

@@ -114,9 +114,14 @@ function connectedText(agents: readonly CodingAgent[]): string {
 }
 
 const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
-/** One shell word; set-up quotes the launcher path it hands the coding agent with it too. */
-export function shellQuote(value: string): string {
-  return SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+/**
+ * One shell word; set-up quotes the launcher path it hands the coding agent with it too. POSIX shells get single
+ * quotes. Windows gets double quotes, as cmd.exe (and Git Bash) take a quoted path, like every command Rerail writes
+ * for Windows (`harness-registration.ts`); a Windows path cannot contain `"`.
+ */
+export function shellQuote(value: string, platform: NodeJS.Platform = process.platform): string {
+  if (SHELL_SAFE.test(value)) return value;
+  return platform === "win32" ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 // ── Questions ───────────────────────────────────────────────────────────────
@@ -156,7 +161,7 @@ const AGENT_QUESTION_OUTRO = "Do not choose for them. When they answer, run set-
 /** What the coding agent runs for one answer: the command, the answer's arguments, and the value it names. */
 function agentCommand(form: QuestionForm, choice: Choice): string {
   const input = choice.input === undefined ? [] : [choice.input.flag, choice.input.placeholder];
-  const command = [form.setupCommand ?? SETUP_COMMAND, ...choice.args.map(shellQuote), ...input].join(" ");
+  const command = [form.setupCommand ?? SETUP_COMMAND, ...choice.args.map(arg => shellQuote(arg)), ...input].join(" ");
   return choice.agentText === undefined ? command : choice.agentText(command);
 }
 

@@ -4,15 +4,12 @@
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, clock, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { data, ui, rangeLabel, titleOf, attachedPackOf } from "../state.js";
-import { isByRerail } from "../derive.js";
+import { data, ui, rangeLabel, titleOf, activityPackOf, activityView } from "../state.js";
+import { violationOutcome } from "../derive.js";
 import { rangeControl, syncRange } from "./overview.js";
 
 let pane = null;
 
-const OTHER = "Other rules";
-/** The rule pack a violation files under: the added pack its rule is present through, else Other or Created rules. */
-const packNameOf = stored => (stored ? attachedPackOf(stored)?.name ?? (isByRerail(stored) ? OTHER : "Created rules") : OTHER);
 
 function build() {
   const rows = h("div.list.recent-rows");
@@ -42,8 +39,7 @@ function updateRow(node, item) {
   if (item.day !== undefined) return;
   const x = item.x, stored = data.rules.get(x.ruleId);
   setText(node.querySelector(".when"), clock(x.at));
-  // The mode the violation was reported with; the rule may have changed since. Block is shown as Steered (not in this version).
-  const outcome = x.mode === "log" ? "logged" : "steered";
+  const outcome = violationOutcome(x);
   const oc = node.querySelector(".oc");
   if (oc.dataset.o !== outcome) {
     oc.dataset.o = outcome;
@@ -65,7 +61,7 @@ function updateRow(node, item) {
 
 function syncPackSelect(select, findings) {
   const counts = new Map();
-  for (const x of findings) { const n = packNameOf(data.rules.get(x.ruleId)); counts.set(n, (counts.get(n) ?? 0) + 1); }
+  for (const x of findings) { const n = activityPackOf(data.rules.get(x.ruleId)); counts.set(n, (counts.get(n) ?? 0) + 1); }
   const options = [["", `All rule packs · ${fmt(findings.length)}`], ...[...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([n, c]) => [n, `${n} · ${fmt(c)}`])];
   const sig = JSON.stringify(options);
   if (select.dataset.sig !== sig) {
@@ -84,13 +80,10 @@ export function renderActivity(root) {
   const ruleName = ui.actRule === null ? null : (data.rules.get(ui.actRule) ? titleOf(data.rules.get(ui.actRule)) : ui.actRule);
   setContent(a.lead, JSON.stringify([label, ruleName]), () => [`Every violation logged ${label}, newest first.`,
     ruleName === null ? null : h("button.chip", { "data-act": "actclear", "aria-pressed": "true", title: "Show every rule again" }, `${ruleName} ✕`)]);
-  const list = data.findings.filter(x => (!ui.actPack || packNameOf(data.rules.get(x.ruleId)) === ui.actPack) && (ui.actRule === null || x.ruleId === ui.actRule));
-  const filtered = ui.actPack !== "" || ui.actRule !== null;
-  const total = filtered ? list.length : Math.max(data.findingsTotal, list.length);
-  setAttr(a.empty, "hidden", total > 0);
+  const { filtered, shown, none, more } = activityView();
+  setAttr(a.empty, "hidden", !none);
   setText(a.empty.querySelector("p"), `Rerail audited the sessions ${label} and logged no violations${filtered ? " for this filter" : ""}. Widen the range above to see earlier ones.`);
-  setAttr(a.rows, "hidden", total === 0);
-  const shown = list.slice(0, ui.recentShown);
+  setAttr(a.rows, "hidden", none);
   const items = [];
   let lastDay = null;
   for (const x of shown) {
@@ -99,7 +92,6 @@ export function renderActivity(root) {
     items.push({ key: `${x.auditId}:${x.id}`, x });
   }
   syncChildren(a.rows, items, i => i.key, createRow, updateRow);
-  const remaining = total - shown.length;
-  setAttr(a.more, "hidden", remaining <= 0);
-  setText(a.more.firstChild, `Show ${fmt(Math.min(50, remaining))} more of ${fmt(total)}`);
+  setAttr(a.more, "hidden", !more);
+  if (more) setText(a.more.firstChild, `Show ${more.count === null ? "" : `${fmt(more.count)} `}more${more.of === null ? "" : ` of ${fmt(more.of)}`}`);
 }

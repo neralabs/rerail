@@ -14,7 +14,7 @@ vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOrigi
 });
 import { runSetup, runSetupStep, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
-import { runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
+import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/setup-cli.js";
 import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS, shellQuote } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
@@ -88,7 +88,7 @@ function expectParity(question: SetupQuestion, agent: string, keys: readonly str
   expect(question.options.map(option => option.answer)).toEqual([...keys]);
   expect(question.options.map((option, index) => `${index + 1}. ${option.label}${option.detail === null ? "" : `  ${option.detail}`}`)).toEqual(answers);
   question.options.forEach((option, index) => {
-    const command = ["rerail setup", ...option.next.args.slice(2).map(shellQuote)].join(" ");
+    const command = ["rerail setup", ...option.next.args.slice(2).map(arg => shellQuote(arg))].join(" ");
     expect(commands[index]).toContain(command);
     if (option.input !== null) expect(commands[index]).toContain(`${command} ${option.input.flag} <`);
   });
@@ -204,6 +204,17 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(step).toMatchObject({ step: "done", question: null });
     expect(step.screen.split("\n").at(-1)).toBe("  http://127.0.0.1:4737/#rules");
     expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false });
+  });
+
+  it("takes `--relay`, as `/rerail-start` passes it, and answers in JSON", async () => {
+    const setup = await fixture();
+    const home = join(setup.root, "home");
+    const packageRoot = join(setup.root, "package");
+    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) };
+    const place = { cwd: setup.repo, databasePath: setup.databasePath, environment: () => fakeSetupEnvironment() };
+    const step = await runSetupStepArgs(["start", "--relay", "--json"], context, place);
+    expect(step.step).toBe("read-repo");
+    expect(step.question!.options[0]!.next.args).toEqual(["setup", "--database", setup.databasePath, "--json", "--answer", "yes", "--repo", setup.repo]);
   });
 });
 
