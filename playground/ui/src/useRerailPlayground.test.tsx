@@ -3,10 +3,10 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import type * as RulesApi from "./rulesApi";
+import type * as RulesApi from "./rules-api";
 import { useRerailPlayground } from "./useRerailPlayground";
 
-vi.mock("./rulesApi", async (importOriginal) => ({
+vi.mock("./rules-api", async (importOriginal) => ({
   ...(await importOriginal<typeof RulesApi>()),
   fetchRules: vi.fn(async () => []),
 }));
