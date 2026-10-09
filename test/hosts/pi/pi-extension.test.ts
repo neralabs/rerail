@@ -30,7 +30,7 @@ import {
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
-import type { RerailCommandContext } from "../../../src/harness/index.js";
+import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
@@ -38,7 +38,7 @@ import { startTestRepository, stopTestRepository } from "../../support/started-r
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
 vi.setConfig({ testTimeout: 30_000 });
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
-type CommandHandler = (args: string, context: RerailCommandContext) => Promise<void>;
+type CommandHandler = (args: string, context: HostCommandContext) => Promise<void>;
 interface PiHarness {
   handlers: Map<string, Handler>;
   commands: Map<string, CommandHandler>;

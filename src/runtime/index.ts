@@ -5,6 +5,7 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export {
+  DAEMON_STATE_FILE,
   type DaemonHealth,
   type DaemonLaunchOptions,
   type DaemonState,

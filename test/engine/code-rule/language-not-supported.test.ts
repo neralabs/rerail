@@ -79,7 +79,7 @@ describe("a rule for a planned language", () => {
     gitRepository(workspace);
     const databasePath = join(root, "rerail.sqlite");
     setUpTestRepository(workspace, {
-      library: [{ kind: "file", rule: astCodeRule("planned:vue", "vue") }, { kind: "file", rule: astCodeRule("supported:python", "python") }],
+      library: [{ kind: "code", rule: astCodeRule("planned:vue", "vue") }, { kind: "code", rule: astCodeRule("supported:python", "python") }],
     }, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath);
     try {
@@ -87,7 +87,7 @@ describe("a rule for a planned language", () => {
       const catalog = catalogs.catalog(workspace);
       expect(catalog.snapshot().codeRules.map(entry => entry.id)).toEqual(["supported:python"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "planned:vue", kind: "file", owner: "library", reason: reason("vue"), code: LANGUAGE_NOT_SUPPORTED },
+        { ruleId: "planned:vue", kind: "code", owner: "library", reason: reason("vue"), code: LANGUAGE_NOT_SUPPORTED },
       ]);
       expect(warnings).not.toHaveBeenCalled();
     } finally {
@@ -110,7 +110,7 @@ describe("a rule for a planned language", () => {
       const put = async (rule: CodeRule) => app.request(`/api/library-rules/${rule.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json", host: "127.0.0.1:4737" },
-        body: JSON.stringify({ kind: "file", rule, checkout: workspace, attach: true }),
+        body: JSON.stringify({ kind: "code", rule, checkout: workspace, attach: true }),
       });
       const stored = await put(astCodeRule("planned:sql", "sql"));
       expect(stored.status).toBe(200);

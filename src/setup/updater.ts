@@ -290,14 +290,24 @@ export async function validateManagedInstallation(installation: Installation): P
     throw new Error("Installed native runtime health check failed");
   }
 
-  // The round-trip runs in a scratch repository with its own home, so it neither autostarts a daemon from a
-  // staging directory nor writes into a database shared with anything else.
+  // The round-trip runs in a scratch repository with its own Rerail home and user home, so it neither autostarts
+  // a daemon from a staging directory nor writes into a database or user file shared with anything else; a
+  // candidate that does not speak this build's protocol fails here without touching the real home.
   const root = await mkdtemp(join(tmpdir(), "rerail-update-health-"));
   const workspace = join(root, "workspace");
   const storageRoot = join(root, "sessions");
-  const env = { ...process.env, RERAIL_HOME: join(root, "home"), RERAIL_STORAGE_ROOT: storageRoot, RERAIL_AUTOSTART: "0" };
+  const userHome = join(root, "user");
+  const env = {
+    ...process.env,
+    HOME: userHome,
+    USERPROFILE: userHome,
+    RERAIL_HOME: join(root, "home"),
+    RERAIL_STORAGE_ROOT: storageRoot,
+    RERAIL_AUTOSTART: "0",
+  };
   try {
     await mkdir(workspace);
+    await mkdir(userHome);
     await startHealthRepository(join(installation.packageRoot, ENTRY_POINTS.cli), workspace, env);
   } catch (error) {
     await rm(root, { recursive: true, force: true });

@@ -229,14 +229,14 @@ export function nativePlatformSuffix(
   return `${platform}-${architecture}`;
 }
 
-export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_NATIVE_KERNEL_PATH): string {
+export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENGINE_PATH): string {
   if (configuredPath !== undefined) {
     const addonPath = resolve(configuredPath);
-    if (!existsSync(addonPath)) throw new Error(`RERAIL_NATIVE_KERNEL_PATH does not exist: ${addonPath}`);
+    if (!existsSync(addonPath)) throw new Error(`RERAIL_ENGINE_PATH does not exist: ${addonPath}`);
     return addonPath;
   }
-  const fileName = `rerail.${nativePlatformSuffix()}.node`;
-  const candidates = [join(PACKAGE_ROOT, "native", fileName), join(PACKAGE_ROOT, "native", "rerail.node")];
+  const fileName = `rerail_engine.${nativePlatformSuffix()}.node`;
+  const candidates = [join(PACKAGE_ROOT, "native", fileName), join(PACKAGE_ROOT, "native", "rerail_engine.node")];
   const addonPath = candidates.find(existsSync);
   if (addonPath === undefined) {
     throw new Error(`Unsupported platform or missing native addon: ${fileName}`);

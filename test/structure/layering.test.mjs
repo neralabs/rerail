@@ -72,8 +72,8 @@ describe("#13 import direction", () => {
 
 describe("#14 fixtures root", () => {
   it("allows one resolver per language and flags a second", () => {
-    const resolver = 'const root = resolve(repositoryRoot, process.env.RERAIL_FIXTURES_DIR || "fixtures");';
-    const one = fixturesRoot(memoryRepo({ "test/support/oracles.ts": resolver, "native/build.rs": 'let f = root.join("fixtures"); // RERAIL_FIXTURES_DIR' }));
+    const resolver = 'const root = resolve(repositoryRoot, process.env.RERAIL_ORACLES_DIR || "fixtures");';
+    const one = fixturesRoot(memoryRepo({ "test/support/oracles.ts": resolver, "native/build.rs": 'let f = root.join("fixtures"); // RERAIL_ORACLES_DIR' }));
     expect(one.findings).toEqual([]);
     expect(one.actual).toBe("0; Rust 1, TypeScript 1");
     const two = fixturesRoot(

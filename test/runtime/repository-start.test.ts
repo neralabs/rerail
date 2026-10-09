@@ -413,4 +413,27 @@ describe("repository start state", () => {
     expect(stopRerail(checkout, io, { databasePath: join(root, "rerail.sqlite") })).toBe("stopped");
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
   });
+
+  it("reads a database whose creator has not committed its schema yet as stopped, without failing", async () => {
+    const root = await temporary("rerail-creating-");
+    const checkout = gitRepository(join(root, "acme-web"));
+    const databasePath = join(root, "rerail.sqlite");
+    // A creator that has made the file and holds the write lock while its schema transaction is still open.
+    const creator = new Database(databasePath);
+    try {
+      creator.pragma("journal_mode = WAL");
+      creator.exec("BEGIN IMMEDIATE");
+      creator.exec("CREATE TABLE pending (id INTEGER)");
+      expect({
+        state: workspaceStartState(checkout, databasePath),
+        started: isRerailStarted(checkout, databasePath),
+        setUp: workspaceSetUp(checkout, databasePath),
+        statusLine: readOnlyStartState(checkout, databasePath),
+        note: sessionNoteRules(checkout, databasePath),
+      }).toStrictEqual({ state: "stopped", started: false, setUp: false, statusLine: undefined, note: { setUp: false } });
+      creator.exec("COMMIT");
+    } finally {
+      creator.close();
+    }
+  });
 });

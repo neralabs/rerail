@@ -23,10 +23,10 @@ export function corePackDirectories(): string[] {
   return CORE_RULE_PACKS.map(id => join(PACKAGE_ROOT, "packs", id));
 }
 
-/** A file rule (`format` is the code rule format) or a conversation rule; `label` names the source in errors. */
+/** A code rule (`format` is the code rule format) or a conversation rule; `label` names the source in errors. */
 export function parseRuleDocument(value: unknown, label: string): RuleDocument {
   const isCodeRule = typeof value === "object" && value !== null && "format" in value && value.format === CODE_RULE_FORMAT;
-  if (isCodeRule) return { kind: "file", rule: codeRuleSchema.parse(value) };
+  if (isCodeRule) return { kind: "code", rule: codeRuleSchema.parse(value) };
   const conversationRule = conversationRuleSchema.safeParse(value);
   if (conversationRule.success) return { kind: "conversation", rule: conversationRule.data };
   throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);

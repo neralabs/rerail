@@ -42,7 +42,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
   let stores: DatabaseApiStores;
   const codeRule = MOCK_CODE_RULES[0]!;
   /** The mock code rule's upsert body with its clause's `id` given twice; JSON.parse would keep the second. */
-  const repeatedBody = JSON.stringify({ kind: "file", rule: codeRule })
+  const repeatedBody = JSON.stringify({ kind: "code", rule: codeRule })
     .replace('"id":"console-call"', '"id":"first","id":"console-call"');
   const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -77,13 +77,13 @@ describe("rule documents with repeated keys are rejected on write", () => {
     expect(await rejected.json()).toEqual({ error: "duplicate-key", message: "request body: duplicate key `id` at /rule/clauses/0" });
     expect(stored()).toBe(false);
 
-    expect((await put(JSON.stringify({ kind: "file", rule: codeRule }))).status).toBe(200);
+    expect((await put(JSON.stringify({ kind: "code", rule: codeRule }))).status).toBe(200);
   });
 
   it("rejects a deeply nested discarded duplicate key instead of applying last-key-wins", async () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const nested = `${"[".repeat(10_000)}0${"]".repeat(10_000)}`;
-    const body = JSON.stringify({ kind: "file", rule: codeRule }).replace('"kind":"file"', `"kind":${nested},"kind":"file"`);
+    const body = JSON.stringify({ kind: "code", rule: codeRule }).replace('"kind":"code"', `"kind":${nested},"kind":"code"`);
 
     const rejected = await app.request(`/api/library-rules/${codeRule.id}`, {
       method: "PUT",
@@ -115,7 +115,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
 
   it("refuses to import a dump with a repeated key, naming its path", () => {
     const dumpPath = join(root, "rules.json");
-    upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule, "file");
+    upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule, "code");
     expect(runRulesCommand(["export", "--output", dumpPath], () => "usage")).toBe(0);
     removeLibraryRule(stores.database(), codeRule.id);
     writeFileSync(dumpPath, readFileSync(dumpPath, "utf8").replace('"id": "console-call"', '"id": "first", "id": "console-call"'));

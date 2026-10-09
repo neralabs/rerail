@@ -19,7 +19,7 @@ import {
   workspaceStartState,
 } from "../../src/runtime/index.js";
 import { runAuditCommand } from "../../src/cli/audit-cli.js";
-import { registerRerailCommands, type RerailCommandHost } from "../../src/harness/index.js";
+import { registerHostCommands, type HostCommandHost } from "../../src/harness/index.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-rules.js";
 
 const NO_PRINT = codeRuleSchema.parse({
@@ -52,7 +52,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   execFileSync("git", ["add", ".gitignore", "api/clean.py"], { cwd: root });
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
   const database = join(home, "rerail.sqlite");
-  const repositoryKey = setUpTestRepository(root, { library: [{ kind: "file", rule: NO_PRINT }] }, database);
+  const repositoryKey = setUpTestRepository(root, { library: [{ kind: "code", rule: NO_PRINT }] }, database);
   const runtime = new RerailRuntime({
     storageRoot: join(root, ".rerail/sessions"), databasePath: database,
     workspaceRoot: root,
@@ -72,10 +72,10 @@ describe("rerail scan and settings CLI", () => {
   it("starts, stops, and restarts this repository through slash commands", async () => {
     const { root } = await fixture();
     const name = basename(root);
-    const commands = new Map<string, Parameters<RerailCommandHost["registerCommand"]>[1]>();
+    const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
     let reattached = 0;
     const notices: string[] = [];
-    registerRerailCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
+    registerHostCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
       packageRoot: resolve("."),
       cwd: () => root,
       reattach: async () => { reattached += 1; },

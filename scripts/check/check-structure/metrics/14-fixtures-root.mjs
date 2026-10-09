@@ -10,7 +10,7 @@
 //     expression (`repoRoot()`, `process.cwd()`), followed only by `"."`/`".."` segments; the call may
 //     span lines (`join(root, "fixtures")`, `join(here, "..", "..", "fixtures")`); or
 //   - the bare segment anywhere on a path-building line when the file also reads the
-//     `RERAIL_FIXTURES_DIR` override (`root.join("fixtures")`).
+//     `RERAIL_ORACLES_DIR` override (`root.join("fixtures")`).
 // A bare `"fixtures"` deeper in a path (`join(root, "labels", "fixtures")`, an upstream tool's own
 // `fixtures/`) is not the fixtures root. A literal that is only compared (`startsWith(`, `endsWith(`,
 // `includes(`, `===`, `!==`) classifies a path rather than reading one, and name lists are not path
@@ -85,7 +85,7 @@ function isRootSegment(text, index) {
 
 /** The first line at which a file's text resolves a fixtures root, or null. */
 export function resolverLine(text) {
-  const override = text.includes("RERAIL_FIXTURES_DIR");
+  const override = text.includes("RERAIL_ORACLES_DIR");
   LITERAL.lastIndex = 0;
   for (let match = LITERAL.exec(text); match; match = LITERAL.exec(text)) {
     const start = text.lastIndexOf("\n", match.index) + 1;

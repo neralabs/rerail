@@ -70,10 +70,10 @@ function repositoryWithBrokenRow(): { checkout: string; databasePath: string } {
   const checkout = realpathSync(root);
   execFileSync("git", ["init", "--quiet"], { cwd: checkout });
   const databasePath = join(checkout, ".rerail", "rerail.sqlite");
-  setUpTestRepository(checkout, { library: [{ kind: "file", rule: codeRule("test:kept") }, { kind: "file", rule: codeRule("test:broken") }] }, databasePath);
+  setUpTestRepository(checkout, { library: [{ kind: "code", rule: codeRule("test:kept") }, { kind: "code", rule: codeRule("test:broken") }] }, databasePath);
   const database = openRerailDatabase(databasePath);
   try {
-    const broken = { kind: "file", rule: { ...codeRule("test:broken"), clauses: [{ id: "x" }] } } as unknown as RuleDocument;
+    const broken = { kind: "code", rule: { ...codeRule("test:broken"), clauses: [{ id: "x" }] } } as unknown as RuleDocument;
     database.update(libraryRules).set({ document: broken }).where(eq(libraryRules.ruleId, "test:broken")).run();
   } finally {
     database.$client.close();
@@ -97,7 +97,7 @@ describe("quarantined code rule rows", () => {
       const catalog = catalogs.catalog(checkout);
       expect(catalog.snapshot().codeRules.map(entry => entry.id)).toEqual(["test:kept"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "test:broken", kind: "file", owner: "library", reason: expect.stringMatching(/clauses/u) },
+        { ruleId: "test:broken", kind: "code", owner: "library", reason: expect.stringMatching(/clauses/u) },
       ]);
     } finally {
       catalogs.close();
@@ -131,7 +131,7 @@ describe("quarantined code rule rows", () => {
       expect(enforcer.snapshotStatus().failures).toEqual([quarantineFailure]);
 
       // Fixing a library rule writes a new revision, which the catalog sees as a configuration change.
-      upsertLibraryRule(catalogs.database, loadBundledCatalog(), { ...codeRule("test:broken"), revision: 2 }, "file");
+      upsertLibraryRule(catalogs.database, loadBundledCatalog(), { ...codeRule("test:broken"), revision: 2 }, "code");
       await enforcer.auditGeneratedEdits("session", {
         revision: 3, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE = 3\n" }],
       });
@@ -151,8 +151,8 @@ describe("quarantined code rule rows", () => {
       origin: () => "http://127.0.0.1:4737",
     });
     try {
-      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:kept"), "file");
-      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:broken"), "file");
+      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:kept"), "code");
+      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:broken"), "code");
       const raw = new Database(databasePath);
       raw.prepare("UPDATE library_rules SET document_json = json_set(document_json, '$.rule.clauses', json(?)) WHERE rule_id = ?")
         .run(JSON.stringify([{ id: "x" }]), "test:broken");
@@ -161,7 +161,7 @@ describe("quarantined code rule rows", () => {
 
       const listed = await (await app.request("/api/library-rules")).json() as { rules: { rule: { id: string } }[]; quarantined: unknown[] };
       expect(listed.rules.map(stored => stored.rule.id)).toEqual(["test:kept"]);
-      expect(listed.quarantined).toEqual([{ ruleId: "test:broken", kind: "file", owner: "library", reason: expect.stringMatching(/clauses/u) }]);
+      expect(listed.quarantined).toEqual([{ ruleId: "test:broken", kind: "code", owner: "library", reason: expect.stringMatching(/clauses/u) }]);
       const conversationOnly = await (await app.request("/api/library-rules?kind=conversation")).json() as { quarantined: unknown[] };
       expect(conversationOnly.quarantined).toEqual([]);
     } finally {

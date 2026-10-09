@@ -10,7 +10,8 @@ import type { RepositoryStartState } from "../../engine/catalog/repository-model
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
- * take the write lock, so where a carry-over would have to run first it cannot say (undefined, "not running").
+ * take the write lock, so where only a writable open could read the database (no schema yet) it cannot say
+ * (undefined, "not running").
  * Loaded only when no daemon answers: the reader links Drizzle and SQLite, about 170 ms per status-line run.
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {

@@ -69,9 +69,9 @@ export function conversation(id: string): ConversationRule {
  */
 export function testBundle(overrides: { noConsoleRevision?: number } = {}): BundledCatalog {
   const documents: RuleDocument[] = [
-    { kind: "file", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
-    { kind: "file", rule: codeRule("no-var") },
-    { kind: "file", rule: codeRule("loose") },
+    { kind: "code", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
+    { kind: "code", rule: codeRule("no-var") },
+    { kind: "code", rule: codeRule("loose") },
     { kind: "conversation", rule: conversation("talk") },
   ];
   const pack: RulePack = {
@@ -83,8 +83,8 @@ export function testBundle(overrides: { noConsoleRevision?: number } = {}): Bund
     match: { any: [{ files: ["**/*.ts"], label: "TypeScript" }] },
     honourSuppressionComments: true,
     rules: [
-      { id: "no-console", kind: "file", title: "No console", group: "Lint", mode: "steer", on: true },
-      { id: "no-var", kind: "file", title: "No var", group: "Lint", mode: "log", on: false },
+      { id: "no-console", kind: "code", title: "No console", group: "Lint", mode: "steer", on: true },
+      { id: "no-var", kind: "code", title: "No var", group: "Lint", mode: "log", on: false },
     ],
   };
   return {

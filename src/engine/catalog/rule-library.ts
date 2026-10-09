@@ -2,9 +2,9 @@
  * The rule library: rules people wrote ("Created by you"), stored once per machine and added to
  * repositories by attachments. A library rule can't take a By Rerail rule's id, and one id keeps one kind.
  */
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq, notInArray, or } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
-import { readStoredCodeRule, type QuarantinedRule } from "./rule-quarantine.js";
+import { readStoredCodeRule, unknownRuleKind, type QuarantinedRule } from "./rule-quarantine.js";
 import { assertCodeRuleStorable } from "../code-rule/code-rule-compile.js";
 import { codeRuleSchema } from "../code-rule/code-rule-schema.js";
 import type { BundledCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
@@ -16,6 +16,7 @@ import {
   ruleAttachments,
   ruleCatalogIdentities,
   ruleSettings,
+  RULE_KINDS,
   type RuleKind,
 } from "../storage/schema.js";
 import { ruleDocumentDigest } from "../stable-json.js";
@@ -27,7 +28,7 @@ type LibraryRow = typeof libraryRules.$inferSelect;
 type Queries = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
 
 export interface LibraryRuleWriteOptions {
-  /** Conversation rules carry no revision; omit to bump the stored one. File rules take `rule.revision`. */
+  /** Conversation rules carry no revision; omit to bump the stored one. Code rules take `rule.revision`. */
   readonly revision?: number;
   readonly copiedFromRuleId?: string | null;
   readonly createdAt?: number;
@@ -49,9 +50,9 @@ export interface CopiedRule {
   readonly folders: readonly string[];
 }
 
-/** Validate a rule body of `kind`: file rules must compile in the engine (or name a language it does not read yet), conversation regexes must be accepted. */
+/** Validate a rule body of `kind`: code rules must compile in the engine (or name a language it does not read yet), conversation regexes must be accepted. */
 export function validateLibraryDocument(document: unknown, kind: RuleKind): RuleDocument {
-  if (kind === "file") {
+  if (kind === "code") {
     const rule = codeRuleSchema.parse(document);
     assertCodeRuleStorable(rule);
     return { kind, rule };
@@ -69,6 +70,12 @@ export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: 
   if (bundle.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
     throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
   }
+  // A database from before the library table can hold an id's kind with no library row; one of a kind this build
+  // does not know (the code rule kind's old name) locks nothing, since no remove could clear it.
+  if (existing === undefined) {
+    db.delete(ruleCatalogIdentities)
+      .where(and(eq(ruleCatalogIdentities.ruleId, id), notInArray(ruleCatalogIdentities.kind, [...RULE_KINDS]))).run();
+  }
   db.insert(ruleCatalogIdentities).values({ ruleId: id, kind: document.kind }).onConflictDoNothing().run();
   const identity = db.select().from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get();
   if (identity?.kind !== document.kind) {
@@ -76,7 +83,7 @@ export function writeLibraryRule(db: Queries, bundle: BundledCatalog, document: 
   }
   const now = options.now ?? Date.now();
   let revision: number;
-  if (document.kind === "file") revision = document.rule.revision;
+  if (document.kind === "code") revision = document.rule.revision;
   else revision = options.revision ?? (existing === undefined ? 1 : existing.revision + 1);
   const payloadHash = ruleDocumentDigest(document);
   const copiedFromRuleId = options.copiedFromRuleId === undefined ? existing?.copiedFromRuleId ?? null : options.copiedFromRuleId;
@@ -113,17 +120,19 @@ export function upsertLibraryRule(
   }, { behavior: "immediate" });
 }
 
-/** A stored row read and validated; a row that fails validation is quarantined, never thrown. */
+/** A stored row read and validated; a row that fails validation, or whose kind is unknown, is quarantined, never thrown. */
 export function readLibraryRow(row: LibraryRow): { ok: true; rule: LibraryRule } | { ok: false; quarantined: QuarantinedRule } {
-  const quarantine = (reason: string) => ({
+  const quarantine = (reason: string, kind: RuleKind = row.kind) => ({
     ok: false as const,
-    quarantined: { ruleId: row.ruleId, kind: row.kind, owner: LIBRARY_OWNER, reason },
+    quarantined: { ruleId: row.ruleId, kind, owner: LIBRARY_OWNER, reason },
   });
+  const unknown = unknownRuleKind(row.kind, row.document);
+  if (unknown !== undefined) return quarantine(unknown.reason, unknown.kind);
   let document: RuleDocument;
-  if (row.kind === "file") {
+  if (row.kind === "code") {
     const read = readStoredCodeRule(row.document.rule);
     if (!read.ok) return quarantine(read.reason);
-    document = { kind: "file", rule: read.rule };
+    document = { kind: "code", rule: read.rule };
   } else {
     try {
       document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };

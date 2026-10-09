@@ -62,7 +62,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
   - `on` (optional, default `true`) is whether the pack starts the rule on.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule.
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a code rule and none for a conversation rule. The complexity pack has one pair per rule.
   - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 

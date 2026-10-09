@@ -103,7 +103,7 @@ describe("checkout code-rule catalog", () => {
       expect(catalogs.eligibility(root)).toBe("not-set-up");
       expect(catalog.status.ruleCount).toBe(0);
 
-      setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:zeta") }, { kind: "file", rule: rule("test:alpha") }] }, databasePath);
+      setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:zeta") }, { kind: "code", rule: rule("test:alpha") }] }, databasePath);
       expect(catalog.refresh()).toBe(true);
       expect(catalog.snapshot().codeRules.map(({ id }) => id)).toEqual(["test:alpha", "test:zeta"]);
       expect(JSON.parse(catalog.snapshot().codeRules[0]!.executable.canonicalJson())).toMatchObject({ id: "test:alpha" });
@@ -126,11 +126,11 @@ describe("checkout code-rule catalog", () => {
   it("places a rule per folder from its attachments and settings, the deepest folder deciding", () => {
     const { root, databasePath } = checkout();
     const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
-    const key = setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:everywhere") }] }, databasePath);
+    const key = setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:everywhere") }] }, databasePath);
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadBundledCatalog(), rule("test:api-only"), "file");
+      upsertLibraryRule(database, loadBundledCatalog(), rule("test:api-only"), "code");
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
@@ -158,7 +158,7 @@ describe("checkout code-rule catalog", () => {
   it("changes its version with a placement but reuses the compiled body", () => {
     const { root, databasePath } = checkout();
     const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
-    const key = setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:placed") }] }, databasePath);
+    const key = setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:placed") }] }, databasePath);
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
@@ -190,13 +190,13 @@ describe("checkout code-rule catalog", () => {
       clauses: [{ id: "regex", violation: { anchor: "witness.span", code: "R", message: "r" }, forbid: { regex: { source: "file.content", pattern: "print" } } }],
       format: "rerail.policy/v1", id: "test:regex", mode: "steer", revision: 1, scope: { exclude: [], include: ["**/*.py"] },
     });
-    setUpTestRepository(root, { library: [{ kind: "file", rule: rule("test:requires-python") }, { kind: "file", rule: regexRule }] }, databasePath);
+    setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:requires-python") }, { kind: "code", rule: regexRule }] }, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities: loadCodeRuleCapabilities(capabilitiesPath) });
     try {
       const catalog = catalogs.catalog(root);
       expect(catalog.snapshot().codeRules.map(({ id }) => id)).toEqual(["test:regex"]);
       expect(catalog.quarantined()).toEqual([
-        expect.objectContaining({ kind: "file", ruleId: "test:requires-python", owner: "library", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
+        expect.objectContaining({ kind: "code", ruleId: "test:requires-python", owner: "library", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
       ]);
     } finally {
       catalogs.close();

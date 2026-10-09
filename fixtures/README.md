@@ -8,7 +8,7 @@ package's `files` includes this directory. A rule pack's own tool recordings liv
 
 Tests resolve this directory in one place per language: Rust through `native/build.rs` (the `fixtures_dir!` and
 `oracle!` macros of `native/src/code_rule_dsl/mod.rs` read what it found), TypeScript through `fixturesPath()` in
-`test/oracles.ts`. Both read `RERAIL_FIXTURES_DIR` (relative to the repository root) when it is set, else this
+`test/support/oracles.ts`. Both read `RERAIL_ORACLES_DIR` (relative to the repository root) when it is set, else this
 directory.
 
 Maintainers run the generators by hand against the pinned upstream versions their headers name; CI and the product
