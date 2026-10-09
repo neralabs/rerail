@@ -11,6 +11,7 @@ import { SqliteAuditReader } from "../src/audit-store.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../src/audit.js";
 import { type CodeRule, codeRuleSchema } from "../src/code-rule-schema.js";
 import { recordCheckout } from "../src/repository-registry.js";
+import { setCheckoutStarted } from "../src/repository-start.js";
 import { setRuleSetting } from "../src/rule-configuration.js";
 import type { RuleMode } from "../src/rule-mode.js";
 import { RerailRuntime } from "../src/runtime.js";
@@ -285,6 +286,35 @@ describe("CheckoutCodeRuleRouter", () => {
       { checkout: session, path: "lib/y.py", code: "SESSION", mode: "block" },
       { checkout: session, path: "src/api/x.py", code: "SESSION", mode: "block" },
     ]);
+  });
+
+  it("judges a stopped nested worktree's files, and a recorded nested repository that is not set up, by no rules", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    // A worktree inside the checkout, as Claude Code keeps them, stopped on its own.
+    git(session, "worktree", "add", "--quiet", "-b", "nested", join(session, ".claude", "worktrees", "w"));
+    const worktree = await realpath(join(session, ".claude", "worktrees", "w"));
+    // A repository Rerail recorded inside the checkout, started but never set up.
+    const vendored = await repository(join(session, "vendored"));
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, worktree), false);
+      recordCheckout(database, vendored);
+    } finally {
+      database.$client.close();
+    }
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("nested");
+    expect(auditor.acceptsPath(".claude/worktrees/w/api/x.py")).toBe(false);
+    expect(auditor.acceptsPath("vendored/api/y.py")).toBe(false);
+    expect(auditor.acceptsPath("api/z.py")).toBe(true);
+    await edit(auditor, "nested", 1, ".claude/worktrees/w/api/x.py", "vendored/api/y.py", "api/z.py");
+
+    expect(violations(audits)).toEqual([{ checkout: session, path: "api/z.py", code: "SESSION", mode: "block" }]);
   });
 
   it("rejects a parent's file that is a symlink into a nested checkout, which the parent's rules would otherwise judge", async () => {

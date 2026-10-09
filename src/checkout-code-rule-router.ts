@@ -227,9 +227,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return owner;
   }
 
-  /** A checkout inside another owns its files when that one declares it as a submodule, or when it may run rules. */
+  /**
+   * A checkout inside another owns its files when Rerail recorded it or the outer one declares it as a submodule; a
+   * stopped or not set up one then runs nothing. Only a Git folder Rerail never recorded (a stray `.git`, a `git init`
+   * nobody started) is judged by the checkout around it.
+   */
   #ownsItsFiles(root: string): boolean {
-    return this.#eligibilityOf(root) === "ok" || this.#options.owners.isDeclaredSubmodule(root);
+    return this.#eligibilityOf(root) !== "unrecorded" || this.#options.owners.isDeclaredSubmodule(root);
   }
 
   /** The checkouts inside `root` that own their files, relative to it: its walks skip them and audit them apart. */
