@@ -17,7 +17,7 @@ mod value;
 
 pub(crate) use super::with_adapter;
 pub(crate) use arguments::ArgumentRules;
-pub(crate) use calls::CallRules;
+pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::FormatArgRules;
 pub(crate) use scope::ScopeRules;
 pub(crate) use value::ValueRules;
@@ -220,7 +220,7 @@ impl Adapter for Blade {
     type Scope = Self;
     type Value = Php;
     type Arguments = Php;
-    type Calls = Php;
+    type Calls = Self;
     type FormatArgs = Php;
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
