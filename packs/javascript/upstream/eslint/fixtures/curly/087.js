@@ -1,0 +1,1 @@
+if (a) { for (key in obj) if (b) foo(); } else bar();

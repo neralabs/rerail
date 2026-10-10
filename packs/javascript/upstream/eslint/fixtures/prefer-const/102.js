@@ -1,0 +1,1 @@
+/*eslint custom/use-x:error*/ { let x = 1 }

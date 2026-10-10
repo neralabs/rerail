@@ -1,0 +1,1 @@
+if(Math.pow(a, b)){}

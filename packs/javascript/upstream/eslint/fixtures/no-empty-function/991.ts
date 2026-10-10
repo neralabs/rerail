@@ -1,0 +1,1 @@
+const B = class {@decorator() static set foo(value: string) {}}; // allow: setters

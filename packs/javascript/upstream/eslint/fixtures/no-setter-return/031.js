@@ -1,0 +1,1 @@
+class A { constructor(val) { return 1; } }

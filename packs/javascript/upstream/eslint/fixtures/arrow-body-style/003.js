@@ -1,0 +1,1 @@
+var addToB = (a) => { b =  b + a };

@@ -1,0 +1,1 @@
+foo({ value: function value() {} })

@@ -1,0 +1,1 @@
+Object.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })

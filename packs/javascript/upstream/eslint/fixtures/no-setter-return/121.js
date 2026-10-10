@@ -1,0 +1,1 @@
+({ set a(val) { if (foo) { return 1; }; } })

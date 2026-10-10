@@ -1,0 +1,1 @@
+import { Card } from './card.jsx'; <MyCard />;

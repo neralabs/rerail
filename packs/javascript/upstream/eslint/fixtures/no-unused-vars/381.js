@@ -1,0 +1,1 @@
+let { a } = foo, bar = 'hello'; alert(bar);

@@ -1,0 +1,1 @@
+let insertedNode = parentNode?.insertBefore(newNode, null)

@@ -1,0 +1,1 @@
+class C { field = foo = 0 }

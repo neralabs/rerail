@@ -1,0 +1,1 @@
+const a = 0; foo; const b = 1;

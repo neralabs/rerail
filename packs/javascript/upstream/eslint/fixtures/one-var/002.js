@@ -1,0 +1,1 @@
+function foo() { var bar = true, baz = 1; if (qux) { bar = false; } }

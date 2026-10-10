@@ -1,0 +1,1 @@
+function myFunc(...foo) {  return foo;}

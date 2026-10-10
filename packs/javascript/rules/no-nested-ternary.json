@@ -1,0 +1,59 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-nested-ternary",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-nested-ternary` rule (https://eslint.org/docs/latest/rules/no-nested-ternary). Reports a conditional expression whose consequent or alternate (through parentheses) is itself a conditional expression.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "nested-ternary",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "ternary_expression",
+            "has": {
+              "all": [
+                {
+                  "follows": {
+                    "regex": "^\\?$",
+                    "stopBy": "end"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "ternary_expression"
+                    },
+                    {
+                      "kind": "parenthesized_expression",
+                      "has": {
+                        "kind": "ternary_expression",
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-nested-ternary",
+        "message": "Do not nest ternary expressions."
+      }
+    }
+  ]
+}

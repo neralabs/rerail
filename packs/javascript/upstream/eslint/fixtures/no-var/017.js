@@ -1,0 +1,1 @@
+var a; if (b) { var a; }

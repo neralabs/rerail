@@ -1,0 +1,4 @@
+
+new // a
+Array // b
+()

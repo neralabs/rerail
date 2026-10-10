@@ -1,0 +1,1 @@
+switch (a) { default: const x = 2; break; }

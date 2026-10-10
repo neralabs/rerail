@@ -1,0 +1,1 @@
+class Foo implements Bar { override set setter(v: number) {} }

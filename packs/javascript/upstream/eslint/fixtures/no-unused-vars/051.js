@@ -1,0 +1,1 @@
+const x = 1; let y; ({z: [y = x]} = {}); foo(y);

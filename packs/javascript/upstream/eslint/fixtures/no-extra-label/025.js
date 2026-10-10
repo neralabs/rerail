@@ -1,0 +1,1 @@
+X: switch (a) { case 0: A: while (b) break A; }

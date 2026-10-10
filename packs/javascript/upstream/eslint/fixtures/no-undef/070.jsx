@@ -1,0 +1,1 @@
+let Foo, Bar; <Foo><Bar /></Foo>;

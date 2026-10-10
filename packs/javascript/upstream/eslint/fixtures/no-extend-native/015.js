@@ -1,0 +1,1 @@
+obj[Object.prototype] = 0

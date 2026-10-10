@@ -1,0 +1,1 @@
+async function foo() { for (var bar = await baz in qux) {} }

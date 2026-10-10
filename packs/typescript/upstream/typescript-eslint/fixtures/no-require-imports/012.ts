@@ -1,0 +1,1 @@
+import lib8 = require('lib8');

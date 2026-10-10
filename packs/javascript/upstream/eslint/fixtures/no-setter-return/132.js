@@ -1,0 +1,1 @@
+(class { static set a(val) { if (val > 0) { this._val = val; return; } return false; } })

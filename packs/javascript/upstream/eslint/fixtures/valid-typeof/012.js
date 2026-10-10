@@ -1,0 +1,1 @@
+'boolean' === typeof foo

@@ -1,0 +1,1 @@
+class C { set; foo() { return 1; } }

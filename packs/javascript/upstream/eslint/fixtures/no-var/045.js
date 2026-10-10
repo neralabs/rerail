@@ -1,0 +1,1 @@
+var bar = foo; var foo = function () { foo(); };
