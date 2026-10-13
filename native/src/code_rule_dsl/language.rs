@@ -655,6 +655,8 @@ pub(crate) enum Semantic {
 pub(crate) enum Suppression {
     /// Ruff's `# noqa`.
     Noqa,
+    /// Bandit's `# nosec`.
+    Nosec,
     /// ESLint's `eslint-disable` comments.
     Eslint,
     /// PHPStan's `@phpstan-ignore` comments.
@@ -902,6 +904,7 @@ mod tests {
         ];
         let suppressions = [
             ("noqa", Suppression::Noqa),
+            ("nosec", Suppression::Nosec),
             ("eslint", Suppression::Eslint),
             ("phpstan", Suppression::Phpstan),
             ("psalm", Suppression::Psalm),
