@@ -91,9 +91,9 @@ lizard getting a function's range wrong (running past its end, ending it early, 
 literal), or to lizard reading a type as a function; none was a Rerail miscount. Not every difference was inspected
 one by one.
 
-The TypeScript grammar does not parse a few newer forms, such as `export type * from` and call signatures with type
-parameters in an interface. In such a file the functions outside the error regions are scored and the rest are left
-unknown, so they never report a guessed number (8 of hono's 165 files).
+The TypeScript grammar does not parse an interface's call signature with type parameters on the line after another
+call signature (`): T⏎<U>(x: U): V`). In such a file the functions outside the error regions are scored and the rest
+are left unknown, so they never report a guessed number (2 of hono's 165 files).
 
 ## Parity corpus
 
