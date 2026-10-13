@@ -371,6 +371,7 @@ impl EslintDirectives {
     }
 }
 
+mod clippy;
 #[cfg(test)]
 mod eslint;
 mod noqa;
