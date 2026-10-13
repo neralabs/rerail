@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f631-assert-tuple",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F631 (assert-tuple) with default settings: an `assert` whose test (not its message) is a non-empty tuple, parenthesized any number of times. Reported on the whole statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "non-empty-tuple": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "non-empty-tuple"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assert_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "non-empty-tuple",
+              "follows": {
+                "stopBy": "neighbor",
+                "regex": "^assert$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F631",
+        "message": "Assert test is a non-empty tuple, which is always `True`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F631"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

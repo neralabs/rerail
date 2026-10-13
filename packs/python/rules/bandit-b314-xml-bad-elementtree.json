@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b314-xml-bad-elementtree",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect vulnerable xml.etree.ElementTree parsing calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B314",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "xml.etree.ElementTree.parse",
+                  "xml.etree.ElementTree.iterparse",
+                  "xml.etree.ElementTree.fromstring",
+                  "xml.etree.ElementTree.XMLParser"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B314",
+        "anchor": "witness.span",
+        "message": "Using xml.etree.ElementTree to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B314"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

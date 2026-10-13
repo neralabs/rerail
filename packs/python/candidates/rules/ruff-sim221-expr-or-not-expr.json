@@ -1,0 +1,265 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim221-expr-or-not-expr",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM221 (expr-or-not-expr): an `or` expression (one run of the operator; parentheses start a new one) with a value `not A` and a value `A`, the same plain name (through parentheses), and no side effect anywhere in it (Ruff's `contains_effect`). Reported on the whole `or` expression, once per such pair.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "expr-or-not-expr",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "or-op": {
+              "kind": "boolean_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^or$"
+              }
+            },
+            "or-top": {
+              "matches": "or-op",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "or-op"
+                }
+              }
+            },
+            "not-or-op": {
+              "not": {
+                "matches": "or-op"
+              }
+            },
+            "safe-binop-operand": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    },
+                    {
+                      "kind": "true"
+                    },
+                    {
+                      "kind": "false"
+                    },
+                    {
+                      "kind": "none"
+                    },
+                    {
+                      "kind": "ellipsis"
+                    },
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "safe-binop-operand"
+                  }
+                }
+              ]
+            },
+            "effect": {
+              "any": [
+                {
+                  "kind": "call",
+                  "not": {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "resolves": {
+                            "global": [
+                              "list",
+                              "tuple",
+                              "set",
+                              "dict",
+                              "frozenset"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "argument_list",
+                          "regex": "^\\(\\s*\\)$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "safe-binop-operand"
+                        },
+                        {
+                          "regex": "^(\\+|-|\\*|/|//|%|\\*\\*|<<|>>|&|\\||\\^|@)$"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "named_expression"
+                },
+                {
+                  "kind": "await"
+                },
+                {
+                  "kind": "yield"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "generator_expression"
+                }
+              ]
+            },
+            "name-a": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$A"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-a"
+                  }
+                }
+              ]
+            },
+            "negated-name-a": {
+              "any": [
+                {
+                  "kind": "not_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-a"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "negated-name-a"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "name-a",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "or-op"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "matches": "or-top"
+              },
+              "matches": "or-top",
+              "pattern": "$ROOT",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": {
+                      "matches": "not-or-op"
+                    },
+                    "not": {
+                      "matches": "or-op"
+                    },
+                    "matches": "negated-name-a",
+                    "pattern": "$N"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "effect"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ROOT",
+        "code": "SIM221",
+        "message": "Use `True` instead of `$A or not $A`",
+        "each": "N",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM221"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

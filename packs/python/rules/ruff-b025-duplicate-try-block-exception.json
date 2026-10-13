@@ -1,0 +1,182 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b025-duplicate-try-block-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B025 (duplicate-try-block-exception): an exception name (a name or dotted attribute chain) in an `except`/`except*` clause, as the type or a direct element of a tuple type, that an earlier handler of the same `try` already names; within one tuple only its first occurrence counts. Names compare structurally. Reported on the repeated name.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-try-block-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dotted": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dotted"
+                  }
+                }
+              ]
+            },
+            "type-slot": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^(except|\\*)$"
+                  },
+                  "not": {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "as_pattern",
+                    "matches": "type-slot"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "type-slot"
+                  }
+                }
+              ]
+            },
+            "name-slot": {
+              "any": [
+                {
+                  "matches": "type-slot"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple",
+                    "matches": "type-slot"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  },
+                  "any": [
+                    {
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "name-slot"
+                  }
+                }
+              ]
+            },
+            "lists-e": {
+              "kind": "except_clause",
+              "has": {
+                "stopBy": {
+                  "kind": "block"
+                },
+                "pattern": "$E",
+                "matches": "dotted",
+                "all": [
+                  {
+                    "matches": "name-slot"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "matches": "dotted",
+            "pattern": "$E",
+            "all": [
+              {
+                "matches": "name-slot"
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "pattern": "$E"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "except_clause"
+                  },
+                  "kind": "except_clause",
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "lists-e"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B025",
+        "message": "try-except block with duplicate exception `$E`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B025"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

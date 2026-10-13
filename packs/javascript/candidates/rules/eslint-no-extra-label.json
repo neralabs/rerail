@@ -1,0 +1,744 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-extra-label",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-extra-label` rule (https://eslint.org/docs/latest/rules/no-extra-label). Flags a labeled break/continue whose target is already the nearest enclosing loop or switch, and removes the label when the statement holds no comment.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "extra-label-break",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "break_statement"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "regex": "^;$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.L",
+        "code": "no-extra-label",
+        "message": "This label '$L' is unnecessary.",
+        "fix": "break;"
+      }
+    },
+    {
+      "id": "extra-label-break-asi",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "break_statement"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "^;$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.L",
+        "code": "no-extra-label",
+        "message": "This label '$L' is unnecessary.",
+        "fix": "break"
+      }
+    },
+    {
+      "id": "extra-label-continue",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "continue_statement"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "regex": "^;$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.L",
+        "code": "no-extra-label",
+        "message": "This label '$L' is unnecessary.",
+        "fix": "continue;"
+      }
+    },
+    {
+      "id": "extra-label-continue-asi",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "continue_statement"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "^;$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.L",
+        "code": "no-extra-label",
+        "message": "This label '$L' is unnecessary.",
+        "fix": "continue"
+      }
+    },
+    {
+      "id": "extra-label-with-comment",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "break_statement"
+                  },
+                  {
+                    "kind": "continue_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "kind": "comment"
+                }
+              },
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        },
+                        {
+                          "kind": "switch_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.L",
+        "code": "no-extra-label",
+        "message": "This label '$L' is unnecessary."
+      }
+    }
+  ]
+}

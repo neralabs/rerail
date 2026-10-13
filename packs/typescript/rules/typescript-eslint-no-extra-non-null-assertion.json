@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "typescript-eslint:no-extra-non-null-assertion",
+  "id": "typescript-eslint-no-extra-non-null-assertion",
   "revision": 1,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-extra-non-null-assertion` rule (https://typescript-eslint.io/rules/no-extra-non-null-assertion). Flags a non-null assertion that is itself asserted non-null again, or that is the object/callee of an optional chain (parentheses are transparent, as in ESTree).",

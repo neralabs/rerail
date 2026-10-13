@@ -1,0 +1,171 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b004-unreliable-callable-check",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B004 (unreliable-callable-check): `hasattr(x, \"__call__\")` with exactly two positional arguments, or `getattr(x, \"__call__\")` / `getattr(x, \"__call__\", default)` with two or three, no keyword arguments, the second argument a str literal (not bytes, an f- or t-string; parentheses transparent) whose value is `__call__` (escapes decoded, implicit concatenations joined). The callee (parentheses transparent) resolves to the builtin `hasattr`/`getattr` (Ruff's `resolve_builtin_symbol`, via `resolves`): the unshadowed name, or that attribute of the `builtins` module through the file's imports. Reported on the call.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unreliable-callable-check",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "call-string": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string",
+                      "regex": "^[rRuU]{0,2}['\"]"
+                    },
+                    {
+                      "kind": "concatenated_string",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "string",
+                          "not": {
+                            "regex": "^[rRuU]{0,2}['\"]"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "value": {
+                    "eq": "__call__"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "call-string"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  }
+                ]
+              }
+            },
+            "builtin-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "hasattr",
+                      "getattr"
+                    ],
+                    "import": [
+                      "builtins.hasattr",
+                      "builtins.getattr"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "builtin-callee"
+                  }
+                }
+              ]
+            },
+            "getattr-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "getattr"
+                    ],
+                    "import": [
+                      "builtins.getattr"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "getattr-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "pattern": "$FUNC($OBJ, $ATTR)"
+              },
+              {
+                "pattern": "$GETATTR($OBJ, $ATTR, $DEFAULT)"
+              }
+            ]
+          },
+          "constraints": {
+            "FUNC": {
+              "matches": "builtin-callee"
+            },
+            "GETATTR": {
+              "matches": "getattr-callee"
+            },
+            "OBJ": {
+              "matches": "positional"
+            },
+            "ATTR": {
+              "matches": "call-string"
+            },
+            "DEFAULT": {
+              "matches": "positional"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B004",
+        "message": "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B004"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

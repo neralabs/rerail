@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
-  "id": "python-conformance:bandit-b505-weak-cryptographic-key",
+  "id": "bandit-b505-weak-cryptographic-key",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Bandit 1.8.6's B505 weak_cryptographic_key: a DSA or RSA key below 2048 bits or an EC curve below 224 bits, by keyword or position (Bandit's medium thresholds). Port of the kernel test b505_weak_key_sizes_by_keyword_or_position. Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "description": "Port of Bandit 1.9.4's B505 weak_cryptographic_key: a DSA or RSA key below 2048 bits or an EC curve below 224 bits, by keyword or position (Bandit's medium thresholds). Port of the kernel test b505_weak_key_sizes_by_keyword_or_position. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
   "scope": {
     "include": [
       "**/*"
@@ -152,7 +152,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B505",
-        "message": "Bandit B505 (weak-cryptographic-key)"
+        "message": "Bandit B505 (weak-cryptographic-key)",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B505"
+            ]
+          }
+        }
       }
     }
   ]

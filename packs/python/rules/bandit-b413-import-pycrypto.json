@@ -1,0 +1,159 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b413-import-pycrypto",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of deprecated pyCrypto namespaces.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B413",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import Crypto.Cipher"
+              },
+              {
+                "pattern": "import Crypto.Cipher as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Cipher import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Cipher"
+              },
+              {
+                "pattern": "from Crypto import Cipher as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.Hash"
+              },
+              {
+                "pattern": "import Crypto.Hash as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Hash import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Hash"
+              },
+              {
+                "pattern": "from Crypto import Hash as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.IO"
+              },
+              {
+                "pattern": "import Crypto.IO as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.IO import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import IO"
+              },
+              {
+                "pattern": "from Crypto import IO as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.Protocol"
+              },
+              {
+                "pattern": "import Crypto.Protocol as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Protocol import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Protocol"
+              },
+              {
+                "pattern": "from Crypto import Protocol as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.PublicKey"
+              },
+              {
+                "pattern": "import Crypto.PublicKey as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.PublicKey import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import PublicKey"
+              },
+              {
+                "pattern": "from Crypto import PublicKey as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.Random"
+              },
+              {
+                "pattern": "import Crypto.Random as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Random import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Random"
+              },
+              {
+                "pattern": "from Crypto import Random as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.Signature"
+              },
+              {
+                "pattern": "import Crypto.Signature as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Signature import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Signature"
+              },
+              {
+                "pattern": "from Crypto import Signature as $ALIAS"
+              },
+              {
+                "pattern": "import Crypto.Util"
+              },
+              {
+                "pattern": "import Crypto.Util as $ALIAS"
+              },
+              {
+                "pattern": "from Crypto.Util import $$$NAMES"
+              },
+              {
+                "pattern": "from Crypto import Util"
+              },
+              {
+                "pattern": "from Crypto import Util as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B413",
+        "anchor": "witness.span",
+        "message": "The pyCrypto library is deprecated and unmaintained; consider using pyca/cryptography.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B413"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

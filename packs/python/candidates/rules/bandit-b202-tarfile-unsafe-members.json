@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b202-tarfile-unsafe-members",
+  "revision": 1,
+  "mode": "steer",
+  "description": "After proving an exact tarfile import, resolve an extractall call; allow filter=\"data\", otherwise classify missing members, members supplied by a call, and other members expressions separately and recommend validating/discarding dangerous archive members.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b202",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$ARCHIVE.extractall($$$ARGS)"
+          },
+          "constraints": {
+            "ARCHIVE": {
+              "resolves": {
+                "binding": {
+                  "value": {
+                    "matches": "tar-open"
+                  }
+                }
+              }
+            },
+            "OPEN": {
+              "resolves": {
+                "import": [
+                  "tarfile.open"
+                ]
+              }
+            }
+          },
+          "utils": {
+            "tar-open": {
+              "pattern": "$OPEN($$$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B202",
+        "anchor": "witness.span",
+        "message": "After proving an exact tarfile import, resolve an extractall call; allow filter=\"data\", otherwise classify missing members, members supplied by a call, and other members expressions separately and recommend validating/discarding dangerous a",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B202"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

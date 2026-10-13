@@ -3,9 +3,9 @@
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
 `packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Core does not load
 installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
-`packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)), and no pack
-is published. A pack introduces no new file format: it combines the two schemas the repository already has. To start
-one, see [language packs](language-packs.md#start-a-pack).
+`packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)).
+Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it
+combines the two schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
 
 Core has no rules of its own: every rule document it ships is in a pack. Like every By Rerail rule, a pack's rules run
 only in repositories that add them (or the pack). The engine's `capabilities.json`, which every code rule compiles
@@ -30,7 +30,7 @@ packs/<id>/
 ├── README.md           what the pack covers, for people
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
-│   └── <name>.json     code-rule documents (rerail.policy/v1)
+│   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
 │
@@ -53,6 +53,7 @@ packs/<id>/
   "name": "@neralabs/rerail-pack-typescript",
   "version": "0.1.0",
   "license": "Apache-2.0 AND MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/neralabs/rerail.git", "directory": "packs/typescript" },
   "files": ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"],
   "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
@@ -67,22 +68,33 @@ packs/<id>/
 - `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `upstream/` and
   `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
+- `repository` names this repository and the pack's directory: npm's trusted publishing requires the repository it
+  publishes from. `publishConfig.access` is `restricted` until launch, like core.
 - The schema is `rulePackPackageSchema` in `src/engine/catalog/rule-packs.ts`.
 
 ### pack.json
 
 Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
-`examples: { caught, passes }`. One change: a rule now names its document, `rules/<name>.json`, so a pack is
+`examples: { caught, passes }`. One change: a rule now names its document, `rules/<id>.json`, so a pack is
 self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
 recommended. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
 from the pack:
 
 ```json
-{ "id": "complexity:cyclomatic-python", "document": "rules/cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
+{ "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
 ```
 
 An example's `path` is required in a pack: it decides the file's language and must be inside the rule's scope.
+
+**Rule ids.** Every pack uses one id style, because people turn rules on and off by id and an id must not change once
+its pack is published: lowercase letters, digits and dashes (`RULE_PACK_RULE_ID` in `src/engine/catalog/rule-packs.ts`),
+the upstream tool's name then its rule for a port (`eslint-no-empty`, `typescript-eslint-no-explicit-any`,
+`ruff-b011-assert-false`, `n-no-sync`), and the pack's name then the rule for a rule of Rerail's own
+(`complexity-cyclomatic-python`). The id is the same string everywhere: the rule's `id` in `pack.json`, its document's
+`id`, its document's file name (`rules/<id>.json`, or `candidates/rules/<id>.json` while it is a candidate, so it keeps
+its id when it ships), and its port's `id` in `conformance.json`. Check 1 enforces this, and the pack tests reject an id
+that two documents in any packs share.
 
 ### conformance.json, divergences.json, upstream/
 
@@ -130,18 +142,25 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, its `id` differs from the listing, or it does not compile against core's capabilities |
+| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
-| 5 | Package | `package.json` misnames the pack, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
+| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
 
 Precisely:
 
-1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each document must
-   be a valid code rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
-   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it.
+1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each rule's `id` is
+   lowercase letters, digits and dashes, and its `document` is `rules/<id>.json`. Each document must be a valid code
+   rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
+   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it. Every rule document under `candidates/`
+   (each JSON file in a `rules/` directory there, and any file there whose `format` names a policy, such as the older
+   `tempo.policy/v1`) must be `rerail.policy/v1`, sit in a `rules/` directory and be named `<id>.json`
+   (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`); candidates need not compile. Every port in the
+   pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its document's `id`.
+   Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under `candidates/` that
+   does not parse (`packSchema`) or has a port whose document does not exist.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A
@@ -151,10 +170,11 @@ Precisely:
    negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.
    Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too; their false positives,
    false negatives and engine failures are reported and fail nothing.
-5. The npm name is `@neralabs/rerail-pack-<id>`. `files` must publish `pack.json`, `rules`, `LICENSE` and, when
-   present, `licenses`, and no entry may cover `conformance.json`, `divergences.json`, `upstream` or `candidates`. The
-   SPDX ids `license` names must be exactly Apache-2.0 plus the licence each `licenses/<project>/UPSTREAM.md` records
-   on its `License: <SPDX id>` line.
+5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
+   repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
+   `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,
+   `divergences.json`, `upstream` or `candidates`. The SPDX ids `license` names must be exactly Apache-2.0 plus the
+   licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` whose table rows start with a
    pack-relative path in backticks. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
    `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (recordings, recorders)
@@ -192,9 +212,51 @@ packs: the core package at the repository root keeps its `v<version>` tag releas
 changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `minor` changeset
 for its initial rules.
 
-Each pack is released on its own: its package publishes `packs/<id>/` through the release workflow and trusted
-publishing, under `next` first and `latest` once promoted, `restricted` until launch like core. Publishing from the
-release workflow is not wired yet; until it is, changesets accumulate and nothing is published.
+### Release
+
+`.github/workflows/release-packs.yml` releases the packs; core's `v*` release (`release.yml`) is separate.
+
+1. **Version.** On each push to `main` with changesets pending, the workflow opens or updates the **Version packs**
+   pull request (opened by the `neralabs-ci` app, so CI runs on it). It runs `npm run version:packs`: `changeset
+   version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new versions in `package-lock.json`.
+   Review it like any pull request; merging it is the release.
+2. **Publish.** On each push to `main`, every pack whose `package.json` version has no git tag
+   `@neralabs/rerail-pack-<id>@<version>` goes through the publish gate and is published:
+   - the whole pack validation for that pack (`test/engine/catalog/packs.test.ts`, every check and every rule), so a
+     check added to the contract gates publishing with no change to the workflow;
+   - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
+     validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
+   - `npm publish --access restricted --tag next` with npm trusted publishing (the `release` environment, so a
+     reviewer approves the run), a check that the registry refuses the package to an anonymous reader, and the tag.
+
+   Packs are published one by one: a re-run publishes those not yet tagged. A pull request that touches packs runs
+   the gate and the packing as a dry run.
+3. **Promote.** A version reaches `latest` only when promoted, pack by pack: run the workflow from `main`
+   (Actions → Release packs → Run workflow) with the pack's id and, optionally, the version (default: the one in its
+   `package.json`). Only a version with its release tag can be promoted. By hand, from a 2FA npm login:
+   `npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest`.
+
+The scripts are in `scripts/release/`. To check a pack's tarball locally:
+`node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.
+
+### Publishing a new pack
+
+npm only lets a trusted publisher be configured for a package that exists, and a new configuration expires unless a
+publish uses it within 2 days. So a pack's first version is published by hand, and the workflow publishes the next.
+Until then each release run reports the pack as needing its first publish and fails after publishing the others.
+
+1. From a clean checkout of `main`, with the native engine built (`npm ci && npm run build:native`) and an
+   interactive npm login with 2FA (`npm login`; a token that bypasses 2FA cannot configure trusted publishing):
+   ```sh
+   node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>   # the publish gate
+   node scripts/release/packs-publish.mjs /tmp/rule-packs                       # publish under next, tag it
+   ```
+2. On npmjs.com: Packages → `@neralabs/rerail-pack-<id>` → Settings → Trusted publishing → GitHub Actions:
+   organization `neralabs`, repository `rerail`, workflow `release-packs.yml`, environment `release`; allow
+   **npm publish** and **npm dist-tag**. Then Settings → Publishing access → "Require two-factor authentication and
+   disallow tokens".
+3. Within 2 days, merge the Version packs pull request that bumps the pack. Its publish uses the configuration and
+   keeps it. If the 2 days pass, delete the configuration and add it again before merging.
 
 ## Licensing
 

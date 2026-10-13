@@ -1,0 +1,281 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b039-mutable-contextvar-default",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B039 (mutable-contextvar-default): the `default=` of a `contextvars.ContextVar(...)` call (the callee may be subscripted) is a list, dict or set display or comprehension, or a call to anything other than a function Ruff knows returns an immutable value (`is_immutable_return_type`: `datetime`, `decimal`, `fractions`, `operator`, `pathlib.Path`, `types.MappingProxyType`, `re.compile`, immutable builtins, and Ruff's option `flake8-bugbear.extend-immutable-calls`). Names resolve with `resolves` (imports, and builtins only when unshadowed). Reported on the default, inside any parentheses.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "flake8-bugbear.extend-immutable-calls": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Qualified names of further calls that return immutable values."
+          }
+        }
+      }
+    },
+    {
+      "id": "mutable-contextvar-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "contextvar": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "contextvars.ContextVar"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "contextvar"
+                  }
+                }
+              ]
+            },
+            "immutable-func": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "bool",
+                  "bytes",
+                  "complex",
+                  "float",
+                  "frozenset",
+                  "int",
+                  "range",
+                  "str",
+                  "tuple",
+                  "slice",
+                  "frozendict"
+                ],
+                "import": [
+                  "datetime.date",
+                  "datetime.datetime",
+                  "datetime.time",
+                  "datetime.timedelta",
+                  "datetime.timezone",
+                  "datetime.tzinfo",
+                  "decimal.Decimal",
+                  "fractions.Fraction",
+                  "operator.attrgetter",
+                  "operator.itemgetter",
+                  "operator.methodcaller",
+                  "pathlib.Path",
+                  "types.MappingProxyType",
+                  "re.compile",
+                  {
+                    "$option": "flake8-bugbear.extend-immutable-calls",
+                    "spread": true
+                  }
+                ]
+              }
+            },
+            "callee-of-contextvar": {
+              "any": [
+                {
+                  "matches": "contextvar"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "contextvar"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-of-contextvar"
+                  }
+                }
+              ]
+            },
+            "immutable-callee": {
+              "any": [
+                {
+                  "matches": "immutable-func"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "immutable-func"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "immutable-callee"
+                  }
+                }
+              ]
+            },
+            "mutable-default": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    }
+                  ]
+                },
+                {
+                  "kind": "call",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "matches": "immutable-callee"
+                    }
+                  }
+                }
+              ]
+            },
+            "default-slot": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^=$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^default$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "keyword_argument",
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^(default)$",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^=$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "matches": "callee-of-contextvar"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "default-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "mutable-default",
+            "all": [
+              {
+                "matches": "default-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B039",
+        "message": "Do not use mutable data structures for `ContextVar` defaults",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B039"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings } from "../../src/engine/index.js";
+import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings, RULE_PACK_RULE_ID } from "../../src/engine/index.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
@@ -32,7 +32,8 @@ export type PackCorpus = z.infer<typeof corpusSchema>;
 const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 
 const ruleSchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u, "rule ids are lowercase kebab-case"),
+  /** The id of the document it ports (`policy`), in pack.json's style: see `RULE_PACK_RULE_ID`. */
+  id: z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case"),
   upstream: z.strictObject({ tool: nonEmpty, rule: nonEmpty }),
   /** `rules/<id>.json` (shipped, gated) or `candidates/…` (scored, never gated), relative to the pack directory. */
   policy: nonEmpty,

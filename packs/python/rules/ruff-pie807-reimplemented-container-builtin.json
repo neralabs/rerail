@@ -1,0 +1,100 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pie807-reimplemented-container-builtin",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PIE807 (reimplemented-container-builtin): a parameterless `lambda` whose body is an empty list or dict display.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reimplemented-container-builtin",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "empty-container": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "list"
+                        },
+                        {
+                          "kind": "dictionary"
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\]{}]$"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-container"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "lambda",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "lambda_parameters"
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "not": {
+                "regex": "^(lambda|:)$"
+              },
+              "matches": "empty-container"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE807",
+        "message": "Prefer `list` or `dict` over useless lambda",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE807"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
