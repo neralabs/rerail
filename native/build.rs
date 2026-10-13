@@ -215,10 +215,12 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     }
     // A Blade tape is the template's Forte tree and the PHP view of it: the port, its directive
     // registry and how the view is built are part of the tape, as is the view a PHP file is
-    // parsed from (`php_view`, which reads with Forte's scanners). Their tests are not.
+    // parsed from (`php_view`, which reads with Forte's scanners and `php_literal`, as Blade's
+    // view does). Their tests are not.
     let mut view_sources = Vec::new();
     collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
     view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
+    view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
     view_sources.retain(|path| {
         !path
             .file_name()

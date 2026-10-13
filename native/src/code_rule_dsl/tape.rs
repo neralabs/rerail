@@ -758,7 +758,7 @@ impl TapeImage {
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
         }
-        let parsed = super::php_view::parse_input(grammar.lang, source);
+        let parsed = super::language::adapter::parse_input(grammar.lang, source);
         let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: tree_sitter::Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {

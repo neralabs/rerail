@@ -1,7 +1,8 @@
 use super::*;
-use crate::code_rule_dsl::test_support::{
-    CAPABILITIES, clause_document, compile_document_with, evaluate_file,
-};
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{ast_grep, parse_input};
+use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
+use ast_grep_language::LanguageExt;
 use serde_json::{Value, json};
 
 /// `text` as the view blanks inline text: each byte a space, blanks and line ends kept.
@@ -76,9 +77,14 @@ fn inline_text_around_php_blocks_is_blanked() {
             blanked("</html>\n")
         ),
     );
+    // `<?=` before a blank is the `echo` PHP compiles it to, over the same bytes.
     assert_view(
         SHORT_ECHO,
-        &format!("{}<?= $x ?>{}", blanked("<p>"), blanked("</p>\n")),
+        &format!("{}echo$x ?>{}", blanked("<p>"), blanked("</p>\n")),
+    );
+    assert_view(
+        "<p><?= $a, $b ?></p>\n",
+        &format!("{}echo$a, $b ?>{}", blanked("<p>"), blanked("</p>\n")),
     );
     assert_view(
         INLINE_REAL_EVAL,
@@ -99,11 +105,20 @@ fn a_mid_file_close_tag_terminates_only_an_open_statement() {
             blanked("?>\n<p>x</p>\n<?php")
         ),
     );
-    // A later `<?=` is blanked; the statement before it is ended.
+    // A later `<?=` is `echo`; the statement before it is ended.
     assert_view(
         "<p><?php $a = 1 ?></p><?= $a ?>\n",
         &format!(
-            "{}<?php $a = 1 ; {} $a ?>\n",
+            "{}<?php $a = 1 ; {}echo$a ?>\n",
+            blanked("<p>"),
+            blanked("</p>")
+        ),
+    );
+    // Without a blank after it, `<?=` is blanked: its expression is a statement.
+    assert_view(
+        "<p><?php $a = 1 ?></p><?=$a?>\n",
+        &format!(
+            "{}<?php $a = 1 ; {}$a?>\n",
             blanked("<p>"),
             blanked("</p><?=")
         ),
@@ -134,14 +149,34 @@ fn a_mid_file_close_tag_terminates_only_an_open_statement() {
             blanked("?>\n<p>a</p>\n<?php")
         ),
     );
-    // After `}`, `?>` is blanked.
-    assert_view(
-        "<?php function f() {} ?>\n<p>x</p>\n<?php f();\n",
-        &format!(
-            "<?php function f() {{}} {} f();\n",
-            blanked("?>\n<p>x</p>\n<?php")
-        ),
-    );
+    // A `}` may end an expression (a closure, a `match`, a dynamic member), which the `?>` ends.
+    for code in [
+        "function f() {}",
+        "$x = function() {}",
+        "$x = match ($a) { 1 => 2 }",
+        "echo $o->{$field}",
+    ] {
+        assert_view(
+            &format!("<?php {code} ?>html<?php eval(1);\n"),
+            &format!("<?php {code} ; {} eval(1);\n", blanked("html<?php")),
+        );
+    }
+    // Unless what follows continues the statement the brace closes.
+    for next in [
+        "else",
+        "elseif ($b)",
+        "catch (E $e)",
+        "finally",
+        "while ($a);",
+    ] {
+        assert_view(
+            &format!("<?php if ($a) {{ f(); }} ?>\n<?php {next} {{}}\n"),
+            &format!(
+                "<?php if ($a) {{ f(); }} {} {next} {{}}\n",
+                blanked("?>\n<?php")
+            ),
+        );
+    }
 }
 
 #[test]
@@ -153,6 +188,21 @@ fn a_close_tag_in_a_string_or_block_comment_stays_php() {
             blanked("\n<p>x</p>\n")
         ),
     );
+    // A string an interpolation nests is part of the outer string, `?>` and all.
+    for literal in [
+        "\"{$obj->{\"?>\"}}\"",
+        "\"{$a[\"?>\"]}\"",
+        "\"${a[\"?>\"]}\"",
+        "`{$a[\"?>\"]}`",
+    ] {
+        assert_view(
+            &format!("<?php $s = {literal}; eval(1); ?>\n<p>x</p>\n"),
+            &format!(
+                "<?php $s = {literal}; eval(1); ?>{}",
+                blanked("\n<p>x</p>\n")
+            ),
+        );
+    }
 }
 
 #[test]
@@ -201,8 +251,8 @@ fn a_close_tag_ends_a_line_comment() {
     assert_view(
         "<?php #[A('?>')] function f() {} ?>\n<p>x</p>\n<?php f();\n",
         &format!(
-            "<?php #[A('?>')] function f() {{}} {} f();\n",
-            blanked("?>\n<p>x</p>\n<?php")
+            "<?php #[A('?>')] function f() {{}} ; {} f();\n",
+            blanked("\n<p>x</p>\n<?php")
         ),
     );
 }
@@ -250,16 +300,39 @@ fn line_ends_and_multi_byte_text_keep_their_places() {
 
 #[test]
 fn a_file_without_an_open_tag_is_all_inline_text() {
-    let source = "<html>\n<?xml version=\"1.0\"?>\n<? short ?>\n<?phpx f(); ?>\n</html>\n";
+    let source = "<html>\n<?xml version=\"1.0\"?>\n<?phpx f(); ?>\n</html>\n";
     assert_view(source, &blanked(source));
 }
 
-/// The minimal templates of NER-1808, which the grammar read with errors.
-const TEMPLATES: [&str; 5] = [INLINE, INLINE_REAL_EVAL, IN_HTML, ALTERNATIVE, SHORT_ECHO];
+#[test]
+fn a_short_open_tag_opens_php() {
+    // PHP's compiled default (`short_open_tag`) and tree-sitter-php's `php_tag` read `<?` before a
+    // blank as an open tag.
+    assert_view(
+        "<? eval($a); ?>\n<p>x</p>\n<?\n$b();\n",
+        &format!("<? eval($a); {}\n$b();\n", blanked("?>\n<p>x</p>\n<?")),
+    );
+}
+
+/// The minimal templates of NER-1808 and of its review, which the grammar read with errors.
+const TEMPLATES: &[&str] = &[
+    INLINE,
+    INLINE_REAL_EVAL,
+    IN_HTML,
+    ALTERNATIVE,
+    SHORT_ECHO,
+    "<p><?= $a, $b ?></p>\n",
+    "<? eval($a); ?>\n<p>x</p>\n",
+    "<?php $s = \"{$obj->{\"?>\"}}\"; eval(1); ?>\n<p>x</p>\n",
+    "<?php $x = function() {} ?>html<?php eval(1);\n",
+    "<?php $x = match ($a) { 1 => 2 } ?>html<?php eval(1);\n",
+    "<?php echo $o->{$field} ?>html<?php eval(1);\n",
+    "<?php if ($a) { ?>\n<p>a</p>\n<?php } else { ?>\n<p>b</p>\n<?php } ?>\n",
+];
 
 #[test]
 fn templates_parse_clean_and_read_the_source() {
-    for source in TEMPLATES {
+    for &source in TEMPLATES {
         assert!(
             GrammarDialect::Php
                 .ast_grep(source)
@@ -280,24 +353,14 @@ fn templates_parse_clean_and_read_the_source() {
     }
 }
 
-/// `packs/php/rules/phpcs-squiz-php-eval.json`'s clause: every `eval` construct.
+/// The shipped `phpcs-squiz-php-eval`: every `eval` construct.
 fn squiz_php_eval() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-    let document = clause_document(json!({
-        "id": "upstream",
-        "forbid": {
-            "ast": {
-                "language": "php",
-                "rule": {
-                    "kind": "function_call_expression",
-                    "has": { "field": "function", "kind": "name", "regex": "^(?i:eval)$" }
-                }
-            }
-        },
-        "violation": { "anchor": "witness.span", "code": "Squiz.PHP.Eval", "message": "eval() is discouraged" }
-    }));
-    let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
-    compile_document_with(document, &capabilities)
-        .unwrap_or_else(|error| panic!("{}", error.reason))
+    crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+        include_str!("../../../../packs/php/rules/phpcs-squiz-php-eval.json").to_owned(),
+        "json".to_owned(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason))
 }
 
 fn violation_lines(result: &Value, source: &str) -> Vec<usize> {
@@ -333,4 +396,16 @@ fn inline_text_is_no_php_code_to_a_rule() {
         ),
         [2, 5]
     );
+    // The review's templates: `eval` after a nested interpolation's `?>`, and after a closure, a
+    // `match` and a dynamic member whose `}` the `?>` ends, is found, and each reads clean.
+    for source in &TEMPLATES[7..11] {
+        assert_eq!(
+            violation_lines(
+                &evaluate_file(&compiled, "php", "review.php", source),
+                source
+            ),
+            [1],
+            "{source:?}"
+        );
+    }
 }
