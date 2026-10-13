@@ -82,6 +82,21 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2023 Emran Mashhadi Ramezan", "2014 Max Brunsfeld"]
 SPDX-License-Identifier = "MIT"
 
+# DerekStride/tree-sitter-sql 0.3.11 with Rerail's patches (native/grammars/tree-sitter-sql/PATCHES.md):
+# grammar.json regenerated from the patched grammar.js, scanner.c patched, rerail.patch the diff.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 Derek Stride"
+SPDX-License-Identifier = "MIT"
+
+# The parser headers `tree-sitter generate` 0.27.0 writes.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/src/tree_sitter/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018 Max Brunsfeld"
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with

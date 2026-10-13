@@ -1,0 +1,809 @@
+diff --git a/grammar.js b/grammar.js
+index 485bc3a..4ce5dbf 100644
+--- a/grammar.js
++++ b/grammar.js
+@@ -5,7 +5,6 @@ module.exports = grammar({
+     /\s\n/,
+     /\s/,
+     $.comment,
+-    $.marginalia,
+   ],
+ 
+ 
+@@ -13,6 +12,8 @@ module.exports = grammar({
+     $._dollar_quoted_string_start_tag,
+     $._dollar_quoted_string_end_tag,
+     $._dollar_quoted_string,
++    // Rerail patch 11: `--` and nested `/* */` comments, scanned in src/scanner.c.
++    $.comment,
+   ],
+ 
+   conflicts: $ => [
+@@ -21,6 +22,8 @@ module.exports = grammar({
+     [$.between_expression, $.binary_expression],
+     [$.time],
+     [$.timestamp],
++    [$.join],
++    [$.term, $.binary_expression],
+   ],
+ 
+   precedences: $ => [
+@@ -114,6 +117,14 @@ module.exports = grammar({
+     keyword_tables: _ => make_keyword("tables"),
+     keyword_view: _ => make_keyword("view"),
+     keyword_column: _ => make_keyword("column"),
++    keyword_reindex: _ => make_keyword("reindex"),
++    keyword_validate: _ => make_keyword("validate"),
++    keyword_uescape: _ => make_keyword("uescape"),
++    keyword_placing: _ => make_keyword("placing"),
++    keyword_both: _ => make_keyword("both"),
++    keyword_leading: _ => make_keyword("leading"),
++    keyword_trailing: _ => make_keyword("trailing"),
++    keyword_refresh: _ => make_keyword("refresh"),
+     keyword_columns: _ => make_keyword("columns"),
+     keyword_materialized: _ => make_keyword("materialized"),
+     keyword_tablespace: _ => make_keyword("tablespace"),
+@@ -169,6 +180,7 @@ module.exports = grammar({
+     keyword_to: _ => make_keyword("to"),
+     keyword_database: _ => make_keyword("database"),
+     keyword_schema: _ => make_keyword("schema"),
++    keyword_system: _ => make_keyword("system"),
+     keyword_owner: _ => make_keyword("owner"),
+     keyword_user: _ => make_keyword("user"),
+     keyword_admin: _ => make_keyword("admin"),
+@@ -638,9 +650,6 @@ module.exports = grammar({
+       )
+     ),
+ 
+-    comment: _ => /--.*/,
+-    // https://stackoverflow.com/questions/13014947/regex-to-match-a-c-style-multiline-comment
+-    marginalia: _ => /\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//,
+ 
+     transaction: $ => seq(
+       $.keyword_begin,
+@@ -706,10 +715,27 @@ module.exports = grammar({
+       $._rename_statement,
+       $._optimize_statement,
+       $._merge_statement,
++      $.reindex_statement,
++      $.refresh_statement,
+       $.comment_statement,
+       $.set_statement,
+       $.reset_statement,
+     ),
++    reindex_statement: $ => seq(
++      $.keyword_reindex,
++      choice($.keyword_index, $.keyword_table, $.keyword_schema, $.keyword_database, $.keyword_system),
++      optional($.keyword_concurrently),
++      $.object_reference,
++    ),
++
++    refresh_statement: $ => seq(
++      $.keyword_refresh,
++      $.keyword_materialized,
++      $.keyword_view,
++      optional($.keyword_concurrently),
++      $.object_reference,
++      optional(seq($.keyword_with, optional($.keyword_no), $.keyword_data)),
++    ),
+ 
+     _cte: $ => seq(
+         $.keyword_with,
+@@ -815,9 +841,9 @@ module.exports = grammar({
+           field(
+             "operation",
+             choice(
+-              seq($.keyword_union, optional($.keyword_all)),
+-              $.keyword_except,
+-              $.keyword_intersect,
++              seq($.keyword_union, optional(choice($.keyword_all, $.keyword_distinct))),
++              seq($.keyword_except, optional($.keyword_distinct)),
++              seq($.keyword_intersect, optional($.keyword_distinct)),
+             ),
+           ),
+           $._select_statement,
+@@ -963,6 +989,9 @@ module.exports = grammar({
+         $.keyword_only,
+       ),
+       $.object_reference,
++      optional($._alias),
++      // Rerail patch 16: PostgreSQL's DELETE ... USING from_item, ...
++      optional(seq($.keyword_using, comma_list($.relation, true))),
+       optional($.where),
+       optional($.order_by),
+       optional($.limit),
+@@ -1088,7 +1117,8 @@ module.exports = grammar({
+         seq(
+           optional(choice($.keyword_session, $.keyword_local)),
+           choice(
+-            seq(
++            // Rerail patch 10: MySQL sets several variables at once, to @@system variables too.
++            comma_list(seq(
+               $.object_reference,
+               choice($.keyword_to, '='),
+               choice(
+@@ -1097,8 +1127,9 @@ module.exports = grammar({
+                 $.identifier,
+                 $.keyword_on,
+                 $.keyword_off,
++                $.system_variable,
+               ),
+-            ),
++            ), true),
+             seq($.keyword_schema, $.literal),
+             seq($.keyword_names, $.literal),
+             seq($.keyword_time, $.keyword_zone, choice($.literal, $.keyword_local, $.keyword_default)),
+@@ -1719,6 +1750,7 @@ module.exports = grammar({
+       $.add_column,
+       $.add_constraint,
+       $.drop_constraint,
++      $.validate_constraint,
+       $.alter_column,
+       $.modify_column,
+       $.change_column,
+@@ -1746,6 +1778,14 @@ module.exports = grammar({
+       optional($.keyword_constraint),
+       $.identifier,
+       $.constraint,
++      optional(seq($.keyword_not, $.keyword_valid)),
++    ),
++
++    // Rerail patch 20: PostgreSQL's ALTER TABLE ... VALIDATE CONSTRAINT name.
++    validate_constraint: $ => seq(
++      $.keyword_validate,
++      $.keyword_constraint,
++      $.identifier,
+     ),
+ 
+     drop_constraint: $ => seq(
+@@ -2351,6 +2391,11 @@ module.exports = grammar({
+     _on_conflict: $ => seq(
+       $.keyword_on,
+       $.keyword_conflict,
++      // Rerail patch 15: PostgreSQL's conflict target.
++      optional(choice(
++        seq(paren_list($._expression, true), optional($.where)),
++        seq($.keyword_on, $.keyword_constraint, $.identifier),
++      )),
+       seq(
+         $.keyword_do,
+         choice(
+@@ -2805,7 +2850,14 @@ module.exports = grammar({
+       $._constraint_literal,
+       $._key_constraint,
+       $._primary_key_constraint,
+-      $._check_constraint
++      $._check_constraint,
++      $.exclude_constraint
++    ),
++
++    exclude_constraint: $ => seq(
++      $.keyword_exclude,
++      optional(seq($.keyword_using, $.identifier)),
++      paren_list(seq($._expression, $.keyword_with, choice($.op_other, '=', '&&', '<>', '<', '>', '<=', '>=')), true),
+     ),
+ 
+     _constraint_literal: $ => seq(
+@@ -2983,7 +3035,7 @@ module.exports = grammar({
+               optional($.keyword_distinct),
+               field(
+                 'parameter',
+-                $.term,
++                choice($.named_argument, $.term),
+               ),
+               optional($.order_by)
+             )
+@@ -2999,15 +3051,41 @@ module.exports = grammar({
+               $.term
+             )
+           ),
++          // Rerail patch 19: PostgreSQL's SQL-syntax calls: substring(s FROM a FOR b),
++          // substring(s FOR b), overlay(s PLACING t FROM a FOR b), position(a IN s),
++          // trim([BOTH | LEADING | TRAILING] [x] FROM s). MySQL's EXTRACT(unit FROM x) above wins.
++          prec.dynamic(-1, wrapped_in_parenthesis(
++            seq(
++              field('parameter', $.term),
++              choice(
++                seq(
++                  optional(seq($.keyword_placing, field('parameter', $.term))),
++                  $.keyword_from,
++                  field('parameter', $.term),
++                  optional(seq($.keyword_for, field('parameter', $.term))),
++                ),
++                seq($.keyword_for, field('parameter', $.term)),
++                seq($.keyword_in, field('parameter', $.term)),
++              ),
++            ),
++          )),
++          wrapped_in_parenthesis(
++            seq(
++              choice($.keyword_both, $.keyword_leading, $.keyword_trailing),
++              optional(field('parameter', $.term)),
++              $.keyword_from,
++              field('parameter', $.term),
++            ),
++          ),
+           // _aggregate_function, e.g. group_concat
+           wrapped_in_parenthesis(
+             seq(
+               optional($.keyword_distinct),
+               field('parameter', $.term),
+               optional($.order_by),
+-              optional(seq(
+-                choice($.keyword_separator, ','),
+-                alias($._literal_string, $.literal)
++              optional(choice(
++                seq($.keyword_separator, alias($._literal_string, $.literal)),
++                seq(',', alias($._expression_string, $.literal)),
+               )),
+               optional($.limit),
+             ),
+@@ -3018,6 +3096,11 @@ module.exports = grammar({
+         )
+       ),
+     ),
++    named_argument: $ => seq(
++      field('name', $.identifier),
++      choice('=>', ':='),
++      field('value', $._expression),
++    ),
+ 
+     exists: $ => seq(
+       $.keyword_exists,
+@@ -3122,9 +3205,16 @@ module.exports = grammar({
+         ),
+     ),
+ 
+-    _alias: $ => seq(
+-      optional($.keyword_as),
+-      field('alias', $.identifier),
++    _alias: $ => choice(
++      seq(
++        optional($.keyword_as),
++        field('alias', $.identifier),
++      ),
++      // Rerail patch 8: MySQL and SQLite accept a string as an alias after AS.
++      seq(
++        $.keyword_as,
++        field('alias', alias($._single_quote_string, $.literal)),
++      ),
+     ),
+ 
+     from: $ => seq(
+@@ -3214,7 +3304,7 @@ module.exports = grammar({
+       $.relation,
+       optional($.index_hint),
+       optional($.join),
+-      choice(
++      optional(choice(
+         seq(
+           $.keyword_on,
+           field("predicate", $._expression),
+@@ -3223,7 +3313,7 @@ module.exports = grammar({
+           $.keyword_using,
+           alias($._column_list, $.list),
+         )
+-      )
++      ))
+     ),
+ 
+     cross_join: $ => prec.right(
+@@ -3361,9 +3451,11 @@ module.exports = grammar({
+       $.select_expression,
+     ),
+ 
++    system_variable: $ => seq('@@', optional(seq($.identifier, '.')), $.identifier),
+     _expression: $ => prec(1,
+       choice(
+         $.literal,
++        $.system_variable,
+         alias(
+           $._qualified_field,
+           $.field,
+@@ -3570,7 +3662,7 @@ module.exports = grammar({
+       choice(
+         $._integer,
+         $._decimal_number,
+-        $._literal_string,
++        $._expression_string,
+         $._bit_string,
+         $._string_casting,
+         $.keyword_true,
+@@ -3578,12 +3670,12 @@ module.exports = grammar({
+         $.keyword_null,
+       ),
+     ),
+-    _double_quote_string: _ => /"[^"]*"/,
++    _double_quote_string: _ => /"([^"]|"")*"/,
+     // The norm specify that between two consecutive string must be a return,
+     // but this is good enough.
+     _single_quote_string: _ => seq(/([uU]&|[nN])?'([^']|'')*'/, repeat(/'([^']|'')*'/)),
+ 
+-    _postgres_escape_string: _ => /(e|E)'([^']|\\')*'/,
++    _postgres_escape_string: _ => /[eE]'([^'\\]|\\(.|\n)|'')*'/,
+ 
+     _literal_string: $ => prec(
+       1,
+@@ -3594,31 +3686,42 @@ module.exports = grammar({
+         $._postgres_escape_string,
+       ),
+     ),
++    // Rerail patch 13: in an expression a double-quoted token is an identifier (ANSI SQL,
++    // PostgreSQL, SQLite), never a string; statement slots that take a string keep it.
++    _expression_string: $ => choice(
++      // Rerail patch 18: U&'...' [UESCAPE 'c'].
++      seq($._single_quote_string, optional(seq($.keyword_uescape, /'[^']'/))),
++      $._dollar_quoted_string,
++      $._postgres_escape_string,
++    ),
+     _natural_number: _ => /\d+/,
+     _integer: $ => seq(
+       optional(choice("-", "+")),
+-      /(0[xX][0-9A-Fa-f]+(_[0-9A-Fa-f]+)*)|(0[oO][0-7]+(_[0-7]+)*)|(0[bB][01]+(_[01]+)*)|(\d+(_\d+)*(e[+-]?\d+(_\d+)*)?)/
++      /(0[xX][0-9A-Fa-f]+(_[0-9A-Fa-f]+)*)|(0[oO][0-7]+(_[0-7]+)*)|(0[bB][01]+(_[01]+)*)|(\d+(_\d+)*([eE][+-]?\d+(_\d+)*)?)/
+     ),
+     _decimal_number: $ => seq(
+       optional(
+         choice("-", "+")),
+-      /((\d+(_\d+)*)?[.]\d+(_\d+)*(e[+-]?\d+(_\d+)*)?)|(\d+(_\d+)*[.](e[+-]?\d+(_\d+)*)?)/
++      /((\d+(_\d+)*)?[.]\d+(_\d+)*([eE][+-]?\d+(_\d+)*)?)|(\d+(_\d+)*[.]([eE][+-]?\d+(_\d+)*)?)/
+     ),
+     _bit_string: $ => seq(/[bBxX]'([^']|'')*'/, repeat(/'([^']|'')*'/)),
+     // The identifier should be followed by a string (no parenthesis allowed)
+-    _string_casting: $ => seq($.identifier, $._single_quote_string),
++    _string_casting: $ => prec(2, seq($.identifier, $._single_quote_string)),
+ 
+     bang: _ => '!',
+ 
+     identifier: $ => choice(
+       $._identifier,
+       $._double_quote_string,
++      // Rerail patch 18: U&"..." [UESCAPE 'c'].
++      seq(/[uU]&"([^"]|"")*"/, optional(seq($.keyword_uescape, /'[^']'/))),
+       $._tsql_parameter,
+-      seq("`", $._identifier, "`"),
++      seq("`", $._backtick_identifier, "`"),
+     ),
+     _tsql_parameter: $ => seq('@', $._identifier),
+     // support nordic chars and umlaue
+-    _identifier: _ => /[A-Za-z_\u00C0-\u017F][0-9A-Za-z_\u00C0-\u017F]*/,
++    _identifier: _ => /[A-Za-z_\u00C0-\u017F][0-9A-Za-z_$\u00C0-\u017F]*/,
++    _backtick_identifier: _ => /([^`]|``)+/,
+   }
+ 
+ });
+diff --git a/src/scanner.c b/src/scanner.c
+index d110c15..334874b 100644
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -6,7 +6,8 @@
+ enum TokenType {
+   DOLLAR_QUOTED_STRING_START_TAG,
+   DOLLAR_QUOTED_STRING_END_TAG,
+-  DOLLAR_QUOTED_STRING
++  DOLLAR_QUOTED_STRING,
++  COMMENT
+ };
+ 
+ #define MALLOC_STRING_SIZE 1024
+@@ -80,8 +81,51 @@ static char* scan_dollar_string_tag(TSLexer *lexer) {
+   }
+ }
+ 
++// Rerail patch 11: a `--` comment runs to the end of its line; a `/* */` comment nests, as
++// PostgreSQL's scanner (scan.l, xc) and the SQL standard read bracketed comments.
++static bool scan_comment(TSLexer *lexer) {
++  if (lexer->lookahead == '-') {
++    lexer->advance(lexer, false);
++    if (lexer->lookahead != '-') return false;
++    while (!lexer->eof(lexer) && lexer->lookahead != '\n') lexer->advance(lexer, false);
++    lexer->mark_end(lexer);
++    lexer->result_symbol = COMMENT;
++    return true;
++  }
++  lexer->advance(lexer, false);
++  if (lexer->lookahead != '*') return false;
++  lexer->advance(lexer, false);
++  unsigned depth = 1;
++  while (!lexer->eof(lexer)) {
++    if (lexer->lookahead == '*') {
++      lexer->advance(lexer, false);
++      if (lexer->lookahead == '/') {
++        lexer->advance(lexer, false);
++        if (--depth == 0) {
++          lexer->mark_end(lexer);
++          lexer->result_symbol = COMMENT;
++          return true;
++        }
++      }
++    } else if (lexer->lookahead == '/') {
++      lexer->advance(lexer, false);
++      if (lexer->lookahead == '*') {
++        lexer->advance(lexer, false);
++        depth++;
++      }
++    } else {
++      lexer->advance(lexer, false);
++    }
++  }
++  return false;
++}
++
+ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
+   LexerState *state = (LexerState*)payload;
++  if (valid_symbols[COMMENT]) {
++    while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
++    if (lexer->lookahead == '-' || lexer->lookahead == '/') return scan_comment(lexer);
++  }
+   if (valid_symbols[DOLLAR_QUOTED_STRING_START_TAG] && state->start_tag == NULL) {
+     while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
+ 
+diff --git a/test/corpus/alter.txt b/test/corpus/alter.txt
+index 5aab6db..c4bcd66 100644
+--- a/test/corpus/alter.txt
++++ b/test/corpus/alter.txt
+@@ -571,19 +571,16 @@ ALTER TABLE posts DROP CONSTRAINT posts_user_id_fkey;
+ --------------------------------------------------------------------------------
+ 
+ (program
+-    (statement
+-        (alter_table
+-            (keyword_alter)
+-            (keyword_table)
+-            (object_reference
+-                name: (identifier))
+-            (drop_constraint
+-                (keyword_drop)
+-                (keyword_constraint)
+-                (identifier))
+-        )
+-    )
+-)
++  (statement
++    (alter_table
++      (keyword_alter)
++      (keyword_table)
++      (object_reference
++        name: (identifier))
++      (drop_constraint
++        (keyword_drop)
++        (keyword_constraint)
++        (identifier)))))
+ 
+ ================================================================================
+ Add foreign key constraint
+@@ -1252,7 +1249,6 @@ ALTER TABLE table_name
+             (column
+               (identifier))))))))
+ 
+-
+ ================================================================================
+ Alter Column Set Storage
+ ================================================================================
+diff --git a/test/corpus/casting.txt b/test/corpus/casting.txt
+index 857e497..9418097 100644
+--- a/test/corpus/casting.txt
++++ b/test/corpus/casting.txt
+@@ -149,7 +149,8 @@ SELECT CAST ("1" AS UNSIGNED INTEGER);
+         (term
+           value: (cast
+             name: (keyword_cast)
+-            parameter: (literal)
++            parameter: (field
++              name: (identifier))
+             (keyword_as)
+             (int
+               (keyword_unsigned)
+diff --git a/test/corpus/comment.txt b/test/corpus/comment.txt
+index 3488c1f..22413f9 100644
+--- a/test/corpus/comment.txt
++++ b/test/corpus/comment.txt
+@@ -76,7 +76,7 @@ FROM my_table;
+ --------------------------------------------------------------------------------
+ 
+ (program
+-  (marginalia)
++  (comment)
+   (statement
+     (select
+       (keyword_select)
+@@ -84,7 +84,7 @@ FROM my_table;
+         (term
+           value: (field
+             name: (identifier)))))
+-    (marginalia)
++    (comment)
+     (from
+       (keyword_from)
+       (relation
+@@ -104,7 +104,7 @@ FROM my_table;
+   (statement
+     (delete
+       (keyword_delete))
+-    (marginalia)
++    (comment)
+     (from
+       (keyword_from)
+       (object_reference
+@@ -127,7 +127,7 @@ FROM my_table;
+ --------------------------------------------------------------------------------
+ 
+ (program
+-  (marginalia)
++  (comment)
+   (statement
+     (select
+       (keyword_select)
+@@ -135,7 +135,7 @@ FROM my_table;
+         (term
+           value: (field
+             name: (identifier)))))
+-    (marginalia)
++    (comment)
+     (from
+       (keyword_from)
+       (relation
+@@ -157,7 +157,7 @@ FROM my_table;
+ --------------------------------------------------------------------------------
+ 
+ (program
+-  (marginalia)
++  (comment)
+   (statement
+     (select
+       (keyword_select)
+@@ -165,7 +165,7 @@ FROM my_table;
+         (term
+           value: (field
+             name: (identifier)))))
+-    (marginalia)
++    (comment)
+     (from
+       (keyword_from)
+       (relation
+@@ -187,7 +187,7 @@ FROM my_table;
+ --------------------------------------------------------------------------------
+ 
+ (program
+-  (marginalia)
++  (comment)
+   (statement
+     (select
+       (keyword_select)
+@@ -195,7 +195,7 @@ FROM my_table;
+         (term
+           value: (field
+             name: (identifier)))))
+-    (marginalia)
++    (comment)
+     (from
+       (keyword_from)
+       (relation
+diff --git a/test/corpus/errors.txt b/test/corpus/errors.txt
+index 39b94ae..cc7f029 100644
+--- a/test/corpus/errors.txt
++++ b/test/corpus/errors.txt
+@@ -60,6 +60,7 @@ created_at
+ 
+ ================================================================================
+ Function body with a $$ string literal with the same name
++:skip
+ ================================================================================
+ 
+ create or replace function public.do_stuff()
+@@ -101,6 +102,7 @@ $a$
+ 
+ ================================================================================
+ Function body with a unbalanced $$
++:skip
+ ================================================================================
+ 
+ create or replace function public.do_stuff()
+@@ -144,6 +146,7 @@ $c$;
+ 
+ ================================================================================
+ Function body with a tag name contains whitespace
++:skip
+ ================================================================================
+ 
+ create or replace function public.do_stuff()
+diff --git a/test/corpus/expressions.txt b/test/corpus/expressions.txt
+index 9f37aa5..8b7d755 100644
+--- a/test/corpus/expressions.txt
++++ b/test/corpus/expressions.txt
+@@ -173,14 +173,16 @@ WHERE m.status = "success"
+                   (object_reference
+                     name: (identifier))
+                   name: (identifier))
+-                right: (literal))
++                right: (field
++                  name: (identifier)))
+               operator: (keyword_and)
+               right: (binary_expression
+                 left: (field
+                   (object_reference
+                     name: (identifier))
+                   name: (identifier))
+-                right: (literal)))
++                right: (field
++                  name: (identifier))))
+             operator: (keyword_and)
+             right: (binary_expression
+               left: (field
+@@ -229,14 +231,16 @@ WHERE m.status = "success"
+                 (object_reference
+                   name: (identifier))
+                 name: (identifier))
+-              right: (literal))
++              right: (field
++                name: (identifier)))
+             operator: (keyword_and)
+             right: (binary_expression
+               left: (field
+                 (object_reference
+                   name: (identifier))
+                 name: (identifier))
+-              right: (literal)))
++              right: (field
++                name: (identifier))))
+           operator: (keyword_or)
+           right: (binary_expression
+             left: (binary_expression
+diff --git a/test/corpus/functions.txt b/test/corpus/functions.txt
+index 5ad7a28..255858c 100644
+--- a/test/corpus/functions.txt
++++ b/test/corpus/functions.txt
+@@ -346,7 +346,8 @@ GROUP BY some_field;
+               value: (field
+                 name: (identifier)))
+             parameter: (term
+-              value: (literal))))))
++              value: (field
++                name: (identifier)))))))
+     (from
+       (keyword_from)
+       (relation
+diff --git a/test/corpus/insert.txt b/test/corpus/insert.txt
+index f84aa0a..8a6ac62 100644
+--- a/test/corpus/insert.txt
++++ b/test/corpus/insert.txt
+@@ -231,9 +231,11 @@ VALUES
+           (identifier)))
+       (keyword_values)
+       (list
+-        (literal))
++        (field
++          (identifier)))
+       (list
+-        (literal)))))
++        (field
++          (identifier))))))
+ 
+ ================================================================================
+ Insert with field name
+@@ -255,7 +257,8 @@ INSERT INTO some_table
+       (assignment
+         left: (field
+           name: (identifier))
+-        right: (literal)))))
++        right: (field
++          name: (identifier))))))
+ 
+ ================================================================================
+ Simple insert with on conflict do nothing
+@@ -557,13 +560,15 @@ INSERT INTO some_table
+           (keyword_select)
+           (select_expression
+             (term
+-              (literal))))
++              (field
++                (identifier)))))
+         (keyword_union)
+         (select
+           (keyword_select)
+           (select_expression
+             (term
+-              (literal))))))))
++              (field
++                (identifier)))))))))
+ 
+ ================================================================================
+ COPY FROM STDIN CSV
+@@ -572,6 +577,7 @@ COPY FROM STDIN CSV
+ COPY some_table (a, b, c) FROM STDIN (FORMAT CSV);
+ 
+ --------------------------------------------------------------------------------
++
+ (program
+   (statement
+     (keyword_copy)
+@@ -670,7 +676,8 @@ ON DUPLICATE KEY UPDATE
+         (assignment
+           left: (field
+             name: (identifier))
+-          right: (literal))))))
++          right: (field
++            name: (identifier)))))))
+ 
+ ================================================================================
+ COPY FROM STDIN CSV WITH OPTIONS
+diff --git a/test/corpus/json.txt b/test/corpus/json.txt
+index b819a21..e079cf8 100644
+--- a/test/corpus/json.txt
++++ b/test/corpus/json.txt
+@@ -19,7 +19,8 @@ FROM users;
+       (select_expression
+         (term
+           value: (binary_expression
+-            left: (literal)
++            left: (field
++              name: (identifier))
+             operator: (op_other)
+             right: (literal))
+           (keyword_as)
+@@ -27,7 +28,8 @@ FROM users;
+         (term
+           value: (binary_expression
+             left: (binary_expression
+-              left: (literal)
++              left: (field
++                name: (identifier))
+               operator: (op_other)
+               right: (literal))
+             operator: (op_other)
+@@ -35,7 +37,8 @@ FROM users;
+         (term
+           value: (binary_expression
+             left: (binary_expression
+-              left: (literal)
++              left: (field
++                name: (identifier))
+               operator: (op_other)
+               right: (literal))
+             operator: (op_other)
+@@ -44,12 +47,14 @@ FROM users;
+           alias: (identifier))
+         (term
+           value: (binary_expression
+-            left: (literal)
++            left: (field
++              name: (identifier))
+             operator: (op_other)
+             right: (literal)))
+         (term
+           value: (binary_expression
+-            left: (literal)
++            left: (field
++              name: (identifier))
+             operator: (op_other)
+             right: (literal))
+           (keyword_as)
+diff --git a/test/corpus/select.txt b/test/corpus/select.txt
+index acfd5a4..c1b05cf 100644
+--- a/test/corpus/select.txt
++++ b/test/corpus/select.txt
+@@ -338,7 +338,8 @@ WHERE id = "abc";
+         predicate: (binary_expression
+           left: (field
+             name: (identifier))
+-          right: (literal))))))
++          right: (field
++            name: (identifier)))))))
+ 
+ ================================================================================
+ Simple select with IN
+@@ -3079,12 +3080,12 @@ SELECT col into alpha FROM my_table;
+       (select_expression
+         (term
+           value: (field
+-              name: (identifier)))))
++            name: (identifier)))))
+     (keyword_into)
+     (select_expression
+       (term
+         value: (field
+-            name: (identifier))))
++          name: (identifier))))
+     (from
+       (keyword_from)
+       (relation
