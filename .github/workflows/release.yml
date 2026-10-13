@@ -274,9 +274,18 @@ jobs:
           installed="$smoke_directory/node_modules/@neralabs/rerail"
           npm install --prefix "$smoke_directory" "$PWD/$PACKAGE_TARBALL"
           "$smoke_directory/node_modules/.bin/rerail" --help
-          for hook in cursor claude codex; do
-            test -f "$installed/dist/$hook-hook.js" || { echo "missing dist/$hook-hook.js" >&2; exit 1; }
-          done
+          # Every file the package runs by path (src/engine/package-root.ts ENTRY_POINTS: CLI, daemon, hooks, status
+          # line, event stream), read from the installed package itself so a layout change cannot leave this stale.
+          node --input-type=module --eval '
+            import { existsSync } from "node:fs";
+            import { join } from "node:path";
+            import { pathToFileURL } from "node:url";
+            const root = process.argv[1];
+            const { ENTRY_POINTS } = await import(pathToFileURL(join(root, "dist", "engine", "package-root.js")).href);
+            const missing = Object.values(ENTRY_POINTS).filter((path) => !existsSync(join(root, path)));
+            if (missing.length > 0) { console.error(`missing ${missing.join(", ")}`); process.exit(1); }
+            console.log(`entry points present: ${Object.keys(ENTRY_POINTS).join(", ")}`);
+          ' "$installed"
           test -f "$installed/dist/ui/index.html"
           for notice in LICENSE NOTICE; do
             test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
