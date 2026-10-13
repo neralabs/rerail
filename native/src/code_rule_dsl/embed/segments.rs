@@ -111,6 +111,17 @@ impl SegmentMap {
             .filter(|segment| segment.copied)
             .map(|segment| segment.anchor.clone())
     }
+
+    /// Each copied stretch: its program bytes and the host bytes they copy, in program order.
+    #[cfg(test)]
+    pub(crate) fn copied_stretches(
+        &self,
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+        self.segments
+            .iter()
+            .filter(|segment| segment.copied)
+            .map(|segment| (segment.at..segment.end, segment.anchor.clone()))
+    }
 }
 
 #[cfg(test)]

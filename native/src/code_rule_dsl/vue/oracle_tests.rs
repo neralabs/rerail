@@ -2,7 +2,7 @@
 //! @vue/compiler-sfc and @vue/compiler-dom 3.5.43): blocks, template regions, and the
 //! references and declarations Vue resolves, read off the view's program.
 use super::view::View;
-use super::{grammar, sfc, template};
+use super::{sfc, template};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::scope::{Binding, ScopeTable};
 use ast_grep_language::LanguageExt;
@@ -20,7 +20,9 @@ fn root() -> PathBuf {
 fn parse(path: &str) -> (String, tree_sitter::Tree) {
     let source = std::fs::read_to_string(root().join("fixtures").join(path)).expect("fixture");
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&grammar()).expect("grammar");
+    parser
+        .set_language(&GrammarDialect::Vue.get_ts_language())
+        .expect("grammar");
     let tree = parser.parse(&source, None).expect("tree");
     (source, tree)
 }

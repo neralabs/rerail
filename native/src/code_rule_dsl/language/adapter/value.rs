@@ -610,9 +610,9 @@ impl ValueRules for Blade {
     }
 
     /// Whether no token of the node is one the view writes (`@unless`'s `!(`), which a
-    /// comparison of tokens must not read as the template's (`blade::rewritten`).
+    /// comparison of tokens must not read as the template's (`embed::rewritten`).
     fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::blade::rewritten(node)
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {

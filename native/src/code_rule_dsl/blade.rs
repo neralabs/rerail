@@ -25,16 +25,6 @@ pub(crate) fn program<'r, D: Doc>(root: &Node<'r, D>) -> Option<Node<'r, D>> {
         .filter(|last| last.kind() == "program" && last.is_named())
 }
 
-/// Whether Blade wrote a token of `node` that the template does not spell (`@unless(c)`'s `!(`,
-/// a `:` after a directive): the node is then not the PHP its template bytes are, and what reads
-/// its tokens (structure, names, references) does not know it. Every token the view copies, and
-/// every one it writes over the same text (`@isset(`'s `isset(`), spells its own kind.
-pub(crate) fn rewritten<D: Doc>(node: &Node<'_, D>) -> bool {
-    node.dfs().any(|token| {
-        !token.is_named() && token.is_leaf() && !token.text().eq_ignore_ascii_case(&token.kind())
-    })
-}
-
 /// What a marker (`view`'s empty statement over a directive) does to the template's variables.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Marker {

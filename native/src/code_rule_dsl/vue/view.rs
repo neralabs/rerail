@@ -62,6 +62,7 @@
 //! What the view does not read: tree-sitter-vue (ce8011a) reads two value-less shorthands in a
 //! row (`:a :b`, `@a :b`) as one attribute, of which the view reads the first.
 
+use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::vue::sfc;
 use crate::code_rule_dsl::vue::template::{self, Arg, Directive, Parse};
@@ -70,24 +71,10 @@ use std::borrow::Cow;
 use std::ops::Range;
 use tree_sitter::{Node, Parser, Tree};
 
-/// The foundation moves this map to embed::SegmentMap; Vue's view adopts it on merge.
-/// One stretch of the program's text and the `.vue` bytes it stands for.
-#[derive(Clone, Debug)]
-struct Segment {
-    /// Where it starts in the program.
-    at: usize,
-    /// Where it ends in the program.
-    end: usize,
-    /// The `.vue` bytes it stands for.
-    anchor: Range<usize>,
-    /// Copied from the file: each byte maps to the byte at the same offset of `anchor`.
-    copied: bool,
-}
-
 /// The program a Vue single-file component embeds and its map back to the file.
 pub(crate) struct View {
     /// The program's text in order, never empty.
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     tree: Tree,
     dialect: GrammarDialect,
     #[cfg(test)]
@@ -106,7 +93,7 @@ impl View {
         let mut emitter = Emitter {
             source,
             out: String::new(),
-            segments: Vec::new(),
+            segments: SegmentMap::new(),
             handlers,
         };
         for block in &blocks {
@@ -145,44 +132,9 @@ impl View {
         self.tree.root_node()
     }
 
-    /// The segment holding program byte `at` (the last one at the end of the program).
-    fn segment(&self, at: usize) -> &Segment {
-        let index = self
-            .segments
-            .partition_point(|segment| segment.end <= at)
-            .min(self.segments.len() - 1);
-        &self.segments[index]
-    }
-
-    /// The file position a node starting at program byte `at` starts at.
-    fn start(&self, at: usize) -> usize {
-        let segment = self.segment(at);
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.start
-        }
-    }
-
-    /// The file position a node ending at program byte `at` ends at.
-    fn end(&self, at: usize) -> usize {
-        let segment = self.segment(at.saturating_sub(1));
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.end
-        }
-    }
-
     /// The `.vue` bytes a node of the program stands for.
     pub(crate) fn span(&self, node: Node<'_>) -> Range<usize> {
-        let range = node.byte_range();
-        if range.is_empty() {
-            let at = self.start(range.start);
-            return at..at;
-        }
-        let start = self.start(range.start);
-        start..self.end(range.end).max(start)
+        self.segments.span(node)
     }
 
     /// Whether a node is part of a placeholder the view does not keep: never, since every token
@@ -194,10 +146,7 @@ impl View {
     /// The file ranges the program copies byte for byte, in program order.
     #[cfg(test)]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.segments
-            .iter()
-            .filter(|segment| segment.copied)
-            .map(|segment| segment.anchor.clone())
+        self.segments.copied()
     }
 
     /// The program's text.
@@ -515,7 +464,7 @@ impl<'t> Child<'t> {
 struct Emitter<'t> {
     source: &'t str,
     out: String,
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     /// A parser in the program's grammar, for `template::handler_with`.
     handlers: Parser,
 }
@@ -529,12 +478,8 @@ impl<'t> Emitter<'t> {
         }
         let at = self.out.len();
         self.out.push_str(text);
-        self.segments.push(Segment {
-            at,
-            end: self.out.len(),
-            anchor,
-            copied,
-        });
+        self.segments
+            .push(at, self.out.len(), anchor, copied, false);
     }
 
     /// Writes syntax Vue's compiler wraps the file's code in, standing for the bytes `anchor`.
@@ -813,15 +758,17 @@ impl<'t> Emitter<'t> {
 mod tests {
     use super::{NATIVE_TAGS, View};
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::vue::grammar;
     use crate::code_rule_dsl::vue::template::Directive;
+    use ast_grep_language::LanguageExt;
     use std::ops::Range;
     use std::path::{Path, PathBuf};
     use tree_sitter::{Node, Parser, Tree};
 
     fn parse(source: &str) -> Tree {
         let mut parser = Parser::new();
-        parser.set_language(&grammar()).expect("Vue grammar");
+        parser
+            .set_language(&GrammarDialect::Vue.get_ts_language())
+            .expect("Vue grammar");
         parser.parse(source, None).expect("Vue tree")
     }
 
@@ -836,9 +783,9 @@ mod tests {
 
     /// Checks that each copied segment's program text is the file's text it stands for.
     fn check_copies(view: &View, source: &str) -> Result<(), String> {
-        for segment in view.segments.iter().filter(|segment| segment.copied) {
-            let program = &view.text[segment.at..segment.end];
-            let file = &source[segment.anchor.clone()];
+        for (program, anchor) in view.segments.copied_stretches() {
+            let program = &view.text[program];
+            let file = &source[anchor];
             if program != file {
                 return Err(format!("copied {program:?} stands for {file:?}"));
             }

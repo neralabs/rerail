@@ -1,6 +1,8 @@
 //! Vue template expressions and regions, matching compiler-dom 3.5.43.
 
+#[cfg(test)]
 use crate::code_rule_dsl::language::GrammarDialect;
+#[cfg(test)]
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use tree_sitter::{Node, Parser};
@@ -16,7 +18,6 @@ pub(crate) struct Directive<'t> {
     pub(crate) node: Node<'t>,
     pub(crate) name: &'t str,
     pub(crate) arg: Arg,
-    pub(crate) modifiers: Vec<&'t str>,
     pub(crate) value: Option<Range<usize>>,
 }
 fn text<'t>(n: Node<'t>, s: &'t str) -> &'t str {
@@ -49,7 +50,6 @@ impl<'t> Directive<'t> {
                 node,
                 name,
                 arg: Arg::None,
-                modifiers: vec![],
                 value,
             });
         }
@@ -99,16 +99,6 @@ impl<'t> Directive<'t> {
         } else {
             Arg::None
         };
-        let mut modifiers = Vec::new();
-        if let Some(m) = children.iter().find(|n| n.kind() == "directive_modifiers") {
-            let mut mc = m.walk();
-            for x in m.named_children(&mut mc) {
-                modifiers.push(text(x, source));
-            }
-        }
-        if name == "bind" && source.as_bytes().get(node.start_byte()) == Some(&b'.') {
-            modifiers.insert(0, "prop");
-        }
         let value = children
             .iter()
             .find(|n| n.kind() == "quoted_attribute_value" || n.kind() == "attribute_value")
@@ -117,7 +107,6 @@ impl<'t> Directive<'t> {
             node,
             name,
             arg,
-            modifiers,
             value,
         })
     }
@@ -127,6 +116,8 @@ impl<'t> Directive<'t> {
 pub(crate) struct ForParse {
     pub(crate) alias: Range<usize>,
     pub(crate) parenthesized: bool,
+    /// The value, key and index, as `parseFor` finds them (the oracle's `for-alias` regions).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) items: Vec<Range<usize>>,
     pub(crate) source: Range<usize>,
 }
@@ -197,7 +188,11 @@ pub(crate) fn parse_for(source: &str, value: Range<usize>) -> Option<ForParse> {
 }
 /// How compiler-dom treats a directive expression.
 pub(crate) enum Parse {
+    /// An expression (the oracle's regions; the view writes expressions without asking).
+    #[cfg_attr(not(test), allow(dead_code))]
     Expression,
+    /// Parameters (the oracle's regions).
+    #[cfg_attr(not(test), allow(dead_code))]
     Params,
     HandlerMember,
     HandlerFunction,
@@ -209,6 +204,7 @@ pub(crate) enum Parse {
 /// anything else (a call, an assignment, several statements, text that is no expression) runs as
 /// inline statements. Both checks look through parentheses and TypeScript's `as`, `satisfies`,
 /// `!`, `<T>x` and `x<T>` (`unwrapTSNode`).
+#[cfg(test)]
 pub(crate) fn handler(text: &str, dialect: GrammarDialect) -> Parse {
     let mut parser = Parser::new();
     if parser.set_language(&dialect.get_ts_language()).is_err() {
@@ -264,12 +260,15 @@ fn unwrapped(node: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
+/// A template expression as the view oracle lists it.
+#[cfg(test)]
 pub(crate) struct Region {
     pub(crate) kind: String,
     pub(crate) range: Range<usize>,
     pub(crate) parse: Parse,
-    pub(crate) scope: Option<Range<usize>>,
 }
+/// The template's expressions as the view oracle lists them, sorted.
+#[cfg(test)]
 pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
     let mut out = Vec::new();
     fn trim(r: Range<usize>, s: &str) -> Option<Range<usize>> {
@@ -290,19 +289,16 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                 kind: "interpolation".into(),
                 range: r,
                 parse: Parse::Expression,
-                scope: None,
             });
         }
         if (n.kind() == "directive_attribute" || n.kind() == "attribute")
             && let Some(di) = Directive::read(n, s)
         {
-            let scope = Some(n.parent().map(|x| x.byte_range()).unwrap_or(n.byte_range()));
             if let Arg::Dynamic(r) = &di.arg {
                 o.push(Region {
                     kind: "dynamic-arg".into(),
                     range: r.clone(),
                     parse: Parse::Expression,
-                    scope: None,
                 });
             }
             if let Some(v) = di.value.and_then(|r| trim(r, s)) {
@@ -313,7 +309,6 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                                 kind: "for-alias".into(),
                                 range: r,
                                 parse: Parse::Params,
-                                scope: scope.clone(),
                             });
                         }
                         if let Some(sr) = trim(f.source, s) {
@@ -321,7 +316,6 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                                 kind: "for-source".into(),
                                 range: sr,
                                 parse: Parse::Expression,
-                                scope: None,
                             });
                         }
                     }
@@ -340,7 +334,6 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                         kind,
                         range: v,
                         parse,
-                        scope: None,
                     });
                 }
             }

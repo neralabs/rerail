@@ -82,10 +82,56 @@ pub(crate) fn script_dialect(blocks: &[Block<'_>]) -> Option<GrammarDialect> {
         .iter()
         .find(|b| b.name == "script" && b.setup)
         .or_else(|| blocks.iter().find(|b| b.name == "script"));
-    let Some(script) = script else {
-        return Some(GrammarDialect::JavaScript);
-    };
-    match script.lang.unwrap_or("js") {
+    match script {
+        Some(script) => lang_dialect(script.lang),
+        None => Some(GrammarDialect::JavaScript),
+    }
+}
+
+/// The dialect of the program a component's tape embeds (`embed::ScriptBlock`), read off the
+/// blocks of the tape rooted at `root` as `script_dialect` reads a file's. The program's own
+/// kind codes do not tell it: TypeScript, TSX and JavaScript share them (`KindCatalog`).
+pub(crate) fn tape_script_dialect<D: ast_grep_core::Doc>(
+    root: &ast_grep_core::Node<'_, D>,
+) -> Option<GrammarDialect> {
+    let mut first = None;
+    for element in root.children().filter(|child| child.is_named()) {
+        let Some(start) = element
+            .children()
+            .find(|child| matches!(&*child.kind(), "start_tag" | "self_closing_tag"))
+        else {
+            continue;
+        };
+        let mut parts = start.children().filter(|child| child.is_named());
+        if parts.next().is_none_or(|tag| tag.text() != "script") {
+            continue;
+        }
+        let (mut lang, mut setup) = (None, false);
+        for attribute in parts.filter(|part| part.kind() == "attribute") {
+            let mut named = attribute.children().filter(|child| child.is_named());
+            match named.next().map(|name| name.text()).as_deref() {
+                Some("setup") => setup = true,
+                Some("lang") => {
+                    lang = named.next().map(|value| unquote(&value.text()).to_owned());
+                }
+                _ => {}
+            }
+        }
+        if setup {
+            return lang_dialect(lang.as_deref());
+        }
+        first.get_or_insert(lang);
+    }
+    match first {
+        Some(lang) => lang_dialect(lang.as_deref()),
+        None => Some(GrammarDialect::JavaScript),
+    }
+}
+
+/// The dialect a script's `lang` names: `ts`, `tsx`, else JavaScript (`js`, `jsx`, none); `None`
+/// for another language (`coffee`), which embeds no program.
+fn lang_dialect(lang: Option<&str>) -> Option<GrammarDialect> {
+    match lang.unwrap_or("js") {
         "ts" => Some(GrammarDialect::TypeScript),
         "tsx" => Some(GrammarDialect::Tsx),
         "js" | "jsx" => Some(GrammarDialect::JavaScript),

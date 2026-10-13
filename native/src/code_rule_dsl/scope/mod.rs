@@ -24,7 +24,6 @@ use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::value::{Followed, NodeRef};
 use ast_grep_core::{Doc, Node};
-use ast_grep_language::LanguageExt;
 use foldhash::{HashMap, HashMapExt};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -1134,23 +1133,24 @@ fn stack_address() -> usize {
     std::hint::black_box(&marker) as *const u8 as usize
 }
 
-/// Kind tags and field ids of one grammar, looked up by the native symbol and field ids that both
-/// tree-sitter trees and tapes carry.
+/// Kind tags and field ids of one dialect, looked up by the kind and field codes that both
+/// tree-sitter trees and tapes carry: its grammar's, and those of the programs its tapes embed as
+/// the tapes number them (`KindCatalog`), so a Vue file's script blocks read as ECMAScript's.
 pub(crate) struct Grammar<T> {
     tags: Vec<T>,
-    ts: tree_sitter::Language,
+    kinds: crate::code_rule_dsl::language::KindCatalog,
 }
 
 impl<T: Copy + Default> Grammar<T> {
     fn new(language: GrammarDialect, tag: impl Fn(&str) -> T) -> Self {
-        let ts = language.get_ts_language();
-        let tags = (0..ts.node_kind_count() as u16)
-            .map(|id| match ts.node_kind_for_id(id) {
-                Some(name) if ts.node_kind_is_named(id) => tag(name),
+        let kinds = language.kinds();
+        let tags = (0..kinds.kind_count() as u16)
+            .map(|id| match kinds.kind_name(id) {
+                Some(name) if kinds.kind_is_named(id) => tag(name),
                 _ => T::default(),
             })
             .collect();
-        Self { tags, ts }
+        Self { tags, kinds }
     }
 
     fn tag<D: Doc>(&self, node: &Node<'_, D>) -> T {
@@ -1161,7 +1161,7 @@ impl<T: Copy + Default> Grammar<T> {
     }
 
     fn field(&self, name: &str) -> u16 {
-        self.ts.field_id_for_name(name).map_or(0, |id| id.get())
+        self.kinds.field_id(name).unwrap_or(0)
     }
 }
 

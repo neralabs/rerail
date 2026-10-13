@@ -1,8 +1,38 @@
-//! `eslint-plugin-vue` 10.11.1 template comment directives.
+//! `eslint-plugin-vue` 10.11.1 template comment directives, and the ESLint directives of a Vue
+//! file's scripts.
 
+use super::EslintDirectives;
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
 use std::collections::HashSet;
+
+/// The ESLint directives of the Vue file `node` belongs to: those of the comments in its
+/// `<script>` blocks, the only ones vue-eslint-parser gives ESLint core (`getAllComments`); the
+/// template's comments are eslint-plugin-vue's (`VueDirectives`), and its expressions' comments
+/// neither's.
+pub(crate) fn script_directives<D: Doc>(
+    node: &Node<'_, D>,
+    source: &str,
+    lines: &LineTable,
+) -> EslintDirectives {
+    let root = super::root(node);
+    let scripts = root
+        .children()
+        .filter(|child| child.kind() == "script_element")
+        .map(|script| script.range())
+        .collect::<Vec<_>>();
+    let program = crate::code_rule_dsl::vue::program(&root);
+    let comments = program
+        .iter()
+        .flat_map(|program| program.dfs())
+        .filter(|node| {
+            node.kind() == "comment"
+                && scripts
+                    .iter()
+                    .any(|script| script.contains(&node.range().start))
+        });
+    EslintDirectives::from_comments(comments, source, lines)
+}
 
 /// A sorted event replayed by [`VueDirectives::suppresses`].
 #[derive(Debug)]
@@ -29,7 +59,6 @@ enum EventKind {
 }
 
 /// eslint-plugin-vue 10.11.1's template comment directives and element boundaries.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Default)]
 pub(crate) struct VueDirectives {
     /// Directive and element-boundary events in source order.
@@ -249,40 +278,12 @@ fn strip_description(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::Terminators;
-    use ast_grep_core::{
-        AstGrep,
-        language::Language,
-        matcher::{Pattern, PatternBuilder, PatternError},
-        tree_sitter::{StrDoc, TSLanguage},
-    };
-    use ast_grep_language::LanguageExt;
-
-    #[derive(Clone, Copy)]
-    struct TestVue;
-
-    impl Language for TestVue {
-        fn kind_to_id(&self, kind: &str) -> u16 {
-            crate::code_rule_dsl::vue::grammar().id_for_node_kind(kind, true)
-        }
-        fn field_to_id(&self, field: &str) -> Option<u16> {
-            crate::code_rule_dsl::vue::grammar()
-                .field_id_for_name(field)
-                .map(|id| id.get())
-        }
-        fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-            builder.build(|source| StrDoc::try_new(source, *self))
-        }
-    }
-
-    impl LanguageExt for TestVue {
-        fn get_ts_language(&self) -> TSLanguage {
-            crate::code_rule_dsl::vue::grammar()
-        }
-    }
+    use ast_grep_core::AstGrep;
 
     fn suppressed(source: &str, rule: &str, marker: &str) -> bool {
-        let tree = AstGrep::new(source, TestVue);
+        let tree = AstGrep::new(source, GrammarDialect::Vue);
         let root = tree.root();
         let lines = LineTable::new(source, Terminators::Eslint);
         let directives = VueDirectives::read(&root, source, &lines);
@@ -364,6 +365,7 @@ mod tests {
             "vhtml"
         ));
     }
+    #[test]
     // Verified with eslint-plugin-vue 10.11.1: Linter.verify returns no messages for this
     // top-level disable before the template.
     fn top_level_comment_reaches_template() {

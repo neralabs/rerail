@@ -212,15 +212,19 @@ fn fields_of(grammar: &Grammar<Tag>) -> Fields {
     }
 }
 
-/// A dialect's grammar, as the visit reads it: each ECMAScript dialect parses with its own.
+/// A dialect's grammar, as the visit reads it: each ECMAScript dialect parses with its own; Vue's
+/// tapes hold its script blocks' program in TypeScript, TSX or JavaScript, as Vue numbers their
+/// kinds (`KindCatalog`).
 fn script(language: GrammarDialect) -> &'static Script {
     static TYPESCRIPT: OnceLock<Script> = OnceLock::new();
     static TSX: OnceLock<Script> = OnceLock::new();
     static JAVASCRIPT: OnceLock<Script> = OnceLock::new();
+    static VUE: OnceLock<Script> = OnceLock::new();
     let slot = match language {
         GrammarDialect::TypeScript => &TYPESCRIPT,
         GrammarDialect::Tsx => &TSX,
         GrammarDialect::JavaScript => &JAVASCRIPT,
+        GrammarDialect::Vue => &VUE,
         GrammarDialect::Python | GrammarDialect::Php | GrammarDialect::Blade => {
             unreachable!("only ECMAScript dialects build ECMAScript scopes")
         }
