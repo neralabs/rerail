@@ -1,0 +1,1 @@
+if (foo) var x, y;

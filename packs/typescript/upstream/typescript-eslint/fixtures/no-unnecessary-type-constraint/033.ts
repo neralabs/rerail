@@ -1,0 +1,1 @@
+interface Data<T extends unknown> {}

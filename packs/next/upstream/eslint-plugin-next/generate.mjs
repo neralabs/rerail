@@ -15,8 +15,9 @@
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
 //    { valid, invalid }), and writes one file per case: fixtures/<rule>/<valid|invalid>-NNN.js, or, for a case with a
 //    `filename`, fixtures/<rule>/<valid|invalid>-NNN/<filename> (a leading `/` or `./` dropped, a Windows drive
-//    `C:\` turned into `C/`, backslashes into `/`). Then runs the pinned plugin (PACK_CONFIG, default options, every
-//    chosen rule) over every fixture file: fixtures.expected.json.
+//    `C:\` turned into `C/`, backslashes into `/`). Writes Rerail's own cases (AUTHORED, below) as
+//    fixtures/<rule>/rerail-<name>.tsx and lists them in UPSTREAM.md. Then runs the pinned plugin (PACK_CONFIG, default
+//    options, every chosen rule) over every fixture file: fixtures.expected.json.
 // 3. corpora: the same config over each pinned corpus's files (conformance.json paths and excludes):
 //    corpus-<name>.expected.json.
 // 4. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
@@ -84,6 +85,26 @@ export const RULES = [
   "no-unwanted-polyfillio",
 ];
 const RULE_IDS = RULES.map(rule => `@next/next/${rule}`);
+
+/**
+ * Ours: cases Rerail wrote for the plugin to score beside the upstream tests, each an input the engine once misread.
+ * `errors` is how many findings the case's own rule must report, checked against the recording as a test's count is.
+ */
+const AUTHORED = [
+  // A bare `&` in a JSX attribute string is text; the vendored TSX grammar once read it as a parse error (NER-1760).
+  {
+    rule: "no-img-element",
+    name: "bare-ampersand",
+    code: 'export default function Page() {\n  return <img src="/a?w=8&h=8" alt="" />;\n}\n',
+    errors: 1,
+  },
+  {
+    rule: "no-sync-scripts",
+    name: "bare-ampersand",
+    code: 'export default function Page() {\n  return <script src="https://example.com/widget.js?a=1&b=2" />;\n}\n',
+    errors: 1,
+  },
+];
 
 const { values: options } = parseArgs({
   options: {
@@ -195,7 +216,27 @@ function writeFixtures(cases) {
       });
     }
   }
+  AUTHORED.forEach(({ rule, name, code, errors }, index) => {
+    const path = `${rule}/rerail-${name}.tsx`;
+    mkdirSync(dirname(join(fixturesDirectory, path)), { recursive: true });
+    writeFileSync(join(fixturesDirectory, path), code);
+    written.push({ rule, kind: "authored", index, path, errors });
+  });
   return written;
+}
+
+/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not Next.js's. */
+function writeAuthoredRecord(kept) {
+  const rows = kept.filter(entry => entry.kind === "authored").map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | written by Rerail |`);
+  const text = `# ${TOOL} ${PLUGIN_VERSION}: cases Rerail wrote
+
+The fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\`licenses/next.js/UPSTREAM.md\`). Each is an input the engine once misread; \`generate.mjs\` holds them (\`AUTHORED\`) and records the plugin's findings on them in \`fixtures.expected.json\`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under \`licenses/\`. Paths are relative to the pack directory.
+
+| File | Origin |
+|---|---|
+${rows.join("\n")}
+`;
+  writeFileSync(join(HERE, "UPSTREAM.md"), text);
 }
 
 async function recordFixtures() {
@@ -207,6 +248,7 @@ async function recordFixtures() {
     rmSync(join(fixturesDirectory, entry.path));
   }
   const kept = written.filter(entry => !dropped.has(entry.path));
+  writeAuthoredRecord(kept);
   writeRecording(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort() }, findings);
   // Sanity check: the case's own rule under the pack config vs the test's expected error count.
   const mismatches = [];
@@ -247,7 +289,7 @@ function writeLicenses() {
   const rows = [
     ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases
-      .filter(entry => !entry.dropped)
+      .filter(entry => !entry.dropped && entry.kind !== "authored")
       .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
   ];
   const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)

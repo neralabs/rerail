@@ -1,0 +1,1 @@
+Object.prototype.isPrototypeOf.apply(foo, ['bar'])

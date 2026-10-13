@@ -1,0 +1,1 @@
+let predicate; [, {foo:returnType, predicate}] = foo();

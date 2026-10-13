@@ -1,0 +1,1 @@
+let foo, bar; let a = true; let b = true;

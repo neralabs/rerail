@@ -1,0 +1,1 @@
+A = class { a() {} static a() {} b() {} static c() {} }

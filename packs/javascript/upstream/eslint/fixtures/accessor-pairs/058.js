@@ -1,0 +1,1 @@
+Object.defineProperty({ set: function(value) {} }, 'foo', { value: 1 });

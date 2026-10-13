@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "vitest:no-focused-tests",
+  "revision": 1,
+  "mode": "steer",
+  "description": "A focused test (`.only`), which makes Vitest skip every other test in the file.",
+  "scope": {
+    "include": [
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/*.test.mts",
+      "**/*.spec.mts",
+      "**/__tests__/**/*.ts",
+      "**/__tests__/**/*.tsx"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "only",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vitest/no-focused-tests",
+        "message": "Remove .only: a focused test makes Vitest skip every other test.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vitest/no-focused-tests"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

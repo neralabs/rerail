@@ -1,0 +1,1 @@
+await using foo = object.foo;

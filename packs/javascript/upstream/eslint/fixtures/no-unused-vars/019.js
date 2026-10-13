@@ -1,0 +1,1 @@
+Foo.bar = function(baz) { return baz; };

@@ -1,0 +1,1 @@
+/* global Temporal */ Temporal();

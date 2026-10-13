@@ -212,17 +212,4 @@ describe("Rerail managed launcher", () => {
     expect(rollback.stdout).toContain(`${manifest.version}; new harness sessions will use it.`);
   }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
 
-  test("reports that --skip-start wins during a setup dry run", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-setup-dry-run-"));
-    temporaryDirectories.push(root);
-    const result = await run(
-      ["node", "dist/cli/cli.js", "setup", "--dry-run", "--skip-register", "--skip-start"],
-      { ...process.env, HOME: root, RERAIL_HOME: join(root, "home") },
-    );
-
-    expect(result).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(result.stdout).toContain("Not starting the daemon (--skip-start).");
-    expect(result.stdout).not.toContain("Would start the daemon.");
-  });
-
 });

@@ -1,0 +1,1 @@
+let foo = class A { get a() {} };

@@ -1,0 +1,1 @@
+if (a && b || b && c) {} else if (a && b && c) {}

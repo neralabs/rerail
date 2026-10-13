@@ -1,0 +1,1 @@
+var foo = "foo \37a bar";

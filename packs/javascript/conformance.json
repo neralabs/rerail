@@ -1,0 +1,1616 @@
+{
+  "pack": "javascript",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "value",
+    "compare",
+    "arguments",
+    "scope",
+    "suppression"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "eslint",
+      "version": "10.11.0"
+    },
+    {
+      "name": "eslint-plugin-unicorn",
+      "version": "76.0.0"
+    }
+  ],
+  "rules": [
+    {
+      "id": "eslint-arrow-body-style",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "arrow-body-style"
+      },
+      "policy": "rules/arrow-body-style.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-capitalized-comments",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "capitalized-comments"
+      },
+      "policy": "rules/capitalized-comments.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-default-case",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "default-case"
+      },
+      "policy": "rules/default-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-default-case-last",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "default-case-last"
+      },
+      "policy": "rules/default-case-last.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-eqeqeq",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "eqeqeq"
+      },
+      "policy": "rules/eslint-eqeqeq.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-func-style",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "func-style"
+      },
+      "policy": "rules/func-style.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-guard-for-in",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "guard-for-in"
+      },
+      "policy": "rules/guard-for-in.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-bitwise",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-bitwise"
+      },
+      "policy": "rules/no-bitwise.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-caller",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-caller"
+      },
+      "policy": "rules/no-caller.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-case-declarations",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-case-declarations"
+      },
+      "policy": "rules/no-case-declarations.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-compare-neg-zero",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-compare-neg-zero"
+      },
+      "policy": "rules/eslint-no-compare-neg-zero.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-cond-assign",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-cond-assign"
+      },
+      "policy": "rules/no-cond-assign.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-continue",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-continue"
+      },
+      "policy": "rules/no-continue.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-debugger",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-debugger"
+      },
+      "policy": "rules/eslint-no-debugger.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-delete-var",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-delete-var"
+      },
+      "policy": "rules/no-delete-var.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-div-regex",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-div-regex"
+      },
+      "policy": "rules/no-div-regex.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-dupe-keys",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-dupe-keys"
+      },
+      "policy": "rules/eslint-no-dupe-keys.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-duplicate-case",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-duplicate-case"
+      },
+      "policy": "rules/eslint-no-duplicate-case.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-empty-pattern",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-empty-pattern"
+      },
+      "policy": "rules/no-empty-pattern.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-empty-static-block",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-empty-static-block"
+      },
+      "policy": "rules/no-empty-static-block.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-eq-null",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-eq-null"
+      },
+      "policy": "rules/no-eq-null.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-extend-native",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-extend-native"
+      },
+      "policy": "rules/no-extend-native.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-iterator",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-iterator"
+      },
+      "policy": "rules/no-iterator.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-loss-of-precision",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-loss-of-precision"
+      },
+      "policy": "rules/no-loss-of-precision.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-multi-str",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-multi-str"
+      },
+      "policy": "rules/no-multi-str.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-negated-condition",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-negated-condition"
+      },
+      "policy": "rules/no-negated-condition.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-nested-ternary",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-nested-ternary"
+      },
+      "policy": "rules/no-nested-ternary.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-new",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-new"
+      },
+      "policy": "rules/no-new.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-new-wrappers",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-new-wrappers"
+      },
+      "policy": "rules/eslint-no-new-wrappers.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-nonoctal-decimal-escape",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-nonoctal-decimal-escape"
+      },
+      "policy": "rules/no-nonoctal-decimal-escape.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-octal",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-octal"
+      },
+      "policy": "rules/no-octal.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-octal-escape",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-octal-escape"
+      },
+      "policy": "rules/no-octal-escape.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-plusplus",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-plusplus"
+      },
+      "policy": "rules/no-plusplus.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-proto",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-proto"
+      },
+      "policy": "rules/no-proto.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-prototype-builtins",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-prototype-builtins"
+      },
+      "policy": "rules/no-prototype-builtins.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-return-assign",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-return-assign"
+      },
+      "policy": "rules/no-return-assign.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-script-url",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-script-url"
+      },
+      "policy": "rules/eslint-no-script-url.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-self-compare",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-self-compare"
+      },
+      "policy": "rules/eslint-no-self-compare.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-setter-return",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-setter-return"
+      },
+      "policy": "rules/no-setter-return.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-sparse-arrays",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-sparse-arrays"
+      },
+      "policy": "rules/no-sparse-arrays.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-template-curly-in-string",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-template-curly-in-string"
+      },
+      "policy": "rules/eslint-no-template-curly-in-string.json",
+      "capabilities": [
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-ternary",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-ternary"
+      },
+      "policy": "rules/no-ternary.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unneeded-ternary",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unneeded-ternary"
+      },
+      "policy": "rules/no-unneeded-ternary.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unsafe-finally",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unsafe-finally"
+      },
+      "policy": "rules/no-unsafe-finally.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unsafe-negation",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unsafe-negation"
+      },
+      "policy": "rules/no-unsafe-negation.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-call",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-call"
+      },
+      "policy": "rules/no-useless-call.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-catch",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-catch"
+      },
+      "policy": "rules/no-useless-catch.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-concat",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-concat"
+      },
+      "policy": "rules/no-useless-concat.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-void",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-void"
+      },
+      "policy": "rules/no-void.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-warning-comments",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-warning-comments"
+      },
+      "policy": "rules/no-warning-comments.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-with",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-with"
+      },
+      "policy": "rules/no-with.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-operator-assignment",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "operator-assignment"
+      },
+      "policy": "rules/operator-assignment.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-numeric-literals",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-numeric-literals"
+      },
+      "policy": "rules/prefer-numeric-literals.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-spread",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-spread"
+      },
+      "policy": "rules/prefer-spread.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-template",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-template"
+      },
+      "policy": "rules/prefer-template.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-radix",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "radix"
+      },
+      "policy": "rules/eslint-radix.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-sort-imports",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "sort-imports"
+      },
+      "policy": "rules/sort-imports.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-sort-keys",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "sort-keys"
+      },
+      "policy": "rules/sort-keys.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-sort-vars",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "sort-vars"
+      },
+      "policy": "rules/sort-vars.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-use-isnan",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "use-isnan"
+      },
+      "policy": "rules/eslint-use-isnan.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-valid-typeof",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "valid-typeof"
+      },
+      "policy": "rules/valid-typeof.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-yoda",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "yoda"
+      },
+      "policy": "rules/yoda.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-accessor-pairs",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "accessor-pairs"
+      },
+      "policy": "candidates/rules/accessor-pairs.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-class-methods-use-this",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "class-methods-use-this"
+      },
+      "policy": "candidates/rules/class-methods-use-this.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-curly",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "curly"
+      },
+      "policy": "candidates/rules/curly.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-default-param-last",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "default-param-last"
+      },
+      "policy": "candidates/rules/default-param-last.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-dot-notation",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "dot-notation"
+      },
+      "policy": "candidates/rules/dot-notation.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-empty",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-empty"
+      },
+      "policy": "rules/eslint-no-empty.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-eval",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-eval"
+      },
+      "policy": "candidates/rules/eslint-no-eval.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-implied-eval",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-implied-eval"
+      },
+      "policy": "candidates/rules/eslint-no-implied-eval.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unused-private-class-members",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unused-private-class-members"
+      },
+      "policy": "candidates/rules/eslint-no-unused-private-class-members.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-rename",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-rename"
+      },
+      "policy": "candidates/rules/eslint-no-useless-rename.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-var",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-var"
+      },
+      "policy": "candidates/rules/eslint-no-var.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-const",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-const"
+      },
+      "policy": "candidates/rules/eslint-prefer-const.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-func-name-matching",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "func-name-matching"
+      },
+      "policy": "candidates/rules/func-name-matching.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-grouped-accessor-pairs",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "grouped-accessor-pairs"
+      },
+      "policy": "candidates/rules/grouped-accessor-pairs.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-id-length",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "id-length"
+      },
+      "policy": "candidates/rules/id-length.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-max-classes-per-file",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "max-classes-per-file"
+      },
+      "policy": "candidates/rules/max-classes-per-file.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-max-depth",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "max-depth"
+      },
+      "policy": "candidates/rules/max-depth.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-max-nested-callbacks",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "max-nested-callbacks"
+      },
+      "policy": "candidates/rules/max-nested-callbacks.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-max-params",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "max-params"
+      },
+      "policy": "candidates/rules/max-params.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-max-statements",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "max-statements"
+      },
+      "policy": "candidates/rules/max-statements.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-alert",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-alert"
+      },
+      "policy": "candidates/rules/no-alert.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-array-constructor",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-array-constructor"
+      },
+      "policy": "candidates/rules/no-array-constructor.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-await-in-loop",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-await-in-loop"
+      },
+      "policy": "candidates/rules/no-await-in-loop.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-console",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-console"
+      },
+      "policy": "rules/no-console.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-dupe-class-members",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-dupe-class-members"
+      },
+      "policy": "candidates/rules/no-dupe-class-members.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-dupe-else-if",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-dupe-else-if"
+      },
+      "policy": "candidates/rules/no-dupe-else-if.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-duplicate-imports",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-duplicate-imports"
+      },
+      "policy": "candidates/rules/no-duplicate-imports.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-empty-function",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-empty-function"
+      },
+      "policy": "candidates/rules/no-empty-function.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-extra-bind",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-extra-bind"
+      },
+      "policy": "candidates/rules/no-extra-bind.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-extra-label",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-extra-label"
+      },
+      "policy": "candidates/rules/no-extra-label.json",
+      "capabilities": [
+        "syntax",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-inline-comments",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-inline-comments"
+      },
+      "policy": "rules/no-inline-comments.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-irregular-whitespace",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-irregular-whitespace"
+      },
+      "policy": "candidates/rules/no-irregular-whitespace.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-labels",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-labels"
+      },
+      "policy": "candidates/rules/no-labels.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-lonely-if",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-lonely-if"
+      },
+      "policy": "candidates/rules/no-lonely-if.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-magic-numbers",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-magic-numbers"
+      },
+      "policy": "candidates/rules/no-magic-numbers.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-multi-assign",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-multi-assign"
+      },
+      "policy": "candidates/rules/no-multi-assign.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-new-func",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-new-func"
+      },
+      "policy": "candidates/rules/no-new-func.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-obj-calls",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-obj-calls"
+      },
+      "policy": "candidates/rules/no-obj-calls.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-object-constructor",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-object-constructor"
+      },
+      "policy": "candidates/rules/no-object-constructor.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-redeclare",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-redeclare"
+      },
+      "policy": "candidates/rules/no-redeclare.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-self-assign",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-self-assign"
+      },
+      "policy": "candidates/rules/no-self-assign.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-sequences",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-sequences"
+      },
+      "policy": "candidates/rules/no-sequences.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-undef",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-undef"
+      },
+      "policy": "candidates/rules/no-undef.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unexpected-multiline",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unexpected-multiline"
+      },
+      "policy": "candidates/rules/no-unexpected-multiline.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unsafe-optional-chaining",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unsafe-optional-chaining"
+      },
+      "policy": "candidates/rules/no-unsafe-optional-chaining.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unused-expressions",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unused-expressions"
+      },
+      "policy": "candidates/rules/no-unused-expressions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unused-labels",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unused-labels"
+      },
+      "policy": "candidates/rules/no-unused-labels.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-unused-vars",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-unused-vars"
+      },
+      "policy": "candidates/rules/no-unused-vars.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-computed-key",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-computed-key"
+      },
+      "policy": "candidates/rules/no-useless-computed-key.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-no-useless-constructor",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-useless-constructor"
+      },
+      "policy": "candidates/rules/no-useless-constructor.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "arguments"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-one-var",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "one-var"
+      },
+      "policy": "candidates/rules/one-var.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-destructuring",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-destructuring"
+      },
+      "policy": "candidates/rules/prefer-destructuring.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-exponentiation-operator",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-exponentiation-operator"
+      },
+      "policy": "candidates/rules/prefer-exponentiation-operator.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-prefer-object-has-own",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "prefer-object-has-own"
+      },
+      "policy": "candidates/rules/prefer-object-has-own.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-require-await",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "require-await"
+      },
+      "policy": "candidates/rules/require-await.json",
+      "capabilities": [
+        "syntax",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-require-yield",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "require-yield"
+      },
+      "policy": "candidates/rules/require-yield.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-strict",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "strict"
+      },
+      "policy": "candidates/rules/strict.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-symbol-description",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "symbol-description"
+      },
+      "policy": "candidates/rules/symbol-description.json",
+      "capabilities": [
+        "syntax",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "unicorn-filename-case",
+      "upstream": {
+        "tool": "eslint-plugin-unicorn",
+        "rule": "unicorn/filename-case"
+      },
+      "policy": "candidates/rules/unicorn-filename-case.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "unicorn-no-null",
+      "upstream": {
+        "tool": "eslint-plugin-unicorn",
+        "rule": "unicorn/no-null"
+      },
+      "policy": "candidates/rules/unicorn-no-null.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "unicorn-prefer-node-protocol",
+      "upstream": {
+        "tool": "eslint-plugin-unicorn",
+        "rule": "unicorn/prefer-node-protocol"
+      },
+      "policy": "candidates/rules/unicorn-prefer-node-protocol.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "eslint-vars-on-top",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "vars-on-top"
+      },
+      "policy": "candidates/rules/vars-on-top.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

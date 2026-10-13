@@ -1,0 +1,1 @@
+var value = 'a';var canSet = true;var result = value || (canSet ? 'unset' : 'can not set')

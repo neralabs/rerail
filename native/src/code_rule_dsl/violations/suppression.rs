@@ -5,11 +5,13 @@ use super::{Witness, anchored_span};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::matcher::{
-    file_eslint_directives, file_lines, file_noqa, file_phpcs, file_phpstan, file_psalm, host,
+    file_eslint_directives, file_lines, file_noqa, file_nosec, file_phpcs, file_phpstan,
+    file_psalm, host,
 };
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, parent_statement, root,
+    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    parent_statement, root,
 };
 use ast_grep_core::{Doc, Node};
 
@@ -37,11 +39,20 @@ pub(crate) fn suppresses<D: Doc>(
                 file_eslint_directives(|| EslintDirectives::read(node, source, &lines));
             directives.suppresses(rules, at, &lines)
         }),
-        Family::Python => suppress.noqa.as_ref().is_some_and(|noqa| {
-            let index = file_noqa(|| NoqaIndex::read(&root(node), source, &lines));
-            let parent = noqa.parent.then(|| parent_statement(node, at)).flatten();
-            index.suppresses(&noqa.codes, at, parent)
-        }),
+        // A project may run Ruff and Bandit together: either linter the violation names may
+        // suppress it. Bandit reads `# nosec` on the reported line and on the lines of the node it
+        // visited, here the witness.
+        Family::Python => {
+            suppress.noqa.as_ref().is_some_and(|noqa| {
+                let index = file_noqa(|| NoqaIndex::read(&root(node), source, &lines));
+                let parent = noqa.parent.then(|| parent_statement(node, at)).flatten();
+                index.suppresses(&noqa.codes, at, parent)
+            }) || suppress.nosec.as_ref().is_some_and(|codes| {
+                let index = file_nosec(|| NosecIndex::read(&root(node), source, &lines));
+                let span = (witness.span.start_byte, witness.span.end_byte);
+                index.suppresses(codes, at, span, &lines)
+            })
+        }
         // A PHP project may run PHPStan, Psalm and PHP_CodeSniffer together: any of the
         // linters a violation names may suppress it. A PHPStan identifier ignores one error, so the
         // violation's witnesses on a line spend the identifiers listed for it, as they are met.

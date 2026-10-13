@@ -1745,6 +1745,7 @@ function checkViolationSuppress(ast: CodeRuleDslAstQuery["ast"] | undefined, vio
   const refusals: ReadonlyArray<readonly [CodeRuleSuppression, string]> = [
     ["eslint", "eslint-disable comments are ESLint's"],
     ["noqa", "noqa comments are Ruff's"],
+    ["nosec", "nosec comments are Bandit's"],
     ["phpstan", "@phpstan-ignore comments are PHPStan's"],
     ["psalm", "@psalm-suppress tags are Psalm's"],
     ["phpcs", "phpcs: annotations are PHP_CodeSniffer's"],

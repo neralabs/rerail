@@ -1,0 +1,1 @@
+const foo = bar ? baz: globalThis.Temporal; new foo();

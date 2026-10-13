@@ -1,0 +1,1 @@
+Number.parseInt('67', 8)

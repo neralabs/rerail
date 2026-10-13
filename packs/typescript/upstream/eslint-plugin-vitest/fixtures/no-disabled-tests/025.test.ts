@@ -1,0 +1,1 @@
+describe("foo", { skip: true }, function () {})

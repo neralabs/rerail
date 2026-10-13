@@ -7,6 +7,8 @@ import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daem
 import { createRuleInstructions, RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
+import { pickSetup, type SetupStepRunner } from "./setup-picker.js";
+import { setupStepSchema } from "./setup-step.js";
 
 /** Minimal command-host surface shared by OMP and Pi. */
 export interface HostCommandHost {
@@ -90,19 +92,6 @@ async function launcherStartState(options: HostCommandOptions): Promise<Reposito
   return known;
 }
 
-/**
- * Whether this checkout's repository is set up (`rerail state --set-up`), read apart from its start state: a repository
- * Rerail has never seen reads as stopped, and is not set up either.
- */
-async function launcherSetUp(options: HostCommandOptions): Promise<boolean> {
-  const result = await runLauncher(options, ["state", "--set-up"], databaseArgs(options));
-  const answer = result.stdout.trim();
-  if (result.code !== 0 || (answer !== "set-up" && answer !== "not-set-up")) {
-    throw new Error(`rerail state --set-up failed: ${(result.stdout + result.stderr).trim()}`);
-  }
-  return answer === "set-up";
-}
-
 function notifyResult(ctx: HostCommandContext, name: string, result: LauncherResult): void {
   ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
@@ -112,21 +101,38 @@ function openingNotice(url: string, opening: PageOpening): string {
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
-const RECOMMENDED_RULES = "Add the recommended rules";
-const PICK_MYSELF = "I'll pick rules myself";
+/**
+ * Each set-up step runs through the launcher's `--json`, in this session's folder. That is this session's package,
+ * which a `/rerail-update` since may have replaced; set-up's steps never install it over the active one.
+ */
+function setupSteps(options: HostCommandOptions): SetupStepRunner {
+  const cwd = options.cwd();
+  const launcher = { ...options, cwd: () => cwd };
+  return async args => {
+    const result = await runLauncher(launcher, args, databaseArgs(options));
+    try {
+      return setupStepSchema.parse(JSON.parse(result.stdout));
+    } catch {
+      throw new Error((result.stdout + result.stderr).trim() || `Set-up exited with code ${result.code}.`);
+    }
+  };
+}
 
 /**
- * First-time set-up of a repository that is not set up yet, from OMP or Pi: ask once whether to add the
- * recommended rule packs, then run `rerail start` (with `--no-packs` for "pick myself", which sets the
- * repository up with no rules). Without a UI the recommended packs are added, as `rerail start` does.
+ * `/rerail-start` from OMP or Pi: where the repository is not set up, set-up's questions asked through the coding
+ * agent's own `ctx.ui.select` / `ctx.ui.input`, each answer run as set-up's `--json` step (`pickSetup`); where it
+ * is, the first step starts Rerail and says so. The picker shows every screen itself. Without a UI (print mode) the
+ * launcher's text says what to run instead. Returns whether Rerail ended up started or stopped, so the runtime
+ * re-attaches.
  */
-async function setUpFromCommand(options: HostCommandOptions, ctx: HostCommandContext): Promise<LauncherResult> {
-  const choice = ctx.hasUI === false
-    ? RECOMMENDED_RULES
-    : await ctx.ui.select("Set up Rerail in this repository", [RECOMMENDED_RULES, PICK_MYSELF]);
-  if (choice === undefined) return { code: 0, stdout: "Rerail was not set up.\n", stderr: "" };
-  const packs = choice === PICK_MYSELF ? ["--no-packs"] : [];
-  return runLauncher(options, ["start", ...packs], databaseArgs(options));
+async function startFromCommand(options: HostCommandOptions, ctx: HostCommandContext): Promise<boolean> {
+  if (ctx.hasUI === false) {
+    const result = await runLauncher(options, ["start"], databaseArgs(options));
+    notifyResult(ctx, "rerail-start", result);
+    return result.code === 0;
+  }
+  const last = await pickSetup(ctx.ui, setupSteps(options));
+  return last !== undefined && last.step !== "error";
 }
 
 /** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
@@ -191,11 +197,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
   // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
   register("rerail-start", async ctx => {
-    const result = await launcherSetUp(options)
-      ? await runLauncher(options, ["start"], databaseArgs(options))
-      : await setUpFromCommand(options, ctx);
-    if (result.code === 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-start", result);
+    if (await startFromCommand(options, ctx)) await options.reattach?.();
   });
   register("rerail-stop", async ctx => {
     const result = await runLauncher(options, ["stop"], databaseArgs(options));

@@ -18,7 +18,7 @@ The rule list is the pack file itself: `packs/complexity/pack.json`. A rule's ti
 
 A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
-Every rule is listed in the mode its own document has (all `steer` today), and every pack lists its rules as on.
+Every rule is listed in the mode its own document has (all `steer` today). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it; a rule or pack setting in the repository or a checkout overrides them.
 

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, eq, getTableName, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -16,14 +16,18 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { checkouts, repositories } from "../engine/storage/schema.js";
+import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
-type Reader = Pick<RerailDatabase, "select">;
+type Reader = Pick<RerailDatabase, "select" | "get">;
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
-function stateOf(status: RepositoryStatus): RepositoryStartState {
+/** Whether Rerail runs in `checkout`; the catalog's resolution, exported here beside {@link stateOf}. */
+export { checkoutStatus };
+
+export function stateOf(status: RepositoryStatus): RepositoryStartState {
   if (!status.started) return "stopped";
   return status.setUp ? "started" : "not-set-up";
 }
@@ -153,31 +157,21 @@ export function isRerailStarted(workspace: string, databasePath = defaultRerailD
 }
 
 /** How start and stop name what they changed: the repository, or a worktree of it. */
-function checkoutName(workspace: string, wholeRepository: boolean): string {
+export function checkoutName(workspace: string, wholeRepository: boolean): string {
   const location = repositoryIdentityLocation(workspace);
   const repository = repositoryFolderName(location);
   return wholeRepository || location.main ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
 }
+
 /**
- * Where start and stop talk to the person: a terminal, or a coding agent that relays the text.
- * PR C's set-up swaps in its screens and questions behind this seam.
+ * Where start, stop and set-up talk to the person: a terminal (which set-up can ask), a coding agent that relays
+ * the text, or `--json`, where set-up's questions go out as data.
  */
 export interface RepositorySetupIo {
-  readonly lane: "terminal" | "agent";
+  readonly lane: "terminal" | "agent" | "json";
   say(text: string): void;
-}
-
-export interface RepositoryStartOptions {
-  databasePath?: string;
-  /** Coding agents named by `rerail start --agents`; the set-up screens decide what to do with them. */
-  agents?: readonly RerailHost[];
-  /** Act on every checkout of the repository instead of this checkout and the worktrees inside it. */
-  repository?: boolean;
-  /**
-   * What set-up adds: the recommended rule packs (the default), or none ("I'll pick rule packs myself"), which
-   * still sets the repository up. Ignored for a repository that is already set up.
-   */
-  rulePacks?: "recommended" | "none";
+  /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
+  ask?(prompt: string): Promise<string | undefined>;
 }
 
 export interface RepositoryStopOptions {
@@ -185,23 +179,25 @@ export interface RepositoryStopOptions {
   repository?: boolean;
 }
 
-export interface RepositoryStartReport {
-  /** The state before this start. */
-  previous: RepositoryStartState;
-  repositoryName: string;
-  ruleCount: number;
-  /** The rule packs set-up added, each at its folder; empty when the repository was already set up. */
-  addedPacks: readonly { readonly packId: string; readonly folder: string }[];
-}
-
 /** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
-function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
+export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
   const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
   return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
     .rules.filter(rule => rule.on).length;
 }
 
-const rulesNoun = (count: number): string => `${count} ${count === 1 ? "rule is" : "rules are"} on`;
+/**
+ * Whether `repositoryKey` is what the dashboard's review leaves while set-up waits for the person to start Rerail with
+ * the packs they kept on: set-up offered the review, the person set the repository up in the dashboard, and nobody has
+ * started or stopped it anywhere since. A repository set up any other way is just set up.
+ */
+export function awaitingStartAfterReview(db: Reader, repositoryKey: RepositoryKey): boolean {
+  const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
+    .from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
+  if (repository?.configuredAt == null || repository.started !== null || !setupReviewOffered(db, repositoryKey)) return false;
+  return db.select({ path: checkouts.checkoutPath }).from(checkouts)
+    .where(and(eq(checkouts.repositoryKey, repositoryKey), isNotNull(checkouts.started))).get() === undefined;
+}
 
 /** Set `checkout`'s repository up with `recommendations`, each pack at its recommended folder. */
 function setUpWith(database: RerailDatabase, checkout: CheckoutContext, recommendations: readonly RulePackRecommendation[], now: number) {
@@ -222,22 +218,12 @@ export function setUpWithRecommendedPacks(database: RerailDatabase, checkout: Ch
   return packs;
 }
 
-/** The set-up lines that follow the first one: each pack added, or why none was. */
-function setUpLines(recommendations: readonly RulePackRecommendation[], rulePacks: "recommended" | "none", uiCommand: string): string[] {
-  if (rulePacks === "none") return [`  No rule packs were added. Pick them on the rules page (${uiCommand}).`];
-  if (recommendations.length === 0) return [`  No rule pack fits this repository yet. Add rules on the rules page (${uiCommand}).`];
-  return [
-    "  Rule packs added:",
-    ...recommendations.map(({ pack, folder, ruleCount, reason }) =>
-      `  · ${pack.name}${folder === "" ? "" : ` in ${folder}`} (${ruleCount} ${ruleCount === 1 ? "rule" : "rules"}): ${reason}`),
-  ];
-}
-
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */
 export function setRepositoryStarted(database: RerailDatabase, repositoryKey: RepositoryKey, started: boolean, now = Date.now()): void {
   database.transaction(tx => {
     tx.update(repositories).set({ started, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
+    clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
 }
 
@@ -247,11 +233,12 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
+    clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
 
 /** `setCheckoutStarted`, or (`wholeRepository`) `setRepositoryStarted` for the checkout's repository. */
-function setStarted(database: RerailDatabase, checkout: CheckoutContext, started: boolean, wholeRepository: boolean): void {
+export function setStarted(database: RerailDatabase, checkout: CheckoutContext, started: boolean, wholeRepository: boolean): void {
   if (wholeRepository) setRepositoryStarted(database, checkout.repositoryKey, started);
   else setCheckoutStarted(database, checkout, started);
 }
@@ -261,7 +248,7 @@ function setStarted(database: RerailDatabase, checkout: CheckoutContext, started
  * again, unless a containing checkout is stopped, in which case it is started itself. With `wholeRepository`
  * every checkout follows the repository.
  */
-function startSetUpRepository(database: RerailDatabase, checkout: CheckoutContext, wholeRepository: boolean): void {
+export function startSetUpRepository(database: RerailDatabase, checkout: CheckoutContext, wholeRepository: boolean): void {
   if (wholeRepository) {
     setRepositoryStarted(database, checkout.repositoryKey, true);
     return;
@@ -270,50 +257,8 @@ function startSetUpRepository(database: RerailDatabase, checkout: CheckoutContex
     tx.update(repositories).set({ started: true, updatedAt: Date.now() }).where(eq(repositories.repositoryKey, checkout.repositoryKey)).run();
     const parentStopped = parentCheckouts(tx, checkout).find(row => row.started !== null)?.started === false;
     tx.update(checkouts).set({ started: parentStopped ? true : null }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
+    clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
-}
-
-/**
- * Start Rerail in the checkout `workspace` is in and the worktrees inside it, or with `repository` in every
- * checkout of its repository. A repository that is not set up is set up first: the rule packs recommended for this
- * checkout are added at their folders (none with `rulePacks: "none"`), it is marked set up, and the repository is
- * started (see `startSetUpRepository`).
- */
-export async function startRerail(workspace: string, io: RepositorySetupIo, options: RepositoryStartOptions = {}): Promise<RepositoryStartReport> {
-  const databasePath = options.databasePath ?? defaultRerailDatabasePath();
-  const rulePacks = options.rulePacks ?? "recommended";
-  const database = openRerailDatabase(databasePath);
-  let previous: RepositoryStartState;
-  let recommendations: readonly RulePackRecommendation[] = [];
-  let addedPacks: readonly { packId: string; folder: string }[] = [];
-  let needsSetUp: boolean;
-  let ruleCount: number;
-  try {
-    const checkout = recordCheckout(database, workspace);
-    const status = checkoutStatus(database, checkout);
-    previous = stateOf(status);
-    needsSetUp = !status.setUp;
-    if (needsSetUp) {
-      recommendations = rulePacks === "none" ? [] : recommendRulePacks(checkout.checkoutPath);
-      addedPacks = setUpWith(database, checkout, recommendations, Date.now());
-      startSetUpRepository(database, checkout, options.repository === true);
-    } else {
-      setStarted(database, checkout, true, options.repository === true);
-    }
-    ruleCount = onRuleCount(database, checkout);
-  } finally {
-    database.$client.close();
-  }
-  const name = checkoutName(workspace, options.repository === true || needsSetUp);
-  if (needsSetUp) {
-    const uiCommand = io.lane === "agent" ? "/rerail-ui" : "rerail ui";
-    io.say([`● Rerail is on in ${name}. ${rulesNoun(ruleCount)}.`, ...setUpLines(recommendations, rulePacks, uiCommand)].join("\n"));
-  } else {
-    io.say(previous === "started"
-      ? `● Rerail is already on in ${name}. ${rulesNoun(ruleCount)}.`
-      : `● Rerail is on in ${name}. ${rulesNoun(ruleCount)}, as you left them.`);
-  }
-  return { previous, repositoryName: name, ruleCount, addedPacks };
 }
 
 /**
@@ -324,7 +269,7 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const wholeRepository = options.repository === true;
   const name = checkoutName(workspace, wholeRepository);
-  const startCommand = io.lane === "agent" ? "/rerail-start" : "rerail start";
+  const startCommand = io.lane === "terminal" ? "rerail start" : "/rerail-start";
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
   try {

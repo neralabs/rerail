@@ -437,7 +437,7 @@ fn string_comments_unicode_prefixes_long_residue_and_python_variadics() {
     );
 }
 
-/// Every AST query of the shipped catalog (the complexity pack core ships) and of the Python and TypeScript packs,
+/// Every AST query of the shipped catalog (the complexity pack core ships) and of the JavaScript, Python and TypeScript packs,
 /// compiled with its utilities, constraints and its document's definitions, selects the same nodes on the native tree and on
 /// the restored tape.
 #[test]
@@ -447,7 +447,17 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             Value::Object(object) => {
                 for (key, child) in object {
                     if key == "ast" {
-                        queries.push(child.clone());
+                        // An option-selected query (`$option` with `cases` and a `default`) is one query per branch.
+                        match child.get("$option") {
+                            Some(_) => queries.extend(
+                                child["cases"]
+                                    .as_object()
+                                    .into_iter()
+                                    .flat_map(|cases| cases.values().cloned())
+                                    .chain(std::iter::once(child["default"].clone())),
+                            ),
+                            None => queries.push(child.clone()),
+                        }
                     } else {
                         collect(child, queries);
                     }
@@ -477,6 +487,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut pending = vec![
         root.join("packs/complexity/rules"),
+        root.join("packs/javascript/rules"),
         root.join("packs/python/rules"),
         root.join("packs/typescript/rules"),
     ];
@@ -503,7 +514,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 80, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 233, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (

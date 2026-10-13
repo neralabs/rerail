@@ -1,0 +1,1 @@
+config.newIsCap = config.newIsCap !== false

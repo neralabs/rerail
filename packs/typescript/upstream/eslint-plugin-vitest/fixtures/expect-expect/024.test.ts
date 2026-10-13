@@ -1,0 +1,1 @@
+test("should fail", () => { foo(true).toBe(true); })

@@ -1,0 +1,1 @@
+class C { #pow; foo() { Math.#pow(a, b); } }

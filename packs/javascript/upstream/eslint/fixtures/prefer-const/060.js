@@ -1,0 +1,1 @@
+let a; const b = {}; ({ a, c: b.c } = func());

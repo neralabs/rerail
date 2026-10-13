@@ -1,0 +1,1 @@
+var globalThis = 0;

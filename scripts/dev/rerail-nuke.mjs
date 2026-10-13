@@ -380,14 +380,14 @@ export function detectedHarnesses(home) {
 }
 
 /**
- * `rerail install --remove --harness <detected>` through the installed launcher: Rerail's own unregistration (hooks,
+ * `rerail install --remove --agents <detected>` through the installed launcher: Rerail's own unregistration (hooks,
  * status line, MCP bridge, OMP extension, Pi package, commands, skill). Naming the harnesses keeps the launcher from
  * also moving the database; this script moves the whole home. A launcher that fails leaves the sweep that follows.
  */
 function unregisterSteps(rerailHome, home, env) {
   const harnesses = detectedHarnesses(home);
   if (!existsSync(launcherPath(rerailHome)) || harnesses.length === 0) return [];
-  const args = ["install", "--remove", "--harness", harnesses.join(",")];
+  const args = ["install", "--remove", "--agents", harnesses.join(",")];
   return [{
     kind: "unregister",
     description: `Run ${launcherPath(rerailHome)} ${args.join(" ")}`,

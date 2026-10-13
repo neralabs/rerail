@@ -1,0 +1,1 @@
+var foo = bar(/* comment */).foo;

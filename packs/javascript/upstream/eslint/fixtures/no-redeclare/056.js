@@ -1,0 +1,1 @@
+/*global foo, Array, baz*/

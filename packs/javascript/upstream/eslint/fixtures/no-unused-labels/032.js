@@ -1,0 +1,2 @@
+foo()
+A: `template` + bar

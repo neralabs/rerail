@@ -1,0 +1,1 @@
+define(['foo', 'qux'], function(foo, qux) { var bar = 1; var baz = 2; })

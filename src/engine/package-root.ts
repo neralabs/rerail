@@ -25,7 +25,7 @@ export const PACKAGE_ROOT = nearestPackageRoot(dirname(fileURLToPath(import.meta
 export const ENTRY_POINTS = {
   index: "dist/index.js",
   cli: "dist/cli/cli.js",
-  daemon: "dist/daemon/daemon.js",
+  daemon: "dist/cli/daemon-entry.js",
   eventStream: "dist/harness/event-stream.js",
   hookLauncher: "dist/harness/hook-launcher.js",
   repositoryStart: "dist/runtime/repository-start.js",

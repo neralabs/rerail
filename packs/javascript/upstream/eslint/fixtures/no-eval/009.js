@@ -1,0 +1,1 @@
+function foo() { var eval = 'foo'; window[eval]('foo') }

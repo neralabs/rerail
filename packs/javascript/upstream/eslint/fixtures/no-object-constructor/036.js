@@ -1,0 +1,1 @@
+for (const prop in obj) Object();

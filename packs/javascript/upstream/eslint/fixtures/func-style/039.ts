@@ -1,0 +1,1 @@
+const object: { foo: () => void } = { foo: function(): void {} };

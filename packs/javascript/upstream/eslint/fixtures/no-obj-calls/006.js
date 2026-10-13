@@ -1,0 +1,1 @@
+var x = new Math.foo;

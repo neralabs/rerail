@@ -1,0 +1,1 @@
+function foo(Number) { Number.parseInt("111110111", 2); }

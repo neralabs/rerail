@@ -1,0 +1,1 @@
+await using a = 0, b = 1; foo(); await using c = 2, d = 3;

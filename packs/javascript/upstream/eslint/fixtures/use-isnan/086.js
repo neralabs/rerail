@@ -1,0 +1,1 @@
+lastIndexOf(Number.NaN)

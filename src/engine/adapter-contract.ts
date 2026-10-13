@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
 
-export type RerailHost = "omp" | "pi" | "claude-code" | "codex" | "cursor";
+/** Every coding agent Rerail works with. */
+export const RERAIL_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
+export type RerailHost = (typeof RERAIL_HOSTS)[number];
+
+/** One coding agent as `rerail` sees it on this computer; set-up computes it, the API reports it. */
+export interface CodingAgentState {
+  id: RerailHost;
+  name: string;
+  /** Its config folder exists under the user's home. */
+  found: boolean;
+  /** Registering it again would write nothing: Rerail's hooks and commands are in place. */
+  connected: boolean;
+  /** Why its connection could not be checked, such as a config file that is not valid JSON; null when it could. */
+  problem: string | null;
+}
 export type AssistantObservation = "streaming" | "completed";
 export type ToolSurface = "native" | "event";
 export type PersistenceSurface = "session-entries" | "jsonl-ledger";

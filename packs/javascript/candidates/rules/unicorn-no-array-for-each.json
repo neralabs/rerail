@@ -1,0 +1,69 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn:no-array-for-each",
+  "revision": 1,
+  "mode": "log",
+  "description": "A `.forEach()` call; a `for\u2026of` loop reads better and can `break`, `return` and `await`.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "for-each",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "has": {
+                "field": "property",
+                "regex": "^forEach$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unicorn/no-array-for-each",
+        "message": "Use for\u2026of instead of .forEach().",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "unicorn/no-array-for-each"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

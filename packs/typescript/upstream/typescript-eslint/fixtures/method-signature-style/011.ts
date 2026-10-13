@@ -1,0 +1,1 @@
+type Test = { readonly ['f']?: <T>(a: T, b: T) => T };

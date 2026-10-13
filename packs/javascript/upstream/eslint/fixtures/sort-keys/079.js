@@ -1,0 +1,1 @@
+var obj = { null: 1, [/(?<zero>0)/]: 2 }

@@ -1,0 +1,1 @@
+Object.DefineProperty(foo, 'bar', { set(val) { return 1; } })

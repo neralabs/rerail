@@ -1,0 +1,1 @@
+import { x as foo } from 'y';

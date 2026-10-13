@@ -1,0 +1,1 @@
+type UnionType = string | number;

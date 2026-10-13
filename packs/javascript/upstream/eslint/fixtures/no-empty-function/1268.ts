@@ -1,0 +1,1 @@
+const A = class {foo(param: string) {}}; // allow: overrideMethods

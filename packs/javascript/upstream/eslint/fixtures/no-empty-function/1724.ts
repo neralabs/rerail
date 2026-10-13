@@ -1,0 +1,1 @@
+class A {@decorator() static set foo(value: string) {}} // allow: constructors
