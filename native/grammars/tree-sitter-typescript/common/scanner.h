@@ -13,6 +13,8 @@ enum TokenType {
     JSX_TEXT,
     FUNCTION_SIGNATURE_AUTOMATIC_SEMICOLON,
     ERROR_RECOVERY,
+    // Never returned: valid only after an arrow function's block body.
+    ARROW_BODY_END,
 };
 
 static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
@@ -126,12 +128,18 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
         return false;
     }
 
+    // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
+    // `:` or a `;` starts a new statement (`f = () => {}⏎[1, 2].map(f)`), where after any other expression it
+    // would continue it.
+    if (valid_symbols[ARROW_BODY_END]) {
+        return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
+    }
+
     switch (lexer->lookahead) {
         case '`':
         case ',':
         case '.':
         case ';':
-        case '*':
         case '%':
         case '>':
         case '<':
@@ -150,23 +158,25 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             }
             break;
 
-            // Don't insert a semicolon before a '[' or '(', unless we're parsing
-            // a type. Detect whether we're parsing a type or an expression using
-            // the validity of a binary operator token.
+            // Don't insert a semicolon before a '[', '(' or '*', unless we're parsing
+            // a type, or no binary operator can come next, as after a declarator's or a class field's name
+            // (`var a⏎[b] = c`, `a⏎*g() {}`). Detect it using the validity of a binary operator token.
         case '(':
         case '[':
+        case '*':
             if (valid_symbols[LOGICAL_OR]) {
                 return false;
             }
             break;
 
-            // Insert a semicolon before `--` and `++`, but not before binary `+` or `-`.
+            // Insert a semicolon before `--` and `++`, and before a `+` or `-` where no binary operator can come
+            // next (`var a⏎+b`), but not before binary `+` or `-`.
         case '+':
             skip(lexer);
-            return lexer->lookahead == '+';
+            return lexer->lookahead == '+' || !valid_symbols[LOGICAL_OR];
         case '-':
             skip(lexer);
-            return lexer->lookahead == '-';
+            return lexer->lookahead == '-' || !valid_symbols[LOGICAL_OR];
 
             // Don't insert a semicolon before `!=`, but do insert one before a unary `!`.
         case '!':
@@ -174,7 +184,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             return lexer->lookahead != '=';
 
             // Don't insert a semicolon before `in` or `instanceof`, but do insert one
-            // before an identifier, such as `in_point`, or before a member named `in` or `instanceof` after a type.
+            // before an identifier, such as `in_point`, before a member named `in` after a type, or before an
+            // `instanceof` that no binary operator can take here: a member's name (`#a⏎instanceof() {}`).
         case 'i':
             skip(lexer);
 
@@ -195,7 +206,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             }
 
             if (!is_identifier_char(lexer->lookahead)) {
-                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
+                return !valid_symbols[LOGICAL_OR];
             }
             break;
     }
@@ -284,6 +295,34 @@ static bool scan_closing_comment(TSLexer *lexer) {
     return true;
 }
 
+// After an `&`: whether the rest of a character reference follows, as html_character_reference reads one (`&amp;`,
+// `&#38;`, `&#x26;`). Consumes the name or number either way.
+static bool scan_character_reference_tail(TSLexer *lexer) {
+    unsigned length = 0;
+    if (lexer->lookahead == '#') {
+        advance(lexer);
+        if (lexer->lookahead == 'x' || lexer->lookahead == 'X') {
+            advance(lexer);
+            while (length < 6 && iswxdigit(lexer->lookahead)) {
+                advance(lexer);
+                length++;
+            }
+        } else {
+            while (length < 5 && iswdigit(lexer->lookahead)) {
+                advance(lexer);
+                length++;
+            }
+        }
+    } else {
+        while (length < 30 && ((lexer->lookahead >= 'a' && lexer->lookahead <= 'z') ||
+                               (lexer->lookahead >= 'A' && lexer->lookahead <= 'Z'))) {
+            advance(lexer);
+            length++;
+        }
+    }
+    return length > 0 && lexer->lookahead == ';';
+}
+
 static bool scan_jsx_text(TSLexer *lexer) {
     // saw_text will be true if we see any non-whitespace content, or any whitespace content that is not a newline and
     // does not immediately follow a newline.
@@ -292,8 +331,22 @@ static bool scan_jsx_text(TSLexer *lexer) {
     // immediately follows a newline.
     bool at_newline = false;
 
+    lexer->result_symbol = JSX_TEXT;
+
     while (lexer->lookahead != 0 && lexer->lookahead != '<' && lexer->lookahead != '>' && lexer->lookahead != '{' &&
-           lexer->lookahead != '}' && lexer->lookahead != '&') {
+           lexer->lookahead != '}') {
+        if (lexer->lookahead == '&') {
+            // A character reference is its own token, so the text ends before it. Any other `&` is text, as
+            // TypeScript and Babel read it: `Help & Support`, `&nbsp` without its `;`.
+            lexer->mark_end(lexer);
+            advance(lexer);
+            if (scan_character_reference_tail(lexer)) {
+                return saw_text;
+            }
+            saw_text = true;
+            at_newline = false;
+            continue;
+        }
         bool is_wspace = iswspace(lexer->lookahead);
         if (lexer->lookahead == '\n') {
             at_newline = true;
@@ -321,7 +374,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
         advance(lexer);
     }
 
-    lexer->result_symbol = JSX_TEXT;
+    lexer->mark_end(lexer);
     return saw_text;
 }
 

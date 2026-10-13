@@ -2121,13 +2121,14 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
     const identities = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
       failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
         .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
-    // A missing comma, which TypeScript rejects too, so the error region stays whatever the grammar fixes.
+    // Syntax errors TypeScript rejects too (a missing comma; a bare `>` in JSX text), so the error regions stay
+    // whatever the grammars fix.
     const missingComma = 'const m = importOriginal(1 load("./api"));\ndebugger;\n';
-    const jsxAmpersand = "export const View = () => <p>Domain & capability map</p>;\ndebugger;\n";
+    const jsxGreaterThan = "export const View = () => <p>Domain > capability map</p>;\ndebugger;\n";
 
     it.each([
       ["typescript", "api.test.ts", missingComma],
-      ["tsx", "map.tsx", jsxAmpersand],
+      ["tsx", "map.tsx", jsxGreaterThan],
     ] as const)("reports sound %s witnesses outside the error region and marks the file partial", async (language, path, source) => {
       const nativeWorkspace = workspace();
       const compiled = compileJson([
@@ -2169,7 +2170,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       try {
         const files = [
           { language: "typescript" as const, path: "api.test.ts", source: `${missingComma}console.log(m);\nfunction run() {\n  report(1);\n  debugger;\n}\n` },
-          { language: "tsx" as const, path: "map.tsx", source: `${jsxAmpersand}export const Title = () => <h1 title="map">{report(2)}</h1>;\n` },
+          { language: "tsx" as const, path: "map.tsx", source: `${jsxGreaterThan}export const Title = () => <h1 title="map">{report(2)}</h1>;\n` },
         ];
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
         const full = evaluate(compiled, snapshot(files as never));

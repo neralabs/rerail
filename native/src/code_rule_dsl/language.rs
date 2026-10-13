@@ -204,10 +204,11 @@ impl Language for GrammarDialect {
 
 impl LanguageExt for GrammarDialect {
     /// The grammar the registry names: one `build.rs` generates from a vendored grammar (Python,
-    /// TypeScript and TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/
-    /// PATCHES.md`), else ast-grep's. ast-grep is built without its Python and TypeScript parsers,
-    /// so `SupportLang` only lends these dialects its pattern syntax. Test-only dialects are
-    /// ast-grep's. Blade has none: Rerail's port of Forte parses it (`blade::forte`).
+    /// TypeScript, TSX and JavaScript, which carry patches: `grammars/tree-sitter-{python,
+    /// typescript,javascript}/PATCHES.md`), else ast-grep's. ast-grep is built without its Python,
+    /// TypeScript and JavaScript parsers, so `SupportLang` only lends these dialects its pattern
+    /// syntax. Test-only dialects are ast-grep's. Blade has none: Rerail's port of Forte parses it
+    /// (`blade::forte`).
     fn get_ts_language(&self) -> TSLanguage {
         self.ts_language()
             .unwrap_or_else(|| panic!("{self} is not parsed with tree-sitter"))
@@ -1385,6 +1386,581 @@ mod tests {
             assert!(
                 initialized.root().get_inner_node().has_error(),
                 "{dialect:?}"
+            );
+        }
+    }
+
+    /// A bare `&` in JSX text is text, as TypeScript reads it; only a complete character
+    /// reference such as `&amp;` is an `html_character_reference` (Patch 7 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`). JSX parses only in the TSX dialect.
+    #[test]
+    fn a_bare_ampersand_in_jsx_text_is_text() {
+        let source = "<span>Help & Support</span>;\n<h2>{a} & {b}</h2>;\n\
+                      <p>a &amp; b &#38; c &#x26;</p>;\n<p>&</p>;\n<p>a&b</p>;\n<p>&nbsp</p>;\n\
+                      <p>a &b; c &#; d &#x; e</p>;\n";
+        let root = GrammarDialect::Tsx.ast_grep(source);
+        assert!(!root.root().get_inner_node().has_error());
+        let children = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "jsx_element")
+            .map(|node| {
+                node.children()
+                    .filter(|child| {
+                        !matches!(
+                            child.kind().as_ref(),
+                            "jsx_opening_element" | "jsx_closing_element"
+                        )
+                    })
+                    .map(|child| format!("{}:{}", child.kind(), child.text()))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            children,
+            [
+                "jsx_text:Help & Support",
+                "jsx_expression:{a} | jsx_text: &  | jsx_expression:{b}",
+                "jsx_text:a  | html_character_reference:&amp; | jsx_text: b  | \
+                 html_character_reference:&#38; | jsx_text: c  | html_character_reference:&#x26;",
+                "jsx_text:&",
+                "jsx_text:a&b",
+                "jsx_text:&nbsp",
+                "jsx_text:a  | html_character_reference:&b; | jsx_text: c &#; d &#x; e",
+            ]
+        );
+    }
+
+    /// The JavaScript dialect's tree of `source`, which must parse without an error or a missing
+    /// token (`grammars/tree-sitter-javascript/PATCHES.md`).
+    fn javascript(source: &str) -> ast_grep_core::AstGrep<StrDoc<GrammarDialect>> {
+        let root = GrammarDialect::JavaScript.ast_grep(source);
+        let tree = root.root().get_inner_node();
+        assert!(!tree.has_error(), "{source}\n{}", tree.to_sexp());
+        root
+    }
+
+    /// The text of each named child of every node of kind `kind`.
+    fn named_children_text(
+        root: &ast_grep_core::AstGrep<StrDoc<GrammarDialect>>,
+        kind: &str,
+    ) -> Vec<String> {
+        root.root()
+            .dfs()
+            .filter(|node| node.kind() == kind)
+            .flat_map(|node| node.children().collect::<Vec<_>>())
+            .filter(|child| child.is_named())
+            .map(|child| child.text().into_owned())
+            .collect()
+    }
+
+    /// A bare `&` in a JSX attribute string of a `.js` file is text; only a complete character
+    /// reference is an `html_character_reference` (Patch 1 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`, as TSX's Patch 3).
+    #[test]
+    fn a_bare_ampersand_in_a_javascript_jsx_string_is_text() {
+        let root = javascript(
+            "<a href=\"https://fonts.googleapis.com/css2?family=Krona+One&display=swap\" />;\n\
+             <img src='/a?w=8&h=8' title=\"Q&\" alt=\"a&amp;b\" />;\n",
+        );
+        let strings = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "string")
+            .map(|node| {
+                node.children()
+                    .filter(|child| child.is_named())
+                    .map(|child| format!("{}:{}", child.kind(), child.text()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            strings,
+            [
+                "string_fragment:https://fonts.googleapis.com/css2?family=Krona+One \
+                 string_fragment:& string_fragment:display=swap",
+                "string_fragment:/a?w=8 string_fragment:& string_fragment:h=8",
+                "string_fragment:Q string_fragment:&",
+                "string_fragment:a html_character_reference:&amp; string_fragment:b",
+            ]
+        );
+    }
+
+    /// A bare `&` in the JSX text of a `.js` file is text; `&amp;` stays a reference (Patch 2 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_bare_ampersand_in_javascript_jsx_text_is_text() {
+        let root = javascript(
+            "<span>Help & Support</span>;\n<h2>{a} & {b}</h2>;\n<p>a &amp; b &#; c</p>;\n",
+        );
+        let children = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "jsx_element")
+            .map(|node| {
+                node.children()
+                    .filter(|child| {
+                        !matches!(
+                            child.kind().as_ref(),
+                            "jsx_opening_element" | "jsx_closing_element"
+                        )
+                    })
+                    .map(|child| format!("{}:{}", child.kind(), child.text()))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            children,
+            [
+                "jsx_text:Help & Support",
+                "jsx_expression:{a} | jsx_text: &  | jsx_expression:{b}",
+                "jsx_text:a  | html_character_reference:&amp; | jsx_text: b &#; c",
+            ]
+        );
+    }
+
+    /// A re-export takes import attributes, as an import does (Patch 3 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_re_exports_take_import_attributes() {
+        let root = javascript(
+            "export { default as x } from './x.json' with { type: 'json' };\n\
+             export * from 'y' with { type: 'json' }\n\
+             export * as z from 'z' with { type: 'json' };\n",
+        );
+        assert_eq!(
+            named_children_text(&root, "export_statement")
+                .into_iter()
+                .filter(|text| text.starts_with("with"))
+                .collect::<Vec<_>>(),
+            ["with { type: 'json' }"; 3]
+        );
+    }
+
+    /// A `{` that starts a statement or an arrow function's body opens a block holding a labeled
+    /// statement, never an object, as ECMAScript reads it; elsewhere it is an object (Patch 4 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_brace_at_javascript_statement_start_opens_a_block() {
+        let root = javascript(
+            "if (foo) { bar: 'baz' }\nf = () => { bar: 1 };\n{ bar: 1 }\n\
+             g = () => ({ bar: 1 });\nx = { bar: 1 };\n",
+        );
+        let braces = root
+            .root()
+            .dfs()
+            .filter(|node| matches!(node.kind().as_ref(), "statement_block" | "object"))
+            .map(|node| format!("{}:{}", node.kind(), node.text()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            braces,
+            [
+                "statement_block:{ bar: 'baz' }",
+                "statement_block:{ bar: 1 }",
+                "statement_block:{ bar: 1 }",
+                "object:{ bar: 1 }",
+                "object:{ bar: 1 }",
+            ]
+        );
+    }
+
+    /// `using` and `await using` declarations head a `for` statement, as `const` does (Patch 5 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn using_declarations_head_a_javascript_for_statement() {
+        let root = javascript(
+            "for (await using r = getResource(); ;) {}\nfor (using s = f(); i < 1; i++) {}\n",
+        );
+        let initializers = root
+            .root()
+            .dfs()
+            .filter_map(|node| node.field("initializer"))
+            .map(|node| format!("{}:{}", node.kind(), node.text()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            initializers,
+            [
+                "using_declaration:await using r = getResource();",
+                "using_declaration:using s = f();",
+            ]
+        );
+    }
+
+    /// A destructuring assignment's target may be parenthesized, comments and all (Patch 6 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn parenthesized_javascript_destructuring_targets_parse() {
+        let root = javascript(
+            "({foo: (/**/foo)} = {});\n({foo: (foo) = 1} = {});\n[(a), (b.c), ...(e)] = d;\n",
+        );
+        let targets = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "assignment_expression")
+            .map(|node| node.field("left").expect("an assignment has a left side"))
+            .map(|left| {
+                let parenthesized = left
+                    .dfs()
+                    .filter(|node| node.kind() == "parenthesized_expression")
+                    .map(|node| node.text().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{}:{parenthesized}", left.kind())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            targets,
+            [
+                "object_pattern:(/**/foo)",
+                "object_pattern:(foo)",
+                "array_pattern:(a) (b.c) (e)",
+            ]
+        );
+    }
+
+    /// Outside generators `yield` may label a statement (Patch 7 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn yield_labels_a_javascript_statement() {
+        let root = javascript("var yield = 5;\nyield: while (foo) {\n  break yield;\n}\n");
+        let labels = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "statement_identifier")
+            .map(|node| node.text().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["yield", "yield"]);
+    }
+
+    /// `yield` is an identifier where no yield expression parses or where one would be an
+    /// operand; where both read, the generator's yield expression stays (Patch 10 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn yield_is_a_javascript_name_where_no_yield_expression_parses() {
+        let root = javascript(
+            "yield = 2;\nyield += 1;\nyield++;\n[yield] = a;\nfor (yield of xs);\nyield.x;\n\
+             f(yield);\nyield + 1;\nfunction* g() { yield; yield x; yield* h(); yield (a); }\n",
+        );
+        let yields = root
+            .root()
+            .dfs()
+            .filter(|node| node.text().starts_with("yield"))
+            .filter(|node| matches!(node.kind().as_ref(), "identifier" | "yield_expression"))
+            .map(|node| format!("{}:{}", node.kind(), node.text()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            yields,
+            [
+                "identifier:yield",
+                "identifier:yield",
+                "identifier:yield",
+                "identifier:yield",
+                "identifier:yield",
+                "identifier:yield",
+                "yield_expression:yield",
+                "yield_expression:yield + 1",
+                "yield_expression:yield",
+                "yield_expression:yield x",
+                "yield_expression:yield* h()",
+                "yield_expression:yield (a)",
+            ]
+        );
+    }
+
+    /// A line break before `[`, `(`, `*`, `+` or `-` ends the statement where that token cannot
+    /// continue it, as after a `var` declarator or a class field's name, and so does one before a
+    /// member named `instanceof`; after an expression the line goes on (Patch 8 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_inserts_a_semicolon_before_a_token_that_cannot_continue() {
+        let root = javascript(
+            "var a\n+b > 0 ? c : d\nvar e\n[f] = g\nvar h\n(function () {})()\n\
+             class C {\n  i\n  [j]\n  k\n  *l() {}\n  #m\n  instanceof() {}\n}\nn\n[o]\np\n+q\n",
+        );
+        assert_eq!(
+            named_children_text(&root, "program"),
+            [
+                "var a",
+                "+b > 0 ? c : d",
+                "var e",
+                "[f] = g",
+                "var h",
+                "(function () {})()",
+                "class C {\n  i\n  [j]\n  k\n  *l() {}\n  #m\n  instanceof() {}\n}",
+                "n\n[o]",
+                "p\n+q",
+            ]
+        );
+        assert_eq!(
+            named_children_text(&root, "class_body"),
+            ["i", "[j]", "k", "*l() {}", "#m", "instanceof() {}"]
+        );
+    }
+
+    /// An arrow function is no operand: a line break after its block body ends the statement
+    /// unless the next line goes on with `,` or a ternary's `:`, while a function expression's
+    /// body does not (Patch 9 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_javascript_arrow_block_body_ends_the_statement_at_a_line_break() {
+        let root = javascript(
+            "var foo = () => { return bar }\n[1, 2, 3].map(foo)\nx = () => {}\n(1)\n\
+             class C {\n  a = () => {}\n  *b() {}\n}\nf(() => {}\n, 1)\nc ? () => {}\n: d\n\
+             e = function () {}\n[1]\n",
+        );
+        assert_eq!(
+            named_children_text(&root, "program"),
+            [
+                "var foo = () => { return bar }",
+                "[1, 2, 3].map(foo)",
+                "x = () => {}",
+                "(1)",
+                "class C {\n  a = () => {}\n  *b() {}\n}",
+                "f(() => {}\n, 1)",
+                "c ? () => {}\n: d",
+                "e = function () {}\n[1]",
+            ]
+        );
+        assert_eq!(
+            named_children_text(&root, "class_body"),
+            ["a = () => {}", "*b() {}"]
+        );
+    }
+
+    /// The TypeScript and TSX dialects' trees of `source`, each of which must parse without an
+    /// error or a missing token (`grammars/tree-sitter-typescript/PATCHES.md`).
+    fn typescript_and_tsx(source: &str) -> [ast_grep_core::AstGrep<StrDoc<GrammarDialect>>; 2] {
+        [GrammarDialect::TypeScript, GrammarDialect::Tsx].map(|dialect| {
+            let root = dialect.ast_grep(source);
+            let tree = root.root().get_inner_node();
+            assert!(
+                !tree.has_error(),
+                "{dialect:?}: {source}\n{}",
+                tree.to_sexp()
+            );
+            root
+        })
+    }
+
+    /// A re-export takes import attributes, as an import does, also a type-only one and with the
+    /// deprecated `assert` (Patch 8 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_re_exports_take_import_attributes() {
+        for root in typescript_and_tsx(
+            "export { default as x } from './x.json' with { type: 'json' };\n\
+             export * from 'y' with { type: 'json' }\n\
+             export * as z from 'z' with { type: 'json' };\n\
+             export type { A } from './a.json' with { type: 'json' };\n\
+             export { b } from './b.json' assert { type: 'json' };\n",
+        ) {
+            assert_eq!(
+                named_children_text(&root, "export_statement")
+                    .into_iter()
+                    .filter(|text| text.starts_with("with") || text.starts_with("assert"))
+                    .collect::<Vec<_>>(),
+                [
+                    "with { type: 'json' }",
+                    "with { type: 'json' }",
+                    "with { type: 'json' }",
+                    "with { type: 'json' }",
+                    "assert { type: 'json' }",
+                ]
+            );
+        }
+    }
+
+    /// A `{` that starts a statement or an arrow function's body opens a block holding a labeled
+    /// statement, never an object; in an expression it is an object and in a type an object type
+    /// (Patch 9 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_brace_at_typescript_statement_start_opens_a_block() {
+        for root in typescript_and_tsx(
+            "if (foo) { bar: 'baz' }\nf = (): void => { bar: 1 };\n{ bar: 1 }\n\
+             g = (): { bar: number } => ({ bar: 1 });\nx = { bar: 1 } satisfies T;\n",
+        ) {
+            let braces = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "statement_block" | "object" | "object_type"
+                    )
+                })
+                .map(|node| format!("{}:{}", node.kind(), node.text()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                braces,
+                [
+                    "statement_block:{ bar: 'baz' }",
+                    "statement_block:{ bar: 1 }",
+                    "statement_block:{ bar: 1 }",
+                    "object_type:{ bar: number }",
+                    "object:{ bar: 1 }",
+                    "object:{ bar: 1 }",
+                ]
+            );
+        }
+    }
+
+    /// Outside generators `yield` may label a statement (Patch 10 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn yield_labels_a_typescript_statement() {
+        for root in typescript_and_tsx("var yield = 5;\nyield: while (foo) {\n  break yield;\n}\n")
+        {
+            let labels = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "statement_identifier")
+                .map(|node| node.text().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(labels, ["yield", "yield"]);
+        }
+    }
+
+    /// A destructuring assignment's target may be parenthesized, comments, assertions and all
+    /// (Patch 11 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn parenthesized_typescript_destructuring_targets_parse() {
+        for root in typescript_and_tsx(
+            "({foo: (/**/foo)} = {});\n({foo: (foo as any) = 1} = {});\n\
+             [(a), (b.c!), ...(e)] = d;\n",
+        ) {
+            let targets = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "assignment_expression")
+                .map(|node| node.field("left").expect("an assignment has a left side"))
+                .map(|left| {
+                    let parenthesized = left
+                        .dfs()
+                        .filter(|node| node.kind() == "parenthesized_expression")
+                        .map(|node| node.text().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    format!("{}:{parenthesized}", left.kind())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                targets,
+                [
+                    "object_pattern:(/**/foo)",
+                    "object_pattern:(foo as any)",
+                    "array_pattern:(a) (b.c!) (e)",
+                ]
+            );
+        }
+    }
+
+    /// A line break before `*`, `+` or `-` ends the statement where no binary operator can come
+    /// next, as after a `var` declarator, a type or a class field's name, and so does one before
+    /// a member named `instanceof`; after an expression the line goes on (Patch 12 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_inserts_a_semicolon_before_a_token_that_cannot_continue() {
+        for root in typescript_and_tsx(
+            "var a\n+b > 0 ? c : d\nlet t: T\n-1\n\
+             class C {\n  i\n  *l() {}\n  j: string\n  *k() {}\n  #m\n  instanceof() {}\n}\n\
+             interface I {\n  a: number\n  instanceof(): void\n}\n\
+             n\n*o\np\n+q\nr\ninstanceof (S)\n",
+        ) {
+            assert_eq!(
+                named_children_text(&root, "program"),
+                [
+                    "var a",
+                    "+b > 0 ? c : d",
+                    "let t: T",
+                    "-1",
+                    "class C {\n  i\n  *l() {}\n  j: string\n  *k() {}\n  #m\n  instanceof() {}\n}",
+                    "interface I {\n  a: number\n  instanceof(): void\n}",
+                    "n\n*o",
+                    "p\n+q",
+                    "r\ninstanceof (S)",
+                ]
+            );
+            assert_eq!(
+                named_children_text(&root, "class_body"),
+                [
+                    "i",
+                    "*l() {}",
+                    "j: string",
+                    "*k() {}",
+                    "#m",
+                    "instanceof() {}"
+                ]
+            );
+            assert_eq!(
+                named_children_text(&root, "interface_body"),
+                ["a: number", "instanceof(): void"]
+            );
+        }
+    }
+
+    /// An arrow function is no operand: a line break after its block body ends the statement
+    /// unless the next line goes on with `,` or a ternary's `:`, while a function expression's
+    /// body does not (Patch 13 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_typescript_arrow_block_body_ends_the_statement_at_a_line_break() {
+        for root in typescript_and_tsx(
+            "const foo = (): number[] => { return bar }\n[1, 2, 3].map(foo)\nx = () => {}\n(1)\n\
+             class C {\n  a = () => {}\n  *b() {}\n}\nf(() => {}\n, 1)\nc ? () => {}\n: d\n\
+             e = function () {}\n[1]\n",
+        ) {
+            assert_eq!(
+                named_children_text(&root, "program"),
+                [
+                    "const foo = (): number[] => { return bar }",
+                    "[1, 2, 3].map(foo)",
+                    "x = () => {}",
+                    "(1)",
+                    "class C {\n  a = () => {}\n  *b() {}\n}",
+                    "f(() => {}\n, 1)",
+                    "c ? () => {}\n: d",
+                    "e = function () {}\n[1]",
+                ]
+            );
+            assert_eq!(
+                named_children_text(&root, "class_body"),
+                ["a = () => {}", "*b() {}"]
+            );
+        }
+    }
+
+    /// `yield` is an identifier where no yield expression parses or where one would be an
+    /// operand; where both read, the generator's yield expression stays (Patch 14 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn yield_is_a_typescript_name_where_no_yield_expression_parses() {
+        for root in typescript_and_tsx(
+            "yield = 2;\nyield += 1;\nyield++;\n[yield] = a;\nfor (yield of xs);\nyield.x;\n\
+             f(yield);\nyield + 1;\nfunction* g() { yield; yield x; yield* h(); yield (a); }\n",
+        ) {
+            let yields = root
+                .root()
+                .dfs()
+                .filter(|node| node.text().starts_with("yield"))
+                .filter(|node| matches!(node.kind().as_ref(), "identifier" | "yield_expression"))
+                .map(|node| format!("{}:{}", node.kind(), node.text()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                yields,
+                [
+                    "identifier:yield",
+                    "identifier:yield",
+                    "identifier:yield",
+                    "identifier:yield",
+                    "identifier:yield",
+                    "identifier:yield",
+                    "yield_expression:yield",
+                    "yield_expression:yield + 1",
+                    "yield_expression:yield",
+                    "yield_expression:yield x",
+                    "yield_expression:yield* h()",
+                    "yield_expression:yield (a)",
+                ]
             );
         }
     }

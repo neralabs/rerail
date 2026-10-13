@@ -95,6 +95,20 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-typescript/common/tree_sitter/parser.h",
         ],
     },
+    // tree-sitter-javascript 0.25.0 with the patches in grammars/tree-sitter-javascript/PATCHES.md.
+    VendoredGrammar {
+        name: "javascript",
+        source: "grammars/tree-sitter-javascript/src",
+        headers: "grammars/tree-sitter-javascript/src",
+        version: (0, 25, 0),
+        inputs: &[
+            "grammars/tree-sitter-javascript/src/grammar.json",
+            "grammars/tree-sitter-javascript/src/scanner.c",
+            "grammars/tree-sitter-javascript/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-javascript/src/tree_sitter/array.h",
+            "grammars/tree-sitter-javascript/src/tree_sitter/parser.h",
+        ],
+    },
 ];
 
 fn build_grammar(grammar: &VendoredGrammar) {
