@@ -139,7 +139,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1` or not named for its id; a port's `id` differs from its document's |
+| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
@@ -153,8 +153,11 @@ Precisely:
    rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
    `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it. Every rule document under `candidates/`
    (each JSON file in a `rules/` directory there, and any file there whose `format` names a policy, such as the older
-   `tempo.policy/v1`) must be `rerail.policy/v1` and named `<id>.json`; candidates need not compile. Every port in the
+   `tempo.policy/v1`) must be `rerail.policy/v1`, sit in a `rules/` directory and be named `<id>.json`
+   (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`); candidates need not compile. Every port in the
    pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its document's `id`.
+   Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under `candidates/` that
+   does not parse (`packSchema`) or has a port whose document does not exist.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A

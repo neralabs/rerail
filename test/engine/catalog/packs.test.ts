@@ -108,6 +108,21 @@ describe("validatePack", () => {
         .map(rule => (rule.id === "pass-statement" ? edit(rule) : rule)),
     }));
 
+  /**
+   * A probe manifest, `candidates/probes/conformance.json`, as the root one with its one port given `id` and `policy`, and
+   * that port's document, `candidates/probes/rules/probe-assert-used.json` (id `probe-assert-used`).
+   */
+  const writeProbes = (directory: string, port: { id: string; policy: string }): void => {
+    const probes = join(directory, "candidates", "probes");
+    mkdirSync(join(probes, "rules"), { recursive: true });
+    writeJson(join(probes, "rules", "probe-assert-used.json"), {
+      ...z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(join(directory, "rules", "assert-used.json"), "utf8"))),
+      id: "probe-assert-used",
+    });
+    const root = z.looseObject({ rules: z.array(z.record(z.string(), z.unknown())) }).parse(JSON.parse(readFileSync(join(directory, "conformance.json"), "utf8")));
+    writeJson(join(probes, "conformance.json"), { ...root, pack: "valid-probes", rules: root.rules.map(rule => ({ ...rule, ...port })) });
+  };
+
   const failing = (validation: PackValidation): Partial<Record<PackCheckName, string[]>> =>
     Object.fromEntries(Object.entries(validation.checks).filter(([, failures]) => failures.length > 0));
 
@@ -181,12 +196,59 @@ describe("validatePack", () => {
       { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
     ],
     [
+      "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
+      directory => {
+        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", clauses: [] });
+      },
+      { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
+    ],
+    [
+      "a candidate with no id",
+      directory => {
+        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", clauses: [] });
+      },
+      { rules: ["candidates/rules/no-pass.json: has no id"] },
+    ],
+    [
       "a candidate in an older document format",
       directory => {
-        mkdirSync(join(directory, "candidates"));
-        writeJson(join(directory, "candidates", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
+        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
       },
-      { rules: ["candidates/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
+      { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
+    ],
+    [
+      "a candidate outside a rules/ directory",
+      directory => {
+        mkdirSync(join(directory, "candidates"));
+        writeFileSync(join(directory, "candidates", "pass-statement.json"), readFileSync(join(directory, "rules", "pass-statement.json")));
+      },
+      { rules: ["candidates/pass-statement.json: a candidate is in a rules/ directory; move it to candidates/rules/pass-statement.json"] },
+    ],
+    [
+      "a probe port whose id is not its document's",
+      directory => writeProbes(directory, { id: "probe-assert", policy: "rules/probe-assert-used.json" }),
+      { rules: ["candidates/probes/conformance.json: port probe-assert scores candidates/probes/rules/probe-assert-used.json, whose id is probe-assert-used"] },
+    ],
+    [
+      "a probe port whose document does not exist",
+      directory => writeProbes(directory, { id: "probe-gone", policy: "rules/probe-gone.json" }),
+      { rules: ["candidates/probes/conformance.json: port probe-gone scores candidates/probes/rules/probe-gone.json, which does not exist"] },
+    ],
+    [
+      "a probe port whose id is not lowercase letters, digits and dashes",
+      directory => writeProbes(directory, { id: "probe:assert-used", policy: "rules/probe-assert-used.json" }),
+      { rules: [expect.stringMatching(/^candidates\/probes\/conformance\.json: ✖ rule ids are lowercase kebab-case\n {2}→ at rules\[0\]\.id$/u)] },
+    ],
+    [
+      "a probe manifest that is not JSON",
+      directory => {
+        writeProbes(directory, { id: "probe-assert-used", policy: "rules/probe-assert-used.json" });
+        writeFileSync(join(directory, "candidates", "probes", "conformance.json"), "{\n");
+      },
+      { rules: [expect.stringMatching(/^candidates\/probes\/conformance\.json: is not JSON: /u)] },
     ],
     [
       "a port whose id is not its document's",

@@ -20,7 +20,7 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
 } from "../src/engine/index.js";
-import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
 
@@ -119,25 +119,24 @@ const documentIdOf = (text: string): string | undefined => headerOf(text).id;
 const CODE_RULE_FORMAT = "rerail.policy/v1";
 /** A rule document in some format: `rerail.policy/v1`, or an older one such as `tempo.policy/v1`. */
 const POLICY_FORMAT = /\.policy\/v\d+$/u;
-const manifestSchema = z.object({ rules: z.array(z.object({ id: z.string(), policy: z.string() })) });
+
+const inRulesDirectory = (file: string): boolean => posix.basename(posix.dirname(file)) === "rules";
 
 /**
  * The rule documents among `candidates`, the pack-relative files under `candidates/` (ports under evaluation and
  * probes): every JSON file in a `rules/` directory there, and any other JSON file there whose `format` names a rule
- * document.
+ * document (which check 1 fails, since a candidate is in a `rules/` directory).
  */
 function candidateDocuments(directory: string, candidates: readonly string[]): string[] {
-  return candidates.filter(
-    file => file.endsWith(".json") && (posix.basename(posix.dirname(file)) === "rules" || POLICY_FORMAT.test(headerOf(readFileSync(join(directory, file), "utf8")).format ?? "")),
-  );
+  return candidates.filter(file => file.endsWith(".json") && (inRulesDirectory(file) || POLICY_FORMAT.test(headerOf(readFileSync(join(directory, file), "utf8")).format ?? "")));
 }
 
 /**
  * The id rule (docs/pack-format.md, check 1): one id style in every pack. A rule's id is lowercase letters, digits and
- * dashes and names its document, shipped (`rules/<id>.json`) or candidate (`candidates/…/<id>.json`); a candidate is a
- * `rerail.policy/v1` document like a shipped rule; and a port in any `conformance.json` of the pack has its document's
- * id. So the id users turn a rule on and off by is the one its file, its listing and its scores carry, and a candidate
- * keeps it when it ships.
+ * dashes and names its document, shipped (`rules/<id>.json`) or candidate (`candidates/…/rules/<id>.json`); a candidate
+ * is a `rerail.policy/v1` document like a shipped rule; and a port in any `conformance.json` of the pack has its
+ * document's id. So the id users turn a rule on and off by is the one its file, its listing and its scores carry, and a
+ * candidate keeps it when it ships.
  */
 function idFailures(directory: string): string[] {
   const failures: string[] = [];
@@ -145,23 +144,35 @@ function idFailures(directory: string): string[] {
   for (const file of candidateDocuments(directory, candidates)) {
     const { format, id } = headerOf(readFileSync(join(directory, file), "utf8"));
     if (format !== CODE_RULE_FORMAT) failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT}`);
+    if (!inRulesDirectory(file))
+      failures.push(`${file}: a candidate is in a rules/ directory; move it to ${posix.join(posix.dirname(file), "rules", `${id ?? posix.basename(file, ".json")}.json`)}`);
     if (id === undefined) failures.push(`${file}: has no id`);
     else if (!RULE_PACK_RULE_ID.test(id)) failures.push(`${file}: id ${id} is not lowercase letters, digits and dashes`);
     else if (posix.basename(file, ".json") !== id) failures.push(`${file}: has id ${id}; name it ${posix.join(posix.dirname(file), `${id}.json`)}`);
   }
+  // The root manifest is the conformance runner's pack: check 4 loads it, and reports one that does not parse or a port
+  // whose policy is missing. Nothing else reads the manifests under candidates/ (probes), so check 1 reports those.
   const manifests = [CONFORMANCE_FILE, ...candidates.filter(file => posix.basename(file) === CONFORMANCE_FILE)];
   for (const manifest of manifests.filter(file => existsSync(join(directory, file)))) {
-    let parsed: z.infer<typeof manifestSchema>;
+    const nested = manifest !== CONFORMANCE_FILE;
+    let parsed: z.infer<typeof packSchema>;
     try {
-      const result = manifestSchema.safeParse(JSON.parse(readFileSync(join(directory, manifest), "utf8")));
-      if (!result.success) continue; // check 4 reports a manifest that does not parse
+      const result = packSchema.safeParse(JSON.parse(readFileSync(join(directory, manifest), "utf8")));
+      if (!result.success) {
+        if (nested) failures.push(`${manifest}: ${z.prettifyError(result.error)}`);
+        continue;
+      }
       parsed = result.data;
-    } catch {
+    } catch (error) {
+      if (nested) failures.push(`${manifest}: is not JSON: ${message(error)}`);
       continue;
     }
     for (const port of parsed.rules) {
       const policy = posix.join(posix.dirname(manifest), port.policy);
-      if (!existsSync(join(directory, policy))) continue; // check 4 reports a missing policy
+      if (!existsSync(join(directory, policy))) {
+        if (nested) failures.push(`${manifest}: port ${port.id} scores ${policy}, which does not exist`);
+        continue;
+      }
       const id = documentIdOf(readFileSync(join(directory, policy), "utf8"));
       if (id !== undefined && id !== port.id) failures.push(`${manifest}: port ${port.id} scores ${policy}, whose id is ${id}`);
     }
