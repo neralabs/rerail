@@ -6,7 +6,6 @@ use super::{PhpcsIndex, PhpcsVersion, PhpstanIndex, PsalmIndex};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::suppress::psalm::parent_issue_type;
-use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::{Value as Json, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -219,7 +218,8 @@ impl Disagreement {
 
 /// What Rerail's suppression of `tool` drops from `all`, a file's reports.
 fn rerail_suppressed(tool: &str, source: &str, all: &[Report]) -> Vec<bool> {
-    let root = GrammarDialect::Php.ast_grep(source);
+    // The tree the engine reads: the PHP view's, its texts the file's.
+    let root = crate::code_rule_dsl::language::adapter::ast_grep(GrammarDialect::Php, source);
     let root = root.root();
     let lines = LineTable::new(source, Terminators::Newlines);
     let all = targets(tool, all).collect::<Vec<_>>();
