@@ -4,10 +4,12 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 
 | File | Origin |
 |---|---|
+| `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-assertion-names.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-ava.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-test-without-callback.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-vitest-extend.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-vitest-table-calls.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-expect-modifier-rules.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-unchecked-heads.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias.test.ts` | written by Rerail |
@@ -18,6 +20,7 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-template.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-whole.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-bun-test.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-comment-between-links.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-global-extend.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-invalid-chains.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-local-binding.test.ts` | written by Rerail |

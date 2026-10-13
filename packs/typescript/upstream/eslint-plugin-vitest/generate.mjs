@@ -509,6 +509,44 @@ expect.foo.skip('no matcher chain');
 `,
     reports: { "no-disabled-tests": 2 },
   },
+  // Self-review round 3: comments between links, expect's modifier rules, and assertions as getNodeName names them.
+  {
+    rule: "no-focused-tests",
+    name: "comment-between-links",
+    code: `it.only /* keep */ .concurrent('focused', () => {
+  expect(1).toBe(1);
+});
+`,
+    reports: { "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "expect-modifier-rules",
+    code: `expect.not.not.skip('two nots');
+expect.resolves.rejects.skip('two promise modifiers');
+expect.resolves.not.skip('one of each');
+expect.to.be.skip('language chains');
+expectTypeOf.returns.not.skip('expectTypeOf modifiers');
+`,
+    reports: { "no-disabled-tests": 3 },
+  },
+  {
+    rule: "expect-expect",
+    name: "assertion-names",
+    code: `it('parenthesized', check);
+it('case', () => {
+  Expect(1).toBe(1);
+});
+it('tagged template', () => {
+  expect\`x\`;
+});
+
+function check() {
+  (expect)(1).toBe(1);
+}
+`,
+    reports: { "expect-expect": 1 },
+  },
 ];
 
 function parseArguments(argv) {
