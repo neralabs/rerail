@@ -264,8 +264,16 @@ fn witness_with_groups<'t, D: Doc>(
     })
 }
 
-/// `partial` receives each file evaluated around syntax errors, with its `source-partial` message;
-/// `util_limit` the file where `matches` recursion hit a limit, which ends the query.
+/// Where a query could not answer: the first file it did not read, with the detail a file the
+/// parser did not read reports (`SyntaxReading::Unread`).
+pub(crate) struct Incomplete {
+    pub(crate) path: String,
+    pub(crate) unread: Option<String>,
+}
+
+/// The query's witnesses, or where it could not answer (`Incomplete`). `partial` receives each
+/// file evaluated around syntax errors, with its `source-partial` message; `util_limit` the file
+/// where `matches` recursion hit a limit, which ends the query.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_query(
     query: &Query,
@@ -278,7 +286,7 @@ pub(crate) fn evaluate_query(
     partial: &mut BTreeMap<String, String>,
     violation: Option<&ViolationSpec>,
     util_limit: &mut Option<(String, UtilLimit)>,
-) -> Result<Option<Vec<Witness>>> {
+) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
     let leaf = Leaf {
         snapshot,
         scope,
@@ -291,7 +299,12 @@ pub(crate) fn evaluate_query(
     for file in &snapshot.files {
         match leaf.file(query, file, metrics, decision, violation, util_limit)? {
             FileStep::Skipped => {}
-            FileStep::Failed => return Ok(None),
+            FileStep::Failed(unread) => {
+                return Ok(Err(Incomplete {
+                    path: file.path.clone(),
+                    unread,
+                }));
+            }
             FileStep::Read {
                 witnesses: found,
                 partial: message,
@@ -302,12 +315,12 @@ pub(crate) fn evaluate_query(
                 }
                 witnesses.extend(found);
                 if decided {
-                    return Ok(Some(witnesses));
+                    return Ok(Ok(witnesses));
                 }
             }
         }
     }
-    Ok(Some(witnesses))
+    Ok(Ok(witnesses))
 }
 
 /// What one file contributes to a regex or AST query.
@@ -321,9 +334,10 @@ enum FileStep {
         partial: Option<String>,
         decided: bool,
     },
-    /// The query cannot answer: syntax errors it is not sound under, an unfinished text scan, or
-    /// a limit (left in `util_limit`).
-    Failed,
+    /// The query cannot answer: syntax errors it is not sound under, an unfinished text scan, a
+    /// limit (left in `util_limit`), or a file the parser did not read, with the detail it reports
+    /// (`SyntaxReading::Unread`).
+    Failed(Option<String>),
 }
 
 /// Where a query's leaves read: the snapshot's files in the code rule's scope.
@@ -398,7 +412,7 @@ impl<'a> Leaf<'a> {
                     }
                 }
                 if !complete {
-                    return Ok(FileStep::Failed);
+                    return Ok(FileStep::Failed(None));
                 }
                 Ok(FileStep::Read {
                     witnesses,
@@ -416,12 +430,12 @@ impl<'a> Leaf<'a> {
                 let mut partial = None;
                 if !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
-                    let SyntaxReading::Partial(message) = errors.reading(&lines, file.source.len())
-                    else {
-                        return Ok(FileStep::Failed);
+                    let message = match errors.reading(&lines, file.source.len()) {
+                        SyntaxReading::Partial(message) => message,
+                        SyntaxReading::Unread(detail) => return Ok(FileStep::Failed(Some(detail))),
                     };
                     if !grammar.sound_under_errors {
-                        return Ok(FileStep::Failed);
+                        return Ok(FileStep::Failed(None));
                     }
                     partial = Some(message);
                 }
@@ -447,7 +461,7 @@ impl<'a> Leaf<'a> {
                     FileOutcome::Decided => true,
                     FileOutcome::Limit(limit) => {
                         *util_limit = Some((file.path.clone(), limit));
-                        return Ok(FileStep::Failed);
+                        return Ok(FileStep::Failed(None));
                     }
                 };
                 Ok(FileStep::Read {
@@ -470,7 +484,7 @@ impl<'a> Leaf<'a> {
         partial: &mut BTreeMap<String, String>,
         violation: Option<&ViolationSpec>,
         util_limit: &mut Option<(String, UtilLimit)>,
-    ) -> Result<Option<Vec<Witness>>> {
+    ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
         let plan = Plan::new(query, decision, |leaf, _| leaf);
         let leaves = SnapshotLeaves {
             leaf: self,
@@ -482,11 +496,16 @@ impl<'a> Leaf<'a> {
         };
         let cap = self.limits.max_witnesses.saturating_add(1);
         let answer = match select_when::answer(&plan, cap, &leaves) {
-            Ok(answer) => answer,
+            Ok(Ok(answer)) => answer,
+            Ok(Err((leaf, position))) => {
+                let read = leaves.reads[leaf].borrow();
+                let row = &read.rows[position];
+                return Ok(Err(Incomplete {
+                    path: self.snapshot.files[row.file].path.clone(),
+                    unread: row.unread.clone(),
+                }));
+            }
             Err(message) => return Err(leaves.error.take().unwrap_or_else(|| invalid(message))),
-        };
-        let Some(answer) = answer else {
-            return Ok(None);
         };
         for (leaf, position) in answer.partial {
             let read = leaves.reads[leaf].borrow();
@@ -495,15 +514,13 @@ impl<'a> Leaf<'a> {
                 partial.insert(self.snapshot.files[row.file].path.clone(), message.clone());
             }
         }
-        Ok(Some(
-            answer
-                .witnesses
-                .into_iter()
-                .flat_map(|(leaf, position, take)| {
-                    leaves.reads[leaf].borrow().rows[position].witnesses[..take].to_vec()
-                })
-                .collect(),
-        ))
+        Ok(Ok(answer
+            .witnesses
+            .into_iter()
+            .flat_map(|(leaf, position, take)| {
+                leaves.reads[leaf].borrow().rows[position].witnesses[..take].to_vec()
+            })
+            .collect()))
     }
 }
 
@@ -534,6 +551,8 @@ struct SnapshotRow {
     row: LeafRow,
     witnesses: Vec<Witness>,
     partial: Option<String>,
+    /// A failed row's detail, where the parser did not read the file.
+    unread: Option<String>,
 }
 
 impl Leaves for SnapshotLeaves<'_, '_> {
@@ -564,7 +583,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
                     return Err(message);
                 }
                 Ok(FileStep::Skipped) => continue,
-                Ok(FileStep::Failed) => (
+                Ok(FileStep::Failed(unread)) => (
                     SnapshotRow {
                         file,
                         row: LeafRow {
@@ -574,6 +593,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
                         },
                         witnesses: Vec::new(),
                         partial: None,
+                        unread,
                     },
                     true,
                 ),
@@ -591,6 +611,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
                         },
                         witnesses,
                         partial,
+                        unread: None,
                     },
                     decided,
                 ),
@@ -599,38 +620,6 @@ impl Leaves for SnapshotLeaves<'_, '_> {
             read.ended = ends;
         }
         Ok(read.rows.get(position).map(|row| row.row))
-    }
-}
-
-pub(super) fn query_failure_path<'a>(
-    query: &Query,
-    snapshot: &'a Snapshot,
-    scope: &CodeRuleScope,
-) -> Option<&'a str> {
-    match query {
-        // The first file the query did not read: one with syntax errors where the clause is
-        // unsound under them, or one the parser did not read at all.
-        Query::Ast { matchers, .. } => snapshot
-            .files
-            .iter()
-            .find(|file| {
-                scope.matches(&file.path)
-                    && grammar_matcher(matchers, file).is_some_and(|grammar| {
-                        file_tape(grammar.language, file).is_ok_and(|(doc, lines)| {
-                            let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
-                            !errors.is_empty()
-                                && (!grammar.sound_under_errors
-                                    || matches!(
-                                        errors.reading(&lines, file.source.len()),
-                                        SyntaxReading::Unread(_)
-                                    ))
-                        })
-                    })
-            })
-            .map(|file| file.path.as_str()),
-        Query::SelectWhen { select, exists } => query_failure_path(exists, snapshot, scope)
-            .or_else(|| query_failure_path(select, snapshot, scope)),
-        Query::Regex { .. } => None,
     }
 }
 

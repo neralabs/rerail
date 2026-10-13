@@ -883,7 +883,7 @@ fn restored_results_keep_partial_source_diagnostics() {
         }]),
     );
     let files = json!([{ "path": "broken.ts", "language": "typescript",
-        "source": "debugger; // read: the error region is the function below\nfunction broken( {\n" }]);
+        "source": "debugger; // clean text keeps the error region under half the file\nfunction broken( {\n" }]);
     let cold = stored_workspace(&store, "/restored-partial-source", &code_rule);
     let expected = apply_json(&cold, 1, files.clone());
     assert_eq!(
