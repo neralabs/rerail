@@ -11,7 +11,7 @@ so Rerail carries its fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `src/scanner.c` | upstream, with Patches 2, 8 and 9 |
+| `src/scanner.c` | upstream, with Patches 2, 8, 9, 11 and 13 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
 | `src/grammar.json` | regenerated from the patched `grammar.js` |
 
@@ -617,7 +617,24 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
    ],
  
    word: $ => $.identifier,
-@@ -908,7 +909,7 @@ module.exports = grammar({
+@@ -605,12 +606,11 @@ module.exports = grammar({
+       $.call_expression,
+     ),
+ 
+-    yield_expression: $ => prec.right(seq(
++    yield_expression: $ => prec.right(choice(
++      // A `yield` with an operand outweighs a `yield` name before `++` or `--` (Patch 10): `yield++⏎x` is `yield ++x`.
++      prec.dynamic(3, seq('yield', choice(seq('*', $.expression), $.expression))),
+       'yield',
+-      choice(
+-        seq('*', $.expression),
+-        optional($.expression),
+-      ))),
++    )),
+ 
+     object: $ => prec('object', seq(
+       '{',
+@@ -908,7 +908,7 @@ module.exports = grammar({
      )),
  
      member_expression: $ => prec('member', seq(
@@ -626,7 +643,7 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
        choice('.', field('optional_chain', $.optional_chain)),
        field('property', choice(
          $.private_property_identifier,
-@@ -927,6 +928,7 @@ module.exports = grammar({
+@@ -927,6 +927,7 @@ module.exports = grammar({
        $.subscript_expression,
        $._identifier,
        alias($._reserved_identifier, $.identifier),
@@ -634,7 +651,7 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
        $._destructuring_pattern,
      ),
  
-@@ -940,6 +942,7 @@ module.exports = grammar({
+@@ -940,6 +941,7 @@ module.exports = grammar({
        $.member_expression,
        $.subscript_expression,
        alias($._reserved_identifier, $.identifier),
@@ -642,7 +659,7 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
        $.identifier,
        $.parenthesized_expression,
      ),
-@@ -1014,7 +1017,7 @@ module.exports = grammar({
+@@ -1014,7 +1016,7 @@ module.exports = grammar({
  
      update_expression: $ => prec.left(choice(
        seq(
@@ -651,14 +668,15 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
          field('operator', choice('++', '--')),
        ),
        seq(
-@@ -1316,6 +1319,14 @@ module.exports = grammar({
+@@ -1316,6 +1318,15 @@ module.exports = grammar({
        ']',
      ),
  
 +    // Outside generators and strict code `yield` is a name. The grammar does not know whether a function is a
 +    // generator, so `yield` is a name where a yield_expression cannot parse (`yield = 2`, `[yield] = a`,
-+    // `for (yield of a)`), and where one would be an operand, which ECMAScript forbids (`yield.x`, `yield++`).
-+    // Where both read (`f(yield)`, `yield + 1`, `yield [0]`, `yield (a)`), the yield_expression stays.
++    // `for (yield of a)`), and where one would be an operand, which ECMAScript forbids (`yield.x`, `yield++;`).
++    // Where both read (`f(yield)`, `yield + 1`, `yield [0]`, `yield (a)`, and `yield++⏎x`, which a generator reads as
++    // `yield ++x`), the yield_expression stays.
 +    _yield_identifier: _ => prec.dynamic(-1, 'yield'),
 +
 +    _yield_operand: $ => prec.dynamic(2, alias($._yield_identifier, $.identifier)),
@@ -669,27 +687,289 @@ the assignments, the update and the `for` head are parse errors. `yield.x` silen
 ```
 
 The grammar does not know whether the function around `yield` is a generator. So `yield` is an `identifier` only where
-the keyword's reading fails. That is an assignment target (`_lhs_expression`, also in patterns and `for … of` heads)
-or an augmented assignment target, where no yield expression parses. It is also the operand of a member access or
-postfix update. A yield expression there parses, but ECMAScript forbids it, so that reading's dynamic precedence of 2
-outweighs it. Elsewhere the identifier's dynamic precedence of -1 keeps the generator reading wherever both parse:
-`f(yield)`, `yield + 1`, `yield;`, `yield [0]` and `yield (a)` stay `yield_expression`s, as in a generator. In a
-script, ECMAScript reads them as the name. `yield()` stays a parse error. A call reading of it would also make a
-generator's `yield(1) < a` a call of the yield expression.
+the keyword's reading fails, or where it would be an operand ECMAScript forbids. The first case is an assignment
+target (`_lhs_expression`, also in patterns and `for … of` heads) or an augmented assignment target, where no yield
+expression parses. The second case is the object of a member access (`yield.x`) or the operand of a postfix update
+(`yield++;`). There, an empty yield expression would also parse, so the name's dynamic precedence of 2 outweighs it.
+Elsewhere the name's dynamic precedence of -1 keeps the generator's reading wherever both parse: `f(yield)`,
+`yield + 1`, `yield;`, `yield [0]` and `yield (a)` stay `yield_expression`s, as in a generator. In a script,
+ECMAScript reads them as the name. A yield expression with an operand carries a dynamic precedence of 3, so it also
+outweighs the postfix-update name. A generator's `yield++⏎x` is then `yield (++x)`, as ECMAScript reads it, not
+`yield++; x;`. `yield()` stays a parse error. A call reading of it would also make a generator's `yield(1) < a` a
+call of the yield expression.
 
 Node kinds and field names are unchanged. A `yield` that is a name is an `identifier`, as `var yield` already gave.
 The generated parser has 20 more states (2,175). Over the 11,540 files above, no tree changes from Patch 9's.
 
+## Patch 11: the scanner reads every ECMAScript whitespace
+
+Upstream issue: none open (tree-sitter/tree-sitter-javascript#135, closed, was U+3000 read as an identifier). Present
+at tag `v0.25.0` and at HEAD.
+
+Why: the grammar's extras skip every ECMAScript WhiteSpace and LineTerminator
+(`/[\s\p{Zs}\uFEFF\u2028\u2029\u2060\u200B]/`). The external scanner uses C's `iswspace`, which in the C locale
+the engine runs in is true only for ASCII whitespace. So where the scanner decides on an automatic semicolon, a
+ternary `?` or an HTML comment, a U+3000, U+00A0, U+FEFF or other Unicode space ends its look: an automatic semicolon
+is refused before it. `` `　template`　 `` (an ideographic space after the closing backtick, ESLint fixtures
+`no-irregular-whitespace/192` and `193`) is a parse error with a missing `;`. The result also depends on the C
+library's locale.
+
+```diff
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -34,6 +34,33 @@ static inline void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+ 
+ static inline void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
+ 
++// Whitespace as the grammar's extras read it (`\s`, `\p{Zs}`, U+FEFF, U+2028, U+2029, U+2060, U+200B): every
++// ECMAScript WhiteSpace and LineTerminator, such as U+00A0 and U+3000, whatever the C library's locale says.
++static bool is_space(int32_t c) {
++    switch (c) {
++        case '\t':
++        case '\n':
++        case '\v':
++        case '\f':
++        case '\r':
++        case ' ':
++        case 0x0085:
++        case 0x00A0:
++        case 0x1680:
++        case 0x200B:
++        case 0x2028:
++        case 0x2029:
++        case 0x202F:
++        case 0x205F:
++        case 0x2060:
++        case 0x3000:
++        case 0xFEFF:
++            return true;
++        default:
++            return c >= 0x2000 && c <= 0x200A;
++    }
++}
++
+ static bool scan_template_chars(TSLexer *lexer) {
+     lexer->result_symbol = TEMPLATE_CHARS;
+     for (bool has_content = false;; has_content = true) {
+@@ -70,7 +97,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+     bool saw_block_newline = false;
+ 
+     for (;;) {
+-        while (iswspace(lexer->lookahead)) {
++        while (is_space(lexer->lookahead)) {
+             skip(lexer);
+         }
+ 
+@@ -150,7 +177,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             break;
+         }
+ 
+-        if (!iswspace(lexer->lookahead)) {
++        if (!is_space(lexer->lookahead)) {
+             return false;
+         }
+ 
+@@ -249,7 +276,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+ 
+ static bool scan_ternary_qmark(TSLexer *lexer) {
+     for (;;) {
+-        if (!iswspace(lexer->lookahead)) {
++        if (!is_space(lexer->lookahead)) {
+             break;
+         }
+         skip(lexer);
+@@ -278,7 +305,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+ }
+ 
+ static bool scan_html_comment(TSLexer *lexer) {
+-    while (iswspace(lexer->lookahead) || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
++    while (is_space(lexer->lookahead)) {
+         skip(lexer);
+     }
+ 
+```
+
+`is_space` is the extras' set, spelled out: ASCII whitespace, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+200B,
+U+2028, U+2029, U+202F, U+205F, U+2060, U+3000 and U+FEFF. JSX text's own whitespace test is left as it is, so `jsx_text`
+nodes keep their ranges. Node kinds, field names and the grammar are unchanged.
+
+## Patch 12: a JSX name may be a reserved word or start with `this`
+
+Upstream issue: none open. Present at tag `v0.25.0` and at HEAD. tree-sitter 0.25's reserved words (upstream
+`reserved: { global: … }`, added with 0.25.0) bar every reserved word from an `identifier`, JSX names included.
+
+Why: a JSX name is any word: Babel and TypeScript read `<a class="x" for="y" default="z" />`, `<a.default />` and
+`<class />`, and `<this.props.tag />` names a component through `this`. Upstream reads `class`, `for` or `default`
+there as the keyword, a parse error that takes the element with it. vscode's colorize fixture `test.jsx` has
+`default="World"`. `this` is not a JSX object either, so eslint-plugin-react's `jsx-no-undef/valid-006.jsx`
+(`<this.props.tag />`) fails too.
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -714,15 +714,18 @@ module.exports = grammar({
+ 
+     jsx_identifier: _ => /[a-zA-Z_$][a-zA-Z\d_$]*-[a-zA-Z\d_$\-]*/,
+ 
++    // A JSX name may be any word, reserved or not, as Babel and TypeScript read it: `<a class="x" for="y" />`,
++    // `<a.default />`.
+     _jsx_identifier: $ => choice(
+       alias($.jsx_identifier, $.identifier),
+-      $.identifier,
++      reserved('properties', $.identifier),
+     ),
+ 
+     nested_identifier: $ => prec('member', seq(
+-      field('object', choice($.identifier, alias($.nested_identifier, $.member_expression))),
++      // `<this.props.tag />` names a component through `this`.
++      field('object', choice(reserved('properties', $.identifier), $.this, alias($.nested_identifier, $.member_expression))),
+       '.',
+-      field('property', alias($.identifier, $.property_identifier)),
++      field('property', reserved('properties', alias($.identifier, $.property_identifier))),
+     )),
+ 
+     jsx_namespace_name: $ => seq($._jsx_identifier, ':', $._jsx_identifier),
+```
+
+Each identifier of a JSX name is read under the empty `properties` reserved set, as a member expression's property
+already is. `this` may be the object of a JSX member expression. `<this />` alone stays a parse error: there, the
+keyword `this` is read and no element name takes it.
+
+Node kinds and field names are unchanged. A reserved word in a JSX name is an `identifier` (a `property_identifier` as
+an attribute name or a member's property), as any other word is. `this` there is a `this` node, as it is in an
+expression. The generated parser has 1 more state.
+
+## Patch 13: a comment between a JSX closing tag's `<` and `/`
+
+Upstream issue: none open. Present at tag `v0.25.0` and at HEAD.
+
+Why: Babel and TypeScript read `<` and `/` of a closing tag as two tokens, so a comment may stand between them:
+`<></* c *//>` (eslint-plugin-react's `jsx-no-comment-textnodes/valid-012.jsx`). Upstream's `</` is one token, and
+the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and the element is a parse error.
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -31,6 +31,8 @@ module.exports = grammar({
+     '-',
+     // Never returned either: valid only after an arrow function's block body (see arrow_function).
+     $._arrow_body_end,
++    // The `<` of a JSX closing tag whose `/` a comment follows (see jsx_closing_element).
++    $._jsx_closing_tag_lt,
+   ],
+ 
+   extras: $ => [
+@@ -737,7 +739,9 @@ module.exports = grammar({
+     ),
+ 
+     jsx_closing_element: $ => seq(
+-      '</',
++      // The lexer reads `</` as one token, so a comment between the `<` and the `/` (`<></* c *//>`), which
++      // Babel and TypeScript allow, needs the scanner: it reads that `<` alone, and the comment is an extra.
++      choice('</', seq(alias($._jsx_closing_tag_lt, '<'), '/')),
+       optional(field('name', $._jsx_element_name)),
+       '>',
+     ),
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -20,6 +20,8 @@ enum TokenType {
+     MINUS,
+     // Never returned: valid only after an arrow function's block body.
+     ARROW_BODY_END,
++    // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
++    JSX_CLOSING_TAG_LT,
+ };
+ 
+ void *tree_sitter_javascript_external_scanner_create() { return NULL; }
+@@ -304,6 +306,19 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+     return false;
+ }
+ 
++// The rest of an HTML comment's line, once its `<!--` or `-->` is read.
++static bool scan_html_comment_rest(TSLexer *lexer) {
++    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
++           lexer->lookahead != 0x2029) {
++        advance(lexer);
++    }
++
++    lexer->result_symbol = HTML_COMMENT;
++    lexer->mark_end(lexer);
++
++    return true;
++}
++
+ static bool scan_html_comment(TSLexer *lexer) {
+     while (is_space(lexer->lookahead)) {
+         skip(lexer);
+@@ -330,15 +345,7 @@ static bool scan_html_comment(TSLexer *lexer) {
+         return false;
+     }
+ 
+-    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
+-           lexer->lookahead != 0x2029) {
+-        advance(lexer);
+-    }
+-
+-    lexer->result_symbol = HTML_COMMENT;
+-    lexer->mark_end(lexer);
+-
+-    return true;
++    return scan_html_comment_rest(lexer);
+ }
+ 
+ // After an `&`: is what follows the rest of an HTML character reference
+@@ -437,6 +444,29 @@ bool tree_sitter_javascript_external_scanner_scan(void *payload, TSLexer *lexer,
+         return true;
+     }
+ 
++    // A `<` before `/` and a comment, where a JSX closing tag may start: the `<` alone, so the lexer does not read
++    // `</` across the comment. Any other `<` is the lexer's, but for an HTML comment's `<!--`, read here as below.
++    if (valid_symbols[JSX_CLOSING_TAG_LT] && lexer->lookahead == '<') {
++        advance(lexer);
++        if (lexer->lookahead == '/') {
++            lexer->mark_end(lexer);
++            advance(lexer);
++            lexer->result_symbol = JSX_CLOSING_TAG_LT;
++            return lexer->lookahead == '*';
++        }
++        if (valid_symbols[HTML_COMMENT] && !valid_symbols[LOGICAL_OR] && !valid_symbols[ESCAPE_SEQUENCE] &&
++            !valid_symbols[REGEX_PATTERN]) {
++            for (unsigned i = 0; i < 3; i++) {
++                if (lexer->lookahead != "!--"[i]) {
++                    return false;
++                }
++                advance(lexer);
++            }
++            return scan_html_comment_rest(lexer);
++        }
++        return false;
++    }
++
+     if (valid_symbols[AUTOMATIC_SEMICOLON]) {
+         bool scanned_comment = false;
+         bool ret = scan_automatic_semicolon(lexer, valid_symbols, &scanned_comment);
+```
+
+The lexer still reads `</` as one token wherever no comment follows the `<`. Where a JSX closing tag may start and the
+next characters are `<`, `/` and `*`, the scanner reads the `<` alone (`_jsx_closing_tag_lt`). The comment is then an
+extra and the `/` its own token. The scanner already looked at a `<` there for an HTML comment's `<!--`, which it
+still reads. A comment between the `/` and the name (`</ /* c */ a>`) already parsed.
+
+Node kinds and field names are unchanged. A closing tag with such a comment has the anonymous children `<` and `/`
+around a `comment`, where any other has `</`. The generated parser has 32 more states (2,208).
+
 ## Corpus and tree comparison
 
-With all ten patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
-case's expectation changed and one case added per patch (Patch 2's taken from #388), 126 of 126 parse. Over the
-11,540 files above, 51 files that had syntax errors parse (all 13 Next.js plugin fixtures and 12
-next-examples files that failed, 3 eslint-plugin-react fixtures, a shadcn-ui test fixture and 22 ESLint fixtures);
-no file gains an error; and 9 trees change, each as a patch intends: 3 by Patch 4 (a `{` at statement start or as an
-arrow body), 5 by Patch 9 (`arrow-body-style/053`, `054`, `no-unexpected-multiline/035`, `no-unused-vars/430`, `431`),
-and the error recovery of next-examples' `with-custom-babel-config/pages/index.js` (a Babel `do` expression), which has
-a syntax error before and after. espree 11.2.0 reads every changed case as the patched grammar does. The files that
-still fail to parse are invalid JavaScript (Flow annotations, truncated or deliberately broken fixtures) but for three
-JSX forms these patches do not cover: `<this.props.tag />`, a comment inside a closing fragment (`<></* c *//>`) and
-a reserved word as an attribute name (`<A default="x" />`).
+With all thirteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
+case's expectation changed and one case added per patch (Patch 2's taken from #388), 129 of 129 parse. Over the
+11,540 files above, 56 files that had syntax errors parse. They are all 13 Next.js plugin fixtures and 12
+next-examples files that failed, 5 eslint-plugin-react fixtures, a shadcn-ui test fixture, vscode's colorize
+`test.jsx` and 24 ESLint fixtures. No file gains an error. 9 trees change, each as a patch intends. 3 change by
+Patch 4 (a `{` at statement start or as an arrow body). 5 change by Patch 9 (`arrow-body-style/053`, `054`,
+`no-unexpected-multiline/035`, `no-unused-vars/430`, `431`). The last is the error recovery of next-examples'
+`with-custom-babel-config/pages/index.js` (a Babel `do` expression), which has a syntax error before and after.
+espree 11.2.0 reads every changed case as the patched grammar does. Patches 10 to 13 change no tree but the 5 files
+they fix: `no-irregular-whitespace/192` and `193`, `test.jsx`, `jsx-no-undef/valid-006` and
+`jsx-no-comment-textnodes/valid-012`. That comparison parses with tree-sitter 0.27's runtime, the engine's; the
+Patch 11 failures do not show under py-tree-sitter 0.25's. The files that still fail to parse are invalid JavaScript:
+Flow annotations, a Babel `do` expression, and truncated or deliberately broken fixtures.
