@@ -120,6 +120,14 @@
     "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
   },
   {
+    "rule": "clippy-decimal-literal-representation",
+    "source": "tokio",
+    "path": "tokio/tests/io_buf_reader.rs",
+    "line": 188,
+    "kind": "rerail-unknown",
+    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The port expresses the hexadecimal shapes as `value` ranges and `bitsAny` masks, and a rule's numbers are JSON numbers the host parses as IEEE-754 doubles: the range this literal needs, 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) up to 2^63, rounds to the empty range [2^63, 2^63), so the port reads values below 2^52 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
+  },
+  {
     "rule": "clippy-decimal-literal-representation-threshold",
     "source": "tokio",
     "path": "tokio-util/tests/time_delay_queue.rs",
@@ -134,6 +142,14 @@
     "line": 654,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `literal-representation-threshold = 0xFFFFFF` (tests/ui-toml/decimal_literal_representation/clippy.toml), under which the literal is below the threshold; the corpus was recorded with Clippy's default threshold, 16384, under which the default port reports the same line (TP)."
+  },
+  {
+    "rule": "clippy-decimal-literal-representation-threshold",
+    "source": "tokio",
+    "path": "tokio/tests/io_buf_reader.rs",
+    "line": 188,
+    "kind": "rerail-unknown",
+    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`: the corpus recording's default 16384 and this variant's 0xFFFFFF alike, which the value exceeds, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The port expresses the hexadecimal shapes as `value` ranges and `bitsAny` masks, and a rule's numbers are JSON numbers the host parses as IEEE-754 doubles: the range this literal needs, 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) up to 2^63, rounds to the empty range [2^63, 2^63), so the port reads values below 2^52 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
   },
   {
     "rule": "clippy-needless-raw-strings",
@@ -1710,5 +1726,21 @@
     "line": 255,
     "kind": "not-comparable",
     "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
+  },
+  {
+    "rule": "clippy-redundant-static-lifetimes",
+    "source": "ripgrep",
+    "path": "tests/feature.rs",
+    "line": 623,
+    "kind": "rerail-unknown",
+    "evidence": "The `const SHERLOCK: &'static str` at line 623 is inside the closure passed to `rgtest!(f917_trim, |dir: Dir, mut cmd: TestCommand| { .. })` (line 622; tests/macros.rs:2, `($name:ident, $fun:expr)`): Clippy 0.1.99's redundant_static_lifetimes (clippy_lints/src/redundant_static_lifetimes.rs, check_item, `!item.span.from_expansion()`) lints the expanded item, whose span is the caller's tokens, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
+  },
+  {
+    "rule": "clippy-redundant-static-lifetimes",
+    "source": "ripgrep",
+    "path": "tests/feature.rs",
+    "line": 649,
+    "kind": "rerail-unknown",
+    "evidence": "The `const SHERLOCK: &'static str` at line 649 is inside the closure passed to `rgtest!(f917_trim_match, |dir: Dir, mut cmd: TestCommand| { .. })` (line 648; tests/macros.rs:2, `($name:ident, $fun:expr)`): Clippy 0.1.99's redundant_static_lifetimes (clippy_lints/src/redundant_static_lifetimes.rs, check_item, `!item.span.from_expansion()`) lints the expanded item, whose span is the caller's tokens, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   }
 ]
