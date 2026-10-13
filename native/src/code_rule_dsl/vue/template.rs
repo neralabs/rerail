@@ -35,11 +35,45 @@ fn unquote(r: Range<usize>, s: &str) -> Range<usize> {
         r
     }
 }
+
+/// Whether the start tag child `node` follows its tag name with no byte between, and so belongs
+/// to it: HTML's tokenizer, and vue-eslint-parser's, read a tag name up to whitespace, `/` or
+/// `>`, but tree-sitter-vue ends `tag_name` at a `.` and reads the rest as `.` shorthand
+/// attributes (`<ElTable.TableColumn>` as `ElTable` and `.TableColumn`).
+fn in_tag_name(node: Node<'_>) -> bool {
+    let mut current = node;
+    while let Some(previous) = current.prev_named_sibling() {
+        if previous.end_byte() != current.start_byte() {
+            return false;
+        }
+        if previous.kind() == "tag_name" {
+            return true;
+        }
+        current = previous;
+    }
+    false
+}
+
+/// The bytes of the tag name `tag_name` starts, as vue-eslint-parser reads it: with the start
+/// tag children that belong to it (`in_tag_name`), `ElTable.TableColumn`.
+pub(crate) fn tag_name(tag_name: Node<'_>) -> Range<usize> {
+    let mut end = tag_name;
+    while let Some(next) = end.next_named_sibling()
+        && next.start_byte() == end.end_byte()
+    {
+        end = next;
+    }
+    tag_name.start_byte()..end.end_byte()
+}
+
 impl<'t> Directive<'t> {
     /// Reads a grammar directive attribute, including Vue 2 scope aliases: `slot-scope` on any
     /// element, `scope` on a `<template>` only (vue-eslint-parser's reading; `<th scope="col">`
-    /// is HTML's attribute).
+    /// is HTML's attribute). An attribute that belongs to the tag name (`in_tag_name`) is none.
     pub(crate) fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
+        if in_tag_name(node) {
+            return None;
+        }
         let kind = node.kind();
         if kind == "attribute" {
             let n = node.named_child(0)?;

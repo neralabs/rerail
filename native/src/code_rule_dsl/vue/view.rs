@@ -25,7 +25,7 @@
 //! | `v-if="C"`, then sibling `v-else-if="C2"` and `v-else` elements (only whitespace and comments between) | `if (C) { E1 } else if (C2) { E2 } else { E3 }` | the `if` statement: the first element's start to the last one's end; each block: its element; each condition's parentheses: its directive |
 //! | `v-for="ALIAS in SRC"` (or `of`) on element E | `(SRC), (ALIAS) => { E };` | the statement, sequence, `(SRC)` and arrow: the element E |
 //! | `v-slot="P"`, `v-slot:name="P"`, `#name="P"`, Vue 2's `slot-scope="P"` and `scope="P"` on element E | `(P) => { children of E };` | the statement and arrow: the element E |
-//! | a component tag (`<MyComp>`, `<Foo.Bar>`) | `Tag;` (the tag name copied) | the tag name |
+//! | a component tag (`<MyComp>`, `<Foo.Bar>`) | `Tag;`, `Foo.Bar;` (the tag name copied: tree-sitter-vue ends `tag_name` at a `.` and reads the rest as `.` shorthands, which the view reads as the tag, as vue-eslint-parser does) | the tag name |
 //! | text, static attributes, comments, `v-pre` elements | nothing | |
 //!
 //! Inside an element the view reads its component tag, then its directives in attribute order,
@@ -61,7 +61,9 @@
 //! reads them as expressions (`v-if="a &gt; 0"` is `a > 0`): the view writes each reference of a
 //! template expression as the character it stands for, a synthetic token over the reference.
 //! What the view does not read: tree-sitter-vue (ce8011a) reads two value-less shorthands in a
-//! row (`:a :b`, `@a :b`) as one attribute, of which the view reads the first.
+//! row (`:a :b`, `@a :b`) as one attribute, of which the view reads the first; and a dotted end
+//! tag (`</ElTable.TableColumn>`) with an `ERROR` in it, a syntax error in the file (a
+//! self-closing dotted tag parses).
 
 use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -366,8 +368,9 @@ enum Branch {
 /// An element of the template, its start tag read once.
 struct Element<'t> {
     node: Node<'t>,
-    /// The tag name, where the tag is a component the view reads (`Tag;`).
-    component: Option<Node<'t>>,
+    /// The tag name's bytes (`template::tag_name`), where the tag is a component the view reads
+    /// (`Tag;`, `Ns.Tag;`).
+    component: Option<Range<usize>>,
     /// Its directives in attribute order.
     directives: Vec<Directive<'t>>,
     /// Its first `v-if`, `v-else-if` or `v-else`, by index into `directives`.
@@ -400,8 +403,9 @@ impl<'t> Element<'t> {
         let mut cursor = start.walk();
         for attribute in start.named_children(&mut cursor) {
             if attribute.kind() == "tag_name" {
-                if is_component(&source[attribute.byte_range()]) {
-                    element.component = Some(attribute);
+                let tag = template::tag_name(attribute);
+                if is_component(&source[tag.clone()]) {
+                    element.component = Some(tag);
                 }
                 continue;
             }
@@ -690,8 +694,7 @@ impl<'t> Emitter<'t> {
     /// An element's component tag, its directives, then its children, in its slot's arrow if it
     /// has slot parameters.
     fn contents(&mut self, element: &Element<'t>, chained: bool) {
-        if let Some(tag) = element.component {
-            let anchor = tag.byte_range();
+        if let Some(anchor) = element.component.clone() {
             self.emit(" ", anchor.clone());
             self.copy(anchor.clone());
             self.emit(";", anchor);
@@ -1240,6 +1243,31 @@ mod tests {
         assert_eq!(statements[0], find(source, "[k]"));
         assert_eq!(statements[1], find(source, r#":[k]="v""#));
         assert_eq!(statements[3], find(source, "[name]"));
+    }
+
+    #[test]
+    fn dotted_component_tag() {
+        // tree-sitter-vue reads `<ElTable.TableColumn>` as the tag name `ElTable` and a `.`
+        // shorthand `.TableColumn`; vue-eslint-parser reads the one tag `ElTable.TableColumn`,
+        // a component the view reads as a member, and no prop bind or same-name shorthand.
+        let source = r#"<template><ElTable.TableColumn label="a" :b="c"/><a.b.c/><Foo.bar-baz/><Foo .prop="v"/></template>"#;
+        let view = view(source);
+        assert_eq!(
+            view.text(),
+            "{ ElTable.TableColumn; (c); a.b.c; Foo; (v); }"
+        );
+        assert_eq!(
+            spans(&view, "member_expression"),
+            [
+                find(source, "ElTable.TableColumn"),
+                find(source, "a.b.c"),
+                find(source, "a.b")
+            ]
+        );
+        assert!(
+            view.copied()
+                .any(|copy| copy == find(source, "ElTable.TableColumn"))
+        );
     }
 
     #[test]
