@@ -23,28 +23,6 @@
       ]
     }
   ],
-  "suppressionExemptions": [
-    {
-      "rule": "bandit-b101-assert-used",
-      "reason": "Recorded with --ignore-nosec, so the port does not model # nosec yet; open PR #29 re-records it without that flag and adds suppress.nosec, and drops this exemption."
-    },
-    {
-      "rule": "bandit-b113-request-without-timeout",
-      "reason": "Recorded with --ignore-nosec, so the port does not model # nosec yet; open PR #29 re-records it without that flag and adds suppress.nosec, and drops this exemption."
-    },
-    {
-      "rule": "bandit-b505-weak-cryptographic-key",
-      "reason": "Recorded with --ignore-nosec, so the port does not model # nosec yet; open PR #29 re-records it without that flag and adds suppress.nosec, and drops this exemption."
-    },
-    {
-      "rule": "bandit-b506-yaml-load",
-      "reason": "Recorded with --ignore-nosec, so the port does not model # nosec yet; open PR #29 re-records it without that flag and adds suppress.nosec, and drops this exemption."
-    },
-    {
-      "rule": "bandit-b610-django-extra-used",
-      "reason": "Recorded with --ignore-nosec, so the port does not model # nosec yet; open PR #29 re-records it without that flag and adds suppress.nosec, and drops this exemption."
-    }
-  ],
   "corpora": [
     {
       "name": "django",
