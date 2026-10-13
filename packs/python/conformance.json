@@ -702,6 +702,32 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-e743-ambiguous-function-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E743"
+      },
+      "policy": "rules/E743.json",
+      "capabilities": [
+        "suppression",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f403-undefined-local-with-import-star",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F403"
+      },
+      "policy": "rules/F403.json",
+      "capabilities": [
+        "suppression",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f404-late-future-import",
       "upstream": {
         "tool": "ruff",
@@ -939,6 +965,19 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-f541-f-string-missing-placeholders",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F541"
+      },
+      "policy": "rules/F541.json",
+      "capabilities": [
+        "suppression",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f601-multi-value-repeated-key-literal",
       "upstream": {
         "tool": "ruff",
@@ -1090,6 +1129,19 @@
       "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
       "capabilities": [
         "annotation",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f822-undefined-export",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F822"
+      },
+      "policy": "rules/F822.json",
+      "capabilities": [
         "scope",
         "suppression"
       ],
@@ -1535,6 +1587,19 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-sim300-yoda-conditions",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM300"
+      },
+      "policy": "rules/SIM300.json",
+      "capabilities": [
+        "suppression",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-sim905-split-static-string",
       "upstream": {
         "tool": "ruff",
@@ -1694,6 +1759,19 @@
       "match": "line+column"
     },
     {
+      "id": "bandit-b303-md5",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B303"
+      },
+      "policy": "rules/bandit-B303.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "bandit-b305-cipher-modes",
       "upstream": {
         "tool": "bandit",
@@ -1726,6 +1804,19 @@
         "rule": "B307"
       },
       "policy": "rules/eval.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b308-mark-safe",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B308"
+      },
+      "policy": "rules/b308.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2330,19 +2421,6 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-e743-ambiguous-function-name",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "E743"
-      },
-      "policy": "candidates/rules/E743.json",
-      "capabilities": [
-        "suppression",
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-f401-unused-import",
       "upstream": {
         "tool": "ruff",
@@ -2365,32 +2443,6 @@
       "capabilities": [
         "scope",
         "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-f403-undefined-local-with-import-star",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "F403"
-      },
-      "policy": "candidates/rules/F403.json",
-      "capabilities": [
-        "suppression",
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-f541-f-string-missing-placeholders",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "F541"
-      },
-      "policy": "candidates/rules/F541.json",
-      "capabilities": [
-        "suppression",
-        "syntax"
       ],
       "match": "line+column"
     },
@@ -2429,19 +2481,6 @@
       "policy": "candidates/rules/ruff-f821-undefined-name.json",
       "capabilities": [
         "annotation",
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-f822-undefined-export",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "F822"
-      },
-      "policy": "candidates/rules/F822.json",
-      "capabilities": [
         "scope",
         "suppression"
       ],
@@ -2619,19 +2658,6 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-sim300-yoda-conditions",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "SIM300"
-      },
-      "policy": "candidates/rules/SIM300.json",
-      "capabilities": [
-        "suppression",
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-sim401-if-else-block-instead-of-dict-get",
       "upstream": {
         "tool": "ruff",
@@ -2754,38 +2780,12 @@
       "match": "line+column"
     },
     {
-      "id": "bandit-b303-md5",
-      "upstream": {
-        "tool": "bandit",
-        "rule": "B303"
-      },
-      "policy": "candidates/rules/bandit-B303.json",
-      "capabilities": [
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "bandit-b304-ciphers",
       "upstream": {
         "tool": "bandit",
         "rule": "B304"
       },
       "policy": "candidates/rules/b304.json",
-      "capabilities": [
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "bandit-b308-mark-safe",
-      "upstream": {
-        "tool": "bandit",
-        "rule": "B308"
-      },
-      "policy": "candidates/rules/b308.json",
       "capabilities": [
         "scope",
         "suppression"

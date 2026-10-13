@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "156 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "163 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -352,6 +352,20 @@
       "on": false
     },
     {
+      "id": "ruff:E743",
+      "document": "rules/E743.json",
+      "title": "Ruff E743: Ambiguous function name",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:F403",
+      "document": "rules/F403.json",
+      "title": "Ruff F403: Undefined local with import star",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:F404",
       "document": "rules/F404.json",
       "title": "Ruff F404: Late future import",
@@ -462,6 +476,12 @@
       "group": "Ruff"
     },
     {
+      "id": "ruff:F541",
+      "document": "rules/F541.json",
+      "title": "Ruff F541: F string missing placeholders",
+      "group": "Ruff"
+    },
+    {
       "id": "python-conformance:ruff-f601-multi-value-repeated-key-literal",
       "document": "rules/ruff-f601-multi-value-repeated-key-literal.json",
       "title": "Ruff F601: Multi value repeated key literal",
@@ -533,6 +553,12 @@
       "title": "Ruff F722: Forward annotation syntax error",
       "group": "Ruff",
       "on": false
+    },
+    {
+      "id": "ruff:F822",
+      "document": "rules/F822.json",
+      "title": "Ruff F822: Undefined export",
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f823-undefined-local",
@@ -743,6 +769,13 @@
       "group": "Ruff"
     },
     {
+      "id": "ruff:SIM300",
+      "document": "rules/SIM300.json",
+      "title": "Ruff SIM300: Yoda conditions",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:SIM905",
       "document": "rules/SIM905.json",
       "title": "Ruff SIM905: Split static string",
@@ -826,6 +859,12 @@
       "group": "Bandit"
     },
     {
+      "id": "bandit:B303",
+      "document": "rules/bandit-B303.json",
+      "title": "Bandit B303: Md5",
+      "group": "Bandit"
+    },
+    {
       "id": "bandit:b305",
       "document": "rules/b305.json",
       "title": "Bandit B305: Cipher modes",
@@ -841,6 +880,12 @@
       "id": "bandit:b307",
       "document": "rules/eval.json",
       "title": "Bandit B307: Eval",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit:b308",
+      "document": "rules/b308.json",
+      "title": "Bandit B308: Mark safe",
       "group": "Bandit"
     },
     {
