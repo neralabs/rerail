@@ -234,6 +234,11 @@
             "rules": [
               "no-danger-with-children"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
+            ]
           }
         }
       }
@@ -355,6 +360,11 @@
           "oxlint": {
             "rules": [
               "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }
@@ -525,6 +535,11 @@
           "oxlint": {
             "rules": [
               "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }

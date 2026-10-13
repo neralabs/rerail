@@ -80,6 +80,11 @@
             "rules": [
               "no-string-refs"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noReactStringRefs"
+            ]
           }
         }
       }

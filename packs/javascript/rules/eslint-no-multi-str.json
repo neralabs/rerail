@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-multi-str",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-multi-str` rule (https://eslint.org/docs/latest/rules/no-multi-str). Reports a string literal whose source text contains a line break (a backslash line continuation), unless its parent is a JSX attribute or JSX expression container.",
   "scope": {
@@ -47,6 +47,11 @@
           "oxlint": {
             "rules": [
               "no-multi-str"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noMultilineString"
             ]
           }
         }

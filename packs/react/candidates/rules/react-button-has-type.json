@@ -559,6 +559,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -652,6 +657,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -706,6 +716,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -762,6 +777,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -816,6 +836,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -872,6 +897,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -927,6 +957,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -981,6 +1016,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1043,6 +1083,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -1085,6 +1130,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1129,6 +1179,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -1171,6 +1226,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1215,6 +1275,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -1257,6 +1322,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1301,6 +1371,11 @@
             "rules": [
               "button-has-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
+            ]
           }
         }
       }
@@ -1341,6 +1416,11 @@
           "oxlint": {
             "rules": [
               "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }

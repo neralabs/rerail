@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-radix",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 radix, default options. Port of ESLint's `radix` rule (https://eslint.org/docs/latest/rules/radix). Flags calls of the global `parseInt` / `Number.parseInt` (resolved with `resolves`) with no arguments, no radix, or a radix that is not an integer 2..36: any literal whose value is not such a Number, a signed Number literal likewise, or the global `undefined`. The 'always'/'as-needed' option is deprecated and changes nothing.",
   "scope": {
@@ -145,6 +145,11 @@
             "rules": [
               "radix"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useParseIntRadix"
+            ]
           }
         }
       }
@@ -278,6 +283,11 @@
           "oxlint": {
             "rules": [
               "radix"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useParseIntRadix"
             ]
           }
         }
@@ -509,6 +519,11 @@
           "oxlint": {
             "rules": [
               "radix"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useParseIntRadix"
             ]
           }
         }

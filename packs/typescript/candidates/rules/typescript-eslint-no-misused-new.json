@@ -92,6 +92,11 @@
             "rules": [
               "no-misused-new"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noMisleadingInstantiator"
+            ]
           }
         }
       }
@@ -160,6 +165,11 @@
             "rules": [
               "no-misused-new"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noMisleadingInstantiator"
+            ]
           }
         }
       }
@@ -209,6 +219,11 @@
           "oxlint": {
             "rules": [
               "no-misused-new"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noMisleadingInstantiator"
             ]
           }
         }

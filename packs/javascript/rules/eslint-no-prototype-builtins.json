@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-prototype-builtins",
- "revision": 2,
+ "revision": 3,
  "mode": "steer",
  "description": "Port of ESLint's `no-prototype-builtins` rule (https://eslint.org/docs/latest/rules/no-prototype-builtins). Flags calling hasOwnProperty, isPrototypeOf or propertyIsEnumerable as a method of an object, reported at the property. Scope only matters to ESLint's suggestion, which is not a fix.",
  "scope": {
@@ -57,6 +57,11 @@
      "oxlint": {
       "rules": [
        "no-prototype-builtins"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/suspicious/noPrototypeBuiltins"
       ]
      }
     }
@@ -124,6 +129,11 @@
      "oxlint": {
       "rules": [
        "no-prototype-builtins"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/suspicious/noPrototypeBuiltins"
       ]
      }
     }

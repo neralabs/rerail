@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-namespace-keyword",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of typescript-eslint's `prefer-namespace-keyword` rule (https://typescript-eslint.io/rules/prefer-namespace-keyword). Flags `module Name {}` declarations with an identifier name; reports the whole declaration (from `declare` when present) and fixes the keyword.",
   "scope": {
@@ -60,6 +60,11 @@
             "rules": [
               "prefer-namespace-keyword"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useNamespaceKeyword"
+            ]
           }
         }
       }
@@ -113,6 +118,11 @@
           "oxlint": {
             "rules": [
               "prefer-namespace-keyword"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useNamespaceKeyword"
             ]
           }
         }

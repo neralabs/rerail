@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-non-null-assertion",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/no-non-null-assertion, default options. Port of typescript-eslint's `no-non-null-assertion` rule (https://typescript-eslint.io/rules/no-non-null-assertion). Flags every non-null assertion `x!`. Where the grammar misparses a prefix operator applied to an assertion (`!x!` as `(!x)!`), the finding starts at the real operand.",
   "scope": {
@@ -97,6 +97,11 @@
           "oxlint": {
             "rules": [
               "no-non-null-assertion"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noNonNullAssertion"
             ]
           }
         }
@@ -196,6 +201,11 @@
           "oxlint": {
             "rules": [
               "no-non-null-assertion"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noNonNullAssertion"
             ]
           }
         }

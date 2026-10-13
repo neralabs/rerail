@@ -429,6 +429,36 @@ describe("validatePack", () => {
       ],
     });
   });
+
+  it("fails a port whose suppress.eslint lacks the Biome rule the same as its ESLint rule, or that carries suppress.biome alone", async () => {
+    const suppressing = (suppress: Record<string, unknown>) => (directory: string) =>
+      editJson(join(directory, "rules", "no-debugger.json"), document => ({
+        ...document,
+        clauses: z
+          .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+          .parse(document.clauses)
+          .map(clause => ({ ...clause, violation: { ...clause.violation, suppress } })),
+      }));
+    const eslint = { rules: ["no-debugger"] };
+    const oxlint = { rules: ["no-debugger"] };
+    const missing = {
+      ports: [
+        "no-debugger: rules/no-debugger.json carries suppress.eslint without suppress.biome naming lint/suspicious/noDebugger (clause debugger-statement), the Biome 2.5.15 rule the same as the ESLint rule it names, so the biome-ignore comments that silence it are ignored; run scripts/generate/packs/biome-suppression.mjs",
+      ],
+    };
+    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint })), { corpora: false }))).toEqual(missing);
+    const otherRule = suppressing({ eslint, oxlint, biome: { rules: ["lint/suspicious/noConsole"] } });
+    expect(failing(await validatePack(changed("eslint-port", otherRule), { corpora: false }))).toEqual(missing);
+    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })), { corpora: false });
+    expect(failing(alone)).toEqual({
+      ports: [
+        // The fixture's eslint-disable comments no longer silence the port: its recording disagrees.
+        'no-debugger (fixtures): 2 unexplained FP, first {"path":"debugger.js","line":2,"column":1}',
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+        "no-debugger: rules/no-debugger.json carries suppress.biome without suppress.eslint (clause debugger-statement); a port names the Biome rules the same as the ESLint rule it names",
+      ],
+    });
+  });
 });
 
 describe("packedFileFailures", () => {

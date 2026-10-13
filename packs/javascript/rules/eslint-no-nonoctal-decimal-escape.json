@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-nonoctal-decimal-escape",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-nonoctal-decimal-escape` rule (https://eslint.org/docs/latest/rules/no-nonoctal-decimal-escape). Reports each \\8 or \\9 escape sequence in a string literal.",
   "scope": {
@@ -40,6 +40,11 @@
           "oxlint": {
             "rules": [
               "no-nonoctal-decimal-escape"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noNonoctalDecimalEscape"
             ]
           }
         }

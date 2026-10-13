@@ -13,8 +13,8 @@ use ast_grep_core::{Doc, Node};
 use std::rc::Rc;
 
 /// Whether the violation's `suppress` removes a witness: another linter's comments suppress the
-/// violation at its anchor's start (oxlint's: over the anchored span). `node` is the witness's
-/// node, which places the file.
+/// violation at its anchor's start (oxlint's and Biome's: over the anchored span). `node` is the
+/// witness's node, which places the file.
 pub(crate) fn suppresses<D: Doc>(
     violation: Option<&ViolationSpec>,
     node: &Node<'_, D>,

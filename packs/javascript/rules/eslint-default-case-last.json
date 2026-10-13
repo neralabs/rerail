@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-default-case-last",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `default-case-last` (https://eslint.org/docs/latest/rules/default-case-last). Flags a `default` clause followed by a `case` clause.",
   "scope": {
@@ -38,6 +38,11 @@
           "oxlint": {
             "rules": [
               "default-case-last"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useDefaultSwitchClauseLast"
             ]
           }
         }

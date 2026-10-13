@@ -29,13 +29,13 @@ use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    file_eslint_directives, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
-    file_phpstan, file_psalm,
+    file_biome_suppressions, file_eslint_directives, file_noqa, file_nosec, file_oxlint_directives,
+    file_phpcs, file_phpstan, file_psalm,
 };
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex, PhpstanIndex,
-    PsalmIndex, Suppress, parent_statement, root,
+    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
+    PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
 };
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
@@ -192,9 +192,10 @@ impl Adapter for Ecma {
         None
     }
 
-    /// A project may run ESLint or oxlint (which also reads `eslint-` directives): either linter
-    /// the violation names may suppress it. Oxlint asks about the anchored span: a block covers a
-    /// problem that overlaps it.
+    /// A project may run ESLint, oxlint (which also reads `eslint-` directives) or Biome: any
+    /// linter the violation names may suppress it. Oxlint and Biome ask about the anchored span:
+    /// an oxlint block covers a problem that overlaps it, a `biome-ignore-start` range one it
+    /// holds, a `biome-ignore` one that starts in what it covers.
     fn suppresses<D: Doc>(
         _: &ViolationSpec,
         suppress: &Suppress,
@@ -210,6 +211,10 @@ impl Adapter for Ecma {
         }) || suppress.oxlint.as_ref().is_some_and(|rules| {
             let directives = file_oxlint_directives(|| OxlintDirectives::read(&root(node), source));
             directives.suppresses(rules, anchored.clone())
+        }) || suppress.biome.as_ref().is_some_and(|rules| {
+            let suppressions =
+                file_biome_suppressions(|| BiomeSuppressions::read(&root(node), source));
+            suppressions.suppresses(rules, anchored.clone())
         })
     }
 }

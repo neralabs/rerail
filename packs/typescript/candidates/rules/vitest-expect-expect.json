@@ -2303,6 +2303,11 @@
             "rules": [
               "expect-expect"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useExpect"
+            ]
           }
         }
       }

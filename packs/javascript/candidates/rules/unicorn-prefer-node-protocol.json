@@ -87,6 +87,11 @@
             "rules": [
               "prefer-node-protocol"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useNodejsImportProtocol"
+            ]
           }
         }
       }

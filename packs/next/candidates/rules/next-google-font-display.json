@@ -122,6 +122,11 @@
             "rules": [
               "google-font-display"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useGoogleFontDisplay"
+            ]
           }
         }
       }

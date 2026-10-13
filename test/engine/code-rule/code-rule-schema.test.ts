@@ -144,6 +144,23 @@ describe("code rule schema language families", () => {
     expect(validateCodeRule(onPhp)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("oxlint-disable comments are Oxlint's; a php query has none") });
   });
 
+  it("reads Biome's biome-ignore comments on TypeScript and JavaScript queries only, naming lint rules of its JavaScript analyzer", () => {
+    const hook = { kind: "call_expression" };
+    const all = { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] }, biome: { rules: ["lint/correctness/useHookAtTopLevel"] } };
+    expect(validateCodeRule(astRule("typescript", hook, { suppress: all }))).toMatchObject({ ok: true });
+    expect(validateCodeRule(astRule("javascript", hook, { suppress: { biome: { rules: ["lint/correctness/useHookAtTopLevel"] } } }))).toMatchObject({ ok: true });
+    const empty = astRule("typescript", hook, { suppress: { biome: { rules: [] } } });
+    expect(codeRuleSchema.safeParse(empty).error?.message).toContain("Too small");
+    const bare = astRule("typescript", hook, { suppress: { biome: { rules: ["useHookAtTopLevel"] } } });
+    expect(codeRuleSchema.safeParse(bare).error?.message).toContain("Must be a Biome lint rule name");
+    const group = astRule("typescript", hook, { suppress: { biome: { rules: ["lint/correctness"] } } });
+    expect(codeRuleSchema.safeParse(group).error?.message).toContain("Must be a Biome lint rule name");
+    const css = astRule("typescript", hook, { suppress: { biome: { rules: ["lint/a11y/useGenericFontNames"] } } });
+    expect(validateCodeRule(css)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("must be a lint rule of Biome 2.5.15's JavaScript analyzer") });
+    const onPython = astRule("python", { kind: "assert_statement" }, { suppress: { biome: { rules: ["lint/suspicious/noConsole"] } } });
+    expect(validateCodeRule(onPython)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("biome-ignore comments are Biome's; a python query has none") });
+  });
+
   it("reads PHP doc comments with phpDoc", () => {
     const mixedParam = { kind: "comment", parse: { grammar: "phpDoc", kind: "param_tag_value", has: { kind: "identifier_type", value: { eq: "mixed" }, capture: "T" } } };
     expect(codeRuleSchema.safeParse(astRule("php", mixedParam)).error?.issues ?? []).toEqual([]);

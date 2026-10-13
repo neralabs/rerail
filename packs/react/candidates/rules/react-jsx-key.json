@@ -412,6 +412,11 @@
             "rules": [
               "jsx-key"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useJsxKeyInIterable"
+            ]
           }
         }
       }
@@ -454,6 +459,11 @@
           "oxlint": {
             "rules": [
               "jsx-key"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useJsxKeyInIterable"
             ]
           }
         }

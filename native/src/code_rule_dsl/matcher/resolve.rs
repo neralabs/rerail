@@ -12,8 +12,8 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex, PhpstanIndex,
-    PsalmIndex, RerailIgnores,
+    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
+    PhpstanIndex, PsalmIndex, RerailIgnores,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -883,6 +883,8 @@ struct FileScopes {
     eslint_directives: Option<Rc<EslintDirectives>>,
     /// The file's oxlint directive comments (`suppress.oxlint`), read on first use.
     oxlint_directives: Option<Rc<OxlintDirectives>>,
+    /// The file's Biome suppression comments (`suppress.biome`), read on first use.
+    biome_suppressions: Option<Rc<BiomeSuppressions>>,
     /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
     noqa: Option<Rc<NoqaIndex>>,
     /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
@@ -936,6 +938,7 @@ impl FileScopeSlot {
             lines: [None, None],
             eslint_directives: None,
             oxlint_directives: None,
+            biome_suppressions: None,
             noqa: None,
             nosec: None,
             phpstan: None,
@@ -1071,6 +1074,27 @@ pub(crate) fn file_oxlint_directives(
         }
     });
     directives
+}
+
+/// The Biome suppressions of the file being matched: read once per file while a file is being
+/// matched, and fresh outside one.
+pub(crate) fn file_biome_suppressions(
+    read: impl FnOnce() -> BiomeSuppressions,
+) -> Rc<BiomeSuppressions> {
+    if let Some(suppressions) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.biome_suppressions.clone())
+    }) {
+        return suppressions;
+    }
+    let suppressions = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.biome_suppressions = Some(Rc::clone(&suppressions));
+        }
+    });
+    suppressions
 }
 
 /// The `rerail-ignore` directives of the file being matched: read once per file while a file is

@@ -168,6 +168,11 @@
             "rules": [
               "no-eval"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
+            ]
           }
         }
       }
@@ -241,6 +246,11 @@
           "oxlint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }
@@ -344,6 +354,11 @@
           "oxlint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }
@@ -1109,6 +1124,11 @@
           "oxlint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }

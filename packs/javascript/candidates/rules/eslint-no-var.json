@@ -58,6 +58,11 @@
             "rules": [
               "no-var"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noVar"
+            ]
           }
         }
       }

@@ -218,6 +218,11 @@
             "rules": [
               "prefer-function-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
           }
         }
       }
@@ -427,6 +432,11 @@
             "rules": [
               "prefer-function-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
           }
         }
       }
@@ -634,6 +644,11 @@
           "oxlint": {
             "rules": [
               "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
             ]
           }
         }
@@ -945,6 +960,11 @@
           "oxlint": {
             "rules": [
               "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
             ]
           }
         }
@@ -1259,6 +1279,11 @@
             "rules": [
               "prefer-function-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
           }
         }
       }
@@ -1545,6 +1570,11 @@
             "rules": [
               "prefer-function-type"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
           }
         }
       }
@@ -1769,6 +1799,11 @@
           "oxlint": {
             "rules": [
               "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
             ]
           }
         }

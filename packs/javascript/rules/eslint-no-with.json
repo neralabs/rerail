@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-with",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-with` rule (https://eslint.org/docs/latest/rules/no-with). Reports every `with` statement, at its `with` keyword.",
   "scope": {
@@ -37,6 +37,11 @@
           "oxlint": {
             "rules": [
               "no-with"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noWith"
             ]
           }
         }

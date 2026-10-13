@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-unsafe-finally",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-unsafe-finally` rule (https://eslint.org/docs/latest/rules/no-unsafe-finally). Flags return/throw/break/continue inside a finally block that would transfer control out of it: the nearest finally before a function/class boundary (and, for unlabeled break/continue, before an enclosing loop or switch; for a labeled jump, before the labeled statement it targets).",
   "scope": {
@@ -69,6 +69,11 @@
             "rules": [
               "no-unsafe-finally"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
           }
         }
       }
@@ -130,6 +135,11 @@
           "oxlint": {
             "rules": [
               "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
             ]
           }
         }
@@ -214,6 +224,11 @@
             "rules": [
               "no-unsafe-finally"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
           }
         }
       }
@@ -293,6 +308,11 @@
           "oxlint": {
             "rules": [
               "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
             ]
           }
         }
@@ -413,6 +433,11 @@
             "rules": [
               "no-unsafe-finally"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
           }
         }
       }
@@ -531,6 +556,11 @@
           "oxlint": {
             "rules": [
               "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
             ]
           }
         }

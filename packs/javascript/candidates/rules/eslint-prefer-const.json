@@ -236,6 +236,11 @@
             "rules": [
               "prefer-const"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useConst"
+            ]
           }
         }
       }

@@ -298,12 +298,13 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a non-boolean comments", ast({ kind: "identifier", layout: { after: { to: "token", comments: 1, breaks: { eq: 0 } } } }), /expected boolean/],
     ["an edge on a capture", ast({ pattern: "f($A)", layout: { after: { to: "capture.A", edge: true, breaks: { eq: 0 } } } }), /a capture names its node/],
     ["a layout inside a parsed tree", py({ kind: "string", parse: { grammar: "percentFormat", has: { kind: "placeholder", layout: { span: { eq: 0 } } } } }), /layout is not supported inside parse \(percentFormat trees\)/],
-    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, oxlint, phpstan, psalm, or phpcs/],
+    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, or phpcs/],
     ["an unknown suppress key", ast({ kind: "identifier" }, {}, { suppress: { jshint: {} } }), /Unrecognized key: \\"jshint\\"/],
     ["an empty eslint rule list", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: [] } } }), /Too small/],
     ["an eslint rule name with a comma", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["a, b"] } } }), /Must be a rule name/],
     ["an empty oxlint rule list", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: [] } } }), /Too small/],
     ["an oxlint rule name with a plugin prefix", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["react-hooks/rules-of-hooks"] } } }), /Must be an oxlint rule name/],
+    ["a Biome rule name without its lint/ category", ast({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["correctness/useHookAtTopLevel"] } } }), /Must be a Biome lint rule name/],
     ["a lowercase noqa code", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["f401"] } } }), /Must be a rule code/],
     ["a noqa parent other than statement", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"], parent: "import" } } }), /Invalid input/],
 
@@ -526,6 +527,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   it.each([
     ["eslint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["strict"] } } }), /eslint-disable comments are ESLint's; a python query has none/],
     ["oxlint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["no-console"] } } }), /oxlint-disable comments are Oxlint's; a python query has none/],
+    ["biome suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["lint/suspicious/noConsole"] } } }), /biome-ignore comments are Biome's; a python query has none/],
     ["noqa suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"] } } }), /noqa comments are Ruff's; a typescript query has none/],
     ["psalm suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { psalm: { issues: ["UndefinedVariable"] } } }), /@psalm-suppress tags are Psalm's; a python query has none/],
     ["phpcs suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } } }), /phpcs: annotations are PHP_CodeSniffer's; a typescript query has none/],

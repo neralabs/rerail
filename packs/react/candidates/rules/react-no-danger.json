@@ -61,6 +61,11 @@
             "rules": [
               "no-danger"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtml"
+            ]
           }
         }
       }

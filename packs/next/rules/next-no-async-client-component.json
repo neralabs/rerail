@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-async-client-component",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-async-client-component: after a top-level \"use client\" statement: an `export default async function` with a capitalized name, or the first top-level declaration of the capitalized name `export default` exports when it is an async function or a variable initialized with an async arrow.",
   "scope": {
@@ -73,6 +73,11 @@
           "oxlint": {
             "rules": [
               "no-async-client-component"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noNextAsyncClientComponent"
             ]
           }
         }
@@ -213,6 +218,11 @@
           "oxlint": {
             "rules": [
               "no-async-client-component"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noNextAsyncClientComponent"
             ]
           }
         }

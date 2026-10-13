@@ -35,6 +35,11 @@
             "rules": [
               "no-debugger"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDebugger"
+            ]
           }
         }
       }

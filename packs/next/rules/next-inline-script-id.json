@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-inline-script-id",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/inline-script-id: an element named by the first local an import from next/script binds, with children or dangerouslySetInnerHTML and no id (attributes and keys of object-literal spreads; any other spread makes it uncheckable).",
   "scope": {
@@ -393,6 +393,11 @@
           "oxlint": {
             "rules": [
               "inline-script-id"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useInlineScriptId"
             ]
           }
         }

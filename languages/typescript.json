@@ -29,5 +29,5 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": ["eslint", "oxlint"]
+  "suppressions": ["eslint", "oxlint", "biome"]
 }

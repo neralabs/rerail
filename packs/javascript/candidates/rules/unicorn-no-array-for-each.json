@@ -66,6 +66,11 @@
             "rules": [
               "no-array-for-each"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noForEach"
+            ]
           }
         }
       }

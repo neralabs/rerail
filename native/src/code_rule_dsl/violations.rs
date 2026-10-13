@@ -478,6 +478,11 @@ pub(super) fn bind(
                 "oxlint: oxlint-disable comments are Oxlint's",
             ),
             (
+                suppress.biome.is_some(),
+                Suppression::Biome,
+                "biome: biome-ignore comments are Biome's",
+            ),
+            (
                 suppress.phpstan.is_some(),
                 Suppression::Phpstan,
                 "phpstan: @phpstan-ignore comments are PHPStan's",

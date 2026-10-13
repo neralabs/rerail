@@ -87,6 +87,11 @@
             "rules": [
               "no-array-index-key"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noArrayIndexKey"
+            ]
           }
         }
       }

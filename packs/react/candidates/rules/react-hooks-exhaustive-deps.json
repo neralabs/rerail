@@ -1416,6 +1416,11 @@
             "rules": [
               "exhaustive-deps"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useExhaustiveDependencies"
+            ]
           }
         }
       }

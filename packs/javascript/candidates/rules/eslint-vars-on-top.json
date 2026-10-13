@@ -201,6 +201,11 @@
             "rules": [
               "vars-on-top"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
           }
         }
       }
@@ -367,6 +372,11 @@
           "oxlint": {
             "rules": [
               "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
             ]
           }
         }
@@ -535,6 +545,11 @@
             "rules": [
               "vars-on-top"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
           }
         }
       }
@@ -566,6 +581,11 @@
           "oxlint": {
             "rules": [
               "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
             ]
           }
         }

@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-prefer-template",
- "revision": 2,
+ "revision": 3,
  "mode": "steer",
  "description": "Port of ESLint's `prefer-template` rule (https://eslint.org/docs/latest/rules/prefer-template). Flags the outermost `+` concatenation chain that mixes a string literal with a non-string operand.",
  "scope": {
@@ -173,6 +173,11 @@
      "oxlint": {
       "rules": [
        "prefer-template"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useTemplate"
       ]
      }
     }

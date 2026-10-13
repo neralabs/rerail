@@ -118,6 +118,11 @@
             "rules": [
               "require-yield"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useYield"
+            ]
           }
         }
       }

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-process-env",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/no-process-env: `process.env` / `process['env']` member reads on an identifier named process (upstream reads the name only, no scope); default options allow no variable.",
   "scope": {
@@ -83,6 +83,11 @@
           "oxlint": {
             "rules": [
               "no-process-env"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noProcessEnv"
             ]
           }
         }

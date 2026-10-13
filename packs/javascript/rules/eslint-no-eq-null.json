@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-eq-null",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-eq-null` rule (https://eslint.org/docs/latest/rules/no-eq-null). Reports `==` and `!=` with a `null` operand (through parentheses).",
   "scope": {
@@ -51,6 +51,11 @@
           "oxlint": {
             "rules": [
               "no-eq-null"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noEqualsToNull"
             ]
           }
         }

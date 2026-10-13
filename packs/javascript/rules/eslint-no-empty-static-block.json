@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-empty-static-block",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-empty-static-block` rule (https://eslint.org/docs/latest/rules/no-empty-static-block). Reports a class static block with no statements and no comment inside its braces (a trailing comment the grammar attaches after the closing brace does not count).",
   "scope": {
@@ -50,6 +50,11 @@
           "oxlint": {
             "rules": [
               "no-empty-static-block"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noEmptyBlockStatements"
             ]
           }
         }

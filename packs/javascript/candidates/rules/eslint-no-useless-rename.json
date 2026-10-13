@@ -192,6 +192,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -252,6 +257,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -309,6 +319,11 @@
           "oxlint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }
@@ -370,6 +385,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -427,6 +447,11 @@
           "oxlint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }
@@ -487,6 +512,11 @@
           "oxlint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }

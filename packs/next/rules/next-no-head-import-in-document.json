@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-head-import-in-document",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-head-import-in-document: an import from next/head in a file whose path, between its first and second `pages`, names a document (name starts with `_document`, or `/_document/index`).",
   "scope": {
@@ -57,6 +57,11 @@
           "oxlint": {
             "rules": [
               "no-head-import-in-document"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noHeadImportInDocument"
             ]
           }
         }

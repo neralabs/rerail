@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-continue",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-continue` rule (https://eslint.org/docs/latest/rules/no-continue). Reports every `continue` statement.",
   "scope": {
@@ -34,6 +34,11 @@
           "oxlint": {
             "rules": [
               "no-continue"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noContinue"
             ]
           }
         }

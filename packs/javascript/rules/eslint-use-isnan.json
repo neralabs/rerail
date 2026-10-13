@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-use-isnan",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "ESLint 10.11.0 use-isnan, default options. Port of ESLint's `use-isnan` rule (https://eslint.org/docs/latest/rules/use-isnan). Flags comparisons with NaN and, by default, `switch(NaN)` / `case NaN`. NaN and Number are resolved with `resolves` so a shadowing binding does not fire. Default options: enforceForSwitchCase true, enforceForIndexOf false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
   "scope": {
@@ -174,6 +174,11 @@
             "rules": [
               "use-isnan"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useIsNan"
+            ]
           }
         }
       }
@@ -211,6 +216,11 @@
           "oxlint": {
             "rules": [
               "use-isnan"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useIsNan"
             ]
           }
         }
@@ -251,6 +261,11 @@
           "oxlint": {
             "rules": [
               "use-isnan"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useIsNan"
             ]
           }
         }
@@ -371,6 +386,11 @@
           "oxlint": {
             "rules": [
               "use-isnan"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useIsNan"
             ]
           }
         }

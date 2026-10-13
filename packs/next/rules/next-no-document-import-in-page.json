@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-document-import-in-page",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-document-import-in-page: an import from next/document, unless the part of the path after its last `pages` is empty or starts with `/_document`.",
   "scope": {
@@ -57,6 +57,11 @@
           "oxlint": {
             "rules": [
               "no-document-import-in-page"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDocumentImportInPage"
             ]
           }
         }

@@ -307,6 +307,11 @@
       "rules": [
        "no-lonely-if"
       ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
+      ]
      }
     }
    }
@@ -605,6 +610,11 @@
       "rules": [
        "no-lonely-if"
       ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
+      ]
      }
     }
    }
@@ -896,6 +906,11 @@
      "oxlint": {
       "rules": [
        "no-lonely-if"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
       ]
      }
     }

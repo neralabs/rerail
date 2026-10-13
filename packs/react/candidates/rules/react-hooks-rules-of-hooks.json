@@ -1373,6 +1373,11 @@
             "rules": [
               "rules-of-hooks"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1596,6 +1601,11 @@
             "rules": [
               "rules-of-hooks"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1675,6 +1685,11 @@
           "oxlint": {
             "rules": [
               "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -1756,6 +1771,11 @@
           "oxlint": {
             "rules": [
               "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -1876,6 +1896,11 @@
             "rules": [
               "rules-of-hooks"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1951,6 +1976,11 @@
           "oxlint": {
             "rules": [
               "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -2029,6 +2059,11 @@
           "oxlint": {
             "rules": [
               "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }

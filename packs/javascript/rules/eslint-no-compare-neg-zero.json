@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-compare-neg-zero",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 no-compare-neg-zero, default options. Port of ESLint's `no-compare-neg-zero` rule (https://eslint.org/docs/latest/rules/no-compare-neg-zero). Flags a comparison with `-0` (a unary minus applied to a numeric literal whose value is 0). Scope only matters to ESLint's Object.is suggestion, which is not a fix.",
   "scope": {
@@ -95,6 +95,11 @@
           "oxlint": {
             "rules": [
               "no-compare-neg-zero"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noCompareNegZero"
             ]
           }
         }

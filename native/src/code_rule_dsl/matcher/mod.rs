@@ -58,9 +58,9 @@ pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
-    calls_tables, file_eslint_directives, file_lines, file_module, file_noqa, file_nosec,
-    file_oxlint_directives, file_phpcs, file_phpstan, file_psalm, file_rerail_ignores,
-    table_reading,
+    calls_tables, file_biome_suppressions, file_eslint_directives, file_lines, file_module,
+    file_noqa, file_nosec, file_oxlint_directives, file_phpcs, file_phpstan, file_psalm,
+    file_rerail_ignores, table_reading,
 };
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-eqeqeq",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "ESLint 10.11.0 eqeqeq, default options. Port of ESLint's `eqeqeq` rule (https://eslint.org/docs/latest/rules/eqeqeq). Default options (`always`, null `always`): requires === and !==; autofixes only when an operand is typeof or both operands are literals of one type. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
   "scope": {
@@ -340,6 +340,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
+            ]
           }
         }
       }
@@ -420,6 +425,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
+            ]
           }
         }
       }
@@ -458,6 +468,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
+            ]
           }
         }
       }
@@ -494,6 +509,11 @@
           "oxlint": {
             "rules": [
               "eqeqeq"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
             ]
           }
         }
@@ -533,6 +553,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
+            ]
           }
         }
       }
@@ -569,6 +594,11 @@
           "oxlint": {
             "rules": [
               "eqeqeq"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDoubleEquals"
             ]
           }
         }

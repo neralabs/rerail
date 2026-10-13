@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-enum-initializers",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of typescript-eslint's `prefer-enum-initializers` rule (https://typescript-eslint.io/rules/prefer-enum-initializers). Flags enum members without an initializer.",
   "scope": { "include": ["**/*"], "exclude": [] },
@@ -20,7 +20,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "The value of the member '$NAME' should be explicitly defined.", "suppress": { "eslint": { "rules": ["@typescript-eslint/prefer-enum-initializers"] }, "oxlint": { "rules": ["prefer-enum-initializers"] } } }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "The value of the member '$NAME' should be explicitly defined.", "suppress": { "eslint": { "rules": ["@typescript-eslint/prefer-enum-initializers"] }, "oxlint": { "rules": ["prefer-enum-initializers"] }, "biome": { "rules": ["lint/style/useEnumInitializers"] } } }
     }
   ]
 }

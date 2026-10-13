@@ -146,7 +146,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
-| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations |
+| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
 
@@ -195,6 +195,14 @@ Precisely:
    plugin (`rules-of-hooks`, `no-console`), so `oxlint-disable` comments silence it as they silence Oxlint's. The two
    name the same rule and Oxlint reads `eslint-disable` comments as well, so once any violation of a document carries
    `suppress.oxlint`, each violation that carries `suppress.eslint` must carry it, and none may carry it alone.
+
+   A port of a rule Biome 2.5.15 has a rule the same as (its `sources` mark the ESLint rule `.same()`, not
+   `.inspired()`: `useHookAtTopLevel` for `react-hooks/rules-of-hooks`) carries `biome.rules` too, with Biome's full
+   name (`lint/correctness/useHookAtTopLevel`), so `biome-ignore` comments naming it, its group or `lint` silence the
+   port as they silence Biome's rule. Each violation that carries `suppress.eslint` must carry the Biome rules the same
+   as the ESLint rules it names, and none may carry `suppress.biome` without `suppress.eslint`. The mapping,
+   `conformance/biome-same-sources.generated.ts`, is read from Biome's source by
+   `scripts/generate/packs/biome-suppression.mjs`, which also writes `suppress.biome` into the pack documents.
 5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
    repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,

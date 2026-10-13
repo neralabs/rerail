@@ -2302,12 +2302,15 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
-    it("honours oxlint's disable directives as oxlint 1.88.0 reads them", async () => {
-      const nativeWorkspace = workspace();
-      const compiled = compileJson([{
+    it("honours oxlint's disable directives as oxlint 1.88.0 reads them, and biome-ignore as Biome 2.5.15 does", async () => {
+      const clause = {
         violation: {
           ...violation("RULES_OF_HOOKS"),
-          suppress: { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] } },
+          suppress: {
+            eslint: { rules: ["react-hooks/rules-of-hooks"] },
+            oxlint: { rules: ["rules-of-hooks"] },
+            biome: { rules: ["lint/correctness/useHookAtTopLevel"] },
+          },
         },
         forbid: {
           ast: {
@@ -2316,31 +2319,39 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
           },
         },
         id: "conditional-hook",
-      }]);
-      nativeWorkspace.addCodeRule(compiled);
-      try {
-        const source = [
-          "import { useEffect } from \"react\";",
-          "// oxlint-disable react-hooks/rules-of-hooks",
-          "function Avatar({ x }) { if (x) useEffect(() => {}); return null; }",
-          "// oxlint-enable react-hooks/rules-of-hooks",
-          "function Badge({ x }) { if (x) useEffect(() => {}); return null; } // oxlint-disable-line react-hooks/rules-of-hooks",
-          "// oxlint-disable-next-line react-hooks/rules-of-hooks",
-          "function Chip({ x }) { if (x) useEffect(() => {}); return null; }",
-          "// biome-ignore lint/correctness/useHookAtTopLevel: intentional",
-          "function Dot({ x }) { if (x) useEffect(() => {}); return null; }",
-          "/* eslint-disable react-hooks/rules-of-hooks */",
-          "function Eslinted({ x }) { if (x) useEffect(() => {}); return null; }",
-          "/* eslint-enable react-hooks/rules-of-hooks */",
-          "function Plain({ x }) { if (x) useEffect(() => {}); return null; }",
-          "",
-        ].join("\n");
-        const actual = await applyWorkspace(nativeWorkspace, 1, [{ language: "tsx" as const, path: "src/avatar.tsx", source }]);
-        expect(actual).toMatchObject({ status: "completed", failures: [] });
-        // 1-based lines 9 (Dot, under biome-ignore) and 13 (Plain), as `oxlint` 1.88.0 reports them.
-        expect(actual.violations.map(item => item.span!.startLine + 1)).toEqual([9, 13]);
-      } finally {
-        nativeWorkspace.close();
+      };
+      const source = [
+        "import { useEffect } from \"react\";",
+        "// oxlint-disable react-hooks/rules-of-hooks",
+        "function Avatar({ x }) { if (x) useEffect(() => {}); return null; }",
+        "// oxlint-enable react-hooks/rules-of-hooks",
+        "function Badge({ x }) { if (x) useEffect(() => {}); return null; } // oxlint-disable-line react-hooks/rules-of-hooks",
+        "// oxlint-disable-next-line react-hooks/rules-of-hooks",
+        "function Chip({ x }) { if (x) useEffect(() => {}); return null; }",
+        "// biome-ignore lint/correctness/useHookAtTopLevel: intentional",
+        "function Dot({ x }) { if (x) useEffect(() => {}); return null; }",
+        "/* eslint-disable react-hooks/rules-of-hooks */",
+        "function Eslinted({ x }) { if (x) useEffect(() => {}); return null; }",
+        "/* eslint-enable react-hooks/rules-of-hooks */",
+        "function Plain({ x }) { if (x) useEffect(() => {}); return null; }",
+        "",
+      ].join("\n");
+      for (const [placement, expected] of [
+        // 1-based line 13 (Plain) only: `oxlint` 1.88.0 reports Plain and Dot (line 9), `biome lint` 2.5.15 every hook but Dot's.
+        [undefined, [13]],
+        [[{ folder: "", mode: "log", suppressions: "honour" }], [13]],
+        // The setting turns every linter's comments off.
+        [[{ folder: "", mode: "log", suppressions: "ignore" }], [3, 5, 7, 9, 11, 13]],
+      ] as const) {
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]), placement === undefined ? undefined : JSON.stringify(placement));
+          const actual = await applyWorkspace(nativeWorkspace, 1, [{ language: "tsx" as const, path: "src/avatar.tsx", source }]);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(actual.violations.map(item => item.span!.startLine + 1)).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
       }
     });
     it("drops witnesses a rerail-ignore naming the code rule covers, whatever suppress and the suppressions setting", async () => {
