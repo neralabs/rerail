@@ -1088,7 +1088,7 @@ pub(crate) fn holds<'t, D: Doc>(
             };
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
-                Callee::Name(name) => Some(Name::new(&name)),
+                Callee::Name(name) => Some(Name::new(test.family, &name)),
             });
             FILE_CALLS.with_borrow_mut(|slot| {
                 if let Some(slot) = slot {

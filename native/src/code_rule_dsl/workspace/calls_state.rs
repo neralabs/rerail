@@ -518,11 +518,17 @@ fn graph_fingerprint(summary: &Summary, seeds: &FileSeeds) -> u64 {
 
 /// Takes `file`'s call summary from its stored results, if they hold one of this extractor.
 pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResult]) {
-    if !file_language(&file.input).is_some_and(calls::summarizes)
-        || file.crossfile.summary.is_some()
-    {
+    let Some(language) = file_language(&file.input) else {
+        return;
+    };
+    if !calls::summarizes(language) || file.crossfile.summary.is_some() {
         return;
     }
+    let Some(family) =
+        with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::NAMES)
+    else {
+        return;
+    };
     let candidate = summary_candidate();
     let Some(result) = persisted
         .iter()
@@ -530,8 +536,8 @@ pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResu
     else {
         return;
     };
-    let summary =
-        shared_summary(file).or_else(|| Some(share_summary(file, Summary::decode(&result.bytes)?)));
+    let summary = shared_summary(file)
+        .or_else(|| Some(share_summary(file, Summary::decode(&result.bytes, family)?)));
     if let Some(summary) = summary {
         file.crossfile.summary = Some((file.source_revision, summary));
         file.crossfile.summary_stored = true;
