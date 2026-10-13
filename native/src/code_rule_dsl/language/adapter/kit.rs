@@ -11,7 +11,7 @@ use crate::code_rule_dsl::language::{
 };
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-use crate::code_rule_dsl::value::{Lang, Value};
+use crate::code_rule_dsl::value::Value;
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
 use std::borrow::Cow;
@@ -127,7 +127,7 @@ fn python() {
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
         value: value_kit::Expect {
-            lang: Lang::Python,
+            lang: Family::Python,
             string: Value::Str("é".to_owned()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("x = 0x10\n", "integer", Value::int(16)),
@@ -243,7 +243,7 @@ fn ecma() {
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
         value: value_kit::Expect {
-            lang: Lang::Js,
+            lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
             numbers: [
                 Value::Float(16.0),
@@ -372,7 +372,7 @@ fn php() {
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
         value: value_kit::Expect {
-            lang: Lang::Php,
+            lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
             numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
             decoded: ("<?php $x = 0x10;\n", "integer", Value::int(16)),
@@ -520,7 +520,7 @@ fn blade() {
         ],
         module: (".blade.php", None),
         value: value_kit::Expect {
-            lang: Lang::Php,
+            lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
             numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
             decoded: ("<p>{{ 0x10 }}</p>\n", "integer", Value::int(16)),
