@@ -3,7 +3,43 @@
 //! This is deliberately a syntax-level reader. Lint names are compared textually (after removing
 //! whitespace), and are not resolved against the compiler's renamed or removed lint catalogue.
 
+use super::names;
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
+
+/// `suppress.clippy`: the lint names whose `allow` or `expect` silences the violation, as an
+/// attribute spells them (`clippy::double_parens`, a group such as `clippy::complexity` or
+/// `clippy::all`, or `warnings`). A port lists its lint and every group it belongs to.
+pub(crate) type Clippy = Vec<String>;
+
+/// Parses `suppress.clippy`: `{ "lints": [Name]+ }`.
+pub(super) fn spec(clippy: &Value, at: &str) -> napi::Result<Clippy> {
+    reject_unknown(object(clippy, at)?, &["lints"], at)?;
+    names(
+        clippy.get("lints"),
+        &format!("{at}/lints"),
+        lint_name,
+        "lint names",
+        "a lint name (`clippy::name`, `warnings`, or a rustc lint or group)",
+    )
+}
+
+/// A lint path rustc reads in a lint attribute: one or two `::`-joined snake-case identifiers.
+fn lint_name(name: &str) -> bool {
+    let mut segments = name.split("::");
+    let valid = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some(first), None, None) => valid(first),
+        (Some(tool), Some(lint), None) => valid(tool) && valid(lint),
+        _ => false,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Level {
@@ -24,15 +60,13 @@ struct Attribute {
 }
 
 /// Lint-level attributes of one Rust file.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ClippyIndex {
     attributes: Vec<Attribute>,
 }
 
 impl ClippyIndex {
     /// Reads active Rust lint-level attributes from `root`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+        pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let mut attributes = Vec::new();
         let mut order = 0;
         for node in root.dfs() {
@@ -99,8 +133,7 @@ impl ClippyIndex {
     }
 
     /// Whether an `allow`/`expect` naming one of `lints` is the level in force at byte `at`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn suppresses(&self, lints: &[String], at: usize) -> bool {
+        pub(crate) fn suppresses(&self, lints: &[String], at: usize) -> bool {
         let matching = self.attributes.iter().filter(|attribute| {
             attribute.start <= at
                 && at < attribute.end

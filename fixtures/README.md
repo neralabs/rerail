@@ -32,7 +32,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 
 | Feature directory | Engine module | What reads it |
 |---|---|---|
-| `blade/blade/` | `blade` | the compiled view, against illuminate/view and PHPStan (`blade/oracle_tests.rs`) |
+| `blade/blade/` | `blade` | the compiled view, against illuminate/view and PHPStan (`blade/oracle_tests.rs`); `forte/`, the Forte port's parity with Forte 1.1.0 (`blade/forte/tests.rs`), and `grammar-gaps/`, the templates tree-sitter-blade failed on |
 | `{ecma,python}/compile/examples/` | `compile` | the worked examples (`compile/examples_tests.rs`, the DSL reference's coverage) |
 | `php/compile/format-args/` | `compile` | `formatArgs` with style `printf`, against PHPStan (`compile/format_args/php.rs`) |
 | `{ecma,python,php,sql}/scope/` | `scope` | name resolution and usedness; `sql/scope/` is PostgreSQL's reading of names (T2) and the corpus input (T3) |
@@ -57,7 +57,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `python/` | Ruff 0.16.9, Pyflakes 3.4.0, Bandit 1.8.6, CPython 3.13, Jedi 0.19.2 |
 | `ecma/` | ESLint 10.11.0, typescript-eslint 8.70.1, eslint-utils 4.10.1, natural-compare 1.4.0, ast-grep 0.45.3 |
 | `php/` | PHP 8.5.11, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4 and 3.13.6, nikic/php-parser 5.9.0, phpstan/phpdoc-parser 2.3.5 |
-| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16 |
+| `blade/` | illuminate/view 13.34.0, PHP 8.5.11, PHPStan 2.2.16, Forte 1.1.0 |
 | `vue/` | @vue/compiler-sfc 3.5.43, vue-eslint-parser 10.4.1, eslint-plugin-vue 10.11.1, ESLint 10.11.0 |
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 |
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
@@ -93,7 +93,8 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `ecma/licenses/eslint-utils/` | eslint-utils 4.10.1 | MIT |
 | `php/licenses/laravel/` | laravel/framework e5f3d6265f | MIT |
 | `php/licenses/symfony/` | symfony/symfony 2c4011aa7e | MIT |
-| `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/blade/directives.php` | MIT |
+| `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/blade/directives.php`; templates in `blade/blade/forte/corpus/` | MIT |
+| `blade/licenses/forte/` | fortephp/forte 1.1.0 (its test suite's templates in `blade/blade/forte/suite.expected.json`) | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
 | `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |

@@ -9,6 +9,7 @@
 //! the view's data, which Blade defines outside the template, so a variable the template does not
 //! define is unknown there, never undefined.
 
+pub(crate) mod forte;
 #[cfg(test)]
 mod oracle_tests;
 #[cfg(test)]

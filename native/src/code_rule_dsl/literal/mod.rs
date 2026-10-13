@@ -320,8 +320,9 @@ pub(crate) struct SubTree {
 }
 
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
-const ID_FLAG: usize = 1 << 63;
-static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
+/// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
+pub(crate) const ID_FLAG: usize = 1 << 63;
+pub(crate) static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
     /// Flattens `root` over `text`. `offset` shifts every node range (see `SubSource`).

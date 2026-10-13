@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { CodeRuleDslSuppress } from "./code-rule-semantic.js";
 
 export const CODE_RULE_SEMANTIC_COMPARE_TEXTS = ["value", "key", "member", "name", "reference", "reference-no-static-keys", "structure", "structure-hash", "structure-parts"] as const;
 
@@ -11,26 +10,43 @@ const psalmIssue = z.string().regex(/^(?!all$)[A-Za-z0-9_-]+$/, "Must be a Psalm
 const phpcsCode = z
   .string()
   .regex(/^\w+\.\w+\.\w+(?:\.\w+)?$/, "Must be a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code).");
+const clippyLint = z
+  .string()
+  .regex(/^[a-z0-9_]+(?:::[a-z0-9_]+)?$/, "Must be a lint name as a lint attribute spells it (clippy::name, a group such as clippy::all, or a rustc lint or group).");
+
+/**
+ * A violation's `suppress`: the suppression kinds it may ask for, one entry per linter, in the engine's order (its table in
+ * `native/src/code_rule_dsl/suppress.rs`): the key is the kind's `suppress` key and registry name, the value its shape.
+ * Which languages honour a kind is the registry's (`suppressions`) and the engine's to check. A new kind is one entry here.
+ */
 export const codeRuleSuppressSchema = z
   .object({
+    /** ESLint's `eslint-disable` comments. */
     eslint: z.object({ rules: z.array(eslintRuleName).min(1).max(256) }).strict().optional(),
+    /** Ruff's `# noqa` comments; `parent: "statement"` also reads them where the enclosing statement starts. */
     noqa: z.object({ codes: z.array(ruffCode).min(1).max(256), parent: z.literal("statement").optional() }).strict().optional(),
+    /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
     nosec: z.object({ codes: z.array(banditTest).min(1).max(256) }).strict().optional(),
+    /** PHPStan's `@phpstan-ignore` comments. */
     phpstan: z.object({ identifiers: z.array(phpstanIdentifier).min(1).max(256) }).strict().optional(),
+    /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
     psalm: z.object({ issues: z.array(psalmIssue).min(1).max(256), suppressAll: z.boolean().optional() }).strict().optional(),
+    /** PHP_CodeSniffer's `phpcs:` annotations, as version 4 reads them unless `version: 3` (which adds `@codingStandardsIgnore*`). */
     phpcs: z.object({ sniffs: z.array(phpcsCode).min(1).max(256), version: z.union([z.literal(3), z.literal(4)]).optional() }).strict().optional(),
+    /** rustc's and Clippy's lint-level attributes, `#[allow(..)]` and `#[expect(..)]`, naming one of `lints` (a lint or its group). */
+    clippy: z.object({ lints: z.array(clippyLint).min(1).max(256) }).strict().optional(),
   })
   .strict()
-  .refine(
-    suppress =>
-      suppress.eslint !== undefined ||
-      suppress.noqa !== undefined ||
-      suppress.nosec !== undefined ||
-      suppress.phpstan !== undefined ||
-      suppress.psalm !== undefined ||
-      suppress.phpcs !== undefined,
-    "suppress must hold eslint, noqa, nosec, phpstan, psalm, or phpcs.",
-  ) as unknown as z.ZodType<CodeRuleDslSuppress>;
+  .refine(suppress => Object.values(suppress).some(value => value !== undefined), { error: () => `suppress must hold ${suppressionKinds()}.` });
+
+/** `eslint, noqa, ..., or phpcs`: the kinds a `suppress` may hold, in order. */
+function suppressionKinds(): string {
+  const keys = Object.keys(codeRuleSuppressSchema.shape);
+  return `${keys.slice(0, -1).join(", ")}, or ${keys.at(-1)}`;
+}
+
+/** A violation's `suppress`: per kind, the suppressions it honours. */
+export type CodeRuleDslSuppress = z.infer<typeof codeRuleSuppressSchema>;
 
 /** Semantic matcher fields, inserted in the structural shape at their original key position. */
 export function semanticRuleShape(fields: {

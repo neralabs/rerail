@@ -8,11 +8,53 @@
 //! its star, tag and string tokens) and `File::addMessage`'s line check; `File::process` drops
 //! every message of a file with a `phpcs:ignoreFile`.
 
-use super::php_comment_end;
+use super::{names, php_comment_end};
+use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+/// `phpcs`: PHP_CodeSniffer's `phpcs:` annotations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Phpcs {
+    /// The sniff or message codes the violation reports as.
+    pub(crate) codes: Vec<String>,
+    /// `version`: the PHP_CodeSniffer major whose reading applies (4 unless 3).
+    pub(crate) version: PhpcsVersion,
+}
+
+/// `suppress.phpcs`.
+pub(super) fn spec(phpcs: &Value, at: &str) -> napi::Result<Phpcs> {
+    reject_unknown(object(phpcs, at)?, &["sniffs", "version"], at)?;
+    let codes = names(
+        phpcs.get("sniffs"),
+        &format!("{at}/sniffs"),
+        phpcs_code,
+        "PHP_CodeSniffer codes",
+        "a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code)",
+    )?;
+    let version = match phpcs.get("version").map(Value::as_u64) {
+        None | Some(Some(4)) => PhpcsVersion::Four,
+        Some(Some(3)) => PhpcsVersion::Three,
+        Some(_) => return Err(invalid(format!("{at}/version must be 3 or 4"))),
+    };
+    Ok(Phpcs { codes, version })
+}
+
+/// A sniff (`Standard.Category.Sniff`) or message (`Standard.Category.Sniff.Code`) code: parts of
+/// letters, digits and `_`, as PHP_CodeSniffer names standards, sniffs and codes.
+fn phpcs_code(code: &str) -> bool {
+    let parts = code.split('.');
+    (3..=4).contains(&parts.clone().count())
+        && parts.into_iter().all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+}
 
 /// A PHP_CodeSniffer major version whose annotations a violation honours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

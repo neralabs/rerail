@@ -16,10 +16,50 @@
 //! An issue is suppressed by its own name, by its `Config::getParentIssueType` parent, or by
 //! `all` where the configuration sets `disableSuppressAll="false"`.
 
+use super::names;
+use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
+use serde_json::Value;
 use std::ops::Range;
 use std::sync::LazyLock;
+
+/// `psalm`: Psalm's `@psalm-suppress` tags.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Psalm {
+    /// The issues the violation is, and their `Config::getParentIssueType` parents: a tag naming
+    /// any of them suppresses it.
+    pub(crate) names: Vec<String>,
+    /// `suppressAll: true`: `@psalm-suppress all` counts, as with `disableSuppressAll="false"`.
+    pub(crate) suppress_all: bool,
+}
+
+/// `suppress.psalm`.
+pub(super) fn spec(psalm: &Value, at: &str) -> napi::Result<Psalm> {
+    reject_unknown(object(psalm, at)?, &["issues", "suppressAll"], at)?;
+    let issues = names(
+        psalm.get("issues"),
+        &format!("{at}/issues"),
+        |issue| psalm_issue(issue) && issue != "all",
+        "Psalm issue names",
+        "a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll)",
+    )?;
+    let suppress_all = match psalm.get("suppressAll") {
+        None => false,
+        Some(Value::Bool(all)) => *all,
+        Some(_) => return Err(invalid(format!("{at}/suppressAll must be a boolean"))),
+    };
+    let mut names = issues.clone();
+    for parent in issues.iter().filter_map(|issue| parent_issue_type(issue)) {
+        if !names.contains(&parent) {
+            names.push(parent);
+        }
+    }
+    Ok(Psalm {
+        names,
+        suppress_all,
+    })
+}
 
 /// Statement lists: each child (but a `case` value or a `declare` directive) is a statement
 /// `analyzeStatement` reads.

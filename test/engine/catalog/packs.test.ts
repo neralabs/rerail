@@ -5,18 +5,25 @@
  * corpus, a missing checkout failing; 0: none).
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
- * breaks one check of a copy of it, `vue`, for a language core plans, passes with its rule not supported yet, and
- * `empty`, whose ports are all candidates, passes with no rules.
+ * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
+ * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, test } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
 import { PACK_CHECKS, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+
+// The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
+vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
+  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
+vi.mock("../../../src/engine/native/native.js", async importOriginal =>
+  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
@@ -100,10 +107,10 @@ describe("validatePack", () => {
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
-    const validation = await validatePack(join(FIXTURES, "vue"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "exemplar"), { corpora: false });
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
-      { id: "vue:no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
+      { id: "exemplar:no-identifier", document: "rules/no-identifier.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `exemplar` is not supported yet" },
     ]);
   });
 

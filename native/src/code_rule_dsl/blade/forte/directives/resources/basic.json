@@ -1,0 +1,13 @@
+[
+  {
+    "name": "class,classes,style,styles,selected,checked,disabled,required,readonly,dd,dump,method,inject,js,json,unset,use,bool,vite",
+    "args": true
+  },
+  {
+    "name": "continue,php"
+  },
+  {
+    "name": "csrf,viteReactRefresh,endphp",
+    "args":false
+  }
+]

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "blade-parser-for-else-structure",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "stillat/blade-parser 2.1.0 ForElseStructureValidator: a @forelse loop with no @empty directive of its own, or more than one.",
   "scope": {
@@ -17,18 +17,26 @@
         "ast": {
           "language": "blade",
           "rule": {
-            "kind": "loop",
+            "kind": "directive_block",
             "has": {
               "stopBy": "neighbor",
-              "kind": "directive_start",
-              "regex": "^@forelse$"
+              "field": "start",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^@forelse$"
+              }
             },
             "not": {
               "count": {
                 "has": {
                   "stopBy": "neighbor",
                   "kind": "directive",
-                  "regex": "^@empty$"
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_name",
+                    "regex": "^@empty$"
+                  }
                 },
                 "min": 1,
                 "max": 1

@@ -2,7 +2,7 @@ use super::closure::{Bits, Closure, Graph, Hop, Seed, Status, path_module};
 use super::names::Name;
 use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, callee_at};
 use super::{CallsView, FileSeeds, SeedScope, Through};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::content_store::HashKey;
@@ -184,7 +184,10 @@ fn summaries_name_callees_by_qualified_name() {
         vec!["pkg.io"]
     );
     assert!(!summary.open);
-    assert_eq!(Summary::decode(&summary.encode()).as_ref(), Some(&summary));
+    assert_eq!(
+        Summary::decode(&summary.encode(), Family::Python).as_ref(),
+        Some(&summary)
+    );
 }
 
 #[test]
@@ -512,10 +515,13 @@ fn syntax_errors_open_the_summary() {
 fn decoding_rejects_truncated_or_foreign_bytes() {
     let summary = summarize("pkg.m", "def f():\n    g()\n");
     let bytes = summary.encode();
-    assert_eq!(Summary::decode(&bytes[..bytes.len() - 1]), None);
+    assert_eq!(
+        Summary::decode(&bytes[..bytes.len() - 1], Family::Python),
+        None
+    );
     let mut foreign = bytes.clone();
     foreign[0] ^= 0xff;
-    assert_eq!(Summary::decode(&foreign), None);
+    assert_eq!(Summary::decode(&foreign, Family::Python), None);
 }
 
 /// Term 0: an async caller's chain through sync functions to a blocking call.
@@ -583,12 +589,19 @@ fn a_chain_across_files_reaches_the_blocking_call() {
         ),
     ]);
     assert_eq!(
-        graph.status(&closure, &Name::new("app.services.fetch")),
+        graph.status(&closure, &Name::new(Family::Python, "app.services.fetch")),
         REACH
     );
-    assert_eq!(graph.status(&closure, &Name::new("app.util.idle")), NONE);
     assert_eq!(
-        graph.chain(&closure, &Name::new("app.services.fetch"), 0),
+        graph.status(&closure, &Name::new(Family::Python, "app.util.idle")),
+        NONE
+    );
+    assert_eq!(
+        graph.chain(
+            &closure,
+            &Name::new(Family::Python, "app.services.fetch"),
+            0
+        ),
         vec!["app.services.impl.fetch", "app.util.pause"]
     );
 }
@@ -609,10 +622,13 @@ fn a_namespace_package_file_is_found_by_its_path() {
         ),
     ]);
     assert_eq!(
-        graph.status(&closure, &Name::new("app.tests.kit.make")),
+        graph.status(&closure, &Name::new(Family::Python, "app.tests.kit.make")),
         REACH
     );
-    assert_eq!(graph.status(&closure, &Name::new("test_x.case")), REACH);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "test_x.case")),
+        REACH
+    );
 }
 
 #[test]
@@ -623,8 +639,14 @@ fn chains_stop_at_definitions_the_term_does_not_pass_through() {
         "import time\n\nasync def slow():\n    time.sleep(1)\n\ndef via():\n    slow()\n",
     )]);
     // `slow` is async: a sync-only term neither starts nor passes there.
-    assert_eq!(graph.status(&closure, &Name::new("m.slow")), NONE);
-    assert_eq!(graph.status(&closure, &Name::new("m.via")), NONE);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.slow")),
+        NONE
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.via")),
+        NONE
+    );
 }
 
 #[test]
@@ -637,8 +659,14 @@ fn recursion_terminates_and_colours_every_member() {
             "import a\nimport time\n\ndef pong(n):\n    a.ping(n)\n    time.sleep(n)\n",
         ),
     ]);
-    assert_eq!(graph.status(&closure, &Name::new("a.ping")), REACH);
-    assert_eq!(graph.status(&closure, &Name::new("b.pong")), REACH);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "a.ping")),
+        REACH
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "b.pong")),
+        REACH
+    );
 }
 
 #[test]
@@ -657,14 +685,29 @@ fn unknown_callees_are_open_never_absent() {
             "import s\nimport k\n\ndef d():\n    s.not_defined()\n\ndef e():\n    obj = object()\n    obj.method()\n\ndef f():\n    k.CONSTANT()\n",
         ),
     ]);
-    assert_eq!(graph.status(&closure, &Name::new("m.a")), OPEN_STATUS);
-    assert_eq!(graph.status(&closure, &Name::new("m.b")), OPEN_STATUS);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.a")),
+        OPEN_STATUS
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.b")),
+        OPEN_STATUS
+    );
     // A member of a module that star-imports, which no star import gives.
-    assert_eq!(graph.status(&closure, &Name::new("n.d")), OPEN_STATUS);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "n.d")),
+        OPEN_STATUS
+    );
     // `obj.method()` (a local's method) and a module's value no name denotes have no static
     // callee: unknown, never absent.
-    assert_eq!(graph.status(&closure, &Name::new("n.e")), OPEN_STATUS);
-    assert_eq!(graph.status(&closure, &Name::new("n.f")), OPEN_STATUS);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "n.e")),
+        OPEN_STATUS
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "n.f")),
+        OPEN_STATUS
+    );
 }
 
 #[test]
@@ -674,7 +717,10 @@ fn reaching_wins_over_open() {
         "m",
         "import time\n\ndef f():\n    unknown_name()\n    time.sleep(1)\n",
     )]);
-    assert_eq!(graph.status(&closure, &Name::new("m.f")), REACH);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.f")),
+        REACH
+    );
 }
 
 #[test]
@@ -684,8 +730,14 @@ fn constructing_a_class_calls_its_init() {
         "m",
         "import time\n\nclass Client:\n    def __init__(self):\n        self.connect()\n    def connect(self):\n        time.sleep(1)\n\ndef make():\n    Client()\n",
     )]);
-    assert_eq!(graph.status(&closure, &Name::new("m.make")), REACH);
-    assert_eq!(graph.status(&closure, &Name::new("m.Client")), REACH);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.make")),
+        REACH
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.Client")),
+        REACH
+    );
 }
 
 const CLASSES: &str = "from pkg.util import helper
@@ -754,7 +806,7 @@ def wrapped():
 
 /// The definitions a call of `name` links to, by label and line, and whether it is open.
 fn linked(graph: &Graph, sources: &[(&str, &str)], name: &str) -> (Vec<String>, bool) {
-    let (defs, open) = graph.link_of(&Name::new(name));
+    let (defs, open) = graph.link_of(&Name::new(Family::Python, name));
     let labels = defs
         .iter()
         .map(|def| {
@@ -847,7 +899,10 @@ fn callees_are_named_under_nfkc() {
         "m",
         "import 𝐭𝐢𝐦𝐞\n\ndef 𝐰𝐚𝐢𝐭():\n    time.𝐬𝐥𝐞𝐞𝐩(1)\n\ndef make():\n    wait()\n",
     )]);
-    assert_eq!(graph.status(&closure, &Name::new("m.make")), REACH);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "m.make")),
+        REACH
+    );
 }
 
 #[test]
@@ -856,7 +911,10 @@ fn a_file_with_syntax_errors_opens_its_definitions() {
         ("a.py", "a", "import b\n\ndef f():\n    b.g()\n"),
         ("b.py", "b", "def g(:\n    pass\n"),
     ]);
-    assert_eq!(graph.status(&closure, &Name::new("a.f")), OPEN_STATUS);
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "a.f")),
+        OPEN_STATUS
+    );
 }
 
 /// Replacing, removing and adding files one at a time answers every call as linking the files
@@ -1101,9 +1159,12 @@ fn an_updated_graph_answers_as_linking_afresh() {
     }
     // Something reached, so the comparison is not vacuous.
     let closure = graph.close(&seeds_by_direct_call(&graph, &BLOCKING), sync_only, 1);
-    assert_eq!(graph.status(&closure, &Name::new("app.api.handler")), NONE);
     assert_eq!(
-        graph.status(&closure, &Name::new("app.services.fetch")),
+        graph.status(&closure, &Name::new(Family::Python, "app.api.handler")),
+        NONE
+    );
+    assert_eq!(
+        graph.status(&closure, &Name::new(Family::Python, "app.services.fetch")),
         REACH
     );
     // The hierarchy kept across edits has a subclass through a re-export, and a class whose base
@@ -1491,9 +1552,9 @@ fn corpus() {
     let mut open_names = std::collections::HashMap::<String, usize>::new();
     for (_, summary) in &files {
         for name in &summary.targets {
-            let name = summary.name(*name);
+            let name = summary.interned(*name);
             if graph.link_is_open(name) {
-                *open_names.entry(name.to_owned()).or_default() += 1;
+                *open_names.entry(name.text().to_owned()).or_default() += 1;
             }
         }
     }
@@ -1606,4 +1667,49 @@ fn a_utility_may_hold_calls_but_no_seed_may_reach_one() {
         serde_json::json!({ "blocks": { "calls": sleeps } }),
     );
     assert!(rejection(nested).contains("cannot contain calls"));
+}
+
+/// A summary's persisted bytes hold its names' text alone, as they did before names carried
+/// their family: Python and PHP summaries already stored decode unchanged, given the family of
+/// the file they summarize.
+#[test]
+fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
+    let summary = |family, text| Summary {
+        module: None,
+        names: vec![Name::new(family, text)],
+        defs: vec![],
+        edges: vec![],
+        aliases: vec![],
+        targets: vec![],
+        opaque: vec![],
+        stars: vec![],
+        supers: vec![],
+        open: false,
+        open_sites: false,
+        bytes: 0,
+    };
+    let python = summary(Family::Python, "pkg.f");
+    let php = summary(Family::Php, r"\App\f");
+    // Extractor version 9, no module, one name, its length and text, then empty tables.
+    let bytes = |text: &[u8]| -> Vec<u8> {
+        [9, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+            .into_iter()
+            .chain(u32::try_from(text.len()).unwrap().to_le_bytes())
+            .chain(text.iter().copied())
+            .chain([0; 28])
+            .collect()
+    };
+    let (python_bytes, php_bytes) = (bytes(b"pkg.f"), bytes(br"\App\f"));
+    assert_eq!(python.encode(), python_bytes);
+    assert_eq!(php.encode(), php_bytes);
+    assert_eq!(
+        Summary::decode(&python_bytes, Family::Python)
+            .unwrap()
+            .encode(),
+        python_bytes
+    );
+    assert_eq!(
+        Summary::decode(&php_bytes, Family::Php).unwrap().encode(),
+        php_bytes
+    );
 }

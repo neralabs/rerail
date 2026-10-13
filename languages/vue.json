@@ -6,7 +6,8 @@
   "dialects": [
     {
       "label": "vue",
-      "suffixes": [".vue"]
+      "suffixes": [".vue"],
+      "tapeTag": 12
     }
   ],
   "capabilities": {

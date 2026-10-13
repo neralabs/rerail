@@ -1,5 +1,6 @@
 //! The adapter test kit: every family's adapter against known-good literals (`kit`), and the
-//! registry's capabilities against the concerns the adapters read.
+//! registry's capabilities against the concerns the adapters read. A new family adds one `#[test]`
+//! function calling `kit::<Family>(&Expect { .. })`.
 
 use super::value::kit as value_kit;
 use super::{
@@ -11,9 +12,8 @@ use crate::code_rule_dsl::language::{
 };
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-use crate::code_rule_dsl::value::{Lang, Value};
+use crate::code_rule_dsl::value::Value;
 use ast_grep_core::AstGrep;
-use ast_grep_core::tree_sitter::StrDoc;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -22,7 +22,12 @@ use std::sync::Arc;
 /// A document, and the kind and range of each of its regions' roots.
 type Document = (&'static str, &'static [(&'static str, Range<usize>)]);
 
-/// What one family's adapter answers.
+/// What one family's adapter answers: the expectations `kit` checks. `family`, `label` and
+/// `terminators` identify the adapter; `dialect` is the grammar its documents are read in; `name` is
+/// what the identifier `ﬁle` normalises to; `regions` lists each document with the kind and range of
+/// its regions' roots; `module` is the family's file suffix and the module of `pkg/mod<suffix>`; and
+/// `value`, `calls`, `arguments`, `format_args`, `syntax` and `scope` are the expectations of each
+/// concern's kit.
 struct Expect {
     family: Family,
     label: &'static str,
@@ -43,12 +48,13 @@ struct Expect {
     scope: super::scope::kit::Expect,
 }
 
-/// A tape of `source` in `dialect`, as files are read.
+/// A tape of `source` in `dialect`, as files are read: Blade's from its Forte tree, the rest from
+/// tree-sitter's.
 fn tape(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
     let grammar = Grammar::new(dialect).expect("grammar");
-    let native = StrDoc::new(source, dialect);
-    let image =
-        TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).expect("encodes");
+    let image = TapeImage::parse(&grammar, source, &|| false)
+        .expect("parses")
+        .expect("encodes");
     AstGrep::doc(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
             .expect("restores"),
@@ -76,6 +82,9 @@ impl Drop for Package {
     }
 }
 
+/// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
+/// `terminators`), name normalisation, the regions of each document, module paths, and each
+/// concern's own kit. A new family adds one `#[test]` function calling `kit::<Family>(&Expect { .. })`.
 fn kit<A: Adapter>(expect: &Expect) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
@@ -89,7 +98,7 @@ fn kit<A: Adapter>(expect: &Expect) {
     for (source, regions) in expect.regions {
         let doc = tape(source, expect.dialect);
         let root = doc.root();
-        let read = A::regions(&root)
+        let read = A::regions(&root, expect.dialect)
             .map(|region| (region.root.kind().into_owned(), region.root.range()))
             .collect::<Vec<_>>();
         let expected = regions
@@ -127,7 +136,7 @@ fn python() {
         regions: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
         value: value_kit::Expect {
-            lang: Lang::Python,
+            lang: Family::Python,
             string: Value::Str("é".to_owned()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("x = 0x10\n", "integer", Value::int(16)),
@@ -243,7 +252,7 @@ fn ecma() {
         regions: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
         value: value_kit::Expect {
-            lang: Lang::Js,
+            lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
             numbers: [
                 Value::Float(16.0),
@@ -372,7 +381,7 @@ fn php() {
         regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
         value: value_kit::Expect {
-            lang: Lang::Php,
+            lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
             numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
             decoded: ("<?php $x = 0x10;\n", "integer", Value::int(16)),
@@ -520,7 +529,7 @@ fn blade() {
         ],
         module: (".blade.php", None),
         value: value_kit::Expect {
-            lang: Lang::Php,
+            lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
             numbers: [Value::int(16), Value::Float(18_446_744_073_709_551_615.0)],
             decoded: ("<p>{{ 0x10 }}</p>\n", "integer", Value::int(16)),

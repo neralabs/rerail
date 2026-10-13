@@ -18,7 +18,7 @@ const CAPABILITIES: &str = r#"{
     "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
         "languages": { "python": "tree-sitter-python@0.23",
             "typescript": "tree-sitter-typescript@0.23", "php": "tree-sitter-php@0.24",
-            "blade": "tree-sitter-blade@0.12.2" } },
+            "blade": "forte@1.1.0" } },
     "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
         "maxFiles": 1000, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
         "maxVisitedNodes": 100000, "maxWitnesses": 10000 }

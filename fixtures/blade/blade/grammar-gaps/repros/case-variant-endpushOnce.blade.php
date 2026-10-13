@@ -1,0 +1,3 @@
+@pushOnce('a')
+x
+@endpushOnce
