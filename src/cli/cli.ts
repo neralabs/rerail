@@ -40,7 +40,7 @@ import {
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
-import { restoreDatabaseForRollback, runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
+import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
@@ -274,14 +274,11 @@ async function runUpdateCommand(
     return 0;
   }
   if (action === "rollback") {
-    const result = await updater.rollback();
-    await restoreDatabaseForRollback(join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home));
-    printUpdateResult(result);
+    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)));
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
-  snapshotDatabaseBeforeUpdate(join(home, RERAIL_DATABASE_FILE));
-  printUpdateResult(await updater.update(channel));
+  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel));
   return 0;
 }
 

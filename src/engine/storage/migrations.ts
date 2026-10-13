@@ -67,6 +67,15 @@ export function addColumn(database: RerailDatabase, table: string, column: strin
   database.run(sql.raw(`ALTER TABLE ${identifier(table)} ADD COLUMN ${identifier(column)} ${definition}`));
 }
 
+/** The steps of `migrations` an existing file has not recorded, in list order; every step for a file without the record. */
+export function pendingMigrations(database: RerailDatabase, migrations: readonly Migration[]): readonly Migration[] {
+  const recordsMigrations = database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).length > 0;
+  const applied = new Set(
+    recordsMigrations ? database.select({ id: schemaMigrations.id }).from(schemaMigrations).all().map(row => row.id) : [],
+  );
+  return migrations.filter(migration => !applied.has(migration.id));
+}
+
 /**
  * Brings a file a writer holds under `BEGIN IMMEDIATE` to the current shape and returns the floor to stamp.
  * A new file (`fresh`) gets the DDL and every step recorded as run without running it. An existing file
@@ -78,11 +87,7 @@ export function migrate(
   statements: readonly string[],
   migrations: readonly Migration[],
 ): number {
-  const recordsMigrations = !fresh && database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).length > 0;
-  const applied = new Set(
-    recordsMigrations ? database.select({ id: schemaMigrations.id }).from(schemaMigrations).all().map(row => row.id) : [],
-  );
-  const pending = fresh ? [] : migrations.filter(migration => !applied.has(migration.id));
+  const pending = fresh ? [] : pendingMigrations(database, migrations);
   for (const migration of pending) migration.up(database);
   for (const statement of statements) database.run(sql.raw(statement));
   const recorded = fresh ? migrations : pending;

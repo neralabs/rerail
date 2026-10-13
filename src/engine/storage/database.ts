@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, schemaVersionOf, type Migration } from "./migrations.js";
+import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, pendingMigrations, schemaVersionOf, type Migration } from "./migrations.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome } from "./rerail-home.js";
@@ -114,14 +114,38 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
  * tables or a stamp no Rerail wrote, a file from before the migration baseline, and a file that is not SQLite at
  * all are refused, writable or read-only, and left untouched: a writable open checks the stamp before it sets
  * the file mode or switches the journal to WAL. Otherwise a writable open runs the migration steps the file has
- * not run and the current DDL, which is idempotent, and stamps the floor they reach (`migrations.ts`). A
- * read-only open changes nothing, so it reads a file a writer has not migrated yet in its old shape; a read-only
- * open of a file whose creator has not committed the schema yet sees no table at all.
+ * not run and the current DDL, which is idempotent, and stamps the floor they reach (`migrations.ts`).
+ *
+ * A read-only open never writes its own connection. Its readers query this build's shape, so when an existing file
+ * still lacks steps that keep the floor (columns and tables older builds read correctly, the upgrade a new version
+ * makes when it first runs), a writable open runs them first; a reader that cannot write the file (permissions)
+ * reads it as it is. A step that raises the floor waits for this version's writer: an older Rerail still running
+ * would misread the file after it. A read-only open of a file whose creator has not committed the schema yet sees
+ * no table at all.
  */
 export function openRerailDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
   const readonly = options.readonly === true;
   const migrations = options.migrations ?? RERAIL_MIGRATIONS;
   const supported = schemaVersionOf(migrations);
+  const database = openChecked(path, readonly, migrations, supported);
+  if (!readonly || !upgradesBeforeReading(database, migrations)) return database;
+  database.$client.close();
+  try {
+    openChecked(path, false, migrations, supported).$client.close();
+  } catch {
+    // A file this process cannot write is read in the shape it has.
+  }
+  return openChecked(path, true, migrations, supported);
+}
+
+/** Whether an existing file lacks steps of `migrations`, all of which keep the floor. */
+function upgradesBeforeReading(database: RerailDatabase, migrations: readonly Migration[]): boolean {
+  if (schemaStamp(database).version < RERAIL_BASELINE_SCHEMA_VERSION) return false;
+  const pending = pendingMigrations(database, migrations);
+  return pending.length > 0 && pending.every(migration => migration.floor === undefined);
+}
+
+function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {
   let database: RerailDatabase;
   try {
     database = connectSqlite(path, readonly);
