@@ -63,6 +63,13 @@ static bool is_space(int32_t c) {
     }
 }
 
+// An ECMAScript LineTerminator: LF, CR, U+2028 and U+2029, as the grammar's `//` comment ends at.
+static bool is_line_terminator(int32_t c) { return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029; }
+
+// Whitespace JSX text may hold between lines, as `iswspace` reads it in the C locale: ASCII alone, so a JSX text's
+// range does not depend on the locale (U+00A0 or U+3000 on a line of its own stays text, as React renders it).
+static bool is_jsx_space(int32_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+
 static bool scan_template_chars(TSLexer *lexer) {
     lexer->result_symbol = TEMPLATE_CHARS;
     for (bool has_content = false;; has_content = true) {
@@ -108,8 +115,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
 
             if (lexer->lookahead == '/') {
                 skip(lexer);
-                while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-                       lexer->lookahead != 0x2029) {
+                while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
                     skip(lexer);
                 }
                 *scanned_comment = true;
@@ -128,7 +134,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
 
                             break;
                         }
-                    } else if (lexer->lookahead == '\n' || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
+                    } else if (is_line_terminator(lexer->lookahead)) {
                         saw_block_newline = true;
                         skip(lexer);
                     } else {
@@ -175,7 +181,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             return true;
         }
 
-        if (lexer->lookahead == '\n' || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
+        if (is_line_terminator(lexer->lookahead)) {
             break;
         }
 
@@ -308,8 +314,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
 
 // The rest of an HTML comment's line, once its `<!--` or `-->` is read.
 static bool scan_html_comment_rest(TSLexer *lexer) {
-    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-           lexer->lookahead != 0x2029) {
+    while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
         advance(lexer);
     }
 
@@ -401,7 +406,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
             at_newline = false;
             continue;
         }
-        bool is_wspace = iswspace(lexer->lookahead);
+        bool is_wspace = is_jsx_space(lexer->lookahead);
         if (lexer->lookahead == '\n') {
             at_newline = true;
         } else {

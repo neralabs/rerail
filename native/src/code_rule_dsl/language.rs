@@ -2044,8 +2044,8 @@ mod tests {
         );
     }
 
-    /// A comment may stand between a JSX closing tag's `<` and `/`, as Babel and TypeScript read
-    /// it (Patch 13 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    /// A comment may stand between a JSX closing tag's `<` and `/`, as Babel and espree read it
+    /// (Patch 13 in `grammars/tree-sitter-javascript/PATCHES.md`).
     #[test]
     fn a_comment_may_follow_a_javascript_jsx_closing_tag_lt() {
         let root = javascript("<></* c *//>;\n<a>\n  </* d *//a>;\n<a>x</a>;\n");
@@ -2368,6 +2368,138 @@ mod tests {
                     .count(),
                 2
             );
+        }
+    }
+
+    /// A lone CR ends a line, for an automatic semicolon and a `//` comment, as every ECMAScript
+    /// line terminator does; a U+00A0 on a JSX line of its own stays text, whatever the locale
+    /// (Patch 11 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_reads_a_lone_cr_and_jsx_text_by_ecmascript_line_terminators() {
+        let root = javascript("a = 1\rb = 2 // c\rd = 3;\n<a>\n\u{a0}</a>;\n");
+        assert_eq!(
+            named_children_text(&root, "program"),
+            ["a = 1", "b = 2 // c", "d = 3;", "<a>\n\u{a0}</a>;"]
+        );
+        assert_eq!(
+            named_children_text(&root, "jsx_element"),
+            ["<a>", "\n\u{a0}", "</a>"]
+        );
+    }
+
+    /// `<this />` is an element named `this`, as Babel reads it (Patch 12 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn this_names_a_javascript_jsx_element() {
+        let root = javascript("<this />;\nx = <this a=\"1\">t</this>;\n");
+        let names = root
+            .root()
+            .dfs()
+            .filter_map(|node| node.field("name"))
+            .map(|name| format!("{}:{}", name.kind(), name.text()))
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["this:this", "this:this", "this:this"]);
+    }
+
+    /// An import type with no qualifier takes type arguments too (Patch 15 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_bare_typescript_import_type_takes_type_arguments() {
+        for root in typescript_and_tsx("type A<T> = import('x')<T>;\ntype B = import('x')<T>[];\n")
+        {
+            let types = root
+                .root()
+                .dfs()
+                .filter_map(|node| node.field("value"))
+                .map(|value| format!("{}:{}", value.kind(), value.text()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                types,
+                ["generic_type:import('x')<T>", "array_type:import('x')<T>[]"]
+            );
+        }
+    }
+
+    /// A tuple member may be named by a keyword a type starts with, such as `void` or `null`,
+    /// while `[void?]` stays an optional type (Patch 16 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_tuple_members_may_be_named_by_keywords_that_start_a_type() {
+        for root in typescript_and_tsx(
+            "type A = [void: number, null?: string, this: T, typeof?: U, infer: V, import: W];\n\
+             type B = [void?, null?, typeof x, keyof T, unique symbol, import('x').T];\n",
+        ) {
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    node.parent()
+                        .is_some_and(|parent| parent.kind() == "tuple_type")
+                })
+                .filter(|node| node.is_named())
+                .map(|node| {
+                    let name = node.field("name").map(|name| format!("{}:", name.text()));
+                    format!("{}:{}", node.kind(), name.unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "required_parameter:void:",
+                    "optional_parameter:null:",
+                    "required_parameter:this:",
+                    "optional_parameter:typeof:",
+                    "required_parameter:infer:",
+                    "required_parameter:import:",
+                    "optional_type:",
+                    "optional_type:",
+                    "type_query:",
+                    "index_type_query:",
+                    "predefined_type:",
+                    "member_expression:",
+                ]
+            );
+        }
+    }
+
+    /// A lone CR ends a line, for an automatic semicolon and a `//` comment, and a U+00A0 on a
+    /// TSX line of its own stays text, whatever the locale (Patch 20 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_reads_a_lone_cr_and_tsx_text_by_ecmascript_line_terminators() {
+        for root in typescript_and_tsx("a = 1\rb = 2 // c\rd = 3;\r\ne = 4\n") {
+            assert_eq!(
+                named_children_text(&root, "program"),
+                ["a = 1", "b = 2 // c", "d = 3;", "e = 4"]
+            );
+        }
+        let root = GrammarDialect::Tsx.ast_grep("<a>\n\u{a0}</a>;\n<b>\n  \n</b>;\n");
+        assert!(!root.root().get_inner_node().has_error());
+        assert_eq!(
+            named_children_text(&root, "jsx_element"),
+            ["<a>", "\n\u{a0}", "</a>", "<b>", "</b>"]
+        );
+    }
+
+    /// The patches keep TypeScript's syntax errors: a function type's parameter cannot be named
+    /// `void`, a comment's `/` closes no TSX tag, and `accessor` before a line break is a field
+    /// name, not a modifier (Patches 5, 18 and 21 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_patches_keep_typescript_syntax_errors() {
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            let root = dialect.ast_grep("type Bad = (void) => void;\n");
+            assert!(root.root().get_inner_node().has_error(), "{dialect:?}");
+            let root = dialect.ast_grep("class C { accessor\nx = 1 }\n");
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            assert_eq!(
+                named_children_text(&root, "class_body"),
+                ["accessor", "x = 1"],
+                "{dialect:?}"
+            );
+        }
+        for source in ["<a></* x */a>;\n", "<a></* x\n"] {
+            let root = GrammarDialect::Tsx.ast_grep(source);
+            assert!(root.root().get_inner_node().has_error(), "{source}");
         }
     }
 }

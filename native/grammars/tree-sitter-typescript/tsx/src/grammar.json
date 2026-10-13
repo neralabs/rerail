@@ -9534,16 +9534,7 @@
             "members": [
               {
                 "type": "SYMBOL",
-                "name": "identifier"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_reserved_identifier"
-                },
-                "named": true,
-                "value": "identifier"
+                "name": "_tuple_member_name"
               },
               {
                 "type": "SYMBOL",
@@ -9569,22 +9560,8 @@
           "type": "FIELD",
           "name": "name",
           "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "SYMBOL",
-                "name": "identifier"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_reserved_identifier"
-                },
-                "named": true,
-                "value": "identifier"
-              }
-            ]
+            "type": "SYMBOL",
+            "name": "_tuple_member_name"
           }
         },
         {
@@ -9598,6 +9575,73 @@
             "type": "SYMBOL",
             "name": "type_annotation"
           }
+        }
+      ]
+    },
+    "_tuple_member_name": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_reserved_identifier"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "this"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "null"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "undefined"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "true"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "false"
+              },
+              {
+                "type": "STRING",
+                "value": "void"
+              },
+              {
+                "type": "STRING",
+                "value": "typeof"
+              },
+              {
+                "type": "STRING",
+                "value": "keyof"
+              },
+              {
+                "type": "STRING",
+                "value": "unique"
+              },
+              {
+                "type": "STRING",
+                "value": "infer"
+              },
+              {
+                "type": "STRING",
+                "value": "import"
+              }
+            ]
+          },
+          "named": true,
+          "value": "identifier"
         }
       ]
     },
@@ -10018,6 +10062,15 @@
                   },
                   "named": true,
                   "value": "member_expression"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_type_query_call_expression_in_type_annotation"
+                  },
+                  "named": true,
+                  "value": "call_expression"
                 }
               ]
             }
@@ -11801,6 +11854,10 @@
       "predefined_type"
     ],
     [
+      "optional_tuple_parameter",
+      "literal_type"
+    ],
+    [
       "rest_pattern",
       "primary_type",
       "primary_expression"
@@ -12521,7 +12578,8 @@
     "_jsx_identifier",
     "_lhs_expression",
     "_type_identifier",
-    "_jsx_start_opening_element"
+    "_jsx_start_opening_element",
+    "_tuple_member_name"
   ],
   "supertypes": [
     "statement",

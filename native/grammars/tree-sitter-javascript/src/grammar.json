@@ -2870,6 +2870,10 @@
           "name": "_jsx_identifier"
         },
         {
+          "type": "SYMBOL",
+          "name": "this"
+        },
+        {
           "type": "ALIAS",
           "content": {
             "type": "SYMBOL",
