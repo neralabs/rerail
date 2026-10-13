@@ -856,3 +856,10 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vercel, Inc."
 SPDX-License-Identifier = "MIT"
+
+# The fixtures Rerail wrote among them (packs/next/upstream/eslint-plugin-next/UPSTREAM.md).
+[[annotations]]
+path = "packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
