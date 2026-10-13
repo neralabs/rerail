@@ -6,5 +6,21 @@
     "line": 3,
     "kind": "not-comparable",
     "evidence": "SQLite-only: `'`''a\"'.id` qualifies a column with a string literal, which SQLite reads as an identifier in that position; PostgreSQL and ANSI SQL never take a string as a qualifier. The grammar reads that term as the literal `'`''a\"'`, an ERROR at `.`, then the alias `id` (tree checked with the vendored grammar), so the file has a syntax error and the engine reports nothing on it (T1). Recorded under dialect sqlite only (fixtures.cases.json: reference sqlite3 3.50.4, no postgresDialect entry)."
+  },
+  {
+    "rule": "sqlfluff-pg01-postgres-excessive-locks",
+    "source": "fixtures",
+    "path": "ansi/PG01/test_pass_non_postgres_dialect_ignored.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "SQLFluff's PG01 returns early unless the file's dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py), and this case is recorded under dialect ansi to test exactly that. The engine reads every .sql file with one grammar and no dialect setting, as PostgreSQL would. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false; checked: `sqlfluff lint --dialect postgres --rules PG01` (4.4.0, force_enable = True) reports PG01 at 1:1, as the port does."
+  },
+  {
+    "rule": "sqlfluff-rf04-references-keywords",
+    "source": "fixtures",
+    "path": "mysql/RF01/test_mysql_select_no_from_should_not_except.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: `INTERVAL '1.999999' SECOND_MICROSECOND` takes MySQL's compound interval unit, which PostgreSQL and ANSI SQL do not have. The vendored grammar reads `SECOND_MICROSECOND` as the alias of the `interval` term (tree checked: `parameter: term > value: interval, alias: identifier [1:67]`), so the port reports a keyword used as an alias, where SQLFluff's mysql dialect parses an interval unit keyword. Recorded under dialect mysql only (fixtures.cases.json: reference none, no postgresDialect entry)."
   }
 ]
