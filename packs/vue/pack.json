@@ -1,0 +1,11 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "vue",
+  "name": "Vue",
+  "category": "framework",
+  "covers": "Vue single-file components, with ports of eslint-plugin-vue 10.11.1 rules planned for Rerail.",
+  "reason": "matches Vue single-file components",
+  "match": { "any": [{ "files": ["**/*.vue"], "label": "*.vue files" }] },
+  "honourSuppressionComments": true,
+  "rules": []
+}

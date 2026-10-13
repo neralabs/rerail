@@ -1,15 +1,15 @@
-// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack will port (../rules.json). Run offline by a
-// maintainer, never in CI, with the tools of ../../tools.mjs installed in `<checkout>/.rerail/tools/vue`:
+// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack will port (../../conformance.json). Run offline by a
+// maintainer, never in CI, with the tools of ../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
-//   node generate.mjs corpus [<name>...]            # corpora of ../../corpora.json, under .rerail/corpora/vue
+//   node generate.mjs corpus [<name>...]            # corpora of ../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
 //
 // Pins (refused when different): eslint 10.11.0, eslint-plugin-vue 10.11.1, vue-eslint-parser 10.4.1,
 // @typescript-eslint/parser 8.70.1, typescript 6.0.3.
 //
 // One ESLint configuration lints everything (`CONFIG` below): eslint-plugin-vue's `flat/base` (vue-eslint-parser,
 // the `vue/vue` processor and `vue/comment-directive`, so `<!-- eslint-disable -->` in a template works as it does
-// for the plugin's users) and every rule of rules.json at its default options. `<script lang="ts">` and
+// for the plugin's users) and every rule of ../../conformance.json at its default options. `<script lang="ts">` and
 // `lang="tsx"` go through @typescript-eslint/parser (JSX only for tsx, so `<T>x` assertions parse), other scripts
 // through espree with JSX on (Options API render functions).
 //
@@ -34,11 +34,11 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../tools.mjs";
+import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../fixtures/vue/tools.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = toolsDirectory(HERE);
-const RULES = JSON.parse(readFileSync(join(HERE, "../rules.json"), "utf8"));
+const RULES = JSON.parse(readFileSync(join(HERE, "../../conformance.json"), "utf8")).rules;
 const UPSTREAM_TAG = "v10.11.1";
 const UPSTREAM_COMMIT = "ec9c53a6fbed637d7b0fbcd6893b0206ae32839f";
 const ORIGIN = `https://github.com/vuejs/eslint-plugin-vue@${UPSTREAM_COMMIT}`;
@@ -209,7 +209,7 @@ function fixtures(checkout) {
   console.log(`cases: ${kept} kept of ${cases.length}`);
 }
 
-/** `fixtures/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
+/** `packs/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
 function writeLicense(checkout, kept) {
   const dir = join(HERE, "../../licenses/eslint-plugin-vue");
   mkdirSync(dir, { recursive: true });
@@ -219,9 +219,9 @@ function writeLicense(checkout, kept) {
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack will port (\`upstream/rules.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`rules.json\`, \`read_tests.mjs\`, \`generate.mjs\`, \`cases.json\` and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
+The files listed below are the code of RuleTester cases of the rules the Vue pack will port (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`cases.json\` and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
 
-This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to \`vue/\`.
+This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to the pack directory (\`packs/vue/\`).
 
 | File | Upstream case | Copy |
 |---|---|---|
@@ -249,7 +249,7 @@ function vueFiles(root, paths) {
 }
 
 function corpus(names) {
-  const corpora = JSON.parse(readFileSync(join(HERE, "../../corpora.json"), "utf8"));
+  const corpora = JSON.parse(readFileSync(join(HERE, "../../../fixtures/vue/corpora.json"), "utf8"));
   const base = corporaDirectory(HERE);
   for (const corpus of corpora) {
     if (names.length > 0 && !names.includes(corpus.name)) continue;

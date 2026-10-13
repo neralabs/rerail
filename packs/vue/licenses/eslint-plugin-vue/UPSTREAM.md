@@ -2,9 +2,9 @@
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/ec9c53a6fbed637d7b0fbcd6893b0206ae32839f) at tag `v10.11.1` (commit `ec9c53a6fbed637d7b0fbcd6893b0206ae32839f`). License: MIT (Copyright (c) 2017 Toru Nagashima); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack will port (`upstream/rules.json`), and remain under eslint-plugin-vue's license. Each is one case's `code`, copied verbatim, or wrapped in a `<script>` element when the case is a script (a non-`.vue` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a `.vue` file. Every other file under `upstream/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `rules.json`, `read_tests.mjs`, `generate.mjs`, `cases.json` and the recordings they write by running ESLint 10.11.0 with eslint-plugin-vue 10.11.1.
+The files listed below are the code of RuleTester cases of the rules the Vue pack will port (`../../conformance.json`), and remain under eslint-plugin-vue's license. Each is one case's `code`, copied verbatim, or wrapped in a `<script>` element when the case is a script (a non-`.vue` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a `.vue` file. Every other file under `upstream/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `read_tests.mjs`, `generate.mjs`, `cases.json` and the recordings they write by running ESLint 10.11.0 with eslint-plugin-vue 10.11.1.
 
-This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Paths are relative to `vue/`.
+This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Paths are relative to the pack directory (`packs/vue/`).
 
 | File | Upstream case | Copy |
 |---|---|---|
