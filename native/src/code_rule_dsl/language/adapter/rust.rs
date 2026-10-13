@@ -82,13 +82,13 @@ impl Adapter for Rust {
         _: &ViolationSpec,
         suppress: &Suppress,
         node: &Node<'_, D>,
-        source: &str,
+        _: &str,
         _: &LineTable,
         at: usize,
         _: (usize, usize),
     ) -> bool {
         suppress.clippy.as_ref().is_some_and(|clippy| {
-            let index = file_clippy(|| ClippyIndex::read(&root(node), source));
+            let index = file_clippy(|| ClippyIndex::read(&root(node)));
             index.suppresses(clippy, at)
         })
     }

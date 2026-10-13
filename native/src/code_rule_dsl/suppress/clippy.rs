@@ -116,7 +116,7 @@ pub(crate) struct ClippyIndex {
 
 impl ClippyIndex {
     /// Reads active Rust lint-level and `#[clippy::msrv]` attributes from `root`.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub(crate) fn read<D: Doc>(root: &Node<'_, D>) -> Self {
         let mut attributes = Vec::new();
         let mut order = 0;
         for node in root.dfs() {
@@ -125,7 +125,7 @@ impl ClippyIndex {
                 continue;
             }
             let text = node.text();
-            let parsed = parse_attribute(&text, source);
+            let parsed = parse_attribute(&text);
             if parsed.is_empty() {
                 continue;
             }
@@ -245,7 +245,7 @@ impl ClippyIndex {
     }
 }
 
-fn parse_attribute(text: &str, source: &str) -> Vec<Setting> {
+fn parse_attribute(text: &str) -> Vec<Setting> {
     let text = text.trim();
     let inner = text.starts_with("#!");
     let Some(body) = text
@@ -256,12 +256,12 @@ fn parse_attribute(text: &str, source: &str) -> Vec<Setting> {
     };
     let body = body.trim();
     if body.starts_with("cfg_attr(") {
-        return parse_cfg_attr(body, source);
+        return parse_cfg_attr(body);
     }
     parse_setting(body).into_iter().collect()
 }
 
-fn parse_cfg_attr(body: &str, source: &str) -> Vec<Setting> {
+fn parse_cfg_attr(body: &str) -> Vec<Setting> {
     let Some(inside) = body
         .strip_prefix("cfg_attr(")
         .and_then(|v| v.strip_suffix(')'))
@@ -272,7 +272,7 @@ fn parse_cfg_attr(body: &str, source: &str) -> Vec<Setting> {
     let Some(predicate) = parts.next().map(str::trim) else {
         return Vec::new();
     };
-    if !cfg_enabled(predicate, source) {
+    if !cfg_enabled(predicate) {
         return Vec::new();
     }
     let mut result = Vec::new();
@@ -281,7 +281,7 @@ fn parse_cfg_attr(body: &str, source: &str) -> Vec<Setting> {
         if let Some(value) = parse_setting(part) {
             result.push(value);
         } else if part.starts_with("cfg_attr(") {
-            result.extend(parse_cfg_attr(part, source));
+            result.extend(parse_cfg_attr(part));
         }
     }
     result
@@ -350,7 +350,7 @@ fn split_top_level(text: &str) -> impl Iterator<Item = &str> {
     result.into_iter()
 }
 
-fn cfg_enabled(predicate: &str, source: &str) -> bool {
+fn cfg_enabled(predicate: &str) -> bool {
     let predicate = predicate.trim();
     if predicate == "all()" || predicate == "clippy" || predicate == "all(clippy)" {
         return true;
@@ -362,21 +362,20 @@ fn cfg_enabled(predicate: &str, source: &str) -> bool {
         .strip_prefix("all(")
         .and_then(|v| v.strip_suffix(')'))
     {
-        return split_top_level(inner).all(|item| cfg_enabled(item, source));
+        return split_top_level(inner).all(cfg_enabled);
     }
     if let Some(inner) = predicate
         .strip_prefix("any(")
         .and_then(|v| v.strip_suffix(')'))
     {
-        return split_top_level(inner).any(|item| cfg_enabled(item, source));
+        return split_top_level(inner).any(cfg_enabled);
     }
     if let Some(inner) = predicate
         .strip_prefix("not(")
         .and_then(|v| v.strip_suffix(')'))
     {
-        return !cfg_enabled(inner, source);
+        return !cfg_enabled(inner);
     }
-    let _ = source;
     false
 }
 
@@ -390,7 +389,7 @@ mod tests {
     fn silenced(source: &str, clippy: &Clippy, needle: &str) -> bool {
         let at = source.find(needle).expect("needle");
         let root = GrammarDialect::Rust.ast_grep(source);
-        ClippyIndex::read(&root.root(), source).suppresses(clippy, at)
+        ClippyIndex::read(&root.root()).suppresses(clippy, at)
     }
 
     fn suppressed(source: &str, lint: &str, needle: &str) -> bool {
@@ -595,7 +594,7 @@ mod tests {
                 _ => panic!("unknown fixture {source_path}"),
             };
             let root = GrammarDialect::Rust.ast_grep(source);
-            let index = ClippyIndex::read(&root.root(), source);
+            let index = ClippyIndex::read(&root.root());
             let at = byte_offset(source, case.line, case.column);
             let clippy = Clippy {
                 lints: lints_of(&case.rule),
