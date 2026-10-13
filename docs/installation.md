@@ -127,14 +127,17 @@ A flat config is read as ESLint applies it: its exported array (through
 `export default`, `module.exports`, same-file `const`s, spreads,
 `defineConfig(...)`, typescript-eslint's `config(...)` and `extends`), one
 config object after another, a later one replacing a rule's entry (and
-keeping its options when it sets only a severity). An entry in an object
-with `files`, `ignores` or `basePath` applies to some files only: its options
-become the port's options for the whole repository, it turns a rule off only
-in a folder it covers whole (`files: ["scripts/**"]` turns it off in
-`scripts`), and an "off" for narrower files leaves the rule on with a note,
-as does an "off" a later object turns back on for some files. A rule entry
-whose value Rerail cannot read without running the config turns the port
-off, and the screen says why; the shared configs it does not read are named.
+keeping its options when it sets only a severity, `"warn"` or `["warn"]`);
+within one `rules` object a later key replaces an earlier one or a spread
+whole, as JavaScript does. An entry in an object with `files`, `ignores` or
+`basePath` applies to some files only: its options become the port's options
+for the whole repository only when no entry for every file sets the rule; it
+turns a rule off only in a folder it covers whole (`files: ["scripts/**"]`
+turns it off in `scripts`), and an "off" for narrower files, or one a later
+object turns back on, leaves the rule on with a note. A rule entry whose value
+Rerail cannot read without running the config turns the port off, and the
+screen says why; the shared configs it does not read are named, and an entry
+with one of them after it is not used, since it may replace the entry.
 An `.eslintrc`'s `overrides` are read the same way, after its own `rules`.
 
 Ruff's selection is resolved as Ruff resolves it: its selectors apply from

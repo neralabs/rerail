@@ -30,7 +30,11 @@ export interface FlatConfigEntry {
   readonly scope: FlatConfigScope;
   /** The entry's value as JSON, or why it cannot be read without running the config. */
   readonly value: { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly why: string };
+  /** What comes after the entry that Rerail does not read and that may replace it (a shared config, a spread). */
+  readonly shadowedBy?: string;
 }
+
+type Entry = { -readonly [K in keyof FlatConfigEntry]: FlatConfigEntry[K] };
 
 export interface FlatConfigRead {
   readonly entries: readonly FlatConfigEntry[];
@@ -75,7 +79,7 @@ class FlatConfigReader {
   readonly #consts = new Map<string, t.Expression>();
   /** Local name → the module it is imported from and the name imported (`default`, `*` or the export). */
   readonly #imports = new Map<string, { readonly module: string; readonly imported: string }>();
-  readonly #entries: FlatConfigEntry[] = [];
+  readonly #entries: Entry[] = [];
   readonly #unread: string[] = [];
   readonly #notes: string[] = [];
 
@@ -143,7 +147,7 @@ class FlatConfigReader {
   #elements(node: t.Expression, scope: FlatConfigScope, depth: number): void {
     const value = this.#unwrap(node, depth);
     if (depth > MAX_DEPTH) {
-      this.#unread.push(this.#source(node));
+      this.#unreadable(this.#source(node));
       return;
     }
     if (value.type === "ArrayExpression") {
@@ -159,8 +163,17 @@ class FlatConfigReader {
         else if (isExpression(argument)) this.#elements(argument, scope, depth + 1);
       }
     } else {
-      this.#unread.push(this.#source(node));
+      this.#unreadable(this.#source(node));
     }
+  }
+
+  /**
+   * Something Rerail does not read, named in the notes. It may set any rule, so every entry before it (and in `own`,
+   * the entries of the `rules` object being read) is marked as one it may replace.
+   */
+  #unreadable(text: string, own: ReadonlyMap<string, Entry> = new Map()): void {
+    this.#unread.push(text);
+    for (const entry of [...this.#entries, ...own.values()]) entry.shadowedBy ??= text;
   }
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */
@@ -199,7 +212,7 @@ class FlatConfigReader {
   #object(object: t.ObjectExpression, inherited: FlatConfigScope, depth: number): void {
     const properties = this.#properties(object, depth);
     if (properties === undefined) {
-      this.#unread.push(this.#source(object));
+      this.#unreadable(this.#source(object));
       return;
     }
     const keys = [...properties.keys()].filter(key => key !== "name");
@@ -228,25 +241,38 @@ class FlatConfigReader {
       : { kind: "some", files: text };
   }
 
+  /**
+   * The entries of one config object's `rules`, read as JavaScript builds the object: a later key, spread or written
+   * out, replaces an earlier one whole. ESLint's merging (a severity keeping earlier options) is between objects only.
+   */
   #rules(node: t.Expression, scope: FlatConfigScope, depth: number): void {
+    const own = new Map<string, Entry>();
+    this.#gatherRules(node, scope, depth, own);
+    this.#entries.push(...own.values());
+  }
+
+  #gatherRules(node: t.Expression, scope: FlatConfigScope, depth: number, own: Map<string, Entry>): void {
     const rules = this.#unwrap(node, depth);
-    if (rules.type !== "ObjectExpression") {
-      this.#unread.push(`rules: ${this.#source(node)}`);
+    if (rules.type !== "ObjectExpression" || depth > MAX_DEPTH) {
+      this.#unreadable(this.#source(node), own);
       return;
     }
     for (const property of rules.properties) {
       if (property.type === "SpreadElement") {
-        this.#rules(property.argument, scope, depth + 1);
+        this.#gatherRules(property.argument, scope, depth + 1, own);
         continue;
       }
       const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
       if (key === undefined) {
-        this.#unread.push(`rule ${this.#source(property.key)}`);
+        this.#unreadable(`[${this.#source(property.key)}]`, own);
         continue;
       }
-      if (property.type !== "ObjectProperty" || !isExpression(property.value)) continue;
+      if (property.type !== "ObjectProperty" || !isExpression(property.value)) {
+        own.delete(key);
+        continue;
+      }
       const value = this.#resolve(property.value, depth + 1);
-      this.#entries.push({ key, scope, value: value.ok ? { ok: true, value: value.value } : { ok: false, why: value.why } });
+      own.set(key, { key, scope, value: value.ok ? { ok: true, value: value.value } : { ok: false, why: value.why } });
     }
   }
 

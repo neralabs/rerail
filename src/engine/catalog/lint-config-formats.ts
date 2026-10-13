@@ -148,7 +148,15 @@ class TomlReader {
     this.#index += arrayTable ? 2 : 1;
     // No wanted key lives in an array of tables: its keys are read past, never collected.
     this.#table = arrayTable ? undefined : path;
-    if (!arrayTable) this.#paths.add(dottedPath(path));
+    if (!arrayTable) {
+      this.#paths.add(dottedPath(path));
+      this.#wantedTable(dottedPath(path));
+    }
+  }
+
+  /** A wanted table, recorded even while it is empty: an empty table is set, not absent. */
+  #wantedTable(dotted: string): void {
+    if (this.wantedTables.has(dotted) && !this.#tables.has(dotted)) this.#tables.set(dotted, new Map());
   }
 
   #keyValue(): void {
@@ -165,9 +173,11 @@ class TomlReader {
     if (this.#paths.has(dotted) && !(value instanceof Map)) this.#fail(`${dotted} is set twice`);
     this.#paths.add(dotted);
     if (value instanceof Map) {
+      this.#wantedTable(dotted);
       for (const [key, inner] of value) this.#collect([...path, key], inner);
       return;
     }
+    if (this.wantedTables.has(dotted)) this.#fail(`${dotted} is not a table`);
     if (this.wantedStrings.has(dotted)) {
       if (typeof value !== "string") this.#fail(`${dotted} is not a string`);
       this.#strings.set(dotted, value);

@@ -169,6 +169,8 @@ export interface ScopedRule {
   /** The folders it covers exactly, if it covers whole folders; `files` names them for the person. */
   readonly folders: readonly string[] | undefined;
   readonly files: string;
+  /** What comes after it that Rerail does not read and that may replace it. */
+  readonly shadowedBy?: string;
 }
 
 /** The `rules` of an ESLint or oxlint config file. */
@@ -181,6 +183,8 @@ export interface LintConfigRules {
   readonly scoped: readonly ScopedRule[];
   /** A flat config's rule keys whose value cannot be read without running the config, with why. */
   readonly unresolved: ReadonlyMap<string, string>;
+  /** Rule keys of `rules` that something after them Rerail does not read may replace, with what. */
+  readonly shadowed: ReadonlyMap<string, string>;
 }
 
 /** A Ruff selector in one of the rule selection options, with the file and key path that hold it. */
@@ -279,7 +283,7 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     notes.push({ linter, text: `${file} is not read: its rules are not an object.` });
     return undefined;
   }
-  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map() };
+  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map(), shadowed: new Map() };
 }
 
 const eslintrcOverride = z.looseObject({
@@ -338,9 +342,13 @@ function jsoncFile(root: string, name: string, linter: LintConfigLinter, notes: 
 
 const ESLINT_UNREAD = ["extends", "plugins"];
 
+/** A severity with no options: a severity, or a list of just one, which ESLint merges as a severity alone. */
+const severityAlone = (value: unknown): boolean => !Array.isArray(value) || value.length === 1;
+
 /** A severity with no options after it, as a later config object sets one: ESLint keeps the earlier options. */
 function withEarlierOptions(earlier: unknown, later: unknown): unknown {
-  return !Array.isArray(later) && Array.isArray(earlier) && earlier.length > 1 ? [later, ...earlier.slice(1)] : later;
+  if (!severityAlone(later) || !Array.isArray(earlier) || earlier.length <= 1) return later;
+  return [Array.isArray(later) ? later[0] : later, ...earlier.slice(1)];
 }
 
 /**
@@ -351,18 +359,22 @@ function withEarlierOptions(earlier: unknown, later: unknown): unknown {
 function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
   const rules: Record<string, unknown> = {};
   const unresolved = new Map<string, string>();
+  const shadowed = new Map<string, string>();
   const scopedUnresolved = new Map<string, string>();
   let scoped: ScopedRule[] = [];
-  for (const { key, scope, value } of read.entries) {
+  for (const { key, scope, value, shadowedBy } of read.entries) {
     if (scope.kind !== "all") {
-      if (value.ok) scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files });
-      else if (!scopedUnresolved.has(key)) scopedUnresolved.set(key, `${value.why} (for ${scope.files})`);
+      if (value.ok) {
+        scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files, ...(shadowedBy === undefined ? {} : { shadowedBy }) });
+      } else if (!scopedUnresolved.has(key)) {
+        scopedUnresolved.set(key, `${value.why} (for ${scope.files})`);
+      }
       continue;
     }
     scoped = scoped.filter(entry => entry.key !== key);
     scopedUnresolved.delete(key);
     // Only a value that replaces the earlier one entirely stands in for an unread one: an "off", or a severity with options.
-    const replaces = value.ok && (Array.isArray(value.value) || severityOf(value.value, "eslint")?.off === true);
+    const replaces = value.ok && (!severityAlone(value.value) || severityOf(value.value, "eslint")?.off === true);
     if (!value.ok) {
       unresolved.set(key, value.why);
       delete rules[key];
@@ -372,9 +384,11 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
       unresolved.delete(key);
       Object.defineProperty(rules, key, { value: withEarlierOptions(rules[key], value.value), enumerable: true, writable: true, configurable: true });
     }
+    if (shadowedBy === undefined) shadowed.delete(key);
+    else shadowed.set(key, shadowedBy);
   }
   for (const [key, why] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, why);
-  return { file, rules, scoped, unresolved };
+  return { file, rules, scoped, unresolved, shadowed };
 }
 
 function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
@@ -774,12 +788,17 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
         continue;
       }
       const later = eslint.scoped.filter(entry => entry.key === key);
-      if (Object.hasOwn(eslint.rules, key)) {
+      const global = Object.hasOwn(eslint.rules, key);
+      const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
+      if (global) {
         const value = eslint.rules[key];
         const because = entryText(eslint.file, key, value);
         const severity = severityOf(value, "eslint");
+        const shadowedBy = eslint.shadowed.get(key);
         if (severity === undefined) {
           notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+        } else if (shadowedBy !== undefined) {
+          notes.push(`${ruleId}: ${because} is not used: ${replacedBy(shadowedBy)}.`);
         } else {
           const back = severity.off ? later.find(entry => severityOf(entry.value, "eslint")?.off === false) : undefined;
           if (back !== undefined) {
@@ -790,18 +809,35 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
           }
         }
       }
-      for (const entry of later) {
+      for (const [index, entry] of later.entries()) {
         const because = `${entryText(eslint.file, key, entry.value)} for ${entry.files}`;
         const severity = severityOf(entry.value, "eslint");
         if (severity === undefined) {
           notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
-        } else if (severity.off && entry.folders !== undefined) {
-          for (const folder of entry.folders) addFolderOff(ruleId, folder, because);
-        } else if (severity.off) {
-          notes.push(`${ruleId}: ${because} turns it off only for some files; it stays on.`);
+          continue;
+        }
+        if (entry.shadowedBy !== undefined) {
+          notes.push(`${ruleId}: ${because} is not used: ${replacedBy(entry.shadowedBy)}.`);
+          continue;
+        }
+        if (severity.off) {
+          // A later entry that turns it back on may cover any of these files.
+          const back = later.slice(index + 1).find(next => severityOf(next.value, "eslint")?.off === false);
+          if (back !== undefined) {
+            notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
+          } else if (entry.folders !== undefined) {
+            for (const folder of entry.folders) addFolderOff(ruleId, folder, because);
+          } else {
+            notes.push(`${ruleId}: ${because} turns it off only for some files; it stays on.`);
+          }
         } else if (severity.options.length > 0) {
-          // Options apply to the whole repository: a rule setting's config has no folder.
-          add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
+          // A rule setting's config is for the whole repository, so options set for some files are used only when no
+          // entry for every file sets the rule: otherwise they would change it for files they do not cover.
+          const forEvery = global ? severityOf(eslint.rules[key], "eslint") : undefined;
+          if (forEvery === undefined) add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
+          else if (stableJsonText(forEvery.options) !== stableJsonText(severity.options)) {
+            notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, eslint.rules[key])} sets the rule for every file, and Rerail sets options for the whole repository only.`);
+          }
         }
       }
     }

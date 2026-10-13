@@ -159,7 +159,7 @@ describe("readLintConfigFiles", () => {
       ".eslintrc.json": "{ \"rules\": { \"no-debugger\": \"off\" } }",
     });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map() });
+    expect(files.eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map() });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json is not read: ESLint uses eslint.config.ts instead."]);
     expect(existsSync(join(root, "ran"))).toBe(false);
   });
@@ -179,7 +179,7 @@ describe("readLintConfigFiles", () => {
   it("reads .eslintrc.json as JSONC, noting what besides its top-level rules it does not read", async () => {
     const root = await repository({ ".eslintrc.json": "{\n  // ours\n  \"extends\": [\"airbnb\"],\n  \"rules\": { \"no-console\": \"off\", },\n}\n" });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map() });
+    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map() });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json: only its own rules are read, not extends."]);
   });
 
@@ -197,7 +197,7 @@ describe("readLintConfigFiles", () => {
 
   it("reads package.json eslintConfig where there is no config file", async () => {
     const root = await repository({ "package.json": JSON.stringify({ name: "acme", eslintConfig: { rules: { "no-console": 0 } } }) });
-    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map() });
+    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map() });
   });
 
   it("does not follow a symlinked config", async () => {
@@ -408,6 +408,20 @@ describe("proposeLintConfigSettings", () => {
     expect(await offs("[tool.ruff.lint]\nselect = [\"E\"]\n", "[lint]\nignore = [\"E7\"]\n")).toEqual([]);
     expect(await offs("[tool.ruff.lint]\nselect = [\"E7\"]\n", "[lint]\nselect = []\nignore = [\"E711\"]\n")).toEqual(["ruff-e711-none-comparison"]);
   });
+
+  // Self-review: an explicitly empty per-file-ignores keeps the extended config's out, as Ruff 0.15.0's combine
+  // (`self.per_file_ignores.or(config.per_file_ignores)`) does; `ruff check` reports E711 in tests/ for both.
+  it("lets an empty per-file-ignores, inline or as a table header, replace the extended config's", async () => {
+    const base = "[lint.per-file-ignores]\n\"tests/**\" = [\"E711\"]\n";
+    for (const own of ["[lint]\nper-file-ignores = {}\n", "[lint.per-file-ignores]\n"]) {
+      const root = await repository({ "ruff.toml": `extend = "base.toml"\n${own}`, "base.toml": base });
+      expect(readRepositoryLintConfig(root, bundle, ["python"]).settings).toEqual([]);
+    }
+    const inherited = await repository({ "ruff.toml": "extend = \"base.toml\"\n", "base.toml": base });
+    expect(readRepositoryLintConfig(inherited, bundle, ["python"]).settings).toEqual([
+      ruffOff("ruff-e711-none-comparison", "base.toml: \"E711\" in lint.per-file-ignores.\"tests/**\"", "tests"),
+    ]);
+  });
 });
 
 describe("proposeLintConfigSettings for .eslintrc overrides", () => {
@@ -420,6 +434,18 @@ describe("proposeLintConfigSettings for .eslintrc overrides", () => {
     expect(readRepositoryLintConfig(back, bundle, ["javascript"])).toEqual({
       settings: [],
       notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"off\" turns it off, but .eslintrc.json: \"no-console\": \"warn\" turns it back on for [\"src/**/*.ts\"]; it stays on."],
+    });
+  });
+
+  // Self-review: ESLint 9.39.1 --print-config scripts/a.js gives severity 2 when a later override turns it back on.
+  it("keeps a rule on in a folder when a later override turns it back on there", async () => {
+    const root = await repository({ ".eslintrc.json": JSON.stringify({ overrides: [
+      { files: "scripts/**", rules: { "no-console": "off" } },
+      { files: "scripts/**", rules: { "no-console": "error" } },
+    ] }) });
+    expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+      settings: [],
+      notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"off\" for \"scripts/**\" turns it off, but .eslintrc.json: \"no-console\": \"error\" turns it back on for \"scripts/**\"; it stays on."],
     });
   });
 });
@@ -508,6 +534,52 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     });
     expect((await flat(`${imported}export default [{ files: ["**/*.ts"], rules: { "no-console": ["error", shared.options] } }];`, ["javascript"])).settings)
       .toMatchObject([{ ruleId: "eslint-no-console", folder: "", on: false }]);
-    expect((await flat(`${imported}export default [{ rules: { "no-console": shared.level } }, { rules: { "no-console": ["error"] } }];`, ["javascript"])).settings).toEqual([]);
+    // `["error"]` is a severity alone: ESLint keeps the earlier options, which Rerail cannot read.
+    expect((await flat(`${imported}export default [{ rules: { "no-console": shared.level } }, { rules: { "no-console": ["error"] } }];`, ["javascript"])).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+    expect((await flat(`${imported}export default [{ rules: { "no-console": shared.level } }, { rules: { "no-console": ["error", { allow: ["warn"] }] } }];`, ["javascript"])).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["warn"] } }]);
+  });
+
+  // Self-review findings 4, 6, 7 and 8, each checked against ESLint 9.39.1 on the same config.
+  it("keeps a rule on in a folder when a later object turns it back on there", async () => {
+    expect(await flat("export default [{ files: [\"scripts/**\"], rules: { \"no-console\": \"off\" } }, { files: [\"scripts/**\"], rules: { \"no-console\": \"error\" } }];", ["javascript"])).toEqual({
+      settings: [],
+      notes: ["eslint-no-console: eslint.config.ts: \"no-console\": \"off\" for [\"scripts/**\"] turns it off, but eslint.config.ts: \"no-console\": \"error\" turns it back on for [\"scripts/**\"]; it stays on."],
+    });
+  });
+
+  it("does not widen options set for some files to the whole repository when the rule is set for every file", async () => {
+    expect(await flat("export default [{ rules: { \"no-console\": \"error\" } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", { allow: [\"log\"] }] } }];", ["javascript"])).toEqual({
+      settings: [],
+      notes: ["eslint-no-console: the options of eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"log\"]}] for [\"tests/**\"] are not used: eslint.config.ts: \"no-console\": \"error\" sets the rule for every file, and Rerail sets options for the whole repository only."],
+    });
+  });
+
+  it("reads one rules object as JavaScript builds it: a later key replaces a spread or an earlier key whole", async () => {
+    const common = "const common = { \"no-console\": [\"error\", { allow: [\"log\"] }] };\n";
+    expect((await flat(`${common}export default [{ rules: { ...common, "no-console": "error" } }];`, ["javascript"])).settings).toEqual([]);
+    expect((await flat("export default [{ rules: { \"no-console\": [\"error\", { allow: [\"log\"] }], \"no-console\": \"error\" } }];", ["javascript"], "eslint.config.js")).settings).toEqual([]);
+    expect((await flat(`${common}export default [{ rules: { "no-console": "error", ...common } }];`, ["javascript"])).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", config: { allow: ["log"] } }]);
+  });
+
+  it("merges a one-element severity list as a severity alone, keeping the earlier options", async () => {
+    expect((await flat("export default [{ rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } }, { rules: { \"@typescript-eslint/consistent-type-definitions\": [\"warn\"] } }];")).settings)
+      .toEqual([{ ruleId: TYPE_DEFINITIONS, folder: "", on: null, config: { option: "type" }, because: "eslint.config.ts: \"@typescript-eslint/consistent-type-definitions\": [\"warn\",\"type\"]" }]);
+  });
+
+  it("uses no entry that a later config element it cannot read may replace", async () => {
+    expect(await flat("import prettier from \"eslint-config-prettier\";\nexport default [{ rules: { \"no-console\": \"off\" } }, prettier];", ["javascript"])).toEqual({
+      settings: [],
+      notes: [
+        "eslint.config.ts: the rules of prettier are not read: Rerail does not run code to find them.",
+        "eslint-no-console: eslint.config.ts: \"no-console\": \"off\" is not used: prettier, after it, is not read and may replace it.",
+      ],
+    });
+    const shared = "import shared from \"./shared.js\";\n";
+    expect((await flat(`${shared}export default [{ rules: { "no-console": "off", ...shared.rules } }];`, ["javascript"])).settings).toEqual([]);
+    expect((await flat(`${shared}export default [{ rules: { ...shared.rules, "no-console": "off" } }];`, ["javascript"])).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 });
