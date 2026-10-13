@@ -153,15 +153,21 @@ describe("ruffSelects", () => {
 });
 
 describe("readLintConfigFiles", () => {
-  it("parses a flat config without running it, and reports the eslintrc ESLint then ignores as not read", async () => {
+  it("never runs a flat config, reads it only when it is data, and reports the eslintrc ESLint then ignores as not read", async () => {
     const root = await repository({
       "eslint.config.ts": "import { writeFileSync } from \"node:fs\";\nwriteFileSync(new URL(\"./ran\", import.meta.url), \"\");\nexport default [{ rules: { \"no-console\": \"off\" } }];\n",
       ".eslintrc.json": "{ \"rules\": { \"no-debugger\": \"off\" } }",
     });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
-    expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json is not read: ESLint uses eslint.config.ts instead."]);
+    expect(files.eslint).toBeUndefined();
+    expect(files.notes.map(note => note.text)).toEqual([
+      ".eslintrc.json is not read: ESLint uses eslint.config.ts instead.",
+      expect.stringMatching(/^eslint\.config\.ts is not read: it runs code Rerail does not read as data \(line 2: writeFileSync\(.+\)\. Rerail never runs your config\.$/u),
+    ]);
     expect(existsSync(join(root, "ran"))).toBe(false);
+
+    const data = await repository({ "eslint.config.ts": "import type { Linter } from \"eslint\";\ntype Rules = Linter.RulesRecord;\nconst rules: Rules = { \"no-console\": \"off\" };\nexport default [{ rules }];\n" });
+    expect(readLintConfigFiles(data).eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
   });
 
   it("reports a flat config it cannot parse or that exports nothing it can find as not read", async () => {
@@ -448,6 +454,27 @@ describe("proposeLintConfigSettings for .eslintrc overrides", () => {
       notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"off\" for \"scripts/**\" turns it off, but .eslintrc.json: \"no-console\": \"error\" turns it back on for \"scripts/**\"; it stays on."],
     });
   });
+
+  // Self-review round 4: an override's extends and nested overrides are not read and may turn the rule back on
+  // (ESLINT_USE_FLAT_CONFIG=false eslint 9.39.1 --print-config tests/a.js gives "error" for both).
+  it("uses no off an override's extends or nested overrides may replace", async () => {
+    const extended = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "no-console": "off" }, overrides: [{ files: ["tests/**"], extends: ["./strict.json"] }] }) });
+    expect(readRepositoryLintConfig(extended, bundle, ["javascript"]).settings).toEqual([]);
+    const nested = await repository({ ".eslintrc.json": JSON.stringify({ overrides: [{ files: ["tests/**"], rules: { "no-console": "off" }, overrides: [{ files: ["tests/**/*.js"], rules: { "no-console": "error" } }] }] }) });
+    expect(readRepositoryLintConfig(nested, bundle, ["javascript"]).settings).toEqual([]);
+  });
+
+  // Self-review round 4: oxlint 1.88.0 reports no-console in tests/ for this config.
+  it("uses no .oxlintrc.json off its overrides, which Rerail does not read, may replace", async () => {
+    const root = await repository({ ".oxlintrc.json": JSON.stringify({ rules: { "no-console": "off" }, overrides: [{ files: ["tests/**"], rules: { "no-console": "error" } }] }) });
+    expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+      settings: [],
+      notes: [
+        ".oxlintrc.json: only its own rules are read, not overrides.",
+        "eslint-no-console: .oxlintrc.json: \"no-console\": \"off\" is not used: .oxlintrc.json overrides, which Rerail does not read, may set it for some files.",
+      ],
+    });
+  });
 });
 
 describe("proposeLintConfigSettings for ESLint's flat config", () => {
@@ -634,9 +661,40 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     }
   });
 
-  it("reads a const whose name is only a property key elsewhere", async () => {
-    const text = "const allow = [\"log\"];\nconst metadata = { allow: 0 };\nObject.freeze(metadata);\nexport default [{ rules: { \"no-console\": [\"error\", { allow }] } }];";
-    expect((await flat(text, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["log"] } }]);
+  // Self-review round 4: a flat config is read only when it is data throughout; each of these runs code, so none gives a
+  // setting (each ESLint 9.39.1 config turns no-console on).
+  it("reads nothing from a flat config that runs code, however small", async () => {
+    for (const text of [
+      "const rules = { \"no-console\": \"off\" };\nconst { alias = rules } = {};\nalias[\"no-console\"] = \"error\";\nexport default [{ rules }];",
+      "const rules = { \"no-console\": \"off\" };\nfunction change(alias = rules) { alias[\"no-console\"] = \"error\"; }\nchange();\nexport default [{ rules }];",
+      "const rules = { \"no-console\": \"off\" };\nnamespace Runtime { rules[\"no-console\"] = \"error\"; }\nexport default [{ rules }];",
+      "module.exports = [{ rules: { \"no-console\": \"off\" } }];\nmodule.exports[0].rules[\"no-console\"] = \"error\";",
+      "import tseslint from \"typescript-eslint\";\n({ config: tseslint.config } = { config: () => [{ rules: { \"no-console\": \"error\" } }] });\nexport default tseslint.config({ rules: { \"no-console\": \"off\" } });",
+      "import tseslint from \"typescript-eslint\";\nfor (tseslint!.config of [() => []]);\nexport default tseslint.config({ rules: { \"no-console\": \"off\" } });",
+      "const severity = \"off\";\nfunction describe(severity: string) { return severity; }\nexport default [{ rules: { \"no-console\": severity } }];",
+      "const allow = [\"log\"];\nconst metadata = { allow: 0 };\nObject.freeze(metadata);\nexport default [{ rules: { \"no-console\": [\"error\", { allow }] } }];",
+    ]) {
+      const proposed = await flat(text, ["javascript"]);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.ts is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+  });
+
+  it("reads a flat config that calls imported functions with nothing of its own", async () => {
+    const text = [
+      "import { fileURLToPath } from \"node:url\";",
+      "import { createResolver } from \"resolver\";",
+      "const root = fileURLToPath(new URL(\".\", import.meta.url));",
+      "export default [{ settings: { resolver: createResolver(), root }, rules: { \"no-console\": \"off\" } }];",
+    ].join("\n");
+    expect((await flat(text, ["javascript"])).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+    // Handing a call one of its own consts is code: the call could change it.
+    expect((await flat("import merge from \"merge\";\nconst rules = { \"no-console\": \"off\" };\nexport default [{ rules: merge(rules) }];", ["javascript"])).settings).toEqual([]);
+  });
+
+  it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
+    const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
+    expect((await flat(text, ["javascript"])).settings).toEqual([]);
   });
 
   it("does not trust a config helper the file changes", async () => {

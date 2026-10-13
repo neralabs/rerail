@@ -119,26 +119,34 @@ settings, owned by the repository. Nothing is executed or imported.
 
 | Linter | Read | Not read |
 |---|---|---|
-| ESLint | the config ESLint itself would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), parsed and never run; else `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`, JSON with comments and trailing commas, its own `rules` and its `overrides`' `rules` | in a flat config, a value Rerail would have to run code for (an imported config such as `js.configs.recommended`, a call, an imported variable); `.eslintrc.{js,cjs,yaml,yml}`; `extends` and plugins' presets of an `.eslintrc` |
+| ESLint | the config ESLint itself would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), parsed and never run, when it is data throughout; else `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`, JSON with comments and trailing commas, its own `rules` and its `overrides`' `rules` | a flat config that runs code (a function, a statement that changes something, a namespace, a loop), and in a flat config a value Rerail would have to run code for (an imported config such as `js.configs.recommended`, a call's result, an imported variable); `.eslintrc.{js,cjs,yaml,yml}`; `extends` and plugins' presets of an `.eslintrc` |
 | oxlint | `.oxlintrc.json`, top-level `rules`; each key resolved to a built-in rule as oxlint 1.88.0 resolves it, and a rule's last key applies | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options |
 | Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores` and `extend-per-file-ignores` (each from `[lint]` where it is set there, else the top level) of the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and of the configs its `extend` names inside the repository | a config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config |
 
-A flat config is read as ESLint applies it: its exported array (through
-`export default`, `module.exports`, same-file `const`s, spreads,
-`defineConfig(...)`, typescript-eslint's `config(...)` and `extends`), one
-config object after another, a later one replacing a rule's entry (and
-keeping its options when it sets only a severity, `"warn"` or `["warn"]`);
-within one `rules` object a later key replaces an earlier one or a spread
-whole, as JavaScript does. An entry in an object with `files`, `ignores` or
-`basePath` applies to some files only: its options become the port's options
-for the whole repository only when no entry for every file sets the rule; it
-turns a rule off only in a folder it covers whole (`files: ["scripts/**"]`
-turns it off in `scripts`), and an "off" for narrower files, or one a later
-object turns back on, leaves the rule on with a note. A rule entry whose value
-Rerail cannot read without running the config turns the port off, and the
-screen says why; the shared configs it does not read are named, and an entry
-with one of them after it is not used, since it may replace the entry.
-An `.eslintrc`'s `overrides` are read the same way, after its own `rules`.
+A flat config is read only when it is data throughout: imports, top-level
+`const`s, the export and type-only declarations, built from literals, arrays,
+objects without methods, spreads, member reads and calls that are handed none of
+the file's own `const`s (except `defineConfig(...)` and typescript-eslint's
+`config(...)`, which Rerail takes to do what their documentation says, as it
+takes the modules the file imports). A file with anything else is not read at all,
+and the screen says why. A config that is read, is read as ESLint applies it: its
+exported array (through `export default`, `module.exports`, same-file `const`s,
+spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
+after another, a later one replacing a rule's entry (and keeping its options
+when it sets only a severity, `"warn"`, `["warn"]` or `"off"`); within one
+`rules` object a later key replaces an earlier one or a spread whole, as
+JavaScript does. An entry in an object with `files`, `ignores` or `basePath`
+applies to some files only: its options become the port's options for the
+whole repository only when no entry for every file sets the rule; it turns a
+rule off only in a folder it covers whole (`files: ["scripts/**"]` turns it off
+in `scripts`), and an "off" for narrower files, or one a later object turns back
+on, leaves the rule on with a note. A rule entry whose value Rerail cannot read
+without running the config turns the port off, and the screen says why; the
+shared configs it does not read are named, and an entry with one of them after
+it is not used, since it may replace the entry; nor are options one of them may
+have set. An `.eslintrc`'s `overrides` are read the same way, after its own
+`rules`; an off an override's `extends` or nested `overrides` may replace is not
+used, nor is an `.oxlintrc.json` rule its `overrides` may replace.
 
 Ruff's selection is resolved as Ruff resolves it: its selectors apply from
 the least specific (`ALL`, then `E`, `E7`, ...) to the most specific (`E711`),

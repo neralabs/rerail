@@ -284,7 +284,8 @@ type Notes = { linter: LintConfigLinter; text: string }[];
 
 /**
  * The `rules` of a JSON config file's object `config`, noting what the file sets that is not read. Undefined (with a
- * note) when `rules` is not an object.
+ * note) when `rules` is not an object. What an `.eslintrc`'s overrides may replace, or any oxlint `overrides` (not
+ * read), shadows the rules: they give notes, not settings.
  */
 function topLevelRules(file: string, config: z.infer<typeof configFile>, unread: readonly string[], linter: LintConfigLinter, notes: Notes): LintConfigRules | undefined {
   const skipped = unread.filter(key => Object.hasOwn(config, key));
@@ -294,7 +295,11 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     notes.push({ linter, text: `${file} is not read: its rules are not an object.` });
     return undefined;
   }
-  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() };
+  const overrides = linter === "eslint"
+    ? eslintrcOverrides(file, config, notes)
+    : { scoped: [], shadowedBy: config.overrides === undefined ? undefined : `${file} overrides` };
+  const shadowed = new Map(overrides.shadowedBy === undefined ? [] : Object.keys(rules.data).map(key => [key, overrides.shadowedBy!] as const));
+  return { file, rules: rules.data, scoped: overrides.scoped, unresolved: new Map(), shadowed, optionsUnknown: new Map() };
 }
 
 const eslintrcOverride = z.looseObject({
@@ -304,33 +309,42 @@ const eslintrcOverride = z.looseObject({
 
 /**
  * An `.eslintrc`'s `overrides` as rule entries for some files, in order: ESLint applies each after the config's own
- * rules to the files its `files` match, less its `excludedFiles`. Their `extends` and nested `overrides` are not read.
+ * rules to the files its `files` match, less its `excludedFiles`. An override's `extends` (applied before its rules)
+ * and nested `overrides` (after them) are not read, nor is an override Rerail cannot read; each may replace any rule
+ * entry before it, so those entries are shadowed (`shadowedBy`, for the config's own rules too).
  */
-function eslintrcOverrides(file: string, config: z.infer<typeof configFile>, notes: Notes): ScopedRule[] {
+function eslintrcOverrides(file: string, config: z.infer<typeof configFile>, notes: Notes): { scoped: ScopedRule[]; shadowedBy: string | undefined } {
   const overrides = config.overrides;
-  if (overrides === undefined) return [];
+  if (overrides === undefined) return { scoped: [], shadowedBy: undefined };
   if (!Array.isArray(overrides)) {
     notes.push({ linter: "eslint", text: `${file}: its overrides are not read: they are not a list.` });
-    return [];
+    return { scoped: [], shadowedBy: `${file} overrides` };
   }
-  return overrides.flatMap((value, index) => {
+  const scoped: { -readonly [K in keyof ScopedRule]: ScopedRule[K] }[] = [];
+  let shadowedBy: string | undefined;
+  const shadow = (by: string): void => {
+    shadowedBy ??= by;
+    for (const entry of scoped) entry.shadowedBy ??= by;
+  };
+  for (const [index, value] of overrides.entries()) {
     const override = eslintrcOverride.safeParse(value);
     if (!override.success) {
       notes.push({ linter: "eslint", text: `${file}: overrides[${index}] is not read: it has no files or its rules are not an object.` });
-      return [];
+      shadow(`${file} overrides[${index}]`);
+      continue;
     }
     const unread = ["extends", "overrides"].filter(key => Object.hasOwn(override.data, key));
     if (unread.length > 0) notes.push({ linter: "eslint", text: `${file}: overrides[${index}]: only its own rules are read, not ${unread.join(" or ")}.` });
+    if (Object.hasOwn(override.data, "extends")) shadow(`${file} overrides[${index}].extends`);
     const patterns = typeof override.data.files === "string" ? [override.data.files] : override.data.files;
     const folders = Object.hasOwn(override.data, "excludedFiles") ? [] : patterns.map(folderOfGlob);
     const exact = folders.length > 0 && folders.every(folder => folder !== undefined);
-    return Object.entries(override.data.rules ?? {}).map(([key, value]) => ({
-      key,
-      value,
-      folders: exact ? (folders as string[]) : undefined,
-      files: JSON.stringify(override.data.files),
-    }));
-  });
+    for (const [key, ruleValue] of Object.entries(override.data.rules ?? {})) {
+      scoped.push({ key, value: ruleValue, folders: exact ? (folders as string[]) : undefined, files: JSON.stringify(override.data.files) });
+    }
+    if (Object.hasOwn(override.data, "overrides")) shadow(`${file} overrides[${index}].overrides`);
+  }
+  return { scoped, shadowedBy };
 }
 
 /** A JSONC config file at the root as an object; undefined (with a note when present) otherwise. */
@@ -365,23 +379,29 @@ function withEarlierOptions(earlier: unknown, later: unknown): unknown {
 /**
  * A flat config's entries as ESLint applies them, in order: a later entry every file gets replaces the earlier ones
  * (keeping their options when it sets only a severity), and the entries limited to some files that come after it are
- * kept apart. An entry Rerail cannot read stands for its rule until a later entry for every file replaces it. What a
- * later unread element may replace stays so through a severity alone, which keeps whatever options it set.
+ * kept apart. An entry Rerail cannot read stands for its rule until a later entry replaces it: one for every file, or
+ * one for the same files that sets the rule in full. What a later unread element may replace stays so through a
+ * severity alone, which keeps whatever options it set.
  */
 function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
   const rules: Record<string, unknown> = {};
   const unresolved = new Map<string, UnreadEntry>();
   const shadowed = new Map<string, string>();
   const optionsUnknown = new Map<string, string>();
-  const scopedUnresolved = new Map<string, UnreadEntry>();
+  /** Per rule key, the unread entries for some files that no later entry has replaced, with how the config names the files. */
+  const scopedUnresolved = new Map<string, { readonly files: string; readonly entry: UnreadEntry }[]>();
   const unread = (why: string, by: string | undefined): UnreadEntry => (by === undefined ? { why } : { why, shadowedBy: by });
   let scoped: ScopedRule[] = [];
   for (const { key, scope, value, shadowedBy } of read.entries) {
     if (scope.kind !== "all") {
+      const unreadBefore = scopedUnresolved.get(key) ?? [];
       if (value.ok) {
         scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files, ...(shadowedBy === undefined ? {} : { shadowedBy }) });
-      } else if (!scopedUnresolved.has(key)) {
-        scopedUnresolved.set(key, unread(`${value.why} (for ${scope.files})`, shadowedBy));
+        if (!severityAlone(value.value) || severityOf(value.value, "eslint")?.off === true) {
+          scopedUnresolved.set(key, unreadBefore.filter(entry => entry.files !== scope.files));
+        }
+      } else {
+        scopedUnresolved.set(key, [...unreadBefore, { files: scope.files, entry: unread(`${value.why} (for ${scope.files})`, shadowedBy) }]);
       }
       continue;
     }
@@ -411,7 +431,7 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
       else optionsUnknown.set(key, uncertain);
     }
   }
-  for (const [key, entry] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, entry);
+  for (const [key, entries] of scopedUnresolved) if (!unresolved.has(key) && entries.length > 0) unresolved.set(key, entries[0]!.entry);
   return { file, rules, scoped, unresolved, shadowed, optionsUnknown };
 }
 
@@ -882,6 +902,11 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       const severity = severityOf(value, "oxlint");
       if (severity === undefined) {
         notes.push(`${ruleId}: ${because} is not a severity oxlint takes; not read.`);
+        continue;
+      }
+      const shadowedBy = files.oxlint!.shadowed.get(key);
+      if (shadowedBy !== undefined) {
+        notes.push(`${ruleId}: ${because} is not used: ${shadowedBy}, which Rerail does not read, may set it for some files.`);
         continue;
       }
       // The ports' options follow the upstream rule's; oxlint's own options are not mapped onto them.

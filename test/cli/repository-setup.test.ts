@@ -528,10 +528,8 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
   it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), [
-      "import { writeFileSync } from \"node:fs\";",
       "import type { Linter } from \"eslint\";",
       "import tsEslint from \"typescript-eslint\";",
-      "writeFileSync(\"ran\", \"\");",
       "const config: Linter.Config[] = [",
       "  ...tsEslint.configs.stylistic,",
       "  { files: [\"**/src/**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
@@ -556,7 +554,6 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     } finally {
       database.$client.close();
     }
-    expect(existsSync(join(setup.repo, "ran"))).toBe(false);
   });
 
   it("takes nothing from the lint config when the person picks packs themselves", async () => {
