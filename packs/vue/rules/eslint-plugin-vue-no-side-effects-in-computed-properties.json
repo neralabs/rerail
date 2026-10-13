@@ -1062,21 +1062,14 @@
                         }
                       },
                       {
-                        "has": {
-                          "field": "arguments",
-                          "kind": "arguments",
-                          "has": {
-                            "stopBy": "neighbor",
-                            "nthChild": {
-                              "position": 1,
-                              "ofRule": {
-                                "not": {
-                                  "kind": "comment"
-                                }
-                              }
-                            },
-                            "matches": "chain-opt"
-                          }
+                        "arguments": {
+                          "signature": [
+                            "target"
+                          ],
+                          "bind": {
+                            "T": "target"
+                          },
+                          "mode": "estree"
                         }
                       }
                     ]
@@ -1408,21 +1401,14 @@
                         }
                       },
                       {
-                        "has": {
-                          "field": "arguments",
-                          "kind": "arguments",
-                          "has": {
-                            "stopBy": "neighbor",
-                            "nthChild": {
-                              "position": 1,
-                              "ofRule": {
-                                "not": {
-                                  "kind": "comment"
-                                }
-                              }
-                            },
-                            "matches": "chain-comp"
-                          }
+                        "arguments": {
+                          "signature": [
+                            "target"
+                          ],
+                          "bind": {
+                            "T": "target"
+                          },
+                          "mode": "estree"
                         }
                       }
                     ]
@@ -1564,6 +1550,11 @@
           "rule": {
             "matches": "mutation-opt"
           },
+          "constraints": {
+            "T": {
+              "matches": "chain-opt"
+            }
+          },
           "transform": {
             "N1": {
               "replace": {
@@ -1602,6 +1593,11 @@
           "language": "vue",
           "rule": {
             "matches": "mutation-comp"
+          },
+          "constraints": {
+            "T": {
+              "matches": "chain-comp"
+            }
           }
         }
       },

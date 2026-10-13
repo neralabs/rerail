@@ -1621,22 +1621,14 @@
                     "kind": "call_expression"
                   },
                   {
-                    "has": {
-                      "field": "arguments",
-                      "kind": "arguments",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "comment"
-                            },
-                            {
-                              "regex": "^[(),]$"
-                            }
-                          ]
-                        }
-                      }
+                    "arguments": {
+                      "signature": [
+                        "callback"
+                      ],
+                      "bind": {
+                        "CB": "callback"
+                      },
+                      "mode": "estree"
                     }
                   },
                   {
@@ -1704,22 +1696,14 @@
                     "kind": "call_expression"
                   },
                   {
-                    "has": {
-                      "field": "arguments",
-                      "kind": "arguments",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "comment"
-                            },
-                            {
-                              "regex": "^[(),]$"
-                            }
-                          ]
-                        }
-                      }
+                    "arguments": {
+                      "signature": [
+                        "callback"
+                      ],
+                      "bind": {
+                        "CB": "callback"
+                      },
+                      "mode": "estree"
                     }
                   },
                   {

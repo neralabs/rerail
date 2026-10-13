@@ -18,285 +18,157 @@
           "language": "vue",
           "utils": {
             "tag-svg-ctx": {
-              "any": [
-                {
-                  "kind": "self_closing_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "start_tag",
-                      "matches": "svg-children"
-                    }
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
                   }
-                },
-                {
-                  "kind": "start_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "element"
-                        },
-                        {
-                          "kind": "template_element"
-                        }
-                      ],
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "start_tag",
-                        "matches": "svg-children"
-                      }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
                     }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "svg-children"
                   }
                 }
-              ]
+              }
             },
             "tag-math-ctx": {
-              "any": [
-                {
-                  "kind": "self_closing_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "start_tag",
-                      "matches": "math-children"
-                    }
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
                   }
-                },
-                {
-                  "kind": "start_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "element"
-                        },
-                        {
-                          "kind": "template_element"
-                        }
-                      ],
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "start_tag",
-                        "matches": "math-children"
-                      }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
                     }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "math-children"
                   }
                 }
-              ]
+              }
             },
             "parent-annotation-xml": {
-              "any": [
-                {
-                  "kind": "self_closing_tag",
-                  "inside": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
                     "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
+                    "kind": "start_tag",
                     "has": {
                       "stopBy": "neighbor",
-                      "kind": "start_tag",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "tag_name",
-                        "regex": "^annotation-xml$"
-                      }
-                    }
-                  }
-                },
-                {
-                  "kind": "start_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "element"
-                        },
-                        {
-                          "kind": "template_element"
-                        }
-                      ],
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "start_tag",
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "tag_name",
-                          "regex": "^annotation-xml$"
-                        }
-                      }
+                      "kind": "tag_name",
+                      "regex": "^annotation-xml$"
                     }
                   }
                 }
-              ]
+              }
             },
             "parent-text-integration": {
-              "any": [
-                {
-                  "kind": "self_closing_tag",
-                  "inside": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
                     "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
+                    "kind": "start_tag",
                     "has": {
                       "stopBy": "neighbor",
-                      "kind": "start_tag",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "tag_name",
-                        "regex": "^(?:mi|mo|mn|ms|mtext)$"
-                      }
-                    }
-                  }
-                },
-                {
-                  "kind": "start_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "element"
-                        },
-                        {
-                          "kind": "template_element"
-                        }
-                      ],
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "start_tag",
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "tag_name",
-                          "regex": "^(?:mi|mo|mn|ms|mtext)$"
-                        }
-                      }
+                      "kind": "tag_name",
+                      "regex": "^(?:mi|mo|mn|ms|mtext)$"
                     }
                   }
                 }
-              ]
+              }
             },
             "parent-math-ns": {
-              "any": [
-                {
-                  "kind": "self_closing_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "start_tag",
-                      "matches": "ns-math"
-                    }
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
                   }
-                },
-                {
-                  "kind": "start_tag",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "element"
-                      },
-                      {
-                        "kind": "template_element"
-                      }
-                    ],
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "element"
-                        },
-                        {
-                          "kind": "template_element"
-                        }
-                      ],
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "start_tag",
-                        "matches": "ns-math"
-                      }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
                     }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "ns-math"
                   }
                 }
-              ]
+              }
             },
             "svg-children": {
               "all": [
@@ -463,6 +335,9 @@
                       }
                     ]
                   }
+                },
+                {
+                  "regex": "^<[^\\s/>.]+\\."
                 },
                 {
                   "all": [

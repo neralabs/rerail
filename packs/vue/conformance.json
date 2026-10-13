@@ -6,6 +6,7 @@
     "scope",
     "value",
     "compare",
+    "arguments",
     "suppression"
   ],
   "corpora": [
@@ -351,7 +352,7 @@
       "capabilities": [
         "syntax",
         "scope",
-        "value",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"
@@ -366,7 +367,7 @@
       "capabilities": [
         "syntax",
         "scope",
-        "value",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"

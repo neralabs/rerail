@@ -1280,217 +1280,361 @@
       }
     },
     {
-      "id": "get-property-setup",
+      "id": "get-property-setup-0",
       "forbid": {
         "ast": {
           "language": "vue",
           "rule": {
-            "any": [
+            "kind": "call_expression",
+            "all": [
               {
-                "kind": "call_expression",
-                "all": [
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "template_string"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "barrier"
+                  },
+                  "matches": "setup-fn"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "props-member-ref-setup"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-1",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
                   {
-                    "not": {
-                      "has": {
-                        "field": "arguments",
-                        "kind": "template_string"
-                      }
-                    }
+                    "kind": "array"
                   },
                   {
-                    "has": {
-                      "stopBy": "end",
-                      "matches": "props-member-ref-setup"
-                    }
+                    "kind": "object"
                   }
                 ]
               },
               {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "kind": "array"
-                      },
-                      {
-                        "kind": "object"
-                      }
-                    ]
-                  },
-                  {
-                    "matches": "rhs-slot"
-                  },
-                  {
-                    "has": {
-                      "stopBy": "end",
-                      "matches": "props-member-ref-setup"
-                    }
-                  }
-                ]
+                "matches": "rhs-slot"
               },
               {
-                "all": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "matches": "props-member-ref-setup"
-                  },
-                  {
-                    "matches": "chain-up"
-                  },
-                  {
-                    "not": {
-                      "all": [
-                        {
-                          "matches": "chain-up-pattern"
-                        },
-                        {
-                          "matches": "props-id-setup"
+                "has": {
+                  "stopBy": "end",
+                  "matches": "props-member-ref-setup"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-2",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "matches": "props-member-ref-setup"
+              },
+              {
+                "matches": "chain-up"
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "matches": "chain-up-pattern"
+                    },
+                    {
+                      "matches": "props-id-setup"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-3",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-setup"
+              },
+              {
+                "inside": {
+                  "kind": "template_substitution",
+                  "all": [
+                    {
+                      "inside": {
+                        "kind": "template_string",
+                        "all": [
+                          {
+                            "matches": "chain-up"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "matches": "chain-up-pattern"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "template_substitution",
+                                    "has": {
+                                      "kind": "identifier",
+                                      "matches": "props-id-setup"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "template_substitution",
+                          "has": {
+                            "matches": "contains-ref-setup"
+                          }
                         }
-                      ]
+                      }
                     }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-4",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-setup"
+              },
+              {
+                "matches": "ternary-condition-slot-setup"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-5",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-setup"
+              },
+              {
+                "matches": "ternary-consequence-slot-setup"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-6",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-setup"
+              },
+              {
+                "matches": "ternary-alternative-slot-setup"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-setup-7",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "object_pattern"
+                  },
+                  {
+                    "kind": "array_pattern"
                   }
                 ]
               },
               {
-                "all": [
+                "any": [
                   {
-                    "not": {
-                      "kind": "parenthesized_expression"
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "field": "name",
+                      "has": {
+                        "field": "value",
+                        "matches": "chain-has-props-setup"
+                      }
                     }
-                  },
-                  {
-                    "matches": "contains-ref-setup"
                   },
                   {
                     "inside": {
-                      "kind": "template_substitution",
-                      "all": [
-                        {
-                          "inside": {
-                            "kind": "template_string",
-                            "all": [
-                              {
-                                "matches": "chain-up"
-                              },
-                              {
-                                "not": {
-                                  "all": [
-                                    {
-                                      "matches": "chain-up-pattern"
-                                    },
-                                    {
-                                      "has": {
-                                        "kind": "template_substitution",
-                                        "has": {
-                                          "kind": "identifier",
-                                          "matches": "props-id-setup"
-                                        }
-                                      }
-                                    }
-                                  ]
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "not": {
-                            "follows": {
-                              "stopBy": "end",
-                              "kind": "template_substitution",
-                              "has": {
-                                "matches": "contains-ref-setup"
-                              }
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-setup"
-                  },
-                  {
-                    "matches": "ternary-condition-slot-setup"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-setup"
-                  },
-                  {
-                    "matches": "ternary-consequence-slot-setup"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-setup"
-                  },
-                  {
-                    "matches": "ternary-alternative-slot-setup"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "kind": "object_pattern"
-                      },
-                      {
-                        "kind": "array_pattern"
+                      "kind": "assignment_expression",
+                      "field": "left",
+                      "has": {
+                        "field": "right",
+                        "matches": "chain-has-props-setup"
                       }
-                    ]
-                  },
-                  {
-                    "any": [
-                      {
-                        "inside": {
-                          "kind": "variable_declarator",
-                          "field": "name",
-                          "has": {
-                            "field": "value",
-                            "matches": "chain-has-props-setup"
-                          }
-                        }
-                      },
-                      {
-                        "inside": {
-                          "kind": "assignment_expression",
-                          "field": "left",
-                          "has": {
-                            "field": "right",
-                            "matches": "chain-has-props-setup"
-                          }
-                        }
-                      }
-                    ]
+                    }
                   }
                 ]
               }
@@ -1512,217 +1656,361 @@
       }
     },
     {
-      "id": "get-property-script",
+      "id": "get-property-script-0",
       "forbid": {
         "ast": {
           "language": "vue",
           "rule": {
-            "any": [
+            "kind": "call_expression",
+            "all": [
               {
-                "kind": "call_expression",
-                "all": [
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "template_string"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "barrier"
+                  },
+                  "kind": "program"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "props-member-ref-script"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-1",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
                   {
-                    "not": {
-                      "has": {
-                        "field": "arguments",
-                        "kind": "template_string"
-                      }
-                    }
+                    "kind": "array"
                   },
                   {
-                    "has": {
-                      "stopBy": "end",
-                      "matches": "props-member-ref-script"
-                    }
+                    "kind": "object"
                   }
                 ]
               },
               {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "kind": "array"
-                      },
-                      {
-                        "kind": "object"
-                      }
-                    ]
-                  },
-                  {
-                    "matches": "rhs-slot"
-                  },
-                  {
-                    "has": {
-                      "stopBy": "end",
-                      "matches": "props-member-ref-script"
-                    }
-                  }
-                ]
+                "matches": "rhs-slot"
               },
               {
-                "all": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "matches": "props-member-ref-script"
-                  },
-                  {
-                    "matches": "chain-up"
-                  },
-                  {
-                    "not": {
-                      "all": [
-                        {
-                          "matches": "chain-up-pattern"
-                        },
-                        {
-                          "matches": "props-id-script"
+                "has": {
+                  "stopBy": "end",
+                  "matches": "props-member-ref-script"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-2",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "matches": "props-member-ref-script"
+              },
+              {
+                "matches": "chain-up"
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "matches": "chain-up-pattern"
+                    },
+                    {
+                      "matches": "props-id-script"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-3",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-script"
+              },
+              {
+                "inside": {
+                  "kind": "template_substitution",
+                  "all": [
+                    {
+                      "inside": {
+                        "kind": "template_string",
+                        "all": [
+                          {
+                            "matches": "chain-up"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "matches": "chain-up-pattern"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "template_substitution",
+                                    "has": {
+                                      "kind": "identifier",
+                                      "matches": "props-id-script"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "template_substitution",
+                          "has": {
+                            "matches": "contains-ref-script"
+                          }
                         }
-                      ]
+                      }
                     }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-4",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-script"
+              },
+              {
+                "matches": "ternary-condition-slot-script"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-5",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-script"
+              },
+              {
+                "matches": "ternary-consequence-slot-script"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-6",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "matches": "contains-ref-script"
+              },
+              {
+                "matches": "ternary-alternative-slot-script"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-setup-props-reactivity-loss",
+        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-setup-props-reactivity-loss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-property-script-7",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "object_pattern"
+                  },
+                  {
+                    "kind": "array_pattern"
                   }
                 ]
               },
               {
-                "all": [
+                "any": [
                   {
-                    "not": {
-                      "kind": "parenthesized_expression"
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "field": "name",
+                      "has": {
+                        "field": "value",
+                        "matches": "chain-has-props-script"
+                      }
                     }
-                  },
-                  {
-                    "matches": "contains-ref-script"
                   },
                   {
                     "inside": {
-                      "kind": "template_substitution",
-                      "all": [
-                        {
-                          "inside": {
-                            "kind": "template_string",
-                            "all": [
-                              {
-                                "matches": "chain-up"
-                              },
-                              {
-                                "not": {
-                                  "all": [
-                                    {
-                                      "matches": "chain-up-pattern"
-                                    },
-                                    {
-                                      "has": {
-                                        "kind": "template_substitution",
-                                        "has": {
-                                          "kind": "identifier",
-                                          "matches": "props-id-script"
-                                        }
-                                      }
-                                    }
-                                  ]
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "not": {
-                            "follows": {
-                              "stopBy": "end",
-                              "kind": "template_substitution",
-                              "has": {
-                                "matches": "contains-ref-script"
-                              }
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-script"
-                  },
-                  {
-                    "matches": "ternary-condition-slot-script"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-script"
-                  },
-                  {
-                    "matches": "ternary-consequence-slot-script"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "kind": "parenthesized_expression"
-                    }
-                  },
-                  {
-                    "matches": "contains-ref-script"
-                  },
-                  {
-                    "matches": "ternary-alternative-slot-script"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "kind": "object_pattern"
-                      },
-                      {
-                        "kind": "array_pattern"
+                      "kind": "assignment_expression",
+                      "field": "left",
+                      "has": {
+                        "field": "right",
+                        "matches": "chain-has-props-script"
                       }
-                    ]
-                  },
-                  {
-                    "any": [
-                      {
-                        "inside": {
-                          "kind": "variable_declarator",
-                          "field": "name",
-                          "has": {
-                            "field": "value",
-                            "matches": "chain-has-props-script"
-                          }
-                        }
-                      },
-                      {
-                        "inside": {
-                          "kind": "assignment_expression",
-                          "field": "left",
-                          "has": {
-                            "field": "right",
-                            "matches": "chain-has-props-script"
-                          }
-                        }
-                      }
-                    ]
+                    }
                   }
                 ]
               }

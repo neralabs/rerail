@@ -2078,24 +2078,36 @@
         "ast": {
           "language": "vue",
           "rule": {
-            "any": [
+            "all": [
               {
-                "kind": "assignment_expression"
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "tpl-block"
+                }
               },
               {
-                "kind": "augmented_assignment_expression"
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  },
+                  {
+                    "kind": "update_expression"
+                  },
+                  {
+                    "kind": "unary_expression"
+                  },
+                  {
+                    "kind": "call_expression"
+                  }
+                ]
               },
               {
-                "kind": "update_expression"
-              },
-              {
-                "kind": "unary_expression"
-              },
-              {
-                "kind": "call_expression"
+                "matches": "tpl-mut"
               }
-            ],
-            "matches": "tpl-mut"
+            ]
           }
         }
       },
@@ -2164,24 +2176,38 @@
         "ast": {
           "language": "vue",
           "rule": {
-            "any": [
+            "all": [
               {
-                "kind": "assignment_expression"
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  },
+                  {
+                    "kind": "update_expression"
+                  },
+                  {
+                    "kind": "unary_expression"
+                  },
+                  {
+                    "kind": "call_expression"
+                  }
+                ]
               },
               {
-                "kind": "augmented_assignment_expression"
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "tpl-block"
+                  }
+                }
               },
               {
-                "kind": "update_expression"
-              },
-              {
-                "kind": "unary_expression"
-              },
-              {
-                "kind": "call_expression"
+                "matches": "opt-mut"
               }
-            ],
-            "matches": "opt-mut"
+            ]
           }
         }
       },
