@@ -26,8 +26,8 @@
           "text": "export default function Page() {\n  return <img src=\"/hero.png\" alt=\"Hero\" />;\n}\n"
         },
         "passes": {
-          "path": "app/page.tsx",
-          "text": "import Image from \"next/image\";\n\nexport default function Page() {\n  return <Image src=\"/hero.png\" alt=\"Hero\" width={640} height={320} />;\n}\n"
+          "path": "app/opengraph-image.tsx",
+          "text": "import { ImageResponse } from \"next/og\";\n\nexport default function OpengraphImage() {\n  return new ImageResponse(<img src=\"https://example.com/hero.png\" alt=\"Hero\" />);\n}\n"
         }
       }
     },
@@ -75,7 +75,17 @@
       "id": "next-no-assign-module-variable",
       "document": "rules/next-no-assign-module-variable.json",
       "title": "No assign module variable",
-      "group": "Next.js"
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "pages/index.tsx",
+          "text": "let module = { title: \"Home\" };\n\nexport default function Home() {\n  return <h1>{module.title}</h1>;\n}\n"
+        },
+        "passes": {
+          "path": "pages/index.tsx",
+          "text": "const page = { title: \"Home\" };\n\nexport default function Home() {\n  return <h1>{page.title}</h1>;\n}\n"
+        }
+      }
     },
     {
       "id": "next-no-document-import-in-page",
@@ -93,19 +103,49 @@
       "id": "next-no-styled-jsx-in-document",
       "document": "rules/next-no-styled-jsx-in-document.json",
       "title": "No styled jsx in document",
-      "group": "Next.js"
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "pages/_document.tsx",
+          "text": "import { Html, Head, Main, NextScript } from \"next/document\";\n\nexport default function Document() {\n  return (\n    <Html>\n      <Head />\n      <body>\n        <style jsx>{\"body { margin: 0; }\"}</style>\n        <Main />\n        <NextScript />\n      </body>\n    </Html>\n  );\n}\n"
+        },
+        "passes": {
+          "path": "pages/_document.tsx",
+          "text": "import { Html, Head, Main, NextScript } from \"next/document\";\n\nexport default function Document() {\n  return (\n    <Html>\n      <Head />\n      <body>\n        <style>{\"body { margin: 0; }\"}</style>\n        <Main />\n        <NextScript />\n      </body>\n    </Html>\n  );\n}\n"
+        }
+      }
     },
     {
       "id": "next-no-title-in-document-head",
       "document": "rules/next-no-title-in-document-head.json",
       "title": "No title in document head",
-      "group": "Next.js"
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "pages/_document.tsx",
+          "text": "import { Html, Head, Main, NextScript } from \"next/document\";\n\nexport default function Document() {\n  return (\n    <Html>\n      <Head>\n        <title>My site</title>\n      </Head>\n      <body>\n        <Main />\n        <NextScript />\n      </body>\n    </Html>\n  );\n}\n"
+        },
+        "passes": {
+          "path": "pages/index.tsx",
+          "text": "import Head from \"next/head\";\n\nexport default function Home() {\n  return (\n    <Head>\n      <title>My site</title>\n    </Head>\n  );\n}\n"
+        }
+      }
     },
     {
       "id": "next-no-script-component-in-head",
       "document": "rules/next-no-script-component-in-head.json",
       "title": "No script component in head",
-      "group": "Next.js"
+      "group": "Next.js",
+      "examples": {
+        "caught": {
+          "path": "pages/index.tsx",
+          "text": "import Head from \"next/head\";\nimport Script from \"next/script\";\n\nexport default function Home() {\n  return (\n    <Head>\n      <Script src=\"https://example.com/analytics.js\" />\n    </Head>\n  );\n}\n"
+        },
+        "passes": {
+          "path": "pages/index.tsx",
+          "text": "import Head from \"next/head\";\nimport Script from \"next/script\";\n\nexport default function Home() {\n  return (\n    <>\n      <Head>\n        <title>Home</title>\n      </Head>\n      <Script src=\"https://example.com/analytics.js\" />\n    </>\n  );\n}\n"
+        }
+      }
     },
     {
       "id": "next-inline-script-id",
