@@ -590,6 +590,10 @@
    "rerail/noqa/SIM905.py",
    "rerail/noqa/SIM910.py",
    "rerail/noqa/T100.py",
+   "rerail/probes/ASYNC109-parenthesized-override.py",
+   "rerail/probes/ASYNC110-tuple-body.py",
+   "rerail/probes/ASYNC212-ASYNC240-builtin-name-module-binding.py",
+   "rerail/probes/ASYNC220-ASYNC221-with-item-mode.py",
    "rerail/probes/B017-comment-before-argument.py",
    "rerail/probes/B017-continuation.py",
    "rerail/probes/B019-parenthesized-decorator.py",
@@ -1824,6 +1828,12 @@
    "path": "rerail/noqa/ASYNC221.py",
    "line": 19,
    "column": 5
+  },
+  {
+   "rule": "ASYNC221",
+   "path": "rerail/probes/ASYNC220-ASYNC221-with-item-mode.py",
+   "line": 4,
+   "column": 9
   },
   {
    "rule": "ASYNC222",
@@ -10967,6 +10977,12 @@
    "rule": "F401",
    "path": "rerail/noqa/F404.py",
    "line": 13,
+   "column": 8
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ASYNC109-parenthesized-override.py",
+   "line": 1,
    "column": 8
   },
   {

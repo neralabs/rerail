@@ -15,7 +15,7 @@ import {
 } from "../../../src/api/index.js";
 import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
-import { globPattern } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { globPattern, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   loadRulePacks,
@@ -216,6 +216,34 @@ describe("globPattern", () => {
     ["{src/**/,}*.py", "b.py", true],
   ])("%s on %s is %s", (glob, path, expected) => {
     expect(globPattern([glob]).test(path)).toBe(expected);
+  });
+});
+
+describe("the Python pack's match", () => {
+  const pack = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8"));
+  const [signal] = pack.match.any;
+  const scan = (files: string[]) => ({ files, npmDependencies: new Map<string, string[]>() });
+
+  it.each([
+    ["src/app/models.py", true],
+    ["app/views.py", true],
+    ["stubs/pkg/__init__.pyi", true],
+    ["tests/test_models.py", false],
+    ["src/app/models_test.py", false],
+    ["conftest.py", false],
+    ["scripts/release.py", false],
+    ["script/bootstrap.py", false],
+    ["tools/gen.py", false],
+    ["ci/check.py", false],
+    [".github/actions/lint/main.py", false],
+    ["setup.py", false],
+    ["noxfile.py", false],
+    ["docs/conf.py", false],
+    ["docs/source/conf.py", false],
+    ["doc/source/conf.py", false],
+    ["docs/_ext/directive.py", false],
+  ])("counts %s as Python source: %s", (path, expected) => {
+    expect(signalEvidence(signal, scan([path]))).toEqual(expected ? [path] : []);
   });
 });
 

@@ -517,6 +517,20 @@ PROBES = {
                                                     "        a = [x for x in (not self != other,)]\n"
                                                     "        g = lambda y=not self != other: y\n        return a, g\n",
     "SIM220-SIM221-t-strings.py": "a = True\nx = a and (t\"x\" + t\"y\") and not a\ny = a or (t\"x\" + t\"y\") or not a\n",
+    # From the audit of #29's ASYNC rules, the same way: each port still misreads its case.
+    # ASYNC109: a parenthesized `@(override)` is still an override.
+    "ASYNC109-parenthesized-override.py": "import trio\nfrom typing import override\nclass C:\n    @(override)\n"
+                                          "    async def i(self, timeout):\n        pass\n",
+    # ASYNC110: a tuple whose first item is the `await` is not a lone sleep.
+    "ASYNC110-tuple-body.py": "import trio\nasync def f(c):\n    while c:\n        await trio.sleep(1), 1\n",
+    # ASYNC212, ASYNC240: a module binding named like a builtin shadows it, so it is not the only binding.
+    "ASYNC212-ASYNC240-builtin-name-module-binding.py": "import httpx\nfrom pathlib import Path\n"
+                                                        "license = Path(\"LICENSE\")\nhelp = httpx.Client()\n"
+                                                        "async def f():\n    license.read_text()\n"
+                                                        "    help.get(\"https://example.com\")\n",
+    # ASYNC220, ASYNC221: a mode bound by a `with` item is `os.P_WAIT`, so the call is ASYNC221's.
+    "ASYNC220-ASYNC221-with-item-mode.py": "import os\nasync def f():\n    with os.P_WAIT as m:\n"
+                                           "        os.spawnl(m, \"x\")\n",
 }
 
 
