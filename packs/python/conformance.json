@@ -648,18 +648,6 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-e731-lambda-assignment",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "E731"
-      },
-      "policy": "rules/E731.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-e742-ambiguous-class-name",
       "upstream": {
         "tool": "ruff",
@@ -1037,19 +1025,6 @@
       "capabilities": [
         "scope",
         "annotation",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-f811-redefined-while-unused",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "F811"
-      },
-      "policy": "rules/ruff-f811-redefined-while-unused.json",
-      "capabilities": [
-        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -1996,6 +1971,956 @@
         "arguments",
         "scope",
         "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b006-mutable-argument-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B006"
+      },
+      "policy": "candidates/rules/ruff-B006.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b008-function-call-in-default-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B008"
+      },
+      "policy": "candidates/rules/B008.json",
+      "capabilities": [
+        "arguments",
+        "compare",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b012-jump-statement-in-finally",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B012"
+      },
+      "policy": "candidates/rules/B012.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b015-useless-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B015"
+      },
+      "policy": "candidates/rules/B015.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b018-useless-expression",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B018"
+      },
+      "policy": "candidates/rules/B018.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b024-abstract-base-class-without-abstract-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B024"
+      },
+      "policy": "candidates/rules/B024.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b027-empty-method-without-abstract-decorator",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B027"
+      },
+      "policy": "candidates/rules/B027.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b030-except-with-non-exception-classes",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B030"
+      },
+      "policy": "candidates/rules/B030.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b031-reuse-of-groupby-generator",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B031"
+      },
+      "policy": "candidates/rules/B031.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b035-static-key-dict-comprehension",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B035"
+      },
+      "policy": "candidates/rules/B035.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b911-batched-without-explicit-strict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B911"
+      },
+      "policy": "candidates/rules/B911.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b912-map-without-explicit-strict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B912"
+      },
+      "policy": "candidates/rules/B912.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ble001-blind-except",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "BLE001"
+      },
+      "policy": "candidates/rules/BLE001.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e402-module-import-not-at-top-of-file",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E402"
+      },
+      "policy": "candidates/rules/E402.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e731-lambda-assignment",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E731"
+      },
+      "policy": "candidates/rules/E731.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e741-ambiguous-variable-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E741"
+      },
+      "policy": "candidates/rules/E741.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e743-ambiguous-function-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E743"
+      },
+      "policy": "candidates/rules/E743.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f401-unused-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F401"
+      },
+      "policy": "candidates/rules/ruff-F401.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f402-import-shadowed-by-loop-var",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F402"
+      },
+      "policy": "candidates/rules/F402.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f403-undefined-local-with-import-star",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F403"
+      },
+      "policy": "candidates/rules/F403.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f541-f-string-missing-placeholders",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F541"
+      },
+      "policy": "candidates/rules/F541.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f704-yield-outside-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F704"
+      },
+      "policy": "candidates/rules/F704.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f811-redefined-while-unused",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F811"
+      },
+      "policy": "candidates/rules/ruff-f811-redefined-while-unused.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f821-undefined-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F821"
+      },
+      "policy": "candidates/rules/ruff-f821-undefined-name.json",
+      "capabilities": [
+        "scope",
+        "annotation",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f822-undefined-export",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F822"
+      },
+      "policy": "candidates/rules/F822.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f841-unused-variable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F841"
+      },
+      "policy": "candidates/rules/ruff-f841-unused-variable.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n999-invalid-module-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N999"
+      },
+      "policy": "candidates/rules/N999.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret503-implicit-return",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET503"
+      },
+      "policy": "candidates/rules/RET503.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim102-collapsible-if",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM102"
+      },
+      "policy": "candidates/rules/SIM102.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim103-needless-bool",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM103"
+      },
+      "policy": "candidates/rules/SIM103.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim105-suppressible-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM105"
+      },
+      "policy": "candidates/rules/SIM105.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim108-if-else-block-instead-of-if-exp",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM108"
+      },
+      "policy": "candidates/rules/ruff-SIM108.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim110-reimplemented-builtin",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM110"
+      },
+      "policy": "candidates/rules/SIM110.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim114-if-with-same-arms",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM114"
+      },
+      "policy": "candidates/rules/SIM114.json",
+      "capabilities": [
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim117-multiple-with-statements",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM117"
+      },
+      "policy": "candidates/rules/SIM117.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim118-in-dict-keys",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM118"
+      },
+      "policy": "candidates/rules/SIM118.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim222-expr-or-true",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM222"
+      },
+      "policy": "candidates/rules/ruff-sim222-expr-or-true.json",
+      "capabilities": [
+        "value",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim223-expr-and-false",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM223"
+      },
+      "policy": "candidates/rules/SIM223.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim300-yoda-conditions",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM300"
+      },
+      "policy": "candidates/rules/SIM300.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim401-if-else-block-instead-of-dict-get",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM401"
+      },
+      "policy": "candidates/rules/SIM401.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim911-zip-dict-keys-and-values",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM911"
+      },
+      "policy": "candidates/rules/SIM911.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-w605-invalid-escape-sequence",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "W605"
+      },
+      "policy": "candidates/rules/W605.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b103-set-bad-file-permissions",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B103"
+      },
+      "policy": "candidates/rules/b103.json",
+      "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b105-hardcoded-password-string",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B105"
+      },
+      "policy": "candidates/rules/bandit-B105.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b106-hardcoded-password-funcarg",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B106"
+      },
+      "policy": "candidates/rules/hardcoded-password-function-argument.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b107-hardcoded-password-default",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B107"
+      },
+      "policy": "candidates/rules/hardcoded-password-default.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b201-flask-debug-true",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B201"
+      },
+      "policy": "candidates/rules/b201.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b202-tarfile-unsafe-members",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B202"
+      },
+      "policy": "candidates/rules/b202.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b303-md5",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B303"
+      },
+      "policy": "candidates/rules/bandit-B303.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b304-ciphers",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B304"
+      },
+      "policy": "candidates/rules/b304.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b308-mark-safe",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B308"
+      },
+      "policy": "candidates/rules/b308.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b324-hashlib-insecure-functions",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B324"
+      },
+      "policy": "candidates/rules/b324.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b403-import-pickle",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B403"
+      },
+      "policy": "candidates/rules/b403.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b404-import-subprocess",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B404"
+      },
+      "policy": "candidates/rules/b404.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b412-import-httpoxy",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B412"
+      },
+      "policy": "candidates/rules/b412.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b501-request-with-no-cert-validation",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B501"
+      },
+      "policy": "candidates/rules/b501.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b503-ssl-with-bad-defaults",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B503"
+      },
+      "policy": "candidates/rules/b503.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b504-ssl-with-no-version",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B504"
+      },
+      "policy": "candidates/rules/b504.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b506-yaml-load",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B506"
+      },
+      "policy": "candidates/rules/bandit-b506-yaml-load.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b508-snmp-insecure-version",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B508"
+      },
+      "policy": "candidates/rules/b508.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b509-snmp-weak-cryptography",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B509"
+      },
+      "policy": "candidates/rules/b509.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b601-paramiko-calls",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B601"
+      },
+      "policy": "candidates/rules/b601.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b602-subprocess-popen-with-shell-equals-true",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B602"
+      },
+      "policy": "candidates/rules/bandit-B602.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b603-subprocess-without-shell-equals-true",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B603"
+      },
+      "policy": "candidates/rules/b603.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b604-any-other-function-with-shell-equals-true",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B604"
+      },
+      "policy": "candidates/rules/b604.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b605-start-process-with-a-shell",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B605"
+      },
+      "policy": "candidates/rules/b605.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b607-start-process-with-partial-path",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B607"
+      },
+      "policy": "candidates/rules/b607.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b608-hardcoded-sql-expressions",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B608"
+      },
+      "policy": "candidates/rules/bandit-B608.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b609-linux-commands-wildcard-injection",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B609"
+      },
+      "policy": "candidates/rules/b609.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b611-django-rawsql-used",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B611"
+      },
+      "policy": "candidates/rules/b611.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b612-logging-config-insecure-listen",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B612"
+      },
+      "policy": "candidates/rules/b612.json",
+      "capabilities": [
+        "arguments",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b613-trojansource",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B613"
+      },
+      "policy": "candidates/rules/b613.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b614-pytorch-load",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B614"
+      },
+      "policy": "candidates/rules/b614.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b702-use-of-mako-templates",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B702"
+      },
+      "policy": "candidates/rules/b702.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b703-django-mark-safe",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B703"
+      },
+      "policy": "candidates/rules/b703.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "bandit-b704-markupsafe-markup-xss",
+      "upstream": {
+        "tool": "bandit",
+        "rule": "B704"
+      },
+      "policy": "candidates/rules/b704.json",
+      "capabilities": [
+        "scope"
       ],
       "match": "line+column"
     }

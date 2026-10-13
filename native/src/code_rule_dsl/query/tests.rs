@@ -103,7 +103,7 @@ class C:
     z = sys
 ";
     for rule in [
-        "rules/ruff-f811-redefined-while-unused.json",
+        "candidates/rules/ruff-f811-redefined-while-unused.json",
         "candidates/rules/ruff-f821-undefined-name.json",
         "candidates/rules/ruff-f841-unused-variable.json",
     ] {

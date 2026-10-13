@@ -1,8 +1,8 @@
 # Rerail rule pack: Python
 
-158 code rules for Python, ported from Ruff 0.16.9 (117 rules) and Bandit 1.9.4 (41 tests). Each is scored against
+156 code rules for Python, ported from Ruff 0.16.9 (115 rules) and Bandit 1.9.4 (41 tests). Each is scored against
 the tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
-disagreement declared in `divergences.json` (none today). 32 Ruff rules that Ruff's default selection leaves off ship
+disagreement declared in `divergences.json` (none today). 31 Ruff rules that Ruff's default selection leaves off ship
 off (`"on": false` in `pack.json`).
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
@@ -16,7 +16,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (76 Ruff and Bandit ports): never shipped, never listed in `pack.json`, and not recorded |
+| `candidates/rules/` | Ports still being evaluated (78 Ruff and Bandit ports): never shipped or listed in `pack.json`. 76 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
 
 Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
 install, on CPython 3.13):
@@ -31,5 +31,5 @@ python3.14 upstream/bandit/generate.py corpus <bandit 1.9.4 executable> django=<
 Scoring one rule with every false positive and false negative printed:
 
 ```sh
-node --import tsx conformance/languages/cli.ts --pack python --rule ruff-f811-redefined-while-unused --fixtures
+node --import tsx conformance/languages/cli.ts --pack python --rule ruff-f823-undefined-local --fixtures
 ```

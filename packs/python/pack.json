@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "158 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "156 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -332,13 +332,6 @@
       }
     },
     {
-      "id": "ruff:E731",
-      "document": "rules/E731.json",
-      "title": "Ruff E731: Lambda assignment",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff:E742",
       "document": "rules/E742.json",
       "title": "Ruff E742: Ambiguous class name",
@@ -527,12 +520,6 @@
       "title": "Ruff F722: Forward annotation syntax error",
       "group": "Ruff",
       "on": false
-    },
-    {
-      "id": "python-conformance:ruff-f811-redefined-while-unused",
-      "document": "rules/ruff-f811-redefined-while-unused.json",
-      "title": "Ruff F811: Redefined while unused",
-      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f823-undefined-local",
