@@ -206,5 +206,269 @@
     "line": 4,
     "kind": "not-comparable",
     "evidence": "SQLite-only: the file qualifies and aliases with SQLite's quoted and string-literal names (`\"`'a\"\"\".id`, `'`''a\"'.id`, ```` ```'A\"` ````), recorded under dialect sqlite only (fixtures.cases.json: reference sqlite3 3.50.4, no postgresDialect entry); PostgreSQL and ANSI SQL take no string as a qualifier. The vendored grammar reads the string as a literal and reports a syntax error at 3:8 (the runner's T1 list), so the port, whose negations are unsound under error regions, skips the file."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `FROM tab1 as \"A\"`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 2:14 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `FROM table_a AS \"A\"`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 2:17 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_naked_select_single_quoted_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Line `FROM tab1 as 'A'` writes a name as a single-quoted string, which SQLFluff's ansi dialect reads as a quoted identifier and PostgreSQL rejects (fixtures.cases.json: libpg_query (PostgreSQL 18.6) `accepts: false`, postgresDialect `parses: false`; checked: `sqlfluff lint --dialect postgres` reports only a parse error, 2:11). The engine reads the file as PostgreSQL and the string names nothing, so the port reports nothing; `--dialect ansi` reports RF06 at 2:14."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "Line `INNER JOIN foo.qux 'B'` writes a name as a single-quoted string, which SQLFluff's ansi dialect reads as a quoted identifier and PostgreSQL rejects (fixtures.cases.json: libpg_query (PostgreSQL 18.6) `accepts: false`, postgresDialect `parses: false`; checked: `sqlfluff lint --dialect postgres` reports only a parse error, 5:20). The engine reads the file as PostgreSQL and the string names nothing, so the port reports nothing; `--dialect ansi` reports RF06 at 5:20."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `SELECT \"A\".col1`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 1:8 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `WHERE NOT EXISTS (SELECT TRUE FROM table_b AS b WHERE \"A\".col_4 = b.col_1)`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 3:55 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 9,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_b\" as \"Col_B\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 9:5, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 10,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"COL_C\" as \"col_c\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 10:5 and `--dialect postgres` at 10:16, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 11,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"Col_D\" as \"COL_D\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 11:16 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 12,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_e\" \"Col_e\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 12:5, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 13,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"COL_F\" \"col_f\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 13:5 and `--dialect postgres` at 13:13, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_different_case.sql",
+    "line": 14,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"Col_G\" \"COL_G\"`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 14:13 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_with_quotes_same_case.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_a\" as \"this_alias_is_fine\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 2:5, 2:16, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_with_quotes_same_case.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_b\" as \"col_b\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 3:5, 3:16, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_with_quotes_same_case.sql",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"COL_C\" as \"COL_C\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 4:5, 4:16 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_with_quotes_same_case.sql",
+    "line": 6,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_e\" \"col_e\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 6:5, 6:13, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_fail_with_quotes_same_case.sql",
+    "line": 7,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"COL_F\" \"COL_F\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 7:5, 7:13 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_pass_different_quotes.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"col_b\" as col_b,`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 3:5, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_pass_different_quotes.sql",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `COL_C as \"COL_C\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 4:14 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_pass_different_quotes.sql",
+    "line": 6,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `col_e \"col_e\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 6:11, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/AL09/test_pass_different_quotes.sql",
+    "line": 7,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"COL_F\" COL_F,`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 7:5 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/RF06/test_fail_quoted_column_ansi.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `SELECT d.\"DATE\"`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at 1:10 and `--dialect postgres` at nothing, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "ansi/RF06/test_pass_default.sql",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "Dialect casefold: SQLFluff's RF06 unquotes an identifier only where its dialect's casefold leaves the name unchanged; the ansi dialect folds unquoted names to upper case and PostgreSQL to lower case, and the engine reads every .sql file as PostgreSQL. Line `\"case_specific_reference\",`: checked with sqlfluff 4.4.0, `--dialect ansi` reports RF06 at nothing and `--dialect postgres` at 5:3, which is what the port reports. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `SELECT nih.`userID`` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 1:12; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:11, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `FROM `flight_notification_item_history` AS `nih`` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 2:6, 2:44; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:11, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `SELECT `nih`.`userID`` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 1:8, 1:14; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:8, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `FROM `flight_notification_item_history` AS nih` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 2:6; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:8, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `SELECT `nih`.`userID`` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 1:8, 1:14; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:8, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `FROM `flight_notification_item_history` AS `nih`` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 2:6, 2:44; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:8, 2:1), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL09/test_pass_mysql_quoted_identifiers.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: SQLFluff's mysql dialect has no casefold for unquoted names, so RF06 unquotes the mixed-case alias `\"Email_in_double_quotes\"` and reports it at 2:20; the file is recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). The engine reads every .sql file as PostgreSQL, which folds unquoted names to lower case, so unquoting would change this name and the port reports nothing, as SQLFluff's postgres dialect does on such a name (its RF06 requires the name to equal its lower-cased form)."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL09/test_pass_mysql_quoted_identifiers.sql",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `users.email AS `Email_in_backticks`,` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 4:20; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 4:17), so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/AL09/test_pass_mysql_quoted_identifiers.sql",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: `users.email AS 'Email_in_single_quotes'` uses a string as an alias, which MySQL accepts and SQLFluff's mysql dialect reads as a quoted identifier (RF06 at 5:20); the file is recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). PostgreSQL takes no string alias; the engine reads the file as PostgreSQL and the string names nothing, so the port reports nothing."
+  },
+  {
+    "rule": "sqlfluff-rf06-references-quoting",
+    "source": "fixtures",
+    "path": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "MySQL-only: line `SELECT `f`.`bar` FROM `foo` AS `f`;` quotes names with MySQL's backticks or reads double quotes as MySQL does, recorded under dialect mysql only (fixtures.cases.json: no reference parser, no postgresDialect entry). SQLFluff's mysql dialect reports RF06 at 1:8, 1:12, 1:23, 1:32; the engine reads the file as PostgreSQL, where a backtick quotes nothing (checked: `sqlfluff lint --dialect postgres` reports parse errors at 1:8, 1:18), so the port reports nothing."
   }
 ]
