@@ -59,6 +59,9 @@ const REPORTED: ReadonlyArray<[string, string]> = [
   ["count() with a mode argument", php("for ($i = 0; $i < count($tree, COUNT_RECURSIVE); $i++) {", "    visit($i);", "}")],
   ["a $this property the loop only reads, with no method call on $this", php("for ($i = 0; $i < count($this->items); $i++) {", "    echo format($this->items[$i]);", "}")],
   ["a loop that changes another array than the one it counts", php("for ($i = 1; $i < count($lines) - 1; ++$i) {", "    array_splice($this->lines, $i, 0, [$lines[$i]]);", "}")],
+  ["a value set once in the for initializer, which runs before the loop", php("for ($items = loadItems(), $i = 0; $i < count($items); ++$i) {", "    echo $items[$i];", "}")],
+  ["a loop whose closure assigns its own parameter of the same name", php("for ($i = 0; $i < count($items); ++$i) {", "    $f = function ($items) { $items = []; };", "}")],
+  ["a comment before the argument", php("for ($i = 0; $i < count(/* items to visit */ $items); ++$i) {", "    echo $items[$i];", "}")],
   [
     "an inner loop that only reads, inside an outer loop that changes the value",
     php("for (; strlen($this->currentLine) > $cursor; ++$cursor) {", "    $value .= $this->currentLine[$cursor];", "}"),
@@ -90,6 +93,8 @@ const SILENT: ReadonlyArray<[string, string]> = [
   ["a list rewritten with array_splice", php("for ($i = 0; $i < count($attributes); ++$i) {", "    array_splice($attributes, $i--, 1, $replacement);", "}")],
   ["a $this property changed through a method on $this", php("while ($more && strlen($this->currentLine) <= $indent) {", "    $more = $this->moveToNextLine();", "}")],
   ["a $this property appended through the property", php("while (count($this->stack) > 0) {", "    array_pop($this->stack);", "}")],
+  ["a buffer grown with .= and measured through a named argument", php("while (strlen(string: $buf) < 10) {", "    $buf .= 'x';", "}")],
+  ["a list changed through array_push with a comment before its argument", php("for ($i = 0; $i < count($list); $i++) {", "    array_push(/* grow */ $list, ...expand($list[$i]));", "}")],
 ];
 
 describe(RULE_ID, () => {
@@ -116,7 +121,12 @@ describe(RULE_ID, () => {
   it("names the measured value and the safe rewrite in its message", () => {
     const [finding] = findings(compile(), REPORTED[0]![1]);
     expect(finding?.message).toBe(
-      "The loop condition re-reads the size of $items on every pass, and nothing in the loop changes $items. Assign the size to a variable before the loop and use the variable in the condition.",
+      "The loop condition re-reads the size of $items on every pass, and this rule found no change to $items inside the loop. If nothing changes it, assign the size to a variable before the loop and use the variable in the condition.",
     );
+  });
+
+  it("names the value, not the label, of a named argument", () => {
+    const [finding] = findings(compile(), php("while (strlen(string: $text) > $pos) {", "    $pos++;", "}"));
+    expect(finding?.message).toContain("the size of $text on every pass");
   });
 });

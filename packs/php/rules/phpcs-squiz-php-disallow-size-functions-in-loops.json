@@ -28,16 +28,7 @@
                 }
               },
               {
-                "has": {
-                  "field": "arguments",
-                  "has": {
-                    "kind": "argument",
-                    "nthChild": 1,
-                    "has": {
-                      "pattern": "$V"
-                    }
-                  }
-                }
+                "matches": "first-argument-is-V"
               }
             ],
             "inside": {
@@ -61,92 +52,24 @@
                   "inside": {
                     "stopBy": "end",
                     "field": "condition",
-                    "any": [
+                    "all": [
                       {
-                        "kind": "for_statement"
+                        "any": [
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          }
+                        ]
                       },
                       {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
+                        "matches": "loop-writes-V"
                       }
-                    ],
-                    "has": {
-                      "stopBy": "end",
-                      "any": [
-                        {
-                          "kind": "assignment_expression",
-                          "has": {
-                            "field": "left",
-                            "any": [
-                              {
-                                "pattern": "$V"
-                              },
-                              {
-                                "kind": "subscript_expression",
-                                "has": {
-                                  "nthChild": 1,
-                                  "pattern": "$V"
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "kind": "augmented_assignment_expression",
-                          "has": {
-                            "field": "left",
-                            "any": [
-                              {
-                                "pattern": "$V"
-                              },
-                              {
-                                "kind": "subscript_expression",
-                                "has": {
-                                  "nthChild": 1,
-                                  "pattern": "$V"
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "kind": "function_call_expression",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "function",
-                                "regex": "^\\\\?(array_push|array_unshift|array_pop|array_shift|array_splice)$"
-                              }
-                            },
-                            {
-                              "has": {
-                                "field": "arguments",
-                                "has": {
-                                  "kind": "argument",
-                                  "nthChild": 1,
-                                  "has": {
-                                    "pattern": "$V"
-                                  }
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "kind": "unset_statement",
-                          "has": {
-                            "stopBy": "end",
-                            "kind": "subscript_expression",
-                            "has": {
-                              "nthChild": 1,
-                              "pattern": "$V"
-                            }
-                          }
-                        }
-                      ]
-                    }
+                    ]
                   }
                 },
                 {
@@ -156,8 +79,22 @@
                         "field": "arguments",
                         "has": {
                           "kind": "argument",
-                          "nthChild": 1,
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "kind": "argument"
+                            }
+                          },
                           "has": {
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
                             "kind": "member_access_expression",
                             "has": {
                               "field": "object",
@@ -171,24 +108,265 @@
                       "inside": {
                         "stopBy": "end",
                         "field": "condition",
-                        "any": [
+                        "all": [
                           {
-                            "kind": "for_statement"
+                            "any": [
+                              {
+                                "kind": "for_statement"
+                              },
+                              {
+                                "kind": "while_statement"
+                              },
+                              {
+                                "kind": "do_statement"
+                              }
+                            ]
                           },
                           {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
+                            "matches": "loop-calls-method-on-this"
                           }
-                        ],
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "utils": {
+            "first-argument-is-V": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "kind": "argument",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "kind": "argument"
+                    }
+                  },
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "pattern": "$V"
+                  }
+                }
+              }
+            },
+            "function-boundary": {
+              "any": [
+                {
+                  "kind": "anonymous_function"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "method_declaration"
+                }
+              ]
+            },
+            "V-or-its-element": {
+              "any": [
+                {
+                  "pattern": "$V"
+                },
+                {
+                  "kind": "subscript_expression",
+                  "has": {
+                    "nthChild": 1,
+                    "pattern": "$V"
+                  }
+                }
+              ]
+            },
+            "writes-V": {
+              "any": [
+                {
+                  "kind": "assignment_expression",
+                  "has": {
+                    "field": "left",
+                    "matches": "V-or-its-element"
+                  }
+                },
+                {
+                  "kind": "augmented_assignment_expression",
+                  "has": {
+                    "field": "left",
+                    "matches": "V-or-its-element"
+                  }
+                },
+                {
+                  "kind": "function_call_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "regex": "^\\\\?(array_push|array_unshift|array_pop|array_shift|array_splice)$"
+                      }
+                    },
+                    {
+                      "matches": "first-argument-is-V"
+                    }
+                  ]
+                },
+                {
+                  "kind": "unset_statement",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "subscript_expression",
+                    "has": {
+                      "nthChild": 1,
+                      "pattern": "$V"
+                    }
+                  }
+                }
+              ]
+            },
+            "calls-method-on-this": {
+              "kind": "member_call_expression",
+              "has": {
+                "field": "object",
+                "regex": "^\\$this$"
+              }
+            },
+            "loop-writes-V": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "condition",
+                        "matches": "writes-V"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "condition",
                         "has": {
-                          "stopBy": "end",
-                          "kind": "member_call_expression",
-                          "has": {
-                            "field": "object",
-                            "regex": "^\\$this$"
-                          }
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "writes-V"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "update",
+                        "matches": "writes-V"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "update",
+                        "has": {
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "writes-V"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "body",
+                        "matches": "writes-V"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "body",
+                        "has": {
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "writes-V"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "loop-calls-method-on-this": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "condition",
+                        "matches": "calls-method-on-this"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "condition",
+                        "has": {
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "calls-method-on-this"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "update",
+                        "matches": "calls-method-on-this"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "update",
+                        "has": {
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "calls-method-on-this"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "body",
+                        "matches": "calls-method-on-this"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "body",
+                        "has": {
+                          "stopBy": {
+                            "matches": "function-boundary"
+                          },
+                          "matches": "calls-method-on-this"
                         }
                       }
                     }
@@ -202,7 +380,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Squiz.PHP.DisallowSizeFunctionsInLoops",
-        "message": "The loop condition re-reads the size of $V on every pass, and nothing in the loop changes $V. Assign the size to a variable before the loop and use the variable in the condition.",
+        "message": "The loop condition re-reads the size of $V on every pass, and this rule found no change to $V inside the loop. If nothing changes it, assign the size to a variable before the loop and use the variable in the condition.",
         "suppress": {
           "phpcs": {
             "sniffs": [
