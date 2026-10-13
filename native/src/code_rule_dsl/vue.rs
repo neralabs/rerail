@@ -107,6 +107,29 @@ mod tests {
         }
     }
 
+    /// ast-grep walks a node's later siblings from the first sibling that ends after its start
+    /// (`next_all`): a `v-for` parameter's are the parameters after it, the alias's parentheses
+    /// standing for no bytes (eslint-plugin-vue no-unused-vars invalid-007 to 009: a parameter
+    /// before a read one counts as used, one after it does not).
+    #[test]
+    fn for_parameters_walk_to_their_later_siblings() {
+        for alias in ["(a, b, c) in foo", "a, b, c in foo"] {
+            let source = format!(r#"<template><div v-for="{alias}">{{{{ a }}}}</div></template>"#);
+            let doc = tape(&source);
+            let root = doc.root();
+            let b = root
+                .dfs()
+                .find(|node| node.kind() == "identifier" && node.text() == "b")
+                .expect("the parameter b");
+            let later: Vec<String> = b
+                .next_all()
+                .filter(|node| node.is_named())
+                .map(|node| node.text().into_owned())
+                .collect();
+            assert_eq!(later, ["c"], "{alias}");
+        }
+    }
+
     #[test]
     fn parses_two_scripts_fixture() {
         let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
