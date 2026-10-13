@@ -14,6 +14,8 @@ pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
 pub(crate) mod python;
+#[allow(dead_code)]
+pub(crate) mod sql;
 pub(crate) mod usage;
 
 pub(crate) use lookup::Lookup;

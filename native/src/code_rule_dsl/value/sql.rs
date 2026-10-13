@@ -88,6 +88,12 @@ fn float_literal(s: &str) -> Option<Value> {
 }
 
 fn quoted_body(s: &str, quote: char) -> Option<(String, usize)> {
+    scan_quoted(s, quote, false)
+}
+
+/// The body of the `quote`-delimited text at the start of `s` (doubled quotes collapsed)
+/// and the bytes used; with `backslashes`, a backslash keeps the next character from ending it.
+fn scan_quoted(s: &str, quote: char, backslashes: bool) -> Option<(String, usize)> {
     if !s.starts_with(quote) {
         return None;
     }
@@ -105,22 +111,27 @@ fn quoted_body(s: &str, quote: char) -> Option<(String, usize)> {
             }
             return Some((out, quote.len_utf8() + offset + quote.len_utf8()));
         }
+        if backslashes && c == '\\' {
+            out.push(c);
+            out.push(iter.next()?.1);
+            continue;
+        }
         out.push(c);
     }
     None
 }
 
 fn e_string(s: &str) -> Option<String> {
-    let (raw, used) = quoted_body(s, '\'')?;
+    let (raw, used) = scan_quoted(s, '\'', true)?;
     if used != s.len() {
         return None;
     }
     let mut out = String::new();
-    let b = raw.as_bytes();
+    let b: Vec<char> = raw.chars().collect();
     let mut i = 0;
     while i < b.len() {
-        if b[i] != b'\\' {
-            out.push(b[i] as char);
+        if b[i] != '\\' {
+            out.push(b[i]);
             i += 1;
             continue;
         }
@@ -128,7 +139,7 @@ fn e_string(s: &str) -> Option<String> {
         if i == b.len() {
             return None;
         }
-        let c = b[i] as char;
+        let c = b[i];
         i += 1;
         let mapped = match c {
             'b' => '\u{8}',
@@ -144,11 +155,11 @@ fn e_string(s: &str) -> Option<String> {
             out.push(mapped);
             continue;
         }
-        if c.is_ascii_digit() && c < '8' {
-            let mut v = (c as u32) - 48;
+        if ('0'..='7').contains(&c) {
+            let mut v = c as u32 - '0' as u32;
             for _ in 0..2 {
-                if i < b.len() && (b[i] as char).is_ascii_digit() && b[i] < b'8' {
-                    v = v * 8 + (b[i] - b'0') as u32;
+                if i < b.len() && ('0'..='7').contains(&b[i]) {
+                    v = v * 8 + (b[i] as u32 - '0' as u32);
                     i += 1;
                 } else {
                     break;
@@ -157,21 +168,22 @@ fn e_string(s: &str) -> Option<String> {
             out.push(char::from_u32(v)?);
         } else if c == 'x' {
             let n = (1..=2)
-                .find(|n| i + n <= b.len() && b[i..i + n].iter().all(u8::is_ascii_hexdigit))
+                .rev()
+                .find(|n| i + n <= b.len() && b[i..i + n].iter().all(char::is_ascii_hexdigit))
                 .unwrap_or(0);
             if n == 0 {
                 return None;
             }
-            let v = u32::from_str_radix(std::str::from_utf8(&b[i..i + n]).ok()?, 16).ok()?;
-            out.push(char::from_u32(v)?);
+            let digits: String = b[i..i + n].iter().collect();
+            out.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
             i += n;
         } else if c == 'u' || c == 'U' {
             let n = if c == 'u' { 4 } else { 8 };
-            if i + n > b.len() || !b[i..i + n].iter().all(u8::is_ascii_hexdigit) {
+            if i + n > b.len() || !b[i..i + n].iter().all(char::is_ascii_hexdigit) {
                 return None;
             }
-            let v = u32::from_str_radix(std::str::from_utf8(&b[i..i + n]).ok()?, 16).ok()?;
-            out.push(char::from_u32(v)?);
+            let digits: String = b[i..i + n].iter().collect();
+            out.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
             i += n;
         } else {
             out.push(c);
@@ -514,35 +526,180 @@ mod tests {
         assert_eq!(checked, 27);
     }
 
+    /// Byte offset of the 1-based (`line`, `column` in code points) position.
+    fn byte_offset(source: &str, line: u64, column: u64) -> usize {
+        let mut start = 0;
+        for _ in 1..line {
+            start += source[start..].find('\n').expect("line exists") + 1;
+        }
+        let rest = &source[start..];
+        let skip = rest
+            .char_indices()
+            .nth(column as usize - 1)
+            .map_or(rest.len(), |(i, _)| i);
+        start + skip
+    }
+
+    /// The values `decode` may give for an oracle constant: a number written as an
+    /// integer may be read as a float (`5.`), as PostgreSQL's own text drops the point.
+    fn expected_constant(value: &Json) -> Vec<Value> {
+        match value[0].as_str().unwrap() {
+            "number" => {
+                let text = value[1].as_str().unwrap();
+                match text.parse::<BigInt>() {
+                    Ok(n) if n.to_i64().is_some() => {
+                        let float = text.parse::<f64>().unwrap();
+                        vec![Value::Int(n), Value::Float(float)]
+                    }
+                    Ok(_) => vec![Value::Unknown],
+                    Err(_) => vec![Value::Float(text.parse::<f64>().unwrap())],
+                }
+            }
+            "string" => vec![Value::Str(value[1].as_str().unwrap().to_string())],
+            "bool" => vec![Value::Bool(value[1].as_bool().unwrap())],
+            "null" => vec![Value::None],
+            "bits" => vec![Value::Unknown],
+            kind => panic!("unexpected constant kind {kind}"),
+        }
+    }
+
+    /// Oracle items the tree cannot match: (line, column, reason).
+    const POSTGRES_EXCEPTIONS: &[(u64, u64, &str)] = &[
+        (
+            6,
+            36,
+            "the grammar parses `ONLY u` as table `ONLY` aliased `u`",
+        ),
+        (
+            6,
+            63,
+            "the grammar parses `LATERAL (SELECT z FROM q)` as a call, `z` an alias",
+        ),
+        (
+            18,
+            25,
+            "PostgreSQL locates `N'nat'` at its string; the literal starts at the `N`",
+        ),
+        (
+            19,
+            45,
+            "PostgreSQL locates `INTERVAL '1 day'` at its string; the grammar has no literal there",
+        ),
+        (
+            19,
+            59,
+            "PostgreSQL locates `DATE '2020-01-01'` at its string; the literal starts at `DATE`",
+        ),
+        (
+            19,
+            77,
+            "PostgreSQL locates `int '3'` at its string; the literal starts at `int`",
+        ),
+    ];
+
     #[test]
-    fn postgres_constants_and_names_cover_oracle() {
-        let root = oracle_root("sql/scope/postgres.expected.json");
-        let mut constants = 0;
-        let mut names = 0;
-        for statement in root["statements"].as_array().unwrap() {
+    fn postgres_oracle_by_position() {
+        use crate::code_rule_dsl::value::sql::test_grammar;
+        let source = std::fs::read_to_string(
+            std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+                .join("sql/scope/postgres.sql"),
+        )
+        .expect("postgres.sql");
+        let grep = test_grammar::parse(&source);
+        let nodes = test_grammar::nodes(&grep.root());
+        let oracle = oracle_root("sql/scope/postgres.expected.json");
+        let excepted = |line: u64, column: u64| {
+            POSTGRES_EXCEPTIONS
+                .iter()
+                .any(|&(l, c, _)| l == line && c == column)
+        };
+        let mut problems: Vec<String> = Vec::new();
+        let (mut constants, mut names) = (0, 0);
+        let (mut total, mut visited, mut skipped) = (0, 0, 0);
+        for statement in oracle["statements"].as_array().unwrap() {
             for item in statement["constants"].as_array().unwrap() {
-                let kind = item["value"][0].as_str().unwrap();
-                let line = item["line"].as_u64().unwrap();
-                let column = item["column"].as_u64().unwrap();
-                assert!(line > 0 && column > 0);
-                assert!(matches!(
-                    kind,
-                    "number" | "string" | "bits" | "bool" | "null"
-                ));
-                constants += 1;
+                let (line, column) = (
+                    item["line"].as_u64().unwrap(),
+                    item["column"].as_u64().unwrap(),
+                );
+                total += 1;
+                if excepted(line, column) {
+                    skipped += 1;
+                    continue;
+                }
+                visited += 1;
+                let at = byte_offset(&source, line, column);
+                let Some(node) = nodes
+                    .iter()
+                    .find(|n| n.kind() == "literal" && n.range().start == at)
+                else {
+                    problems.push(format!("no literal at {line}:{column}"));
+                    continue;
+                };
+                let acceptable = expected_constant(&item["value"]);
+                let got = decode(node);
+                if acceptable.contains(&got) {
+                    constants += 1;
+                } else {
+                    problems.push(format!(
+                        "{line}:{column} {}: {got:?} not in {acceptable:?}",
+                        node.text()
+                    ));
+                }
             }
             for category in ["relations", "columns"] {
                 for item in statement[category].as_array().unwrap() {
-                    for part in item["value"].as_array().unwrap() {
-                        if part.as_str() != Some("*") {
-                            names += 1;
+                    let (line, column) = (
+                        item["line"].as_u64().unwrap(),
+                        item["column"].as_u64().unwrap(),
+                    );
+                    total += 1;
+                    if excepted(line, column) {
+                        skipped += 1;
+                        continue;
+                    }
+                    visited += 1;
+                    let at = byte_offset(&source, line, column);
+                    let parts: Vec<&str> = item["value"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|p| p.as_str().unwrap())
+                        .filter(|p| *p != "*")
+                        .collect();
+                    // The reference's identifiers in order: a `field`'s qualifier
+                    // (an `object_reference`) followed by its own name.
+                    let Some(reference) = nodes.iter().find(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "object_reference" | "field" | "all_fields"
+                        ) && n.range().start == at
+                    }) else {
+                        // `*` alone has no reference node.
+                        if !parts.is_empty() {
+                            problems.push(format!("no reference at {line}:{column}"));
                         }
+                        continue;
+                    };
+                    let found: Vec<String> = reference
+                        .dfs()
+                        .filter(|n| n.kind() == "identifier")
+                        .map(|n| node_name(&n).expect("identifier name"))
+                        .collect();
+                    if found == parts {
+                        names += parts.len();
+                    } else {
+                        problems.push(format!(
+                            "{category} {line}:{column}: {found:?} != {parts:?}"
+                        ));
                     }
                 }
             }
         }
-        assert!(constants > 0);
-        assert!(names > 0);
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+        assert!(constants > 0 && names > 0);
+        assert_eq!(skipped, POSTGRES_EXCEPTIONS.len());
+        assert_eq!(visited + skipped, total);
     }
 
     #[test]
@@ -569,5 +726,54 @@ mod tests {
         assert_eq!(name("\"x\"\"y\""), Some("x\"y".into()));
         assert_eq!(name("`x`"), None);
         assert_eq!(name("\"\""), None);
+    }
+}
+
+/// The vendored SQL grammar (`native/grammars/tree-sitter-sql`, built by `build.rs`) as an
+/// ast-grep language, for the SQL modules' tree-level oracle tests until the registry's
+/// `GrammarDialect::Sql` reads it.
+#[cfg(test)]
+pub(crate) mod test_grammar {
+    use ast_grep_core::language::Language;
+    use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
+    use ast_grep_core::tree_sitter::{LanguageExt, StrDoc, TSLanguage};
+    use ast_grep_core::{AstGrep, Doc, Node};
+
+    unsafe extern "C" {
+        fn tree_sitter_sql() -> *const ();
+    }
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct Sql;
+
+    impl Language for Sql {
+        fn kind_to_id(&self, kind: &str) -> u16 {
+            self.get_ts_language().id_for_node_kind(kind, true)
+        }
+        fn field_to_id(&self, field: &str) -> Option<u16> {
+            self.get_ts_language()
+                .field_id_for_name(field)
+                .map(|id| id.get())
+        }
+        fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
+            builder.build(|src| StrDoc::try_new(src, *self))
+        }
+    }
+
+    impl LanguageExt for Sql {
+        fn get_ts_language(&self) -> TSLanguage {
+            // SAFETY: `tree_sitter_sql` is the generated parser's language function.
+            unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_sql) }.into()
+        }
+    }
+
+    /// `source` parsed with the SQL grammar.
+    pub(crate) fn parse(source: &str) -> AstGrep<StrDoc<Sql>> {
+        Sql.ast_grep(source)
+    }
+
+    /// Every node of `root`'s tree, in document order.
+    pub(crate) fn nodes<'r, D: Doc>(root: &Node<'r, D>) -> Vec<Node<'r, D>> {
+        root.dfs().collect()
     }
 }
