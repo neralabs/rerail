@@ -462,9 +462,9 @@ clauses:
       const compiled = compileJson([astForbid({ pattern: "print($ARG)" })]);
       const result = evaluate(compiled, snapshot([{ language: "python", path: "broken.py", source: "print(" }]));
 
-      // The only call overlaps the error region: no witness, and the file is marked partial.
+      // The whole file is an error region, so no AST clause read it: no witness, and the clause did not run.
       expect(result).toMatchObject({ violations: [], status: "failed" });
-      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "source-partial", path: "broken.py" })]);
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "source-incomplete", path: "broken.py" })]);
     });
   });
 
@@ -2192,7 +2192,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       nativeWorkspace.addCodeRule(compiled);
       try {
         const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
-        const broken = { language: "typescript", path: "broken.ts", source: "debugger;\nfunction f( {\n  debugger;\n" };
+        const broken = { language: "typescript", path: "broken.ts", source: "debugger; // read: the error region is the function below\nfunction f( {\n  debugger;\n" };
         const actual = await applyWorkspace(nativeWorkspace, 1, [clean, broken]);
         expect(actual.violations.map(item => [item.clauseId, item.path, item.span?.startLine])).toEqual([
           ["debugger", "broken.ts", 0],
@@ -2219,6 +2219,45 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+
+    it("reads nothing from a file whose error regions cover half of it or more, sound clause or not", async () => {
+      // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end: 95% of the bytes.
+      const prose = { language: "typescript", path: "notes.ts", source: `debugger;\n${"Install it: run the script, then open the page.\n".repeat(5)}` };
+      const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
+      const nativeWorkspace = workspace();
+      const compiled = compileJson([
+        tsClause("debugger", { kind: "debugger_statement" }),
+        tsClause("unguarded", { all: [{ kind: "debugger_statement" }, { not: { follows: { kind: "import_statement", stopBy: "end" } } }] }),
+        { id: "regex", forbid: { regex: { pattern: "debugger", source: "file.content" } }, violation: violation("REGEX") },
+      ]);
+      nativeWorkspace.addCodeRule(compiled);
+      try {
+        const actual = await applyWorkspace(nativeWorkspace, 1, [clean, prose]);
+        // The stateless path fails a whole query that cannot read some file, so compare it on that file alone.
+        const full = evaluate(compiled, snapshot([prose] as never));
+        // Regex clauses read the bytes and still report; no AST clause reports from the unread file.
+        expect(actual.violations.map(item => [item.clauseId, item.path])).toEqual([
+          ["debugger", "clean.ts"],
+          ["unguarded", "clean.ts"],
+          ["regex", "clean.ts"],
+          ["regex", "notes.ts"],
+        ]);
+        expect(full.violations).toEqual(actual.violations.filter(item => item.path === "notes.ts"));
+        const unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+        expect(actual.failures.map(({ clauseId, code, path, message }) => ({ clauseId, code, path, message })).sort((left, right) => left.clauseId.localeCompare(right.clauseId)))
+          .toEqual([
+            { clauseId: "debugger", code: "source-incomplete", path: "notes.ts", message: unread },
+            { clauseId: "unguarded", code: "source-incomplete", path: "notes.ts", message: unread },
+          ]);
+        expect(identities(full.failures)).toEqual(identities(actual.failures));
+
+        const repaired = await applyWorkspace(nativeWorkspace, 2, [{ ...prose, source: "debugger;\n" }]);
+        expect(repaired).toMatchObject({ status: "completed", failures: [] });
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
+
     it("continues capture enumeration after an eslint-suppressed binding", async () => {
       const nativeWorkspace = workspace();
       const compiled = compileJson([{

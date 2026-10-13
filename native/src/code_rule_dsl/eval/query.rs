@@ -10,7 +10,7 @@ use crate::code_rule_dsl::model::{
     CodeRuleScope, FileInput, Limits, Metrics, Query, RegexSource, Snapshot, ViolationSpec,
 };
 use crate::code_rule_dsl::query::select_when::{self, LeafRow, Leaves, Plan};
-use crate::code_rule_dsl::soundness::SyntaxErrors;
+use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading};
 use crate::code_rule_dsl::violations::{self, Captures, Span, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
@@ -415,10 +415,15 @@ impl<'a> Leaf<'a> {
                 let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
                 let mut partial = None;
                 if !errors.is_empty() {
+                    // A file the parser did not read is not read by any clause, sound or not.
+                    let SyntaxReading::Partial(message) = errors.reading(&lines, file.source.len())
+                    else {
+                        return Ok(FileStep::Failed);
+                    };
                     if !grammar.sound_under_errors {
                         return Ok(FileStep::Failed);
                     }
-                    partial = Some(errors.partial_message(&lines));
+                    partial = Some(message);
                 }
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
@@ -603,15 +608,23 @@ pub(super) fn query_failure_path<'a>(
     scope: &CodeRuleScope,
 ) -> Option<&'a str> {
     match query {
+        // The first file the query did not read: one with syntax errors where the clause is
+        // unsound under them, or one the parser did not read at all.
         Query::Ast { matchers, .. } => snapshot
             .files
             .iter()
             .find(|file| {
                 scope.matches(&file.path)
                     && grammar_matcher(matchers, file).is_some_and(|grammar| {
-                        !grammar.sound_under_errors
-                            && file_tape(grammar.language, file)
-                                .is_ok_and(|(doc, _)| !doc.syntax_error_ranges().is_empty())
+                        file_tape(grammar.language, file).is_ok_and(|(doc, lines)| {
+                            let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
+                            !errors.is_empty()
+                                && (!grammar.sound_under_errors
+                                    || matches!(
+                                        errors.reading(&lines, file.source.len()),
+                                        SyntaxReading::Unread(_)
+                                    ))
+                        })
                     })
             })
             .map(|file| file.path.as_str()),

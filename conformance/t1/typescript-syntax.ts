@@ -49,7 +49,8 @@ const codeRule = (id: string, rule: unknown): string =>
     clauses: [{ id: "check", forbid: { ast: { language: "typescript", rule } }, violation: { anchor: "witness.span", code: id, message: id } }],
   });
 // A probe sound under syntax errors: ERROR nodes are never witnesses, so it reports nothing, and its `source-partial`
-// failure locates the file's first syntax error. The second reports every `!` the grammar puts over an expression
+// failure (or, where the error regions cover half the file or more, its `source-incomplete` "file did not parse: …")
+// locates the file's first syntax error. The second reports every `!` the grammar puts over an expression
 // TypeScript's parser never asserts as a whole (it parses `!` inside the member chain: parseMemberExpressionRest).
 // The third reports every call whose callee the grammar reads as a prefix-operator expression: TypeScript binds a
 // prefix operator looser than a call, so `!f<T>(x)` is `!(f<T>(x))`, never `(!f)<T>(x)`.
@@ -83,7 +84,8 @@ const elapsedMs = Math.round(performance.now() - started);
 const byPath = new Map(files.map(file => [file.path, file]));
 const lineOf = (path: string, line: number): string => (byPath.get(path)?.source.split(/\r\n|[\r\n\u2028\u2029]/u)[line - 1] ?? "").trim().slice(0, 160);
 const syntaxErrors = failures
-  .filter(failure => failure.ruleId === "syntax-probe" && failure.code === "source-partial" && failure.path !== undefined)
+  .filter(failure => failure.ruleId === "syntax-probe" && failure.path !== undefined
+    && (failure.code === "source-partial" || (failure.code === "source-incomplete" && failure.message.startsWith("file did not parse: "))))
   .map(failure => {
     const match = /first at line (\d+), column (\d+)$/u.exec(failure.message);
     const line = Number(match?.[1] ?? 0);
@@ -100,8 +102,9 @@ const sites = (policyId: string) =>
     });
 const nonNull = sites("non-null-over");
 const prefixCallee = sites("prefix-callee");
-// Every clause is sound under syntax errors, so `source-partial` is expected on every syntax-error file.
-const otherFailures = failures.filter(failure => failure.code !== "source-partial");
+// Every clause is sound under syntax errors, so `source-partial` is expected on every syntax-error file, and a file the
+// grammar did not read fails every clause as unread.
+const otherFailures = failures.filter(failure => failure.code !== "source-partial" && !failure.message.startsWith("file did not parse: "));
 const report = {
   files: files.length,
   bytes: files.reduce((total, file) => total + Buffer.byteLength(file.source), 0),
