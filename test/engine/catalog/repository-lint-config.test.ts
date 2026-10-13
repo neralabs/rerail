@@ -27,7 +27,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
 
 const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../packs/${id}`, import.meta.url).pathname);
 
-const HOOKS_RULE = "hooks:rules-of-hooks";
+const HOOKS_RULE = "react-hooks-rules-of-hooks";
 
 /**
  * A pack with one port of eslint-plugin-react-hooks' rules-of-hooks, which oxlint also implements: the javascript
@@ -36,7 +36,7 @@ const HOOKS_RULE = "hooks:rules-of-hooks";
 async function hooksPack(): Promise<string> {
   const directory = join(realpathSync(await mkdtemp(join(tmpdir(), "rerail-hooks-pack-"))), "hooks");
   mkdirSync(join(directory, "rules"), { recursive: true });
-  const document = JSON.parse(readFileSync(join(packDirectory("javascript"), "rules", "no-console.json"), "utf8")) as {
+  const document = JSON.parse(readFileSync(join(packDirectory("javascript"), "rules", "eslint-no-console.json"), "utf8")) as {
     id: string;
     clauses: { violation?: { suppress?: unknown } }[];
   };
@@ -46,7 +46,7 @@ async function hooksPack(): Promise<string> {
       clause.violation.suppress = { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] } };
     }
   }
-  writeFileSync(join(directory, "rules", "rules-of-hooks.json"), JSON.stringify(document));
+  writeFileSync(join(directory, "rules", `${HOOKS_RULE}.json`), JSON.stringify(document));
   writeFileSync(join(directory, "pack.json"), JSON.stringify({
     format: "rerail.rule-pack/v1",
     id: "hooks",
@@ -54,7 +54,7 @@ async function hooksPack(): Promise<string> {
     category: "framework",
     covers: "React hooks.",
     reason: "React.",
-    rules: [{ id: HOOKS_RULE, document: "rules/rules-of-hooks.json", title: "Rules of hooks", group: "React" }],
+    rules: [{ id: HOOKS_RULE, document: `rules/${HOOKS_RULE}.json`, title: "Rules of hooks", group: "React" }],
   }));
   return directory;
 }
@@ -220,7 +220,7 @@ describe("proposeLintConfigSettings", () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } }" });
     expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
       settings: [{
-        ruleId: "typescript-eslint:consistent-type-definitions",
+        ruleId: "typescript-eslint-consistent-type-definitions",
         on: null,
         config: { option: "type" },
         because: ".eslintrc.json: \"@typescript-eslint/consistent-type-definitions\": [\"error\",\"type\"]",
@@ -232,24 +232,24 @@ describe("proposeLintConfigSettings", () => {
   it("turns off the javascript pack's no-console for \"no-console\": \"off\", and only for packs being set up", async () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": \"off\" } }" });
     expect(readRepositoryLintConfig(root, bundle, ["javascript"]).settings).toEqual([
-      { ruleId: "eslint:no-console", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"off\"" },
+      { ruleId: "eslint-no-console", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"off\"" },
     ]);
     expect(readRepositoryLintConfig(root, bundle, ["typescript"]).settings).toEqual([]);
   });
 
   it("maps an option object onto the options the port declares, and skips one it cannot map with a note", async () => {
     const mapped = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"warn\", { \"allow\": [\"warn\", \"error\"] }] } }" });
-    expect(readRepositoryLintConfig(mapped, bundle, ["javascript"]).settings).toMatchObject([{ ruleId: "eslint:no-console", on: null, config: { allow: ["warn", "error"] } }]);
+    expect(readRepositoryLintConfig(mapped, bundle, ["javascript"]).settings).toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["warn", "error"] } }]);
 
     const wrongValue = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"error\", { \"allow\": \"warn\" }] } }" });
     expect(readRepositoryLintConfig(wrongValue, bundle, ["javascript"])).toEqual({
       settings: [],
-      notes: ["eslint:no-console: option not mapped (config.allow: must be an array); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"allow\":\"warn\"}]."],
+      notes: ["eslint-no-console: option not mapped (config.allow: must be an array); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"allow\":\"warn\"}]."],
     });
 
     const unknownOption = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"error\", { \"bogus\": true }] } }" });
     expect(readRepositoryLintConfig(unknownOption, bundle, ["javascript"]).notes).toEqual([
-      "eslint:no-console: option not mapped (bogus is not an option the port declares); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"bogus\":true}].",
+      "eslint-no-console: option not mapped (bogus is not an option the port declares); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"bogus\":true}].",
     ]);
   });
 
@@ -276,17 +276,17 @@ describe("proposeLintConfigSettings", () => {
     expect(await oxlintOff({ "custom/no-console": "off" }, ["javascript"])).toEqual([]);
     expect(await oxlintOff({ "custom/no-console": "off", "eslint/no-console": "error" }, ["javascript"])).toEqual([]);
     expect(await oxlintOff({ "react/no-console": "off" }, ["javascript"])).toEqual([]);
-    expect(await oxlintOff({ "eslint/no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
-    expect(await oxlintOff({ "no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
+    expect(await oxlintOff({ "eslint/no-console": "off" }, ["javascript"])).toEqual(["eslint-no-console"]);
+    expect(await oxlintOff({ "no-console": "off" }, ["javascript"])).toEqual(["eslint-no-console"]);
   });
 
   it("takes typescript-eslint's prefixes and its extension rules as oxlint does", async () => {
     for (const key of ["typescript/ban-tslint-comment", "@typescript-eslint/ban-tslint-comment", "ban-tslint-comment"]) {
-      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint:ban-tslint-comment"]);
+      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint-ban-tslint-comment"]);
     }
     // oxlint runs its ESLint default-param-last for typescript-eslint's; every key names that one rule.
     for (const key of ["default-param-last", "typescript/default-param-last", "@typescript-eslint/default-param-last"]) {
-      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint:default-param-last"]);
+      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint-default-param-last"]);
     }
     // A bare no-namespace is the import plugin's, the first of three plugins with a rule of that name.
     expect(await oxlintOff({ "no-namespace": "off" }, ["typescript"])).toEqual([]);
@@ -302,7 +302,7 @@ describe("proposeLintConfigSettings", () => {
 
   it("applies a rule's last .oxlintrc.json key, as oxlint does", async () => {
     expect(await oxlintOff({ "no-console": "off", "eslint/no-console": "error" }, ["javascript"])).toEqual([]);
-    expect(await oxlintOff({ "eslint/no-console": "error", "no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
+    expect(await oxlintOff({ "eslint/no-console": "error", "no-console": "off" }, ["javascript"])).toEqual(["eslint-no-console"]);
   });
 
   it("starts a rule off when one config turns it off and another keeps it on", async () => {
@@ -320,8 +320,8 @@ describe("proposeLintConfigSettings", () => {
     const root = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E7\"]\n", "eslint.config.ts": "export default [];\n" });
     expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({
       settings: [
-        { ruleId: "python-conformance:ruff-e711-none-comparison", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
-        { ruleId: "python-conformance:ruff-e722-bare-except", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
+        { ruleId: "ruff-e711-none-comparison", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
+        { ruleId: "ruff-e722-bare-except", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
       ],
       // No pack being set up ports an ESLint rule, so the flat config is not worth a note.
       notes: [],

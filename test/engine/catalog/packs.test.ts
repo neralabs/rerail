@@ -366,7 +366,7 @@ describe("validatePack", () => {
   it("passes a pack whose ESLint port honours ESLint's suppression comments", async () => {
     const validation = await validatePack(join(FIXTURES, "eslint-port"), { corpora: false });
     expect(failing(validation)).toEqual({});
-    expect(validation.rules).toEqual([{ id: "eslint-port:no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
+    expect(validation.rules).toEqual([{ id: "no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
   });
 
   /** The eslint-port pack with its port's `suppress` removed, scored on a fixture with no directive to honour. */
@@ -390,7 +390,7 @@ describe("validatePack", () => {
         "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
       ],
     });
-    expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "eslint-port:no-debugger", status: "failed" }]);
+    expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "no-debugger", status: "failed" }]);
   });
 
   it("passes a port without suppress that conformance.json exempts with a reason", async () => {
@@ -433,7 +433,7 @@ describe("validatePack", () => {
   it("passes a pack whose rule is a conversation rule, its examples without a path", async () => {
     const validation = await validatePack(join(FIXTURES, "conversation"), { corpora: false });
     expect(failing(validation)).toEqual({});
-    expect(validation.rules).toEqual([{ id: "conversation:no-force-push", document: "rules/no-force-push.json", status: "ok" }]);
+    expect(validation.rules).toEqual([{ id: "no-force-push", document: "rules/no-force-push.json", status: "ok" }]);
   });
 
   it("fails a conversation rule that is not valid", async () => {
@@ -442,7 +442,7 @@ describe("validatePack", () => {
       { corpora: false },
     );
     expect(failing(validation)).toEqual({
-      rules: [expect.stringMatching(/^conversation:no-force-push: rules\/no-force-push\.json is neither a code rule \(it has no format\) nor a valid conversation rule: rule\.action /u)],
+      rules: [expect.stringMatching(/^no-force-push: rules\/no-force-push\.json is neither a code rule \(it has no format\) nor a valid conversation rule: rule\.action /u)],
     });
   });
 
@@ -459,7 +459,7 @@ describe("validatePack", () => {
       ),
       { corpora: false },
     );
-    expect(failing(validation)).toEqual({ examples: ["conversation:no-force-push: the caught example has a path; a conversation rule's examples take none"] });
+    expect(failing(validation)).toEqual({ examples: ["no-force-push: the caught example has a path; a conversation rule's examples take none"] });
   });
 });
 

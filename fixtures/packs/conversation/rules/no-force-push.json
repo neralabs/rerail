@@ -1,5 +1,5 @@
 {
-  "id": "conversation:no-force-push",
+  "id": "no-force-push",
   "mode": "steer",
   "match": {
     "field": "input.command",

@@ -7,7 +7,7 @@
   "reason": "fits any repository",
   "rules": [
     {
-      "id": "conversation:no-force-push",
+      "id": "no-force-push",
       "document": "rules/no-force-push.json",
       "title": "Do not force-push",
       "group": "Git",

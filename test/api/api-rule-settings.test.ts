@@ -21,7 +21,7 @@ import {
   upsertLibraryRule,
 } from "../../src/engine/index.js";
 
-const RULE = "typescript-eslint:consistent-type-definitions";
+const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript"), join(PACKAGE_ROOT, "packs", "python")]);
 
 /** The API over a machine whose bundle is the TypeScript and Python packs, whose rules declare options. */
@@ -106,7 +106,7 @@ describe("rule settings: suppressions and config", () => {
   // A value the option's declaration allows can still make a clause the engine refuses: F841's dummy-variable-rgx
   // is any string, but `[` is no regex. The update is refused and the stored setting stays as it was.
   it("refuses a config the engine cannot compile, keeping the setting before it", async () => {
-    const f841 = { kind: "rule", id: "python-conformance:ruff-f841-unused-variable" };
+    const f841 = { kind: "rule", id: "ruff-f841-unused-variable" };
     expect(await setting({ config: { "dummy-variable-rgx": "^_$" } }, f841)).toMatchObject({ status: 200 });
     const refused = await setting({ config: { "dummy-variable-rgx": "[" } }, f841);
     expect(refused.status).toBe(400);

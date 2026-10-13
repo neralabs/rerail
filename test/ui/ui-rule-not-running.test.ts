@@ -4,18 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRerailApi } from "../../src/api/http.js";
-import { operations } from "../../src/api/operations.js";
-import { DatabaseApiStores } from "../../src/api/stores.js";
-import { readBundledCatalog } from "../../src/engine/catalog/bundled-rules.js";
-import type { BundledCatalog } from "../../src/engine/catalog/repository-model.js";
-import { PACKAGE_ROOT } from "../../src/engine/package-root.js";
-import { recordCheckout, ruleSettings, setUpRepository } from "../../src/engine/index.js";
+import { createRerailApi, DatabaseApiStores, operations } from "../../src/api/index.js";
+import { type BundledCatalog, PACKAGE_ROOT, readBundledCatalog, recordCheckout, ruleSettings, setUpRepository } from "../../src/engine/index.js";
 import { toStoredRules } from "../../ui/poll.js";
 import { isRunning, onText, optionsText } from "../../ui/derive.js";
 import { data, matches, runningCount, summary, ui } from "../../ui/state.js";
 
-const RULE = "typescript-eslint:consistent-type-definitions";
+const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
 
 /** The API over a machine whose bundle is the TypeScript pack, whose rules declare options. */

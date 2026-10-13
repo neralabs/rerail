@@ -342,7 +342,7 @@ describe("CheckoutCodeRuleRouter", () => {
 });
 
 describe("repository settings that reach evaluation", () => {
-  const RULE = "typescript-eslint:consistent-type-definitions";
+  const RULE = "typescript-eslint-consistent-type-definitions";
   const CODE = "@typescript-eslint/consistent-type-definitions";
   const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
 

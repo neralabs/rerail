@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-port:no-debugger",
+  "id": "no-debugger",
   "revision": 1,
   "mode": "steer",
   "description": "Port of ESLint's `no-debugger`: every debugger statement.",

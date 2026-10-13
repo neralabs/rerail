@@ -485,8 +485,8 @@ function rulesOf(fixture: Fixture, ruleIds: readonly string[]): Record<string, {
   }
 }
 
-const TYPE_DEFINITIONS = "typescript-eslint:consistent-type-definitions";
-const TSLINT_COMMENT = "typescript-eslint:ban-tslint-comment";
+const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
+const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
 
 describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("names the settings it takes from .eslintrc.json on the confirm screen, and writes them on start", async () => {

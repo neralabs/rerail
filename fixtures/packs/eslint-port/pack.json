@@ -17,7 +17,7 @@
   },
   "rules": [
     {
-      "id": "eslint-port:no-debugger",
+      "id": "no-debugger",
       "document": "rules/no-debugger.json",
       "title": "ESLint no-debugger: Unexpected 'debugger' statement",
       "group": "ESLint"
