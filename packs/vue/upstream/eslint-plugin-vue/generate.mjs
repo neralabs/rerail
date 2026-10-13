@@ -103,12 +103,12 @@ function lint(code, path) {
 const strip = ({ utf16Column, ...finding }) => finding;
 const byPosition = (a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.column - b.column || a.rule.localeCompare(b.rule);
 
+// The parser stack's pins (eslint, vue-eslint-parser, @typescript-eslint/parser, typescript) are the pack's
+// `conformance.json` `tools`; a recording names its tool alone, as `recordingSchema` requires.
 function write(file, source, findings) {
   const out = {
     tool: "eslint-plugin-vue",
     version: TOOLS["eslint-plugin-vue"],
-    versions: Object.fromEntries(["eslint", "eslint-plugin-vue", "vue-eslint-parser", "@typescript-eslint/parser", "typescript"]
-      .map(name => [name, TOOLS[name]])),
     source,
     findings: findings.map(strip).sort(byPosition),
   };
