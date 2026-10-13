@@ -1162,4 +1162,230 @@ mod tests {
             ]
         );
     }
+
+    /// A type parameter may carry the variance annotations `in`, `out` or `in out`, after `const`,
+    /// and `out` alone still names a parameter (Patch 4 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn variance_annotations_parse() {
+        let source = "interface A<in T> {}\ntype B<out T> = T;\nclass C<in out T> {}\n\
+                      class D<const in T> {}\ntype F<out T> = () => T;\ntype G<out> = out;\n\
+                      function f<out>(x: out) {}\ntype H<in out> = out;\n";
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let names = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "type_parameter")
+                .map(|node| {
+                    let name = node.field("name").expect("a type parameter has a name");
+                    format!("{}:{}", name.kind(), name.text())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                [
+                    "type_identifier:T",
+                    "type_identifier:T",
+                    "type_identifier:T",
+                    "type_identifier:T",
+                    "type_identifier:T",
+                    "type_identifier:out",
+                    "type_identifier:out",
+                    "type_identifier:out",
+                ],
+                "{dialect:?}"
+            );
+            // TS1029: `in` must precede `out`.
+            let reversed = dialect.ast_grep("interface X<out in T> {}");
+            assert!(reversed.root().get_inner_node().has_error(), "{dialect:?}");
+        }
+    }
+
+    /// A function type's parameter may be named by a type keyword, as TypeScript reads
+    /// `(any) => void`; `(string)` alone stays a parenthesized type, and `void` and `null`, which
+    /// cannot name a parameter, stay errors (Patch 5 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn keyword_named_function_type_parameters_parse() {
+        // The first parameter's function and parameter kinds, with its pattern's kind and text.
+        let first_parameter = |dialect: GrammarDialect, source: &str| {
+            let root = dialect.ast_grep(source);
+            assert!(
+                !root.root().get_inner_node().has_error(),
+                "{dialect:?}: {source}"
+            );
+            let parameters = root
+                .root()
+                .dfs()
+                .find(|node| node.kind() == "formal_parameters")
+                .unwrap_or_else(|| panic!("{dialect:?}: {source} has parameters"));
+            let function = parameters.parent().expect("parameters have a parent");
+            let parameter = parameters
+                .children()
+                .find(|child| child.is_named())
+                .unwrap_or_else(|| panic!("{dialect:?}: {source} has a parameter"));
+            let pattern = parameter
+                .field("pattern")
+                .expect("a parameter has a pattern");
+            format!(
+                "{} {} {}:{}",
+                function.kind(),
+                parameter.kind(),
+                pattern.kind(),
+                pattern.text()
+            )
+        };
+        let keywords = [
+            "any", "unknown", "number", "string", "boolean", "never", "object", "symbol", "bigint",
+        ];
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            for keyword in keywords {
+                assert_eq!(
+                    first_parameter(dialect, &format!("type T = ({keyword}) => void;")),
+                    format!("function_type required_parameter identifier:{keyword}"),
+                    "{dialect:?}"
+                );
+            }
+            // As the value side's `(undefined) => 1` reads it.
+            assert_eq!(
+                first_parameter(dialect, "type T = (undefined) => void;"),
+                "function_type required_parameter undefined:undefined",
+                "{dialect:?}"
+            );
+            for (source, expected) in [
+                (
+                    "let r: Record<number, (any) => void>;",
+                    "function_type required_parameter identifier:any",
+                ),
+                (
+                    "type T = (unknown, x) => void;",
+                    "function_type required_parameter identifier:unknown",
+                ),
+                (
+                    "type T = (never, x) => void;",
+                    "function_type required_parameter identifier:never",
+                ),
+                (
+                    "interface I { n: (string) => void }",
+                    "function_type required_parameter identifier:string",
+                ),
+                (
+                    "type T = (foo) => void;",
+                    "function_type required_parameter identifier:foo",
+                ),
+                (
+                    "type T = (any, x) => void;",
+                    "function_type required_parameter identifier:any",
+                ),
+                (
+                    "type T = (any?) => void;",
+                    "function_type optional_parameter identifier:any",
+                ),
+                (
+                    "type T = (a: any) => void;",
+                    "function_type required_parameter identifier:a",
+                ),
+                (
+                    "const f = (any) => 1;",
+                    "arrow_function required_parameter identifier:any",
+                ),
+                (
+                    "type T = new (any) => X;",
+                    "constructor_type required_parameter identifier:any",
+                ),
+            ] {
+                assert_eq!(first_parameter(dialect, source), expected, "{dialect:?}");
+            }
+            let parenthesized = dialect.ast_grep("type T = (string);");
+            let value = parenthesized
+                .root()
+                .dfs()
+                .find(|node| node.kind() == "type_alias_declaration")
+                .and_then(|node| node.field("value"))
+                .expect("an alias has a value");
+            assert_eq!(value.kind(), "parenthesized_type", "{dialect:?}");
+            assert_eq!(
+                value
+                    .child(1)
+                    .map(|child| child.kind().into_owned())
+                    .as_deref(),
+                Some("predefined_type"),
+                "{dialect:?}"
+            );
+            for source in ["type T = (void) => void;", "type T = (null) => void;"] {
+                let root = dialect.ast_grep(source);
+                assert!(
+                    root.root().get_inner_node().has_error(),
+                    "{dialect:?}: {source}"
+                );
+            }
+        }
+    }
+
+    /// After a type, a member named `in` or `instanceof` on the next line ends the member before it,
+    /// as one named by an identifier that starts with `in` (`in_point`, `in2`) now does everywhere,
+    /// while `a⏎instanceof B` stays one binary expression (Patch 6 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn members_named_in_or_instanceof_after_a_newline_parse() {
+        let source = "type O = {\n  a: typeof b\n  instanceof: typeof c\n  in?: string\n};\n\
+                      interface I {\n  a: number\n  in: string\n  in_point: number\n  in2: number\n  \
+                      in$x: number\n  instanceof_x: number\n  instanceof?(): void\n}\n\
+                      class C {\n  a: number\n  in: string\n}\n";
+        for dialect in [GrammarDialect::TypeScript, GrammarDialect::Tsx] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "property_signature" | "method_signature" | "public_field_definition"
+                    )
+                })
+                .map(|node| {
+                    node.field("name")
+                        .expect("a member has a name")
+                        .text()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "a",
+                    "instanceof",
+                    "in",
+                    "a",
+                    "in",
+                    "in_point",
+                    "in2",
+                    "in$x",
+                    "instanceof_x",
+                    "instanceof",
+                    "a",
+                    "in",
+                ],
+                "{dialect:?}"
+            );
+            for expression in ["a\ninstanceof B", "a\ninstanceof (B)", "a\nin b"] {
+                let root = dialect.ast_grep(format!("{expression};\n"));
+                assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+                let binaries = root
+                    .root()
+                    .dfs()
+                    .filter(|node| node.kind() == "binary_expression")
+                    .map(|node| node.text().into_owned())
+                    .collect::<Vec<_>>();
+                assert_eq!(binaries, [expression], "{dialect:?}");
+            }
+            // TypeScript reads `b in` as the start of a binary expression here.
+            let initialized = dialect.ast_grep("class C {\n  a = b\n  in: number\n}\n");
+            assert!(
+                initialized.root().get_inner_node().has_error(),
+                "{dialect:?}"
+            );
+        }
+    }
 }

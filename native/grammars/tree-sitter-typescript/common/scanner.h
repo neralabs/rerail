@@ -79,6 +79,17 @@ static bool scan_whitespace_and_comments(TSLexer *lexer, bool *scanned_comment) 
     }
 }
 
+static bool is_identifier_char(int32_t c) { return iswalnum(c) || c == '_' || c == '$'; }
+
+// After `in` or `instanceof` at the start of a line where no binary operator can follow: whether a `:` or `?`
+// follows, so the keyword names a member (`in: T`, `instanceof?(): T`) that no expression continues with.
+static bool scan_member_name_end(TSLexer *lexer) {
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+        skip(lexer);
+    }
+    return lexer->lookahead == ':' || lexer->lookahead == '?';
+}
+
 static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
     lexer->result_symbol = AUTOMATIC_SEMICOLON;
     lexer->mark_end(lexer);
@@ -163,7 +174,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             return lexer->lookahead != '=';
 
             // Don't insert a semicolon before `in` or `instanceof`, but do insert one
-            // before an identifier.
+            // before an identifier, such as `in_point`, or before a member named `in` or `instanceof` after a type.
         case 'i':
             skip(lexer);
 
@@ -172,8 +183,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             }
             skip(lexer);
 
-            if (!iswalpha(lexer->lookahead)) {
-                return false;
+            if (!is_identifier_char(lexer->lookahead)) {
+                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
             }
 
             for (unsigned i = 0; i < 8; i++) {
@@ -183,8 +194,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
                 skip(lexer);
             }
 
-            if (!iswalpha(lexer->lookahead)) {
-                return false;
+            if (!is_identifier_char(lexer->lookahead)) {
+                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
             }
             break;
     }

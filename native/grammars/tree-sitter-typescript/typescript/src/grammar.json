@@ -7223,6 +7223,14 @@
         },
         {
           "type": "STRING",
+          "value": "unknown"
+        },
+        {
+          "type": "STRING",
+          "value": "never"
+        },
+        {
+          "type": "STRING",
           "value": "new"
         },
         {
@@ -10676,11 +10684,63 @@
           ]
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "in"
+                },
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": "in"
+                        },
+                        {
+                          "type": "BLANK"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "out"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "FIELD",
           "name": "name",
           "content": {
-            "type": "SYMBOL",
-            "name": "_type_identifier"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_type_identifier"
+              },
+              {
+                "type": "ALIAS",
+                "content": {
+                  "type": "STRING",
+                  "value": "out"
+                },
+                "named": true,
+                "value": "type_identifier"
+              }
+            ]
           }
         },
         {
@@ -11337,6 +11397,24 @@
       "primary_type"
     ],
     [
+      "literal_type",
+      "pattern"
+    ],
+    [
+      "primary_expression",
+      "pattern",
+      "literal_type"
+    ],
+    [
+      "predefined_type",
+      "pattern"
+    ],
+    [
+      "primary_expression",
+      "pattern",
+      "predefined_type"
+    ],
+    [
       "optional_tuple_parameter",
       "primary_type"
     ],
@@ -11936,26 +12014,6 @@
       {
         "type": "SYMBOL",
         "name": "decorator"
-      }
-    ],
-    [
-      {
-        "type": "SYMBOL",
-        "name": "literal_type"
-      },
-      {
-        "type": "SYMBOL",
-        "name": "pattern"
-      }
-    ],
-    [
-      {
-        "type": "SYMBOL",
-        "name": "predefined_type"
-      },
-      {
-        "type": "SYMBOL",
-        "name": "pattern"
       }
     ],
     [

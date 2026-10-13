@@ -113,9 +113,11 @@ fn persisted_image_round_trips_without_parsing() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
+    // `out`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them.
     assert_eq!(
         digest,
-        "6fe4a84d7213cb437802c2ed6f023ddc6f8a3c6531db28e16115908c3a4481a7"
+        "2ffdbb1df1bee7ceb39e3a5e1562e7679b19d1f58a4749ba414c8ffcec2ea5cf"
     );
 }
 
