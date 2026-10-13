@@ -6,7 +6,7 @@ import type { RulesDashboardScope } from "../api/session-contracts.js";
 import { CODING_AGENT_NAMES } from "../setup/coding-agents.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { HARNESSES, type Harness } from "../setup/harness-registration.js";
-import type { CheckoutContext, RepositoryKey, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { CheckoutContext, RepositoryKey, RepositoryStartState, RuleSetting } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { listRepositories, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import {
@@ -20,9 +20,11 @@ import {
   workspaceStartState,
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
-import { recordSetUp, removeAttachment } from "../engine/catalog/rule-configuration.js";
+import { recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import { loadRulePacks, recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
-import { ruleAttachments } from "../engine/storage/schema.js";
+import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
+import { ruleAttachments, ruleSettings } from "../engine/storage/schema.js";
 import { offerSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import {
   CONFIRM_PACKS_ANSWERS,
@@ -290,6 +292,23 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
   });
 }
 
+/**
+ * The rule settings the repository's own lint config gives the rules of packs `packIds`, owned by the repository,
+ * read from its files now. None for a rule the repository has a setting of its own for (one the person made in the
+ * dashboard's review stands).
+ */
+function lintConfigSettings(database: RerailDatabase, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
+  const own = new Set(database.select({ targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
+    eq(ruleSettings.ownerKind, "repository"),
+    eq(ruleSettings.ownerId, repositoryKey),
+    eq(ruleSettings.folder, ""),
+    eq(ruleSettings.targetKind, "rule"),
+  )).all().map(row => row.targetId));
+  return readRepositoryLintConfig(root, loadBundledCatalog(), packIds).settings
+    .filter(setting => !own.has(setting.ruleId))
+    .map(({ ruleId, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: ruleId, on, mode: null, config }));
+}
+
 /** Names of the other set-up repositories Rerail is on in: as a whole, or in one of their checkouts. */
 function otherStartedRepositories(database: RerailDatabase, repositoryKey: RepositoryKey): string[] {
   return listRepositories(database)
@@ -359,15 +378,18 @@ async function connect(run: Run, repository: Repository | undefined, chosen?: re
  * Set the repository up and start Rerail in it: every checkout without its own stop. A repository that is not set up adds `packs`, each at
  * its folder (none for "I'll pick rule packs myself"). One the dashboard's review set up keeps the packs kept on
  * there, or drops every pack for "I'll pick rule packs myself": until Rerail starts, only the person in the
- * dashboard adds packs to it. Returns how many rule packs are added, or undefined when the repository was set up
- * otherwise, or started (or stopped) already.
+ * dashboard adds packs to it. Either way the packs' rules take the settings the repository's lint config gives them
+ * (none with "I'll pick rule packs myself"). Returns how many rule packs are added, or undefined when the repository
+ * was set up otherwise, or started (or stopped) already.
  */
 function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecommendation[] | "none"): number | undefined {
   return withCheckout(run, repository, (database, checkout) => {
     const { repositoryKey } = checkout;
     if (!checkoutStatus(database, checkout).setUp) {
+      const chosen = packs === "none" ? [] : packs.map(({ pack, folder }) => ({ packId: pack.id, folder }));
       recordSetUp(database, repositoryKey, {
-        packs: packs === "none" ? [] : packs.map(({ pack, folder }) => ({ packId: pack.id, folder })),
+        packs: chosen,
+        settings: lintConfigSettings(database, repository.root, repositoryKey, chosen.map(({ packId }) => packId)),
       });
     } else if (!awaitingStartAfterReview(database, repositoryKey)) {
       return undefined;
@@ -375,6 +397,9 @@ function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecomm
       for (const { packId, folder } of attachedPacks(database, repositoryKey)) {
         removeAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
       }
+    } else {
+      const kept = [...new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId))];
+      for (const setting of lintConfigSettings(database, repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
     }
     startSetUpRepository(database, checkout, run.request.repository === true);
     return new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId)).size;
@@ -436,6 +461,7 @@ function packsInput(run: Run, repository: Repository, recommendations: readonly 
     agentsFound: codingAgents(connecting),
     agentsNotFound: codingAgents(HARNESSES.filter(id => !found.includes(id) && !connecting.includes(id))),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+    lintConfig: readRepositoryLintConfig(repository.root, loadBundledCatalog(), recommendations.map(({ pack }) => pack.id)),
   };
 }
 

@@ -57,6 +57,8 @@ person says yes.
    count, why it matched and the folder it would be added in, with the coding
    agents found and not found. A repository that matches no rule pack is
    offered none; it can still start, and add rule packs in the dashboard later.
+   The screen also lists the rules of those packs that will start off or
+   with options taken from the repository's own lint config (see below).
 4. **Confirm** — start, review the packs in the dashboard first (the review
    link opens `#rule-packs?review=1` scoped to the repository and checkout,
    and set-up asks again rather than waiting on the browser), name the coding
@@ -109,6 +111,35 @@ again: it shows the summary, or says Rerail is stopped there. Rerail stays off
 in every other repository until you start it there (see "Starting and stopping
 Rerail" below); starting a repository that is not set up runs steps 2 to 6
 for it.
+
+**The repository's own lint config.** So Rerail does not steer against what a
+repository deliberately configured, set-up reads its lint config at the
+repository root, as data, and gives the rules of the packs it adds matching
+settings, owned by the repository. Nothing is executed or imported.
+
+| Linter | Read | Not read |
+|---|---|---|
+| ESLint | the config ESLint itself would use: `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`; JSON with comments and trailing commas; its own top-level `rules` | flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), which ESLint prefers over every `.eslintrc`; `.eslintrc.{js,cjs,yaml,yml}`; `extends`, `overrides`, plugins' presets |
+| oxlint | `.oxlintrc.json`, top-level `rules` (a key matches by its name after the plugin prefix, as oxlint does) | `extends`, `overrides`, `categories`; rule options |
+| Ruff | `ignore` and `extend-ignore` (top level or `[lint]`) of the file Ruff uses: `.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]` | `select`/`extend-select` (a more specific `select` that re-enables an ignored code is not seen), `per-file-ignores`, `extend`; Bandit config |
+
+A port matches an upstream rule through the names its document honours
+suppression comments for (`violation.suppress`): an ESLint key in
+`eslint.rules`, an oxlint key in `oxlint.rules`, a Ruff selector that selects
+one of its `noqa.codes` (`E7` selects `E711`, `E` does not select `ERA001`,
+`ALL` selects every code). A rule set to `"off"`/`0` (oxlint also `"allow"`),
+or ignored by Ruff, starts off; when one config turns a rule off and another
+keeps it on, it starts off and the screen says so. ESLint options become the
+port's `config` when every value lands on an option its document declares:
+the first positional option is `option`, the second `option2`, an option
+object's keys keep their names and a nested object's keys are
+`outer.inner`, so `["error", "type"]` for
+`@typescript-eslint/consistent-type-definitions` gives `option = "type"`.
+Options that do not map, or that the document rejects, are left at the port's
+defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
+symlink is not read, and a rule the person already set in the dashboard's
+review keeps that setting. "I'll pick rule packs myself" takes nothing from
+the lint config.
 
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding

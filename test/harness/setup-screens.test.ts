@@ -175,6 +175,22 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(row.indexOf("the reason")).toBe(header.indexOf("Why"));
   });
 
+  it("lists the rules the lint config starts off or configures, then what it did not read, counting past eight lines", () => {
+    const settings = Array.from({ length: 8 }, (_, index) => ({ ruleId: `eslint:rule-${index}`, on: false as const, config: null, because: `.eslintrc.json: "rule-${index}": "off"` }));
+    const text = renderRecommendedPacks({
+      ...PACKS,
+      lintConfig: {
+        settings: [{ ruleId: "typescript-eslint:consistent-type-definitions", on: null, config: { option: "type" }, because: ".eslintrc.json: \"x\": [\"error\",\"type\"]" }, ...settings],
+        notes: ["eslint.config.ts is not read: Rerail never runs your config."],
+      },
+    }, "agent");
+    expect(text).toContain("  From your lint config (read as data, never run):\n    typescript-eslint:consistent-type-definitions starts with option = \"type\"  .eslintrc.json: \"x\": [\"error\",\"type\"]\n    eslint:rule-0 starts off  .eslintrc.json: \"rule-0\": \"off\"");
+    expect(text).toContain("    eslint:rule-5 starts off");
+    expect(text).not.toContain("eslint:rule-6");
+    expect(text).toContain("    …and 3 more.");
+    expect(renderRecommendedPacks({ ...PACKS, lintConfig: { settings: [], notes: [] } }, "agent")).not.toContain("lint config");
+  });
+
   it("echoes the yes in the terminal only", () => {
     expect(stripAnsi(renderRecommendedPacks(PACKS, "terminal"))).toContain("● You said yes. Rerail read acme-web.");
     expect(renderRecommendedPacks(PACKS, "agent")).not.toContain("You said yes");
