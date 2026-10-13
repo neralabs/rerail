@@ -2,7 +2,7 @@
 
 Upstream: [jsx-eslint/eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react/tree/2c98b83c451a4297edf1787d9a616e50687e27e8) at tag `v7.37.5` (commit `2c98b83c451a4297edf1787d9a616e50687e27e8`). License: MIT (Copyright (c) 2014 Yannick Croissant); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (`candidates/conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
+The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
 Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`.
 
@@ -14,6 +14,7 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/tests/lib/rules/jsx-no-duplicate-props.js` | `tests/lib/rules/jsx-no-duplicate-props.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/jsx-no-target-blank.js` | `tests/lib/rules/jsx-no-target-blank.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/jsx-no-undef.js` | `tests/lib/rules/jsx-no-undef.js` | verbatim |
+| `upstream/eslint-plugin-react/tests/lib/rules/no-array-index-key.js` | `tests/lib/rules/no-array-index-key.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/no-children-prop.js` | `tests/lib/rules/no-children-prop.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/no-danger.js` | `tests/lib/rules/no-danger.js` | verbatim |
 | `upstream/eslint-plugin-react/tests/lib/rules/no-danger-with-children.js` | `tests/lib/rules/no-danger-with-children.js` | verbatim |
@@ -312,6 +313,77 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/fixtures/jsx-no-undef/invalid-003.jsx` | `tests/lib/rules/jsx-no-undef.js invalid[3]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react/fixtures/jsx-no-undef/invalid-004.jsx` | `tests/lib/rules/jsx-no-undef.js invalid[4]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react/fixtures/jsx-no-undef/invalid-005.jsx` | `tests/lib/rules/jsx-no-undef.js invalid[5]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-000.jsx` | `tests/lib/rules/no-array-index-key.js valid[0]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-001.jsx` | `tests/lib/rules/no-array-index-key.js valid[1]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-002.jsx` | `tests/lib/rules/no-array-index-key.js valid[2]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-003.jsx` | `tests/lib/rules/no-array-index-key.js valid[3]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-004.jsx` | `tests/lib/rules/no-array-index-key.js valid[4]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-005.jsx` | `tests/lib/rules/no-array-index-key.js valid[5]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-006.jsx` | `tests/lib/rules/no-array-index-key.js valid[6]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-007.jsx` | `tests/lib/rules/no-array-index-key.js valid[7]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-008.jsx` | `tests/lib/rules/no-array-index-key.js valid[8]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-009.jsx` | `tests/lib/rules/no-array-index-key.js valid[9]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-010.jsx` | `tests/lib/rules/no-array-index-key.js valid[10]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-011.jsx` | `tests/lib/rules/no-array-index-key.js valid[11]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-012.jsx` | `tests/lib/rules/no-array-index-key.js valid[12]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-013.jsx` | `tests/lib/rules/no-array-index-key.js valid[13]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-014.jsx` | `tests/lib/rules/no-array-index-key.js valid[14]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-015.jsx` | `tests/lib/rules/no-array-index-key.js valid[15]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-016.jsx` | `tests/lib/rules/no-array-index-key.js valid[16]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-017.jsx` | `tests/lib/rules/no-array-index-key.js valid[17]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-018.jsx` | `tests/lib/rules/no-array-index-key.js valid[18]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-019.jsx` | `tests/lib/rules/no-array-index-key.js valid[19]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-020.jsx` | `tests/lib/rules/no-array-index-key.js valid[20]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-021.jsx` | `tests/lib/rules/no-array-index-key.js valid[21]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-022.jsx` | `tests/lib/rules/no-array-index-key.js valid[22]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-023.jsx` | `tests/lib/rules/no-array-index-key.js valid[23]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-024.jsx` | `tests/lib/rules/no-array-index-key.js valid[24]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-025.jsx` | `tests/lib/rules/no-array-index-key.js valid[25]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-026.jsx` | `tests/lib/rules/no-array-index-key.js valid[26]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-027.jsx` | `tests/lib/rules/no-array-index-key.js valid[27]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-028.jsx` | `tests/lib/rules/no-array-index-key.js valid[28]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/valid-029.jsx` | `tests/lib/rules/no-array-index-key.js valid[29]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-000.jsx` | `tests/lib/rules/no-array-index-key.js invalid[0]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-001.jsx` | `tests/lib/rules/no-array-index-key.js invalid[1]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-002.jsx` | `tests/lib/rules/no-array-index-key.js invalid[2]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-003.jsx` | `tests/lib/rules/no-array-index-key.js invalid[3]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-004.jsx` | `tests/lib/rules/no-array-index-key.js invalid[4]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-005.jsx` | `tests/lib/rules/no-array-index-key.js invalid[5]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-006.jsx` | `tests/lib/rules/no-array-index-key.js invalid[6]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-007.jsx` | `tests/lib/rules/no-array-index-key.js invalid[7]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-008.jsx` | `tests/lib/rules/no-array-index-key.js invalid[8]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-009.jsx` | `tests/lib/rules/no-array-index-key.js invalid[9]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-010.jsx` | `tests/lib/rules/no-array-index-key.js invalid[10]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-011.jsx` | `tests/lib/rules/no-array-index-key.js invalid[11]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-012.jsx` | `tests/lib/rules/no-array-index-key.js invalid[12]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-013.jsx` | `tests/lib/rules/no-array-index-key.js invalid[13]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-014.jsx` | `tests/lib/rules/no-array-index-key.js invalid[14]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-015.jsx` | `tests/lib/rules/no-array-index-key.js invalid[15]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-016.jsx` | `tests/lib/rules/no-array-index-key.js invalid[16]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-017.jsx` | `tests/lib/rules/no-array-index-key.js invalid[17]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-018.jsx` | `tests/lib/rules/no-array-index-key.js invalid[18]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-019.jsx` | `tests/lib/rules/no-array-index-key.js invalid[19]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-020.jsx` | `tests/lib/rules/no-array-index-key.js invalid[20]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-021.jsx` | `tests/lib/rules/no-array-index-key.js invalid[21]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-022.jsx` | `tests/lib/rules/no-array-index-key.js invalid[22]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-023.jsx` | `tests/lib/rules/no-array-index-key.js invalid[23]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-024.jsx` | `tests/lib/rules/no-array-index-key.js invalid[24]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-025.jsx` | `tests/lib/rules/no-array-index-key.js invalid[25]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-026.jsx` | `tests/lib/rules/no-array-index-key.js invalid[26]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-027.jsx` | `tests/lib/rules/no-array-index-key.js invalid[27]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-028.jsx` | `tests/lib/rules/no-array-index-key.js invalid[28]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-029.jsx` | `tests/lib/rules/no-array-index-key.js invalid[29]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-030.jsx` | `tests/lib/rules/no-array-index-key.js invalid[30]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-031.jsx` | `tests/lib/rules/no-array-index-key.js invalid[31]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-032.jsx` | `tests/lib/rules/no-array-index-key.js invalid[32]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-033.jsx` | `tests/lib/rules/no-array-index-key.js invalid[33]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-034.jsx` | `tests/lib/rules/no-array-index-key.js invalid[34]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-035.jsx` | `tests/lib/rules/no-array-index-key.js invalid[35]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-036.jsx` | `tests/lib/rules/no-array-index-key.js invalid[36]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-037.jsx` | `tests/lib/rules/no-array-index-key.js invalid[37]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-038.jsx` | `tests/lib/rules/no-array-index-key.js invalid[38]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-039.jsx` | `tests/lib/rules/no-array-index-key.js invalid[39]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react/fixtures/no-array-index-key/invalid-040.jsx` | `tests/lib/rules/no-array-index-key.js invalid[40]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react/fixtures/no-children-prop/valid-000.jsx` | `tests/lib/rules/no-children-prop.js valid[0]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react/fixtures/no-children-prop/valid-001.jsx` | `tests/lib/rules/no-children-prop.js valid[1]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react/fixtures/no-children-prop/valid-002.jsx` | `tests/lib/rules/no-children-prop.js valid[2]` | extracted (its `code`, verbatim) |

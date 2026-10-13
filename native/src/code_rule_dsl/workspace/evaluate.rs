@@ -10,6 +10,7 @@ use super::{
 };
 #[cfg(test)]
 use super::{TEST_STORAGE_PREFETCH_FAILURE, pass_deadline_at_test_phase, pause_at_test_phase};
+use crate::code_rule_dsl::blade::forte::tree::parse_tree;
 use crate::code_rule_dsl::budget::{
     MatchBudget, matcher_budget_exhausted, matcher_budget_observed,
 };
@@ -623,7 +624,30 @@ pub(super) fn encode_tape(
 ) -> Result<std::result::Result<(), LocalFailure>> {
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
-    let image = {
+    let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
+    let image = if language == GrammarDialect::Blade {
+        // Forte's step budget bounds the parse; closing the workspace or the matcher budget
+        // interrupts the view and the encoding.
+        #[cfg(feature = "code-rule-profile")]
+        let _native_owner = profile::NativeOwner::start();
+        #[cfg(feature = "code-rule-profile")]
+        let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
+        let parse_started = Instant::now();
+        let tree = parse_tree(file.input.source.as_bytes());
+        #[cfg(feature = "code-rule-profile")]
+        drop(parse_timer);
+        metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
+        #[cfg(test)]
+        pause_at_test_phase("native-tree", &file.input.source);
+        #[cfg(feature = "code-rule-profile")]
+        let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
+        Some(tape::TapeImage::encode_blade(
+            &tree,
+            grammar,
+            &file.input.source,
+            &interrupted,
+        ))
+    } else {
         #[cfg(feature = "code-rule-profile")]
         let _native_owner = profile::NativeOwner::start();
         let mut parser = Parser::new();
@@ -633,7 +657,7 @@ pub(super) fn encode_tape(
         let bytes = file.input.source.as_bytes();
         let mut input = |offset: usize, _: Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
-            if closed.load(Ordering::Relaxed) || matcher_budget_exhausted() {
+            if interrupted() {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(())
@@ -663,7 +687,7 @@ pub(super) fn encode_tape(
                     tree.root_node(),
                     grammar,
                     &file.input.source,
-                    &matcher_budget_exhausted,
+                    &interrupted,
                 );
                 #[cfg(feature = "code-rule-profile")]
                 drop(_encode_timer);

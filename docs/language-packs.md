@@ -61,7 +61,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
   "status": "supported",
   "family": "blade",
   "dialects": [
-    { "label": "blade", "variant": "Blade", "suffixes": [".blade.php"], "parser": "tree-sitter", "grammar": "vendored:blade", "tapeTag": 8 }
+    { "label": "blade", "variant": "Blade", "suffixes": [".blade.php"], "parser": "forte", "grammar": "native:forte", "tapeTag": 8 }
   ],
   "capabilities": { "scope": "supported", "value": "supported", "arguments": "supported", "calls": "supported", "formatArgs": "supported" },
   "suppressions": [],
@@ -75,7 +75,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser`, its `grammar` (`vendored:<name>`, built by `build.rs`, or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)), its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`) |
@@ -127,7 +127,7 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
-The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/react/`, `packs/node/` or
+The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/node/` or
 `packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
 example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
 
