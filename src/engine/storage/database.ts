@@ -118,10 +118,10 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
  *
  * A read-only open never writes its own connection. Its readers query this build's shape, so when an existing file
  * still lacks steps that keep the floor (columns and tables older builds read correctly, the upgrade a new version
- * makes when it first runs), a writable open runs them first; a reader that cannot write the file (permissions)
- * reads it as it is. A step that raises the floor waits for this version's writer: an older Rerail still running
- * would misread the file after it. A read-only open of a file whose creator has not committed the schema yet sees
- * no table at all.
+ * makes when it first runs), a writable open runs them first. A reader that cannot write the file (permissions) is
+ * refused with the reason, since this build's readers would fail on the shape it has. A step that raises the floor
+ * waits for this version's writer: an older Rerail still running would misread the file after it. A read-only open
+ * of a file whose creator has not committed the schema yet sees no table at all.
  */
 export function openRerailDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
   const readonly = options.readonly === true;
@@ -129,11 +129,16 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
   const supported = schemaVersionOf(migrations);
   const database = openChecked(path, readonly, migrations, supported);
   if (!readonly || !upgradesBeforeReading(database, migrations)) return database;
+  const pending = pendingMigrations(database, migrations).map(migration => migration.id);
   database.$client.close();
   try {
     openChecked(path, false, migrations, supported).$client.close();
-  } catch {
-    // A file this process cannot write is read in the shape it has.
+  } catch (error) {
+    throw new Error(
+      `${path} needs this Rerail's schema steps (${pending.join(", ")}) before it can be read, and this process cannot `
+        + `write it: ${error instanceof Error ? error.message : String(error)}. Run a rerail command as the file's owner, `
+        + "or make it writable for this user.",
+    );
   }
   return openChecked(path, true, migrations, supported);
 }
