@@ -1,6 +1,8 @@
 //! TypeScript values (tree-sitter-typescript 0.23): literals as ECMAScript reads them, strings as
 //! UTF-16 code units, and operators folded, in the sense of eslint-utils' `getStaticValue`.
 
+use crate::code_rule_dsl::language::Family;
+
 #[rustfmt::skip]
 #[path = "ecma/builtins.generated.rs"]
 pub(crate) mod builtins;
@@ -10,7 +12,7 @@ mod destructure;
 mod entities;
 pub(crate) mod ops;
 
-use super::{ContainerKind, Context, Lang, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
+use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
 pub(crate) use destructure::destructured;
 
@@ -85,7 +87,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             ) else {
                 return Value::Unknown;
             };
-            match decode(&test, context).truthy(Lang::Js) {
+            match decode(&test, context).truthy(Family::Ecma) {
                 Some(true) => decode(&consequence, context),
                 Some(false) => decode(&alternative, context),
                 None => Value::Unknown,
@@ -229,8 +231,8 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         return Value::Unknown;
     }
     let decided = match operator.as_ref() {
-        "||" => left.truthy(Lang::Js),
-        "&&" => left.truthy(Lang::Js).map(|truthy| !truthy),
+        "||" => left.truthy(Family::Ecma),
+        "&&" => left.truthy(Family::Ecma).map(|truthy| !truthy),
         "??" => Some(!matches!(left, Value::None | Value::Undefined)),
         // `in` and `instanceof` are not folded.
         "in" | "instanceof" => return Value::Unknown,

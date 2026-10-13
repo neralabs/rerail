@@ -1,6 +1,8 @@
 //! ECMAScript's conversions between numbers and strings, exactly: `Number::toString`,
 //! StringToNumber, StringToBigInt, ToInt32 and ToUint32; and ESLint's static property names.
 
+use crate::code_rule_dsl::language::Family;
+
 use super::ecma::{cooked, number, operand, ops, string_node};
 use super::{BigInt, Value};
 use ast_grep_core::{Doc, Node};
@@ -160,7 +162,7 @@ fn equal_literal_value<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> Optio
     let (left, right) = (value(left)?, value(right)?);
     Some(match (&left, &right) {
         (Value::Float(left), Value::Float(right)) => left == right,
-        _ => left.equals(&right, super::Lang::Js)?,
+        _ => left.equals(&right, Family::Ecma)?,
     })
 }
 
