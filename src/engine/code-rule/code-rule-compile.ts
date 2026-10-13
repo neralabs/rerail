@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import { loadNativeBinding, type NativeBinding } from "../native/native.js";
-import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "./code-rule-language-support.js";
-import type { CodeRule } from "./code-rule-schema.js";
+import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf, type CodeRuleLanguageNotSupported } from "./code-rule-language-support.js";
+import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
 
 /** `language-not-supported`: the rule names a language or capability the engine does not read yet; anything else is `invalid-rule`. */
@@ -44,6 +44,9 @@ function capabilitiesJson(): string {
   return bundledCapabilities;
 }
 
+/** Why a document that JSON cannot represent (a cycle, a function) is no code rule. */
+export const NOT_JSON_REPRESENTABLE = "the document is not JSON representable";
+
 /**
  * Compile a schema-valid code rule exactly as the live catalog will (same source text, same bundled capabilities),
  * so a rule the engine rejects never reaches the catalog and fails every later refresh. Code-rule evaluation has
@@ -52,7 +55,7 @@ function capabilitiesJson(): string {
  */
 export function assertCodeRuleCompiles(rule: CodeRule): void {
   const sourceText = stableJsonText(rule);
-  if (sourceText === undefined) throw new CodeRuleCompileError(rule.id, "the document is not JSON representable");
+  if (sourceText === undefined) throw new CodeRuleCompileError(rule.id, NOT_JSON_REPRESENTABLE);
   let binding: NativeBinding;
   let capabilities: string;
   try {
@@ -68,15 +71,25 @@ export function assertCodeRuleCompiles(rule: CodeRule): void {
   }
 }
 
+/** A code rule the catalog may store, and why it stays inactive when the engine does not read it yet. */
+export interface StorableCodeRule {
+  rule: CodeRule;
+  inactive?: CodeRuleLanguageNotSupported;
+}
+
 /**
- * `assertCodeRuleCompiles`, except that a rule refused only as `language-not-supported` passes: the catalog stores it,
- * inactive, until the engine reads its language.
+ * The schema's parse of `input`, compiled as the live catalog will compile it. A rule the engine refuses only as
+ * `language-not-supported` is storable: the catalog keeps it, inactive, until the engine reads its language. Throws
+ * the schema's `ZodError`, `CodeRuleCompileError` or `EngineUnavailableError`.
  */
-export function assertCodeRuleStorable(rule: CodeRule): void {
+export function storableCodeRule(input: unknown): StorableCodeRule {
+  const rule = codeRuleSchema.parse(input);
   try {
     assertCodeRuleCompiles(rule);
   } catch (error) {
-    if (error instanceof CodeRuleCompileError && error.code === LANGUAGE_NOT_SUPPORTED) return;
-    throw error;
+    const inactive = error instanceof CodeRuleCompileError ? languageNotSupportedOf(error.reason) : undefined;
+    if (inactive === undefined) throw error;
+    return { rule, inactive };
   }
+  return { rule };
 }

@@ -1,8 +1,8 @@
 import { and, asc, count, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { readStoredCodeRule, reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
-import { assertCodeRuleStorable } from "../code-rule/code-rule-compile.js";
-import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
+import { storableCodeRule } from "../code-rule/code-rule-compile.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
@@ -137,8 +137,8 @@ function storedBody(row: RuleRow): unknown {
 type RowRead = { ok: true; stored: StoredRule } | { ok: false; quarantined: QuarantinedRule };
 
 /**
- * Rows are re-validated on read: other processes, and plain SQL, write this table too. A row that
- * fails the current schema is quarantined, never thrown.
+ * Rows are re-validated on read, schema and engine compile, as a write validates them: other processes, and plain
+ * SQL, write this table too. A row that fails is quarantined, never thrown.
  */
 function readRuleRow(row: RuleRow): RowRead {
   const base: StoredRuleBase = {
@@ -181,9 +181,7 @@ export class SqliteRuleStore {
    * compiled in the engine first, so one the engine rejects is never written.
    */
   upsertCodeRule(input: unknown, options: RuleWriteOptions = {}): StoredCodeRule {
-    const rule = codeRuleSchema.parse(input);
-    assertCodeRuleStorable(rule);
-    return this.#writeCodeRule(rule, options);
+    return this.#writeCodeRule(storableCodeRule(input).rule, options);
   }
 
   #writeCodeRule(rule: CodeRule, options: RuleWriteOptions): StoredCodeRule {

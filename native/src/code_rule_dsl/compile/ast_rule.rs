@@ -332,10 +332,10 @@ fn literal_dollar_name(
             PatternNode::MetaVar { .. } => None,
         }
     }
-    matches!(
+    use crate::code_rule_dsl::language::adapter::{SyntaxRules, with_adapter};
+    with_adapter!(
         crate::code_rule_dsl::language::Family::of(language),
-        crate::code_rule_dsl::language::Family::Python
-            | crate::code_rule_dsl::language::Family::Php
+        A => <A as SyntaxRules>::DOLLAR_NAMES
     )
     .then(|| find(&pattern.node, language.expando_char(), source))
     .flatten()

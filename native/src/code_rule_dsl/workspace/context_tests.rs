@@ -280,7 +280,8 @@ fn expected_package_violations() -> Vec<(String, String, u64)> {
 fn hosts_and_repository_ingestion_share_one_python_module_derivation() {
     let repository = package_repository("module-path");
     let root = repository.0.join("repo");
-    let module = |path: &str| match super::super::python_module_path(
+    let module = |path: &str| match super::super::module_path(
+        "python".to_owned(),
         root.join(path).to_string_lossy().into_owned(),
     ) {
         Some(napi::Either::A(dotted)) => Some(dotted),

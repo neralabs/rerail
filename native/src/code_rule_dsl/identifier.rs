@@ -5,6 +5,7 @@
 //! `__all__` entry, a `getattr` argument) stay raw, as CPython keeps them. ECMAScript and PHP
 //! names are compared as written (ESLint compares code units, PHP bytes).
 
+use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -32,14 +33,9 @@ pub(crate) fn python_identifier<'r, D: Doc>(node: &Node<'r, D>) -> Cow<'r, str> 
     python_name(node.text())
 }
 
-/// An identifier's text as `dialect`'s family compares names: NFKC for Python, as written for
-/// the others.
+/// An identifier's text as `dialect`'s family compares names (`Adapter::name`).
 pub(crate) fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
-    if Family::of(dialect) == Family::Python {
-        python_name(text)
-    } else {
-        text
-    }
+    with_adapter!(Family::of(dialect), A => A::name(text))
 }
 
 #[cfg(test)]

@@ -46,10 +46,11 @@ pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
             let path = required_str(file, "path", "snapshot.files")?;
             let language = required_str(file, "language", "snapshot.files")?;
             // A `module` of another type is refused like a malformed one.
-            let derived =
-                (language == "python" && file.get("module").is_none() && !packages.is_empty())
-                    .then(|| python_module_in(path, |directory| packages.contains(directory)))
-                    .flatten();
+            let derived = (crate::code_rule_dsl::language::adapter::packages(language)
+                && file.get("module").is_none()
+                && !packages.is_empty())
+            .then(|| python_module_in(path, |directory| packages.contains(directory)))
+            .flatten();
             FileInput::new(
                 path.to_owned(),
                 language.to_owned(),
@@ -337,39 +338,34 @@ fn stateless_calls(
         }
         let path: Arc<str> = Arc::from(file.path.as_str());
         let module = file.module.as_deref();
-        let (summary, _) = match crate::code_rule_dsl::language::Family::of(language) {
-            // A Blade file's calls are its tape's embedded program's (`blade::view`).
-            crate::code_rule_dsl::language::Family::Blade => {
-                let (doc, _) = query::file_tape(language, file)?;
-                let has_errors = !doc.syntax_error_ranges().is_empty();
-                let root = ast_grep_core::AstGrep::doc(doc);
-                let bytes = file.source.len();
-                calls::summarize(
-                    root.root(),
-                    language,
-                    &file.path,
-                    module,
-                    has_errors,
-                    bytes,
-                    None,
-                )
-            }
-            crate::code_rule_dsl::language::Family::Python
-            | crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Ecma => {
-                let root = language.ast_grep(file.source.as_str());
-                let has_errors = root.root().get_doc().tree.root_node().has_error();
-                let bytes = file.source.len();
-                calls::summarize(
-                    root.root(),
-                    language,
-                    &file.path,
-                    module,
-                    has_errors,
-                    bytes,
-                    None,
-                )
-            }
+        // A Blade file's calls are its tape's embedded program's (`calls::taped`).
+        let (summary, _) = if calls::taped(language) {
+            let (doc, _) = query::file_tape(language, file)?;
+            let has_errors = !doc.syntax_error_ranges().is_empty();
+            let root = ast_grep_core::AstGrep::doc(doc);
+            let bytes = file.source.len();
+            calls::summarize(
+                root.root(),
+                language,
+                &file.path,
+                module,
+                has_errors,
+                bytes,
+                None,
+            )
+        } else {
+            let root = language.ast_grep(file.source.as_str());
+            let has_errors = root.root().get_doc().tree.root_node().has_error();
+            let bytes = file.source.len();
+            calls::summarize(
+                root.root(),
+                language,
+                &file.path,
+                module,
+                has_errors,
+                bytes,
+                None,
+            )
         };
         let summary = Arc::new(summary);
         summaries.push((Arc::clone(&path), Arc::clone(&summary)));

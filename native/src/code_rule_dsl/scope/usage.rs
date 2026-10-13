@@ -10,6 +10,7 @@ use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
 };
 use crate::code_rule_dsl::identifier::python_identifier;
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 use std::borrow::Cow;
@@ -211,56 +212,70 @@ impl Usage {
             cap,
             deadline,
         };
-        match crate::code_rule_dsl::language::Family::of(table.language) {
-            crate::code_rule_dsl::language::Family::Ecma => {
-                let built = ecma::build(table, root, &mut steps)?;
-                let sites = name_sites(table, &mut steps)?;
-                let mut private_names =
-                    built
-                        .privates
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(member, private)| {
-                            private.declarations.iter().enumerate().map(
-                                move |(index, declaration)| {
-                                    (declaration.name, member as u32, index as u32)
-                                },
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                private_names.sort_by_key(|(name, _, _)| (name.start, name.end));
-                return Ok(Self {
-                    facts: built.facts,
-                    sites,
-                    exports: Vec::new(),
-                    comment_exports: built.comment_exports,
-                    occurrences: built.occurrences,
-                    privates: built.privates,
-                    private_names,
-                    before_local: Vec::new(),
-                    cost: steps.cost,
-                });
-            }
-            // Blade's usage is its embedded PHP's (`blade::view`).
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                let facts = php::build(table, &mut steps)?;
-                let occurrences = php::occurrences(table, &mut steps)?;
-                let sites = name_sites(table, &mut steps)?;
-                return Ok(Self {
-                    facts,
-                    sites,
-                    exports: Vec::new(),
-                    comment_exports: BTreeSet::new(),
-                    occurrences,
-                    privates: Vec::new(),
-                    private_names: Vec::new(),
-                    before_local: Vec::new(),
-                    cost: steps.cost,
-                });
-            }
-            crate::code_rule_dsl::language::Family::Python => {}
-        }
+        with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::usage(table, root, &mut steps))
+    }
+
+    /// TypeScript's and JavaScript's index: ESLint's no-unused-vars (`ecma`).
+    pub(crate) fn ecma<D: Doc>(
+        table: &ScopeTable,
+        root: &Node<'_, D>,
+        steps: &mut Steps<'_>,
+    ) -> Result<Self, BuildError> {
+        let built = ecma::build(table, root, steps)?;
+        let sites = name_sites(table, steps)?;
+        let mut private_names = built
+            .privates
+            .iter()
+            .enumerate()
+            .flat_map(|(member, private)| {
+                private
+                    .declarations
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, declaration)| {
+                        (declaration.name, member as u32, index as u32)
+                    })
+            })
+            .collect::<Vec<_>>();
+        private_names.sort_by_key(|(name, _, _)| (name.start, name.end));
+        Ok(Self {
+            facts: built.facts,
+            sites,
+            exports: Vec::new(),
+            comment_exports: built.comment_exports,
+            occurrences: built.occurrences,
+            privates: built.privates,
+            private_names,
+            before_local: Vec::new(),
+            cost: steps.cost,
+        })
+    }
+
+    /// PHP's index, from its flow (`php`).
+    pub(crate) fn php(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<Self, BuildError> {
+        let facts = php::build(table, steps)?;
+        let occurrences = php::occurrences(table, steps)?;
+        let sites = name_sites(table, steps)?;
+        Ok(Self {
+            facts,
+            sites,
+            exports: Vec::new(),
+            comment_exports: BTreeSet::new(),
+            occurrences,
+            privates: Vec::new(),
+            private_names: Vec::new(),
+            before_local: Vec::new(),
+            cost: steps.cost,
+        })
+    }
+
+    /// Python's index: Ruff's semantic model, with what a binding inherits from the one it
+    /// shadows.
+    pub(crate) fn python<D: Doc>(
+        table: &ScopeTable,
+        root: &Node<'_, D>,
+        steps: &mut Steps<'_>,
+    ) -> Result<Self, BuildError> {
         let text = root.text();
         let base = root.range().start;
         let mut facts: Vec<HashMap<Box<str>, Vec<Facts>>> = table
@@ -336,7 +351,7 @@ impl Usage {
                 read.nested += u32::from(reference.scope != scope);
             }
         }
-        let exports = dunder_all(table, root, &mut steps)?;
+        let exports = dunder_all(table, root, steps)?;
         for (_, _, name) in &exports.entries {
             if let Some(bindings) = table.scopes[0].bindings.get(name.as_str())
                 && let Some(last) = facts[0]
@@ -401,7 +416,7 @@ impl Usage {
                 }
             }
         }
-        let sites = name_sites(table, &mut steps)?;
+        let sites = name_sites(table, steps)?;
         let mut entries = exports
             .entries
             .into_iter()
@@ -474,7 +489,8 @@ fn inherits(previous: &Binding, binding: &Binding) -> bool {
         && previous.until.is_none_or(|until| binding.offset < until)
 }
 
-struct Steps<'d> {
+/// The steps an index's build spends, against its cap and the evaluation deadline.
+pub(crate) struct Steps<'d> {
     cost: usize,
     cap: usize,
     deadline: &'d dyn Fn() -> bool,

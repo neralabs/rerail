@@ -22,6 +22,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./rules": {
+      "types": "./dist/engine/rules.d.ts",
+      "import": "./dist/engine/rules.js"
+    },
     "./schemas": {
       "types": "./dist/engine/schemas.d.ts",
       "import": "./dist/engine/schemas.js"

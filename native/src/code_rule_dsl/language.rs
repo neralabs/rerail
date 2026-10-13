@@ -3,10 +3,10 @@
 //! kinds and fields (`KindCatalog`, which rules and tapes share), which semantic family serves a
 //! grammar, and which capabilities a language supports. The language registry
 //! (`languages/*.json`, `docs/language-packs.md`) is their one source: `build.rs` validates it
-//! and generates `DIALECTS`, `CodeRuleLanguage`, `PLANNED_LANGUAGES`, `Family::of` and
-//! `Family::honours` from it (`language_registry.rs` in `OUT_DIR`). The host routes files by the
-//! same registry's suffixes (`SOURCE_LANGUAGES` in code-rule-languages.ts); the repository index
-//! receives them.
+//! and generates `DIALECTS`, `CodeRuleLanguage`, `PLANNED_LANGUAGES`, `Family::of`,
+//! `Family::honours` and `with_adapter!` from it (`language_registry.rs` in `OUT_DIR`). The host
+//! routes files by the same registry's suffixes (`SOURCE_LANGUAGES` in code-rule-languages.ts);
+//! the repository index receives them.
 //!
 //! Three layers:
 //! - A **dialect** is one tree-sitter grammar (`GrammarDialect`): Python, TypeScript, TSX,
@@ -18,11 +18,15 @@
 //!   decoder, call arguments, suppression comments and line terminators. TypeScript, TSX and
 //!   JavaScript share the ECMAScript family.
 //!
-//! Adding a language: add its registry entry (`planned` first), its `GrammarDialect` variant and
-//! its family's arm wherever a family is matched (the build fails until each exists). A rule that
-//! names a planned language, or a capability its language has `not-supported-yet`, is refused as
-//! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
-//! another family's code.
+//! Adding a language: add its registry entry (`planned` first), its `GrammarDialect` variant and,
+//! for a new family, its adapter (`adapter`): one type implementing `Adapter`, whose associated
+//! types name the family's implementation of each concern, or `Refused`. `with_adapter!`,
+//! generated from the registry's families, dispatches every family question to it (the build
+//! fails until it exists). A rule that names a planned language, or a capability its language
+//! has `not-supported-yet`, is refused as `language-not-supported`; a `refused` capability is
+//! refused as invalid, never answered by another family's code.
+
+pub(crate) mod adapter;
 
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -497,11 +501,14 @@ pub(crate) fn rule_pattern(
     source: PatternSource<'_>,
     language: GrammarDialect,
 ) -> Result<(Pattern, GrammarDialect), PatternError> {
-    let php = match (Family::of(language), &source) {
-        (Family::Blade, PatternSource::Plain(text)) => blade_text(text),
-        (Family::Blade, PatternSource::Contextual { context, .. }) => blade_text(context),
-        (Family::Python | Family::Ecma | Family::Php, _) => false,
+    let text = match &source {
+        PatternSource::Plain(text) => text,
+        PatternSource::Contextual { context, .. } => context,
     };
+    let php = adapter::with_adapter!(
+        Family::of(language),
+        A => <A as adapter::SyntaxRules>::embeds_pattern(text)
+    );
     if !php {
         let pattern = match source {
             PatternSource::Plain(text) => Pattern::try_new(text, language)?,
@@ -579,7 +586,7 @@ struct Dialect {
 }
 
 // `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`, `dialects`, `family`,
-// `capability`), `PLANNED_LANGUAGES`, `Family::of` and `Family::honours`.
+// `capability`), `PLANNED_LANGUAGES`, `Family::of`, `Family::honours` and `with_adapter!`.
 include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
 
 /// The family `Family::of` reads a test-only grammar with.
@@ -747,17 +754,6 @@ pub(crate) enum Suppression {
     Psalm,
     /// PHP_CodeSniffer's `phpcs:` annotations.
     Phpcs,
-}
-
-impl Family {
-    /// Whether the family's values, arguments and variables are PHP's: PHP's, and Blade's, whose
-    /// semantics are those of the PHP its template embeds (`blade::view`).
-    pub(crate) const fn reads_php(self) -> bool {
-        match self {
-            Self::Php | Self::Blade => true,
-            Self::Python | Self::Ecma => false,
-        }
-    }
 }
 
 /// The ECMAScript source form that structural `when` gates and scope construction read.

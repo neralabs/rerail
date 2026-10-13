@@ -17,6 +17,7 @@ mod python_tests;
 mod tests;
 
 use crate::code_rule_dsl::json::{invalid, object};
+use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use crate::code_rule_dsl::language::is_stub_file;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::Span;
@@ -68,6 +69,8 @@ pub(crate) struct CallsTest {
     pub(crate) key: Arc<str>,
     /// The language whose calls the term follows.
     pub(crate) family: Family,
+    /// The dialect the term's rule is in: the one its files' tables are read in.
+    pub(crate) language: GrammarDialect,
     /// The grammar's call kinds: the only nodes the term holds at.
     pub(crate) call_kinds: Box<[u16]>,
     /// `chain`: the capture a reaching call binds to its chain of definitions
@@ -110,12 +113,13 @@ impl CallsCollector {
         found
     }
 
-    /// Records the `calls` value at `path` and returns its test at `family`'s `call_kinds` nodes.
+    /// Records the `calls` value at `path` and returns its test, in `language`, at `call_kinds`
+    /// nodes.
     pub(crate) fn term(
         &self,
         value: &Value,
         path: &str,
-        family: Family,
+        language: GrammarDialect,
         call_kinds: Box<[u16]>,
     ) -> Result<CallsTest> {
         if self.seed {
@@ -147,7 +151,8 @@ impl CallsCollector {
         });
         Ok(CallsTest {
             key,
-            family,
+            family: Family::of(language),
+            language,
             call_kinds,
             chain,
         })
@@ -227,10 +232,10 @@ pub(crate) enum SeedScope {
 /// Where an inner rule only asks what a definition's body holds, the rule for what it holds
 /// and how its matches map back to definitions: the query then runs at the matched nodes, as a
 /// top-level rule does, not from every definition down. `R`'s `kind` must be another than a
-/// definition's, so the stop node itself is never a match. Python's definitions are
-/// `function_definition`s; PHP's are `function_kinds`, with no one kind for `Innermost` to stop
-/// at, so a PHP rule runs at held nodes only for `stopBy: "end"`.
-fn body_rule(inner: &Value, family: Family) -> Option<(Value, SeedScope)> {
+/// definition's (one of `function_kinds`), so the stop node itself is never a match. Python's
+/// definitions are `function_definition`s; PHP's are several kinds, with no one kind for
+/// `Innermost` to stop at, so a PHP rule runs at held nodes only for `stopBy: "end"`.
+fn body_rule(inner: &Value, function_kinds: &[&str]) -> Option<(Value, SeedScope)> {
     let Value::Object(inner) = inner else {
         return None;
     };
@@ -240,19 +245,17 @@ fn body_rule(inner: &Value, family: Family) -> Option<(Value, SeedScope)> {
     if key != "has" || has.contains_key("field") {
         return None;
     }
-    let scope = match has.get("stopBy")? {
-        Value::String(end) if end == "end" => SeedScope::Enclosing,
-        Value::Object(stop)
-            if family == Family::Python
-                && stop.len() == 1
-                && stop.get("kind") == Some(&Value::String("function_definition".into())) =>
+    let scope = match (has.get("stopBy")?, function_kinds) {
+        (Value::String(end), _) if end == "end" => SeedScope::Enclosing,
+        (Value::Object(stop), [definition])
+            if stop.len() == 1 && stop.get("kind").and_then(Value::as_str) == Some(definition) =>
         {
             SeedScope::Innermost
         }
         _ => return None,
     };
     match has.get("kind") {
-        Some(Value::String(kind)) if !function_kinds(family).contains(&kind.as_str()) => {}
+        Some(Value::String(kind)) if !function_kinds.contains(&kind.as_str()) => {}
         _ => return None,
     }
     let mut body = has.clone();
@@ -260,21 +263,12 @@ fn body_rule(inner: &Value, family: Family) -> Option<(Value, SeedScope)> {
     Some((Value::Object(body), scope))
 }
 
-/// The node kinds of what a call may reach: the definitions a seed query runs on. A Blade
-/// template's definitions (in `@php` blocks) are its embedded PHP's.
-pub(crate) fn function_kinds(family: Family) -> &'static [&'static str] {
-    match family {
-        Family::Python => &["function_definition"],
-        Family::Php | Family::Blade => &php::FUNCTION_KINDS,
-        Family::Ecma => &[],
-    }
-}
-
 /// The seed query of an inner rule in `language` (of `family`): the definitions it matches (or
 /// the nodes they hold, see `SeedScope`), with the query's utilities but those holding a
 /// `calls` term, or reaching one through `matches` (a seed cannot hold `calls`). `Err` where the
-/// inner rule holds or reaches one itself. A Blade code rule's seeds are the workspace's PHP
-/// definitions, which its templates' calls reach: its seed query is PHP's.
+/// inner rule holds or reaches one itself. The seed runs in the family's seed language
+/// (`CallRules::SEED_LANGUAGE`) over the definitions a call may reach
+/// (`CallRules::FUNCTION_KINDS`).
 pub(crate) fn seed_query(
     inner: &Value,
     ast: &Map<String, Value>,
@@ -286,14 +280,15 @@ pub(crate) fn seed_query(
     if mentions(inner, &|key, _| key == "calls") {
         return Err(nested());
     }
-    let (language, family) = match family {
-        Family::Blade => ("php", Family::Php),
-        Family::Python | Family::Php | Family::Ecma => (language, family),
-    };
+    let (seed_language, function_kinds) = with_adapter!(family, A => (
+        <<A as Adapter>::Calls as CallRules>::SEED_LANGUAGE,
+        <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS,
+    ));
+    let language = seed_language.unwrap_or(language);
     let mut seed = Map::new();
     seed.insert("language".into(), Value::String(language.into()));
-    let (rule, scope) = body_rule(inner, family).unwrap_or_else(|| {
-        let definitions = match function_kinds(family) {
+    let (rule, scope) = body_rule(inner, function_kinds).unwrap_or_else(|| {
+        let definitions = match function_kinds {
             [kind] => serde_json::json!({ "kind": kind }),
             kinds => serde_json::json!({
                 "any": kinds.iter().map(|kind| serde_json::json!({ "kind": kind })).collect::<Vec<_>>()
@@ -921,17 +916,20 @@ pub(crate) fn reading(path: &str) -> Reading {
 /// Nodes one summary's scope table may visit before the file's summary is open.
 const MAX_TABLE_NODES: usize = 5_000_000;
 
-/// Whether `calls` follows the calls of files in `language`: Python's, PHP's, and those of the
-/// PHP a Blade template embeds (`blade::view`).
+/// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
+/// the call graph (`CallRules::SUPPORTED`).
 pub(crate) fn summarizes(language: GrammarDialect) -> bool {
-    match Family::of(language) {
-        Family::Python | Family::Php | Family::Blade => true,
-        Family::Ecma => false,
-    }
+    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::SUPPORTED)
 }
 
-/// Extracts the summary of a Python, PHP or Blade (`language`) file of `bytes` bytes whose tree
-/// is `root` (a Blade file's a tape's, holding its embedded program), through `known`, the file's
+/// Whether `summarize` reads a `language` file's tape rather than a parse of its source
+/// (`CallRules::TAPED`): a Blade file's calls are its tape's embedded program's (`blade::view`).
+pub(crate) fn taped(language: GrammarDialect) -> bool {
+    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::TAPED)
+}
+
+/// Extracts the summary of a `language` file of `bytes` bytes whose tree is `root` (a Blade
+/// file's a tape's, holding its embedded program), through `known`, the file's
 /// table as `calls` reads it where its evaluation built one, else a table built here. A table (or
 /// PHP's name resolution) that cannot be built within the file's time budget or
 /// `MAX_TABLE_NODES` leaves the summary open. Returns the table it built, for the file's
@@ -958,33 +956,44 @@ pub(crate) fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    let extract_php = |program: &Node<'_, D>| {
-        // The table's flow read the program's names; build them only where no table holds them.
-        let names = table
-            .and_then(|table| table.php.as_deref())
-            .map(|flow| Arc::clone(&flow.names))
-            .or_else(|| {
-                PhpNames::build(
-                    program.clone(),
-                    MAX_TABLE_NODES,
-                    &crate::code_rule_dsl::budget::matcher_budget_exhausted,
-                )
-                .ok()
-                .map(Arc::new)
-            });
-        php::extract(program, path, table, names.as_deref(), has_errors)
-    };
-    let mut summary = match Family::of(language) {
-        Family::Php => extract_php(&root),
-        // A template's calls are its embedded program's; a template without one calls nothing.
-        Family::Blade => match crate::code_rule_dsl::blade::program(&root) {
-            Some(program) => extract_php(&program),
-            None => Summary::default(),
-        },
-        Family::Python | Family::Ecma => Summary::extract(&root, table, module, has_errors),
-    };
+    // A template's calls are its embedded program's; a template without one calls nothing.
+    let mut summary = with_adapter!(Family::of(language), A => A::regions(&root)
+    .next()
+    .map_or_else(Summary::default, |region| {
+        <<A as Adapter>::Calls as CallRules>::summary(
+            &region.root,
+            path,
+            module,
+            table,
+            has_errors,
+        )
+    }));
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
+}
+
+/// The summary of the PHP `program` in the file at `path`, through `table`, the file's scope
+/// table where one was built.
+pub(crate) fn extract_php<D: Doc>(
+    program: &Node<'_, D>,
+    path: &str,
+    table: Option<&ScopeTable>,
+    has_errors: bool,
+) -> Summary {
+    // The table's flow read the program's names; build them only where no table holds them.
+    let names = table
+        .and_then(|table| table.php.as_deref())
+        .map(|flow| Arc::clone(&flow.names))
+        .or_else(|| {
+            PhpNames::build(
+                program.clone(),
+                MAX_TABLE_NODES,
+                &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+            )
+            .ok()
+            .map(Arc::new)
+        });
+    php::extract(program, path, table, names.as_deref(), has_errors)
 }
 
 /// A seed query's witnesses in one file, by their spans: the definitions (by node start) they
@@ -1070,35 +1079,14 @@ pub(crate) fn holds<'t, D: Doc>(
         Some(callee) => callee,
         None => {
             // A table that cannot be built fails the clause for the file (`UTIL_EXCEEDED`).
-            let callee = match test.family {
-                Family::Python => {
-                    let Some(FileTables::Python(table, module)) =
-                        tables(node, GrammarDialect::Python)
-                    else {
-                        return Reach::Unknown;
-                    };
-                    summary::callee_at(&table, module.as_deref(), &summary, node)
-                }
-                // A Blade template's calls are its embedded program's (`blade::view`); its
-                // top level is no class's, so `$this`, `self` and `static` there are unknown.
-                Family::Php | Family::Blade => {
-                    let language = match test.family {
-                        Family::Blade => GrammarDialect::Blade,
-                        Family::Php | Family::Python | Family::Ecma => GrammarDialect::Php,
-                    };
-                    let Some(FileTables::Php(table, names)) = tables(node, language) else {
-                        return Reach::Unknown;
-                    };
-                    let reader = php::Reader {
-                        names: &names,
-                        table: &table,
-                        root: node.root().root(),
-                    };
-                    php::callee_at(&reader, &summary, node)
-                }
-                Family::Ecma => return Reach::Unknown,
-            }
-            .map(|callee| match callee {
+            let Some(callee) = with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::callee_at(
+                node,
+                &summary,
+                || tables(node, test.language),
+            )) else {
+                return Reach::Unknown;
+            };
+            let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
                 Callee::Name(name) => Some(Name::new(&name)),
             });

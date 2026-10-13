@@ -1,3 +1,4 @@
+use super::config::Options;
 use super::resolve::{MAX_RESOLVE_NAME_BYTES, is_identifier};
 use crate::code_rule_dsl::json::bounded_text;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
@@ -7,7 +8,7 @@ use crate::code_rule_dsl::scope::options::{
     is_ts_lib, python_builtins, ts_lib_globals,
 };
 use napi::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 const LANGUAGE_OPTIONS_KEYS: &[&str] = &[
     "ecmaVersion",
@@ -157,7 +158,7 @@ fn ecma_features(value: Option<&Value>, path: &str) -> Result<(bool, bool)> {
 
 /// An ast query's `languageOptions` (TypeScript and JavaScript), with ESLint's defaults for what
 /// it leaves out: the latest `ecmaVersion`, a `module`, no extra `globals`, no `ecmaFeatures`.
-pub(super) fn compile_language_options(value: &Value, path: &str) -> Result<LanguageOptions> {
+pub(crate) fn compile_language_options(value: &Value, path: &str) -> Result<LanguageOptions> {
     let path = format!("{path}/languageOptions");
     let options = object(value, &path)?;
     reject_unknown(options, LANGUAGE_OPTIONS_KEYS, &path)?;
@@ -221,7 +222,7 @@ const MAX_TYPING_NAMES: usize = 256;
 /// pinned builtins table has (Ruff's default, 3.10, when omitted); `typingModules` and
 /// `extendGenerics`, Ruff's `lint.typing-modules` and `lint.pyflakes.extend-generics`, each a list
 /// of dotted names.
-pub(super) fn compile_python_options(value: &Value, path: &str) -> Result<PythonOptions> {
+pub(crate) fn compile_python_options(value: &Value, path: &str) -> Result<PythonOptions> {
     let path = format!("{path}/languageOptions");
     let options = object(value, &path)?;
     reject_unknown(
@@ -300,75 +301,101 @@ fn python_minor(version: &Value, path: &str) -> Result<u8> {
     })
 }
 
-/// An ast query's `when`: the versions it applies to, `{ "pythonVersion": { "min", "max" } }`
-/// (Python) or `{ "ecmaVersion": { "min", "max" } }` (TypeScript), both bounds inclusive; for
-/// TypeScript also `sourceType` (one or a list) and `ecmaFeatures` (`globalReturn`,
-/// `impliedStrict`: each must equal the query's). It reads the query's own `languageOptions`,
-/// else the defaults (Python 3.10; ESLint's latest, a module, no features). Every key must hold.
+/// A Python ast query's `when`: the versions it applies to, `{ "pythonVersion": { "min", "max" } }`,
+/// read against its own `languageOptions`, else Ruff's default (3.10). Every key must hold.
 /// Whether the query applies.
-pub(super) fn compile_when(
+pub(crate) fn compile_python_when(
     value: &Value,
     path: &str,
-    python: bool,
-    options: Option<&LanguageOptions>,
-    python_options: Option<&PythonOptions>,
-    document: &super::config::Options,
+    python: Option<&PythonOptions>,
+    document: &Options,
 ) -> Result<bool> {
     let path = format!("{path}/when");
     let when = object(value, &path)?;
-    let key = if python {
-        "pythonVersion"
-    } else {
-        "ecmaVersion"
-    };
-    let keys: &[&str] = if python {
-        &[key, "option"]
-    } else {
-        &[key, "sourceType", "ecmaFeatures", "option"]
-    };
-    reject_unknown(when, keys, &path)?;
-    // The document's options (a Rerail extension): each named option meets its condition.
-    let mut applies = match when.get("option") {
-        Some(option) => document.holds(option, &format!("{path}/option"))?,
-        None => true,
-    };
-    if !python {
-        let source_type = options.map_or(SourceType::Module, |options| options.source_type);
-        if let Some(types) = when.get("sourceType") {
-            applies &=
-                when_source_types(types, &format!("{path}/sourceType"))?.contains(&source_type);
+    reject_unknown(when, &["pythonVersion", "option"], &path)?;
+    let applies = document_holds(when, &path, document)?;
+    let version = u16::from(python.map_or(DEFAULT_PYTHON_MINOR, |python| python.minor));
+    let within = version_within(when, &path, "pythonVersion", version, |value, at| {
+        python_minor(value, at).map(u16::from)
+    })?;
+    Ok(applies && within)
+}
+
+/// A TypeScript ast query's `when`: the versions it applies to, `{ "ecmaVersion": { "min", "max" } }`,
+/// `sourceType` (one or a list) and `ecmaFeatures` (`globalReturn`, `impliedStrict`: each must
+/// equal the query's), read against its own `languageOptions`, else ESLint's defaults (the latest,
+/// a module, no features). Every key must hold. Whether the query applies.
+pub(crate) fn compile_ecma_when(
+    value: &Value,
+    path: &str,
+    options: Option<&LanguageOptions>,
+    document: &Options,
+) -> Result<bool> {
+    let path = format!("{path}/when");
+    let when = object(value, &path)?;
+    reject_unknown(
+        when,
+        &["ecmaVersion", "sourceType", "ecmaFeatures", "option"],
+        &path,
+    )?;
+    let mut applies = document_holds(when, &path, document)?;
+    let source_type = options.map_or(SourceType::Module, |options| options.source_type);
+    if let Some(types) = when.get("sourceType") {
+        applies &= when_source_types(types, &format!("{path}/sourceType"))?.contains(&source_type);
+    }
+    if let Some(features) = when.get("ecmaFeatures") {
+        let path = format!("{path}/ecmaFeatures");
+        let features = object(features, &path)?;
+        reject_unknown(features, &["globalReturn", "impliedStrict"], &path)?;
+        if features.is_empty() {
+            return Err(invalid(format!(
+                "{path} must set `globalReturn`, `impliedStrict` or both"
+            )));
         }
-        if let Some(features) = when.get("ecmaFeatures") {
-            let path = format!("{path}/ecmaFeatures");
-            let features = object(features, &path)?;
-            reject_unknown(features, &["globalReturn", "impliedStrict"], &path)?;
-            if features.is_empty() {
-                return Err(invalid(format!(
-                    "{path} must set `globalReturn`, `impliedStrict` or both"
-                )));
-            }
-            for (name, actual) in [
-                (
-                    "globalReturn",
-                    options.is_some_and(|options| options.global_return),
-                ),
-                (
-                    "impliedStrict",
-                    options.is_some_and(|options| options.implied_strict),
-                ),
-            ] {
-                match features.get(name) {
-                    None => {}
-                    Some(Value::Bool(expected)) => applies &= *expected == actual,
-                    Some(_) => {
-                        return Err(invalid(format!("{path}/{name} must be true or false")));
-                    }
+        for (name, actual) in [
+            (
+                "globalReturn",
+                options.is_some_and(|options| options.global_return),
+            ),
+            (
+                "impliedStrict",
+                options.is_some_and(|options| options.implied_strict),
+            ),
+        ] {
+            match features.get(name) {
+                None => {}
+                Some(Value::Bool(expected)) => applies &= *expected == actual,
+                Some(_) => {
+                    return Err(invalid(format!("{path}/{name} must be true or false")));
                 }
             }
         }
     }
+    let version = options.map_or(EsGlobals::get().latest, |options| options.ecma_version);
+    let within = version_within(when, &path, "ecmaVersion", version, ecma_year)?;
+    Ok(applies && within)
+}
+
+/// A `when`'s `option`, the document's options (a Rerail extension): whether each named option
+/// meets its condition.
+fn document_holds(when: &Map<String, Value>, path: &str, document: &Options) -> Result<bool> {
+    match when.get("option") {
+        Some(option) => document.holds(option, &format!("{path}/option")),
+        None => Ok(true),
+    }
+}
+
+/// Whether `version` lies in a `when`'s `key`, `{ "min", "max" }` as `bound` reads each, both
+/// inclusive; `true` without one.
+fn version_within(
+    when: &Map<String, Value>,
+    path: &str,
+    key: &str,
+    version: u16,
+    bound: impl Fn(&Value, &str) -> Result<u16>,
+) -> Result<bool> {
     let Some(range) = when.get(key) else {
-        return Ok(applies);
+        return Ok(true);
     };
     let path = format!("{path}/{key}");
     let range = object(range, &path)?;
@@ -376,20 +403,13 @@ pub(super) fn compile_when(
     if range.is_empty() {
         return Err(invalid(format!("{path} must set `min`, `max` or both")));
     }
-    let bound = |name: &str| -> Result<Option<u16>> {
+    let read = |name: &str| -> Result<Option<u16>> {
         range
             .get(name)
-            .map(|value| {
-                let at = format!("{path}/{name}");
-                if python {
-                    python_minor(value, &at).map(u16::from)
-                } else {
-                    ecma_year(value, &at)
-                }
-            })
+            .map(|value| bound(value, &format!("{path}/{name}")))
             .transpose()
     };
-    let (min, max) = (bound("min")?, bound("max")?);
+    let (min, max) = (read("min")?, read("max")?);
     if let (Some(min), Some(max)) = (min, max)
         && min > max
     {
@@ -397,12 +417,7 @@ pub(super) fn compile_when(
             "{path}: min is after max, so the query never applies"
         )));
     }
-    let version = if python {
-        u16::from(python_options.map_or(DEFAULT_PYTHON_MINOR, |options| options.minor))
-    } else {
-        options.map_or(EsGlobals::get().latest, |options| options.ecma_version)
-    };
-    Ok(applies && min.is_none_or(|min| min <= version) && max.is_none_or(|max| version <= max))
+    Ok(min.is_none_or(|min| min <= version) && max.is_none_or(|max| version <= max))
 }
 
 /// `when.sourceType`: one source type or a non-empty list of them.
@@ -425,20 +440,29 @@ fn when_source_types(value: &Value, path: &str) -> Result<Vec<SourceType>> {
     })
 }
 
+/// Which of an ast query's `file` keys its language's family reads (`Adapter::PACKAGES`,
+/// `Adapter::DECLARATION_FILES`).
+pub(super) struct FileKeys {
+    /// The module path keys: `module`, `moduleName`, `package`, `inPackage`.
+    pub(super) packages: bool,
+    /// `declaration`.
+    pub(super) declarations: bool,
+}
+
 /// An ast query's `file`: conditions on the file. Every language has `path`, a `regex` that must
-/// match the path the host sends, a `notRegex` that must not, or both. TypeScript has
-/// `declaration`, whether the path names a declaration file. Python has its module path, the
-/// host's `module` or the stem fallback: `module`, `moduleName` and `package` hold text conditions
-/// over the dotted names, the last one and the first one (in a package), and `inPackage` whether
-/// the host sent the path.
+/// match the path the host sends, a `notRegex` that must not, or both. A family with declaration
+/// files has `declaration`, whether the path names one. A family naming modules from package
+/// markers has its module path, the host's `module` or the stem fallback: `module`, `moduleName`
+/// and `package` hold text conditions over the dotted names, the last one and the first one (in a
+/// package), and `inPackage` whether the host sent the path.
 pub(super) fn compile_file_condition(
     value: &Value,
     path: &str,
     language: &str,
+    keys: FileKeys,
     max_regex_bytes: usize,
 ) -> Result<FileCondition> {
     let path = format!("{path}/file");
-    let python = language == "python";
     let file = object(value, &path)?;
     reject_unknown(
         file,
@@ -453,19 +477,19 @@ pub(super) fn compile_file_condition(
         &path,
     )?;
     for key in ["module", "moduleName", "package", "inPackage"] {
-        if !python && file.contains_key(key) {
+        if !keys.packages && file.contains_key(key) {
             return Err(invalid(format!(
                 "{path}/{key}: module paths are Python's; {language} has none"
             )));
         }
     }
-    if python && file.contains_key("declaration") {
+    if !keys.declarations && file.contains_key("declaration") {
         return Err(invalid(format!(
             "{path}/declaration: declaration files are TypeScript's; {language} has none"
         )));
     }
     if file.is_empty() {
-        return Err(invalid(if python {
+        return Err(invalid(if keys.packages {
             format!(
                 "{path} must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`"
             )

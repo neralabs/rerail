@@ -1,6 +1,7 @@
 //! How `resolves.binding` reads a reference's binding beyond `ScopeTable::binding`.
 
 use super::{Binding, NodeRef, Reference, ScopeTable};
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 
 /// Readings of a reference's binding that some Ruff checks use instead of `resolve_name`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -25,33 +26,7 @@ impl ScopeTable {
         if lookup == Lookup::default() {
             return self.binding(reference, name);
         }
-        match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                let found = self.python_index_by(reference, name, lookup)?;
-                let binding = self.binding_at(found, name);
-                Some((binding, binding.site.value))
-            }
-            // A read after `global $x` reads that statement's binding: PHP's flow stops there.
-            // Blade's reads are its embedded PHP's (`blade::view`).
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                let (scope, _) = self.php_index(reference)?;
-                let single = self.scopes[scope as usize]
-                    .bindings
-                    .get(name)
-                    .is_some_and(|bindings| bindings.len() == 1);
-                self.binding(reference, name)
-                    .filter(|_| !lookup.only || single)
-            }
-            crate::code_rule_dsl::language::Family::Ecma => {
-                let (scope, _) = self.resolve_lexical_scope(reference, name)?;
-                let single = self.scopes[scope as usize]
-                    .bindings
-                    .get(name)
-                    .is_some_and(|bindings| bindings.len() == 1);
-                self.binding(reference, name).filter(|_| single)
-            }
-        }
+        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::binding_by(self, reference, name, lookup))
     }
 
     /// Python: the binding `ScopeTable::binding_by` reads, as its scope and its index among that

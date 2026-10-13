@@ -4,13 +4,13 @@ use super::resolve::{
 };
 use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
-use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::language::kind_ids;
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::literal;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::value::structure::{self, Equality};
+use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::text_regex::TextRegex;
-use crate::code_rule_dsl::value::{self, BigInt, Context, Lang, Value};
+use crate::code_rule_dsl::value::{BigInt, Context, Lang, Value};
 use ast_grep_core::{Doc, Node};
 use num_traits::Zero;
 use std::cmp::Ordering;
@@ -24,6 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 #[derive(Clone)]
 pub(crate) struct Reading {
     pub(crate) language: GrammarDialect,
+    /// The language's family, whose adapter decodes the values.
+    pub(crate) family: Family,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// The grammar's expression kinds: only these have values.
@@ -44,15 +46,12 @@ impl Reading {
         options: Option<Arc<LanguageOptions>>,
         python: Option<Arc<PythonOptions>>,
     ) -> Self {
-        let kinds = match crate::code_rule_dsl::language::Family::of(language) {
-            crate::code_rule_dsl::language::Family::Python => value::python::EXPRESSION_KINDS,
-            crate::code_rule_dsl::language::Family::Ecma => value::ecma::EXPRESSION_KINDS,
-            // Blade's values are its embedded PHP's (`blade::view`).
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => value::php::EXPRESSION_KINDS,
-        };
+        let family = Family::of(language);
+        let kinds =
+            with_adapter!(family, A => <<A as Adapter>::Value as ValueRules>::EXPRESSION_KINDS);
         Self {
             language,
+            family,
             options,
             python,
             expressions: Arc::new(kind_ids(language, kinds)),
@@ -92,13 +91,9 @@ impl Reading {
         self.expressions.contains(&node.kind_id())
     }
 
+    /// The language whose semantics the reading's values follow.
     pub(crate) fn lang(&self) -> Lang {
-        match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => Lang::Python,
-            crate::code_rule_dsl::language::Family::Ecma => Lang::Js,
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => Lang::Php,
-        }
+        with_adapter!(self.family, A => <<A as Adapter>::Value as ValueRules>::LANG)
     }
 
     /// The node's value, decoded once per file and reading. Each node decoded spends a step of
@@ -145,16 +140,10 @@ impl Reading {
                 .following(&mut binding)
                 .following_constants(&mut constant);
         }
-        let decoded = match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                value::python::decode(node, &mut context)
-            }
-            crate::code_rule_dsl::language::Family::Ecma => value::ecma::decode(node, &mut context),
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                value::php::decode(node, &mut context)
-            }
-        };
+        let decoded = with_adapter!(
+            self.family,
+            A => <<A as Adapter>::Value as ValueRules>::decode(node, &mut context)
+        );
         let exhausted = context.exhausted();
         let decoded = Rc::new(decoded);
         // A decode cut short by the budget or a deadline is not the node's value.
@@ -171,29 +160,17 @@ impl Reading {
         &self,
         node: &Node<'_, D>,
         equality: Equality,
-    ) -> Rc<Option<Vec<structure::Tok>>> {
+    ) -> Rc<Option<Vec<Tok>>> {
         let key = (node.node_id(), equality);
         if let Some(tokens) = memoized_structure(&key) {
             return tokens;
         }
         let mut spend = spend_step;
         let mut context = Context::new(&mut spend);
-        let tokens = match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                structure::structure(node, equality, &mut context)
-            }
-            // Blade's structure is its embedded PHP's; `compare` reads none where Blade wrote a
-            // token (`blade::rewritten`).
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                value::php_structure::structure(node, equality, &mut context)
-            }
-            crate::code_rule_dsl::language::Family::Ecma => {
-                unreachable!(
-                    "the structural modes are refused for this language when the policy compiles"
-                )
-            }
-        };
+        let tokens = with_adapter!(
+            self.family,
+            A => <<A as Adapter>::Value as ValueRules>::structure(node, equality, &mut context)
+        );
         // A read cut short by the budget or a deadline is not the node's structure.
         if context.exhausted() || UTIL_EXCEEDED.get().is_some() {
             return Rc::new(None);

@@ -42,7 +42,7 @@ import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { withinCheckout } from "../catalog/checkout-control.js";
-import { languageOfPath, CODE_RULE_DIALECTS, SOURCE_LANGUAGES } from "./code-rule-languages.js";
+import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -241,12 +241,13 @@ export function languageFor(path: string): CodeRuleSourceLanguage | undefined {
 }
 
 /**
- * Ruff's module path for a Python file (`detect_package_root`), as the engine derives it for every ingestion path:
- * dotted, a list when a name keeps a dot (`["json.d", "__init__"]`), or undefined outside a package. Native repository
- * indexing derives the same value itself, so buffer, inline and repository requests agree.
+ * A file's module as the engine derives it for every ingestion path: for Python, Ruff's module path
+ * (`detect_package_root`), dotted, a list when a name keeps a dot (`["json.d", "__init__"]`), or undefined outside a
+ * package; undefined for a family without modules. Native repository indexing derives the same value itself, so
+ * buffer, inline and repository requests agree.
  */
-export function pythonModulePath(absolute: string): string | string[] | undefined {
-  return loadNativeBinding().pythonModulePath(absolute) ?? undefined;
+export function modulePath(label: CodeRuleSourceLanguage, absolute: string): string | string[] | undefined {
+  return loadNativeBinding().modulePath(label, absolute) ?? undefined;
 }
 
 function emptyEvaluation(): Evaluation {
@@ -1161,10 +1162,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return { path, language, source: source.toString("utf8"), ...this.#module(language, path) };
   }
 
-  /** The module path the engine qualifies a Python file's definitions and relative imports by, and file conditions read. */
+  /** The module path the engine qualifies a file's definitions and relative imports by, and file conditions read. */
   #module(language: CodeRuleSourceLanguage, path: string): { module?: string | string[] } {
-    if (language !== CODE_RULE_DIALECTS.python.label) return {};
-    const module = pythonModulePath(resolve(this.#workspaceRoot, path));
+    const module = modulePath(language, resolve(this.#workspaceRoot, path));
     return module === undefined ? {} : { module };
   }
   /**
