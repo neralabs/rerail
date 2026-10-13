@@ -1,6 +1,9 @@
 //! Vue single-file components (`.vue`): the vendored SFC grammar root.
-
-/// The vendored tree-sitter-vue grammar (`native/build.rs`).
+#[cfg(test)]
+mod oracle_tests;
+mod sfc;
+mod template;
+pub(crate) mod view;
 pub(crate) fn grammar() -> ast_grep_core::tree_sitter::TSLanguage {
     unsafe extern "C" {
         fn tree_sitter_vue() -> *const ();
@@ -25,7 +28,10 @@ mod tests {
         let root = tree.root_node();
         assert_eq!(root.kind(), "document");
         assert!(!root.has_error());
-        let kinds: HashSet<_> = root.named_children(&mut root.walk()).map(|n| n.kind()).collect();
+        let kinds: HashSet<_> = root
+            .named_children(&mut root.walk())
+            .map(|n| n.kind())
+            .collect();
         for expected in ["script_element", "template_element", "style_element"] {
             assert!(kinds.contains(expected), "missing {expected}");
         }
