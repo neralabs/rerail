@@ -12,6 +12,7 @@ pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
 pub(crate) use phpstan::PhpstanIndex;
 pub(crate) use psalm::PsalmIndex;
 use serde_json::Value;
+pub(crate) use vue::VueDirectives;
 
 /// Names a `rules` or `codes` list may hold.
 const MAX_NAMES: usize = 256;
@@ -382,6 +383,7 @@ mod phpstan;
 mod psalm;
 #[cfg(test)]
 mod ruff;
+mod vue;
 
 #[cfg(test)]
 mod tests {
