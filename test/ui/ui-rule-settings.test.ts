@@ -74,9 +74,23 @@ describe("a rule's suppression comments and options on the page", () => {
     const one = [...toStoredRules([entry("eslint:no-var", ""), entry("eslint:radix", "", { suppressions: "ignore" })]).values()];
     const all = [...toStoredRules([entry("eslint:no-var", "", { suppressions: "ignore" }), entry("eslint:radix", "", { suppressions: "ignore" })]).values()];
 
-    expect(packSuppressions(honouring)).toEqual({ text: "honoured by its rules", next: "ignore" });
-    expect(packSuppressions(one)).toEqual({ text: "ignored by 1 of its 2 rules", next: "ignore" });
-    expect(packSuppressions(all)).toEqual({ text: "ignored by its rules", next: "honour" });
+    expect(packSuppressions(honouring, "repository")).toEqual({ text: "honoured by its rules", next: "ignore" });
+    expect(packSuppressions(one, "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "ignore" });
+    expect(packSuppressions(all, "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+  });
+
+  // Self-review round 4: the switch writes only the pack's setting, so a rule with its own setting does not hold it on
+  // ignore forever.
+  it("offers to honour them again once every rule the pack's setting decides ignores them", () => {
+    const rules = [...toStoredRules([
+      entry("eslint:no-var", "", { suppressions: "ignore", suppressionsSource: inRepository("", "pack") }),
+      entry("eslint:radix", "", { suppressions: "honour", suppressionsSource: inRepository("", "rule") }),
+    ]).values()];
+    expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "honour" });
+    // A worktree's own setting decides a rule for the repository's switch, not for the worktree's.
+    const worktree = [...toStoredRules([entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inWorktree("", "pack") })]).values()];
+    expect(packSuppressions(worktree, "repository").next).toBe("ignore");
+    expect(packSuppressions(worktree, "checkout").next).toBe("ignore");
   });
 });
 

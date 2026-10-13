@@ -6,6 +6,7 @@
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
+import { followsPack } from "./derive.js";
 import { captureScope, inScope, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
@@ -71,8 +72,7 @@ export function settingWrites({ toast, invalidate, owner }) {
    */
   function setPackSuppressions(packId, suppressions, label) {
     const by = owner();
-    const followsPack = r => r.suppressionsSource?.target !== "rule" && !(by === "repository" && r.suppressionsSource?.by === "checkout");
-    const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId && followsPack(r));
+    const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId && followsPack(r, by));
     const folders = byFolder((data.attachedPacks.get(packId) ?? []).map(folder => [folder, { kind: "pack", id: packId }]));
     return save(folders, { suppressions }, rules, showSuppressions(suppressions), label);
   }

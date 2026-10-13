@@ -100,15 +100,24 @@ export function suppressionsText(stored, checkoutPath) {
 export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
 
 /**
- * How an added pack's rules here treat suppression comments, from each rule's own value, and what the pack's switch
- * sets: honour once every rule ignores them in every folder, else ignore.
+ * Whether the pack's suppressions setting, written as `owner` ("repository" or "checkout"), decides `rule`: not where
+ * the rule has a setting of its own, nor, for the repository, where a worktree's setting decides it.
  */
-export function packSuppressions(rules) {
+export const followsPack = (rule, owner) =>
+  rule.suppressionsSource?.target !== "rule" && !(owner === "repository" && rule.suppressionsSource?.by === "checkout");
+
+/**
+ * How an added pack's rules here treat suppression comments, from each rule's own value, and what the pack's switch
+ * (written as `owner`) sets: honour once every rule it decides ignores them in every folder, else ignore. A rule with a
+ * setting of its own counts in the text but not in the switch, which does not change it.
+ */
+export function packSuppressions(rules, owner) {
   const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
   const text = ignoring === 0 ? "honoured by its rules"
     : ignoring === rules.length ? "ignored by its rules"
     : `ignored by ${ignoring} of its ${rules.length} rules`;
-  return { text, next: rules.every(r => nextSuppressions(r) === "honour") ? "honour" : "ignore" };
+  const decided = rules.filter(rule => followsPack(rule, owner));
+  return { text, next: decided.length > 0 && decided.every(r => nextSuppressions(r) === "honour") ? "honour" : "ignore" };
 }
 
 /**

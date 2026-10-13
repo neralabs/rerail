@@ -90,7 +90,7 @@ declare module "*/ui/derive.js" {
   export function optionsText(stored: object, checkoutPath?: string): string | null;
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function onText(stored: object, checkoutPath?: string): string;
-  export function packSuppressions(rules: readonly object[]): { text: string; next: "honour" | "ignore" };
+  export function packSuppressions(rules: readonly object[], owner: "repository" | "checkout"): { text: string; next: "honour" | "ignore" };
 }
 
 declare module "*/ui/state.js" {
