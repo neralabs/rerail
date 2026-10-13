@@ -3,14 +3,15 @@
 //! kinds and fields (`KindCatalog`, which rules and tapes share), which semantic family serves a
 //! grammar, and which capabilities a language supports. The language registry
 //! (`languages/*.json`, `docs/language-packs.md`) is their one source: `build.rs` validates it
-//! and generates `DIALECTS`, `CodeRuleLanguage`, `PLANNED_LANGUAGES`, `Family::of`,
-//! `Family::honours` and `with_adapter!` from it (`language_registry.rs` in `OUT_DIR`). The host
-//! routes files by the same registry's suffixes (`SOURCE_LANGUAGES` in code-rule-languages.ts);
-//! the repository index receives them.
+//! and generates `GrammarDialect`'s production variants, `DIALECTS`, `CodeRuleLanguage`,
+//! `PLANNED_LANGUAGES`, `Family`, `Family::of`, `Family::honours` and `with_adapter!` from it
+//! (`language_registry.rs` in `OUT_DIR`). The host routes files by the same registry's suffixes
+//! (`SOURCE_LANGUAGES` in code-rule-languages.ts); the repository index receives them.
 //!
 //! Three layers:
-//! - A **dialect** is one tree-sitter grammar (`GrammarDialect`): Python, TypeScript, TSX,
-//!   JavaScript (JSX included), PHP. Files are parsed by exactly one dialect.
+//! - A **dialect** is one tree-sitter grammar (`GrammarDialect`): one variant per supported
+//!   registry dialect (its `variant`), plus the test-only grammars listed here. Files are parsed
+//!   by exactly one dialect.
 //! - A **code-rule language** is what a rule's `language` names. It spans the dialects its rules run
 //!   on; a sub-rule one dialect cannot express is `Never` there (`compile::dialect`). A
 //!   `typescript` rule also runs on JavaScript files; a `javascript` rule runs on them alone.
@@ -18,13 +19,13 @@
 //!   decoder, call arguments, suppression comments and line terminators. TypeScript, TSX and
 //!   JavaScript share the ECMAScript family.
 //!
-//! Adding a language: add its registry entry (`planned` first), its `GrammarDialect` variant and,
-//! for a new family, its adapter (`adapter`): one type implementing `Adapter`, whose associated
-//! types name the family's implementation of each concern, or `Refused`. `with_adapter!`,
-//! generated from the registry's families, dispatches every family question to it (the build
-//! fails until it exists). A rule that names a planned language, or a capability its language
-//! has `not-supported-yet`, is refused as `language-not-supported`; a `refused` capability is
-//! refused as invalid, never answered by another family's code.
+//! Adding a language: add its registry entry (`planned` first), and, for a new family, its adapter
+//! (`adapter`): one type implementing `Adapter`, whose associated types name the family's
+//! implementation of each concern, or `Refused`. `with_adapter!`, generated from the registry's
+//! families, dispatches every family question to it (the build fails until it exists). A rule that
+//! names a planned language, or a capability its language has `not-supported-yet`, is refused as
+//! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
+//! another family's code.
 
 pub(crate) mod adapter;
 
@@ -36,131 +37,6 @@ use ast_grep_core::{
 };
 use ast_grep_language::{LanguageExt, SupportLang};
 use std::borrow::Cow;
-
-/// Rerail's grammar dialect. `ast_grep_language::SupportLang` is closed, while Blade's vendored
-/// grammar is part of Rerail's supported source surface.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum GrammarDialect {
-    Python,
-    TypeScript,
-    Tsx,
-    JavaScript,
-    Php,
-    Blade,
-    #[cfg(test)]
-    Java,
-    #[cfg(test)]
-    CSharp,
-    #[cfg(test)]
-    Cpp,
-    #[cfg(test)]
-    C,
-    #[cfg(test)]
-    Bash,
-    #[cfg(test)]
-    Ruby,
-    #[cfg(test)]
-    Rust,
-    #[cfg(test)]
-    Kotlin,
-    #[cfg(test)]
-    Scala,
-    #[cfg(test)]
-    Swift,
-    #[cfg(test)]
-    Html,
-    #[cfg(test)]
-    Css,
-    #[cfg(test)]
-    Lua,
-    #[cfg(test)]
-    Json,
-    #[cfg(test)]
-    Go,
-}
-
-impl GrammarDialect {
-    /// Every dialect, test-only grammars included.
-    const ALL: &'static [Self] = &[
-        Self::Python,
-        Self::TypeScript,
-        Self::Tsx,
-        Self::JavaScript,
-        Self::Php,
-        Self::Blade,
-        #[cfg(test)]
-        Self::Java,
-        #[cfg(test)]
-        Self::CSharp,
-        #[cfg(test)]
-        Self::Cpp,
-        #[cfg(test)]
-        Self::C,
-        #[cfg(test)]
-        Self::Bash,
-        #[cfg(test)]
-        Self::Ruby,
-        #[cfg(test)]
-        Self::Rust,
-        #[cfg(test)]
-        Self::Kotlin,
-        #[cfg(test)]
-        Self::Scala,
-        #[cfg(test)]
-        Self::Swift,
-        #[cfg(test)]
-        Self::Html,
-        #[cfg(test)]
-        Self::Css,
-        #[cfg(test)]
-        Self::Lua,
-        #[cfg(test)]
-        Self::Json,
-        #[cfg(test)]
-        Self::Go,
-    ];
-
-    const fn support(self) -> Option<SupportLang> {
-        match self {
-            Self::Python => Some(SupportLang::Python),
-            Self::TypeScript => Some(SupportLang::TypeScript),
-            Self::Tsx => Some(SupportLang::Tsx),
-            Self::JavaScript => Some(SupportLang::JavaScript),
-            Self::Php => Some(SupportLang::Php),
-            Self::Blade => None,
-            #[cfg(test)]
-            Self::Java => Some(SupportLang::Java),
-            #[cfg(test)]
-            Self::CSharp => Some(SupportLang::CSharp),
-            #[cfg(test)]
-            Self::Cpp => Some(SupportLang::Cpp),
-            #[cfg(test)]
-            Self::C => Some(SupportLang::C),
-            #[cfg(test)]
-            Self::Bash => Some(SupportLang::Bash),
-            #[cfg(test)]
-            Self::Ruby => Some(SupportLang::Ruby),
-            #[cfg(test)]
-            Self::Rust => Some(SupportLang::Rust),
-            #[cfg(test)]
-            Self::Kotlin => Some(SupportLang::Kotlin),
-            #[cfg(test)]
-            Self::Scala => Some(SupportLang::Scala),
-            #[cfg(test)]
-            Self::Swift => Some(SupportLang::Swift),
-            #[cfg(test)]
-            Self::Html => Some(SupportLang::Html),
-            #[cfg(test)]
-            Self::Css => Some(SupportLang::Css),
-            #[cfg(test)]
-            Self::Lua => Some(SupportLang::Lua),
-            #[cfg(test)]
-            Self::Json => Some(SupportLang::Json),
-            #[cfg(test)]
-            Self::Go => Some(SupportLang::Go),
-        }
-    }
-}
 
 impl std::fmt::Display for GrammarDialect {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -503,9 +379,31 @@ struct Dialect {
     tape_tag: u8,
 }
 
-// `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`, `dialects`, `family`,
-// `capability`), `PLANNED_LANGUAGES`, `Family::of`, `Family::honours` and `with_adapter!`.
+// `grammar_dialect!`, `DIALECTS`, `registry_grammar`, `CodeRuleLanguage` (`ALL`, `name`,
+// `dialects`, `family`, `capability`), `PLANNED_LANGUAGES`, `Family` (`ALL`, `of`, `honours`) and
+// `with_adapter!`.
 include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
+
+// `GrammarDialect`: the registry's supported dialects, then grammars only tests parse (tape round
+// trips over other shapes, the transducer's grammar census), each with the ast-grep language that
+// lends it pattern syntax. No file or code rule selects a test-only grammar.
+grammar_dialect! {
+    Java => SupportLang::Java,
+    CSharp => SupportLang::CSharp,
+    Cpp => SupportLang::Cpp,
+    C => SupportLang::C,
+    Bash => SupportLang::Bash,
+    Ruby => SupportLang::Ruby,
+    TestRust => SupportLang::Rust,
+    Kotlin => SupportLang::Kotlin,
+    Scala => SupportLang::Scala,
+    Swift => SupportLang::Swift,
+    Html => SupportLang::Html,
+    Css => SupportLang::Css,
+    Lua => SupportLang::Lua,
+    Json => SupportLang::Json,
+    Go => SupportLang::Go,
+}
 
 /// The family `Family::of` reads a test-only grammar with.
 #[cfg(test)]
@@ -615,18 +513,6 @@ impl CodeRuleLanguage {
     }
 }
 
-/// The semantic implementation a dialect is read with.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum Family {
-    Python,
-    /// TypeScript, TSX and JavaScript.
-    Ecma,
-    Php,
-    /// Its semantics are those of the PHP its template embeds (`blade::view`), as the Blade
-    /// compiler oracle (`fixtures/blade`) checks.
-    Blade,
-}
-
 /// Whether a language reads a capability, as its registry entry declares.
 /// The generated `CodeRuleLanguage::capability` constructs the variants the registry uses; one no
 /// supported language declares today is still handled wherever a rule is compiled.
@@ -655,24 +541,10 @@ pub(crate) enum Semantic {
     FormatArgs,
 }
 
-/// Inline suppression comments a family honours (the registry's `suppressions`). PHP has three
-/// linters' (a PHP project may run any of them); Blade templates have none: no linter reads a
-/// template's `{{-- --}}` comments for directives.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum Suppression {
-    /// Ruff's `# noqa`.
-    Noqa,
-    /// Bandit's `# nosec`.
-    Nosec,
-    /// ESLint's `eslint-disable` comments.
-    Eslint,
-    /// PHPStan's `@phpstan-ignore` comments.
-    Phpstan,
-    /// Psalm's `@psalm-suppress` tags.
-    Psalm,
-    /// PHP_CodeSniffer's `phpcs:` annotations.
-    Phpcs,
-}
+/// The suppressions a family honours (the registry's `suppressions`), one kind per linter
+/// (`suppress`'s table). PHP honours three linters' (a PHP project may run any of them); Blade
+/// templates none: no linter reads a template's `{{-- --}}` comments for directives.
+pub(crate) use crate::code_rule_dsl::suppress::Suppression;
 
 /// The ECMAScript source form that structural `when` gates and scope construction read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -898,14 +770,8 @@ mod tests {
             ("calls", Semantic::Calls),
             ("formatArgs", Semantic::FormatArgs),
         ];
-        let suppressions = [
-            ("noqa", Suppression::Noqa),
-            ("nosec", Suppression::Nosec),
-            ("eslint", Suppression::Eslint),
-            ("phpstan", Suppression::Phpstan),
-            ("psalm", Suppression::Psalm),
-            ("phpcs", Suppression::Phpcs),
-        ];
+        // Every kind's `suppress` key is its registry name.
+        let suppressions = Suppression::ALL.iter().map(|&kind| (kind.key(), kind));
         for (entry, language) in supported.iter().zip(CodeRuleLanguage::ALL) {
             let runs_on = entry["runsOn"].as_array().map_or_else(
                 || {
@@ -940,7 +806,7 @@ mod tests {
                 .iter()
                 .map(text)
                 .collect::<Vec<_>>();
-            for (name, suppression) in suppressions {
+            for (name, suppression) in suppressions.clone() {
                 assert_eq!(
                     language.family().honours(suppression),
                     listed.iter().any(|listed| listed == name),

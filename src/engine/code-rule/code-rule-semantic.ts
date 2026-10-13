@@ -12,6 +12,7 @@ export type {
   CodeRuleDslResolves,
   CodeRuleDslValueTest,
 } from "./code-rule.js";
+export type { CodeRuleDslSuppress } from "./code-rule-schema-semantic.js";
 import type {
   CodeRuleDslArguments,
   CodeRuleDslAstRule,
@@ -24,17 +25,6 @@ import type {
   CodeRuleDslValueTest,
 } from "./code-rule.js";
 
-export interface CodeRuleDslSuppress {
-  eslint?: { rules: string[] };
-  noqa?: { codes: string[]; parent?: "statement" };
-  /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
-  nosec?: { codes: string[] };
-  phpstan?: { identifiers: string[] };
-  /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
-  psalm?: { issues: string[]; suppressAll?: boolean };
-  /** PHP_CodeSniffer's `phpcs:` annotations, as version 4 reads them unless `version: 3` (which adds `@codingStandardsIgnore*`). */
-  phpcs?: { sniffs: string[]; version?: 3 | 4 };
-}
 
 export type CodeRuleDslSemanticCompareText =
   | "value"
