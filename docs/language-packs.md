@@ -29,7 +29,7 @@ family's grammar) is the engine's answer alone. The host's schema checks a rule'
 
 ## The engine adapter
 
-Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
+Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`, `Rust`) implementing `Adapter`. The
 `with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family, and the
 registry also generates `Family`, `GrammarDialect`, `Family::of` and `honours`, so no enum is edited by hand. Every
 other call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
@@ -52,6 +52,37 @@ embedding family reuses the embedded language's concerns (Blade's delegate to PH
 the template itself. Refusals go through one gate (`gate`), which reports a refused feature as invalid and a planned
 one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite over every adapter, and
 checks that each family's adapter reads exactly the capabilities its registry entries support.
+
+| Family | Languages | Adapter | Capabilities | Suppressions |
+|---|---|---|---|---|
+| `python` | `python` | `Python` (`adapter/scope.rs`, `value.rs`, ...) | all five | `noqa`, `nosec` |
+| `ecma` | `typescript`, `javascript` | `Ecma` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
+| `php` | `php` | `Php` | all five | `phpstan`, `psalm`, `phpcs` |
+| `blade` | `blade` | `Blade`, delegating to `Php` over the compiled view | all five | none |
+| `rust` | `rust` | `Rust` (`adapter/rust.rs`) | all five | `clippy` |
+
+### The Rust adapter
+
+`adapter/rust.rs` reads Rust from tree-sitter-rust's syntax alone (`ast-grep:Rust`, tape tag 9): what needs types or
+macro expansion, and names inside macro token trees and `macro_rules!` bodies, are not read. Each concern selects the
+Rust module that implements it, and each is proven against a recording of the Rust 1.99.0 toolchain under
+`fixtures/rust/` (`generate.py` beside each; run by hand, never in CI):
+
+| Capability | Module | Reads | Oracle |
+|---|---|---|---|
+| `scope` | `scope/rust.rs`, `scope/usage/rust.rs` | Lexical name resolution as rustc does it: items visible in their whole block or module, `let` and pattern bindings from where they are made, no local of an enclosing `fn`; types, values, macros, lifetimes and labels as separate namespaces. `resolves.import` lists `::` paths, a read's head read through `use` and `extern crate`, `self::`/`super::` normalised to `crate::` paths | rust-analyzer's SCIP occurrences and rustc's unused-name diagnostics (`fixtures/rust/scope`) |
+| `value` | `value/rust.rs` | Literals and constant expressions as rustc evaluates them (integers of any width with their suffix's type, floats, `char`, strings, byte and C strings); `follow` reads a `const` item of the file | rustc's values for every literal and expression case (`fixtures/rust/literal`, `fixtures/rust/value`) |
+| `arguments` | `matcher/arguments/rust.rs` | A call's positional arguments | rustc's binding of each case's arguments (`fixtures/rust/arguments`) |
+| `calls` | `calls/rust.rs`, `Graph::link_rust` | A crate's functions by path, `Self::f`/`Type::f` through its `impl` blocks, `self.m()` in an inherent `impl`; method calls on other values, trait dispatch, closures and function pointers are open | rust-analyzer's resolution of every call in a test crate (`fixtures/rust/calls`) |
+| `formatArgs` | `literal/rust_format.rs`, `matcher/format_args/rust.rs` | `rustFormat` templates and style `rust`: the `format_args!` family as rustc binds it | rustc's diagnostics for every format macro case (`fixtures/rust/format`) |
+
+Suppression is `clippy` (`suppress/clippy.rs`): rustc's and Clippy's lint-level attributes (`allow`, `expect`, `warn`,
+`deny`, `forbid`), outer and inner, with those a `cfg_attr` applies when its predicate holds, and with
+`suppress.clippy.msrv` the `#[clippy::msrv]` in force. Its oracle is `clippy-driver` over UI fixtures and the ripgrep
+and tokio corpora (`fixtures/rust/suppress`). The attributes are read per file: a level set in another file (a crate
+root's `#![allow(..)]` over its modules) or on the command line is not seen, and a `cfg` predicate other than
+`all`, `any` and `not` over `clippy` is false. Rust refuses `languageOptions`, `resolves.imported` and every other
+family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports.
 
 ## The registry entry
 
@@ -81,7 +112,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Reserved today: Rust 9, SQL 10 and Vue 12 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
-| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`) |
+| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`, `clippy`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
 `parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
