@@ -1,15 +1,20 @@
 /**
  * A repository's own lint configuration, read at set-up so Rerail does not steer against what the repository
- * deliberately configured. Only static files at the repository root are read, as data: ESLint's `.eslintrc.json`,
- * `.eslintrc` (JSON) or `package.json` `eslintConfig` (top-level `rules`), oxlint's `.oxlintrc.json` (top-level
- * `rules`) and Ruff's `ignore` and `extend-ignore` (`.ruff.toml`, `ruff.toml` or `pyproject.toml`). Config code
- * (`eslint.config.ts`, `.eslintrc.js`) is never run, imported or read: it is reported as not read.
+ * deliberately configured. Only config files in the repository are read, and only as data: ESLint's flat config
+ * (`eslint.config.*` at the root, parsed and never run: `eslint-flat-config.ts`), `.eslintrc.json`, `.eslintrc` (JSON)
+ * or `package.json` `eslintConfig` (`rules` and `overrides`), oxlint's `.oxlintrc.json` (top-level `rules`) and Ruff's
+ * rule selection (`select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`; `.ruff.toml`, `ruff.toml` or
+ * `pyproject.toml`, and the configs its `extend` names). Config code is never run or imported; `.eslintrc.js` and YAML
+ * configs are reported as not read.
  *
  * What is read becomes settings for the rules of the packs being set up, matched through each port's `violation.
- * suppress` (the upstream rule names the port honours suppression comments for): a rule turned off (`"off"`, `0`, a
- * Ruff selector in `ignore`) starts off; ESLint options become the port's `config` where they map onto the options its
- * document declares. A rule some config turns off starts off even where another config keeps it on. An oxlint config
- * key is resolved to a built-in oxlint rule as oxlint resolves it (`oxlintRuleOfKey`), not by its bare name as its
+ * suppress` (the upstream rule names the port honours suppression comments for): a rule turned off for every file
+ * (`"off"`, `0`, a Ruff ignore that wins over the selects) starts off; one turned off for exactly one folder's files
+ * (`files: ["tests/**"]`, a Ruff per-file ignore of `tests/**`) starts off in that folder; ESLint options become the
+ * port's `config` where they map onto the options its document declares. A rule some config turns off starts off even
+ * where another config keeps it on; a flat config entry whose value cannot be read without running the config turns
+ * the port off. Nothing narrower than a folder turns a rule off: it stays on, with a note. An oxlint config key is
+ * resolved to a built-in oxlint rule as oxlint resolves it (`oxlintRuleOfKey`), not by its bare name as its
  * suppression comments are: `custom/no-console` is another plugin's rule and leaves ESLint's `no-console` alone.
  */
 import { lstatSync, readFileSync } from "node:fs";
@@ -17,6 +22,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CodeRuleDslOptionDeclaration, CodeRuleDslValue } from "../code-rule/code-rule.js";
 import { stableJsonText } from "../stable-json.js";
+import { folderOfGlob, readEslintFlatConfig, type FlatConfigRead } from "./eslint-flat-config.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "./lint-config-formats.js";
 import type { BundledCatalog, RuleConfig } from "./repository-model.js";
 import { configureBundledCodeRule } from "./rule-config.js";
@@ -31,7 +37,9 @@ const ESLINTRC_FILES = [".eslintrc.js", ".eslintrc.cjs", ".eslintrc.yaml", ".esl
 const ESLINTRC_CODE = new Set([".eslintrc.js", ".eslintrc.cjs"]);
 /** Ruff's config files in the order of precedence when one folder has several. */
 const RUFF_FILES = [".ruff.toml", "ruff.toml", "pyproject.toml"];
-const RUFF_KEYS = ["ignore", "extend-ignore", "lint.ignore", "lint.extend-ignore"];
+/** Ruff's rule selection lists; each is read from the `lint` section, else from the top level as Ruff does. */
+const RUFF_LISTS = ["select", "extend-select", "ignore", "extend-ignore"] as const;
+const RUFF_TABLES = ["per-file-ignores", "extend-per-file-ignores"] as const;
 /** A Ruff selector: `ALL`, or a rule code or prefix of one (`E`, `E7`, `E711`, `PLR09`). */
 const RUFF_SELECTOR = /^(?:ALL|[A-Z]+[0-9]*)$/u;
 const NEVER_RUN = "Rerail never runs your config.";
@@ -154,19 +162,56 @@ function oxlintRuleOfPort(eslintName: string): OxlintRule {
 
 export type LintConfigLinter = "eslint" | "oxlint" | "ruff";
 
-/** The `rules` object of an ESLint or oxlint config file. */
+/** A rule entry limited to some files (a flat config object's, an `.eslintrc` override's), after the last entry for its rule that every file gets. */
+export interface ScopedRule {
+  readonly key: string;
+  readonly value: unknown;
+  /** The folders it covers exactly, if it covers whole folders; `files` names them for the person. */
+  readonly folders: readonly string[] | undefined;
+  readonly files: string;
+}
+
+/** The `rules` of an ESLint or oxlint config file. */
 export interface LintConfigRules {
   /** How the file is named to the person: `.eslintrc.json`, `package.json eslintConfig`. */
   readonly file: string;
+  /** What every file gets, by rule key. */
   readonly rules: Readonly<Record<string, unknown>>;
+  /** A flat config's entries limited to some files; none for other configs. */
+  readonly scoped: readonly ScopedRule[];
+  /** A flat config's rule keys whose value cannot be read without running the config, with why. */
+  readonly unresolved: ReadonlyMap<string, string>;
+}
+
+/** A Ruff selector in one of the rule selection options, with the file and key path that hold it. */
+export interface RuffSelector {
+  readonly file: string;
+  readonly key: string;
+  readonly selector: string;
+}
+
+/** One config file's rule selection, as Ruff reads it into one rule selection. */
+export interface RuffLayer {
+  /** `select`, which replaces every earlier selection; undefined where the file does not set it. */
+  readonly select: readonly RuffSelector[] | undefined;
+  readonly extendSelect: readonly RuffSelector[];
+  /** `ignore` and `extend-ignore`. */
+  readonly ignore: readonly RuffSelector[];
+}
+
+/** Ruff's rule selection in the config Ruff uses at the root. */
+export interface RuffSelection {
+  /** Each config's selection in the order Ruff applies them: the configs `extend` names first, the root's last. */
+  readonly layers: readonly RuffLayer[];
+  /** `per-file-ignores` and `extend-per-file-ignores`: a selector ignored in the files a pattern matches. */
+  readonly perFileIgnores: readonly { readonly pattern: string; readonly folder: string | undefined; readonly ignore: RuffSelector }[];
 }
 
 /** What `readLintConfigFiles` read at a repository root. */
 export interface LintConfigFiles {
   readonly eslint: LintConfigRules | undefined;
   readonly oxlint: LintConfigRules | undefined;
-  /** Each Ruff selector in an `ignore` or `extend-ignore` list, with the file and key path that holds it. */
-  readonly ruff: readonly { readonly file: string; readonly key: string; readonly selector: string }[];
+  readonly ruff: RuffSelection | undefined;
   /** What was present and not read, or read only in part, and why; by the linter it configures. */
   readonly notes: readonly { readonly linter: LintConfigLinter; readonly text: string }[];
 }
@@ -174,6 +219,8 @@ export interface LintConfigFiles {
 /** A setting set-up proposes for a rule of a pack being set up. */
 export interface LintConfigSetting {
   readonly ruleId: string;
+  /** The folder it applies in, relative to the repository root; `""` for the whole repository. */
+  readonly folder: string;
   /** `false`: the repository's config turns the rule off. `null`: leaves it as the pack has it. */
   readonly on: false | null;
   /** Option values from the repository's config, or `null`. */
@@ -190,7 +237,10 @@ export interface RepositoryLintConfig {
 
 type FileRead = { readonly present: false } | { readonly present: true; readonly text: string | undefined };
 
-/** A root file as text: absent, present but not a regular file of at most `MAX_CONFIG_BYTES` (no text), or its text. */
+/**
+ * A file at `name` (a path relative to the root) as text: absent, present but not a regular file of at most
+ * `MAX_CONFIG_BYTES` in the repository (no text), or its text.
+ */
 function readRootFile(root: string, name: string): FileRead {
   let info;
   try {
@@ -198,8 +248,10 @@ function readRootFile(root: string, name: string): FileRead {
   } catch {
     return { present: false };
   }
-  // A symlink could point outside the repository or at a device.
-  if (!info.isFile() || info.size > MAX_CONFIG_BYTES) return { present: true, text: undefined };
+  // A symlink, the file's or a folder's on the way to it, could point outside the repository or at a device.
+  const folders = name.split("/").slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join("/"));
+  const throughLink = folders.some(folder => lstatSync(join(root, folder)).isSymbolicLink());
+  if (throughLink || !info.isFile() || info.size > MAX_CONFIG_BYTES) return { present: true, text: undefined };
   try {
     return { present: true, text: readFileSync(join(root, name), "utf8") };
   } catch {
@@ -209,7 +261,7 @@ function readRootFile(root: string, name: string): FileRead {
 
 /** A JSON object; arrays and `null` are not. Zod leaves out `__proto__` keys. */
 const jsonObject = z.record(z.string(), z.unknown());
-const configFile = z.looseObject({ rules: z.unknown().optional() });
+const configFile = z.looseObject({ rules: z.unknown().optional(), overrides: z.unknown().optional() });
 
 const NOT_A_FILE = "it is not a regular file of at most 1 MiB in the repository.";
 
@@ -221,11 +273,49 @@ type Notes = { linter: LintConfigLinter; text: string }[];
  */
 function topLevelRules(file: string, config: z.infer<typeof configFile>, unread: readonly string[], linter: LintConfigLinter, notes: Notes): LintConfigRules | undefined {
   const skipped = unread.filter(key => Object.hasOwn(config, key));
-  if (skipped.length > 0) notes.push({ linter, text: `${file}: only its own top-level rules are read, not ${skipped.join(" or ")}.` });
+  if (skipped.length > 0) notes.push({ linter, text: `${file}: only its own rules are read, not ${skipped.join(" or ")}.` });
   const rules = jsonObject.safeParse(config.rules ?? {});
-  if (rules.success) return { file, rules: rules.data };
-  notes.push({ linter, text: `${file} is not read: its rules are not an object.` });
-  return undefined;
+  if (!rules.success) {
+    notes.push({ linter, text: `${file} is not read: its rules are not an object.` });
+    return undefined;
+  }
+  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map() };
+}
+
+const eslintrcOverride = z.looseObject({
+  files: z.union([z.string(), z.array(z.string())]),
+  rules: jsonObject.optional(),
+});
+
+/**
+ * An `.eslintrc`'s `overrides` as rule entries for some files, in order: ESLint applies each after the config's own
+ * rules to the files its `files` match, less its `excludedFiles`. Their `extends` and nested `overrides` are not read.
+ */
+function eslintrcOverrides(file: string, config: z.infer<typeof configFile>, notes: Notes): ScopedRule[] {
+  const overrides = config.overrides;
+  if (overrides === undefined) return [];
+  if (!Array.isArray(overrides)) {
+    notes.push({ linter: "eslint", text: `${file}: its overrides are not read: they are not a list.` });
+    return [];
+  }
+  return overrides.flatMap((value, index) => {
+    const override = eslintrcOverride.safeParse(value);
+    if (!override.success) {
+      notes.push({ linter: "eslint", text: `${file}: overrides[${index}] is not read: it has no files or its rules are not an object.` });
+      return [];
+    }
+    const unread = ["extends", "overrides"].filter(key => Object.hasOwn(override.data, key));
+    if (unread.length > 0) notes.push({ linter: "eslint", text: `${file}: overrides[${index}]: only its own rules are read, not ${unread.join(" or ")}.` });
+    const patterns = typeof override.data.files === "string" ? [override.data.files] : override.data.files;
+    const folders = Object.hasOwn(override.data, "excludedFiles") ? [] : patterns.map(folderOfGlob);
+    const exact = folders.length > 0 && folders.every(folder => folder !== undefined);
+    return Object.entries(override.data.rules ?? {}).map(([key, value]) => ({
+      key,
+      value,
+      folders: exact ? (folders as string[]) : undefined,
+      files: JSON.stringify(override.data.files),
+    }));
+  });
 }
 
 /** A JSONC config file at the root as an object; undefined (with a note when present) otherwise. */
@@ -246,16 +336,69 @@ function jsoncFile(root: string, name: string, linter: LintConfigLinter, notes: 
   return undefined;
 }
 
-const ESLINT_UNREAD = ["extends", "overrides", "plugins"];
+const ESLINT_UNREAD = ["extends", "plugins"];
+
+/** A severity with no options after it, as a later config object sets one: ESLint keeps the earlier options. */
+function withEarlierOptions(earlier: unknown, later: unknown): unknown {
+  return !Array.isArray(later) && Array.isArray(earlier) && earlier.length > 1 ? [later, ...earlier.slice(1)] : later;
+}
+
+/**
+ * A flat config's entries as ESLint applies them, in order: a later entry every file gets replaces the earlier ones
+ * (keeping their options when it sets only a severity), and the entries limited to some files that come after it are
+ * kept apart. An entry Rerail cannot read stands for its rule until a later entry for every file replaces it.
+ */
+function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
+  const rules: Record<string, unknown> = {};
+  const unresolved = new Map<string, string>();
+  const scopedUnresolved = new Map<string, string>();
+  let scoped: ScopedRule[] = [];
+  for (const { key, scope, value } of read.entries) {
+    if (scope.kind !== "all") {
+      if (value.ok) scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files });
+      else if (!scopedUnresolved.has(key)) scopedUnresolved.set(key, `${value.why} (for ${scope.files})`);
+      continue;
+    }
+    scoped = scoped.filter(entry => entry.key !== key);
+    scopedUnresolved.delete(key);
+    // Only a value that replaces the earlier one entirely stands in for an unread one: an "off", or a severity with options.
+    const replaces = value.ok && (Array.isArray(value.value) || severityOf(value.value, "eslint")?.off === true);
+    if (!value.ok) {
+      unresolved.set(key, value.why);
+      delete rules[key];
+    } else if (unresolved.has(key) && !replaces) {
+      // Rerail cannot tell the options a severity keeps.
+    } else {
+      unresolved.delete(key);
+      Object.defineProperty(rules, key, { value: withEarlierOptions(rules[key], value.value), enumerable: true, writable: true, configurable: true });
+    }
+  }
+  for (const [key, why] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, why);
+  return { file, rules, scoped, unresolved };
+}
 
 function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
   const flat = ESLINT_FLAT_CONFIGS.filter(name => readRootFile(root, name).present);
   const legacy = ESLINTRC_FILES.filter(name => readRootFile(root, name).present);
   if (flat.length > 0) {
-    for (const name of flat) notes.push({ linter: "eslint", text: `${name} is not read: ${NEVER_RUN}` });
-    // ESLint uses the flat config wherever there is one.
-    for (const name of legacy) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${flat[0]} instead.` });
-    return undefined;
+    const used = flat[0]!;
+    // ESLint uses the first flat config it finds wherever there is one.
+    for (const name of [...flat.slice(1), ...legacy]) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
+    const read = readRootFile(root, used);
+    if (read.present && read.text === undefined) {
+      notes.push({ linter: "eslint", text: `${used} is not read: ${NOT_A_FILE}` });
+      return undefined;
+    }
+    let config: FlatConfigRead;
+    try {
+      config = readEslintFlatConfig(read.present ? read.text! : "", used);
+    } catch (error) {
+      if (!(error instanceof LintConfigFormatError)) throw error;
+      notes.push({ linter: "eslint", text: `${used} is not read: ${error.message}. ${NEVER_RUN}` });
+      return undefined;
+    }
+    for (const note of config.notes) notes.push({ linter: "eslint", text: `${used}: ${note}` });
+    return flatRules(used, config);
   }
   const used = legacy[0];
   if (used !== undefined) {
@@ -296,40 +439,147 @@ function readOxlint(root: string, notes: Notes): LintConfigRules | undefined {
   return config === undefined ? undefined : topLevelRules(".oxlintrc.json", config, ["extends", "overrides", "categories"], "oxlint", notes);
 }
 
-function readRuff(root: string, notes: Notes): LintConfigFiles["ruff"] {
-  for (const name of RUFF_FILES) {
-    const read = readRootFile(root, name);
-    if (!read.present) continue;
-    const prefix = name === "pyproject.toml" ? "tool.ruff." : "";
-    if (read.text === undefined) {
-      notes.push({ linter: "ruff", text: `${name} is not read: ${NOT_A_FILE}` });
-      return [];
-    }
-    let found;
-    try {
-      found = readTomlStringLists(read.text, RUFF_KEYS.map(key => `${prefix}${key}`));
-    } catch (error) {
-      if (!(error instanceof LintConfigFormatError)) throw error;
-      // A pyproject.toml that may hold no Ruff config at all is not worth a note.
-      if (prefix === "" || read.text.includes("ruff")) notes.push({ linter: "ruff", text: `${name} is not read: ${error.message}.` });
-      if (prefix === "") return [];
-      continue;
-    }
-    // Ruff skips a pyproject.toml without a [tool.ruff] section.
-    if (prefix !== "" && !found.paths.some(path => path === "tool.ruff" || path.startsWith("tool.ruff."))) continue;
-    const unread = ["extend", "per-file-ignores", "extend-per-file-ignores", "lint.per-file-ignores", "lint.extend-per-file-ignores"]
-      .filter(key => found.paths.includes(`${prefix}${key}`));
-    if (unread.length > 0) notes.push({ linter: "ruff", text: `${name}: only ignore and extend-ignore are read, not ${unread.join(" or ")}.` });
-    const ignores: { file: string; key: string; selector: string }[] = [];
-    for (const [key, selectors] of found.lists) {
-      for (const selector of selectors) {
-        if (RUFF_SELECTOR.test(selector)) ignores.push({ file: name, key, selector });
-        else notes.push({ linter: "ruff", text: `${name}: ${JSON.stringify(selector)} in ${key} is not a Ruff rule code or prefix.` });
-      }
-    }
-    return ignores;
+type RuffPerFileIgnore = RuffSelection["perFileIgnores"][number];
+
+/** One Ruff config file as read: its rule selection, its per-file ignores, and the config it extends. */
+interface RuffFile {
+  readonly name: string;
+  readonly layer: RuffLayer;
+  /** `per-file-ignores`, which replaces the extended config's; undefined where the file does not set it. */
+  readonly perFileIgnores: readonly RuffPerFileIgnore[] | undefined;
+  readonly extendPerFileIgnores: readonly RuffPerFileIgnore[];
+  readonly extend: string | undefined;
+}
+
+/** How many configs deep `extend` is followed; Ruff has no limit, but a chain this long is not one a person wrote. */
+const MAX_RUFF_EXTENDS = 8;
+
+/**
+ * Ruff config file `name` (a path relative to the root), as Ruff reads it: from `[tool.ruff]` in a `pyproject.toml`,
+ * from the top in any other file. `absent` when there is no such file, `not-ruff` for a `pyproject.toml` without
+ * `[tool.ruff]`, undefined (with a note) when it cannot be read.
+ */
+function readRuffFile(root: string, name: string, notes: Notes): RuffFile | "absent" | "not-ruff" | undefined {
+  const read = readRootFile(root, name);
+  if (!read.present) return "absent";
+  const prefix = name === "pyproject.toml" || name.endsWith("/pyproject.toml") ? "tool.ruff." : "";
+  if (read.text === undefined) {
+    notes.push({ linter: "ruff", text: `${name} is not read: ${NOT_A_FILE}` });
+    return undefined;
   }
-  return [];
+  const sections = [`${prefix}lint.`, prefix];
+  let found;
+  try {
+    found = readTomlStringLists(
+      read.text,
+      RUFF_LISTS.flatMap(option => sections.map(section => `${section}${option}`)),
+      RUFF_TABLES.flatMap(option => sections.map(section => `${section}${option}`)),
+      [`${prefix}extend`],
+    );
+  } catch (error) {
+    if (!(error instanceof LintConfigFormatError)) throw error;
+    // A pyproject.toml that may hold no Ruff config at all is not worth a note.
+    if (prefix === "" || read.text.includes("ruff")) notes.push({ linter: "ruff", text: `${name} is not read: ${error.message}.` });
+    return prefix === "" ? undefined : "not-ruff";
+  }
+  // Ruff skips a pyproject.toml without a [tool.ruff] section.
+  if (prefix !== "" && !found.paths.some(path => path === "tool.ruff" || path.startsWith("tool.ruff."))) return "not-ruff";
+  const selectors = (option: string): RuffSelector[] | undefined => {
+    // Ruff reads an option from the lint section where it is set there, else from the top level.
+    const key = sections.map(section => `${section}${option}`).find(path => found.lists.has(path));
+    if (key === undefined) return undefined;
+    return found.lists.get(key)!.flatMap(selector => {
+      if (RUFF_SELECTOR.test(selector)) return [{ file: name, key, selector }];
+      notes.push({ linter: "ruff", text: `${name}: ${JSON.stringify(selector)} in ${key} is not a Ruff rule code or prefix.` });
+      return [];
+    });
+  };
+  const perFileIgnores = (option: string): RuffPerFileIgnore[] | undefined => {
+    const key = sections.map(section => `${section}${option}`).find(path => found.tables.has(path));
+    if (key === undefined) return undefined;
+    return [...found.tables.get(key)!].flatMap(([pattern, ignored]) => ignored.flatMap(selector => {
+      if (!RUFF_SELECTOR.test(selector)) {
+        notes.push({ linter: "ruff", text: `${name}: ${JSON.stringify(selector)} in ${key} is not a Ruff rule code or prefix.` });
+        return [];
+      }
+      return [{ pattern, folder: pattern.startsWith("!") ? undefined : folderOfGlob(pattern), ignore: { file: name, key: `${key}.${JSON.stringify(pattern)}`, selector } }];
+    }));
+  };
+  return {
+    name,
+    layer: {
+      select: selectors("select"),
+      extendSelect: selectors("extend-select") ?? [],
+      ignore: [...selectors("ignore") ?? [], ...selectors("extend-ignore") ?? []],
+    },
+    perFileIgnores: perFileIgnores("per-file-ignores"),
+    extendPerFileIgnores: perFileIgnores("extend-per-file-ignores") ?? [],
+    extend: found.strings.get(`${prefix}extend`),
+  };
+}
+
+/** The config `extend` names from config `from`, as a path relative to the root; undefined outside the repository. */
+function extendedPath(from: string, extend: string): string | undefined {
+  if (extend.startsWith("/") || extend.startsWith("~") || /^[A-Za-z]:/u.test(extend) || extend.includes("\\")) return undefined;
+  const parts: string[] = from.split("/").slice(0, -1);
+  for (const part of extend.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) return undefined;
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+  return parts.length === 0 ? undefined : parts.join("/");
+}
+
+function readRuff(root: string, notes: Notes): RuffSelection | undefined {
+  for (const name of RUFF_FILES) {
+    const first = readRuffFile(root, name, notes);
+    if (first === "absent" || first === "not-ruff") continue;
+    if (first === undefined) return undefined;
+    // The chain of configs `extend` names; a config Rerail cannot read ends it, and the rules only it ignores stay on.
+    const chain: RuffFile[] = [first];
+    for (let current = first; current.extend !== undefined;) {
+      const unread = (why: string): void => {
+        notes.push({ linter: "ruff", text: `${current.name}: the config it extends, ${JSON.stringify(current.extend)}, is not read (${why}), so the rules only that config ignores stay on.` });
+      };
+      const target = extendedPath(current.name, current.extend);
+      if (target === undefined) {
+        unread("it is outside the repository");
+        break;
+      }
+      if (chain.some(file => file.name === target) || chain.length > MAX_RUFF_EXTENDS) {
+        unread("its extend chain loops or runs too deep");
+        break;
+      }
+      const base = readRuffFile(root, target, notes);
+      if (base === "absent" || base === undefined) {
+        if (base === "absent") unread("there is no such file");
+        break;
+      }
+      if (base === "not-ruff") break;
+      chain.push(base);
+      current = base;
+    }
+    // A per-file ignore's pattern is relative to its config's folder; Rerail reads those of configs at the root.
+    const onlyAtRoot = (files: readonly RuffFile[]): RuffPerFileIgnore[] => files.flatMap(file => {
+      if (!file.name.includes("/")) return [file.perFileIgnores ?? [], file.extendPerFileIgnores].flat();
+      notes.push({ linter: "ruff", text: `${file.name}: its per-file ignores are not read: their patterns are relative to its folder.` });
+      return [];
+    });
+    // `per-file-ignores` of the nearest config that sets it replaces the others'; every `extend-per-file-ignores` adds.
+    const nearest = chain.find(file => file.perFileIgnores !== undefined);
+    return {
+      layers: chain.map(file => file.layer).reverse(),
+      perFileIgnores: [
+        ...(nearest === undefined ? [] : onlyAtRoot([{ ...nearest, extendPerFileIgnores: [] }])),
+        ...onlyAtRoot(chain.filter(file => file.extendPerFileIgnores.length > 0).map(file => ({ ...file, perFileIgnores: undefined }))),
+      ],
+    };
+  }
+  return undefined;
 }
 
 /** What the repository at `root` configures for its linters, read from static files at its root only. Runs nothing. */
@@ -352,6 +602,52 @@ export function ruffSelects(selector: string, code: string): boolean {
   const codeLetters = /^[A-Z]*/u.exec(code)![0];
   return selectorLetters === codeLetters || (selectorLetters === "PL" && /^PL[CERW]$/u.test(codeLetters));
 }
+
+/**
+ * How specific a Ruff selector is, as Ruff orders them (`Specificity` in ruff_linter's `rule_selector.rs`): `ALL`, the
+ * legacy `C` and `T`, a linter (`E`, `PL`), a prefix by its length (`E7`, `PLR09`), a rule (`E711`). Two selectors that
+ * select the same code are both prefixes of it, so the longer one is the more specific.
+ */
+const ruffSpecificity = (selector: string): number => (selector === "ALL" ? 0 : selector.length);
+
+/** Whether Ruff runs a rule, and the selector that decided it; `by` is undefined for a rule a `select` leaves out. */
+export interface RuffDecision {
+  readonly enabled: boolean;
+  readonly by: RuffSelector | undefined;
+}
+
+/**
+ * What Ruff's rule selection decides for rule `code`, replaying `as_rule_table` (ruff_workspace's `configuration.rs`,
+ * 0.15.0) over the configs in order. Within one config, selectors apply from the least specific to the most specific,
+ * a select before an ignore of the same specificity, so the most specific selector that names the code decides. A
+ * config that sets `select` replaces the earlier configs' result (a code it does not select is off, decided by no
+ * ignore); one that does not changes only the codes its selectors name; `select = []` with ignores and no
+ * `extend-select` carries its ignores into the next config. Undefined when no selector names the code: Ruff's defaults
+ * decide.
+ */
+export function ruffDecision(selection: RuffSelection, code: string): RuffDecision | undefined {
+  let decided: RuffDecision | undefined;
+  let carried: readonly RuffSelector[] = [];
+  for (const layer of selection.layers) {
+    const updates = [
+      ...[...(layer.select ?? []), ...layer.extendSelect].map(by => ({ enabled: true, by })),
+      ...[...layer.ignore, ...carried].map(by => ({ enabled: false, by })),
+    ].filter(({ by }) => ruffSelects(by.selector, code));
+    // A stable sort keeps selects before ignores of the same specificity.
+    updates.sort((left, right) => ruffSpecificity(left.by.selector) - ruffSpecificity(right.by.selector));
+    const last = updates.at(-1);
+    carried = [];
+    if (layer.select !== undefined) {
+      decided = last ?? { enabled: false, by: undefined };
+      if (layer.select.length === 0 && layer.extendSelect.length === 0) carried = layer.ignore;
+    } else if (last !== undefined) {
+      decided = last;
+    }
+  }
+  return decided;
+}
+
+const ruffText = ({ file, key, selector }: RuffSelector): string => `${file}: ${JSON.stringify(selector)} in ${key}`;
 
 /** A rule entry's severity: `off`, `on`, or undefined when it is not one the linter takes; with the options after it. */
 function severityOf(value: unknown, linter: "eslint" | "oxlint"): { off: boolean; options: unknown[] } | undefined {
@@ -449,26 +745,65 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
     return port === undefined ? [] : [[id, port] as const];
   }));
   const findings = new Map<string, Finding[]>();
+  /** Rule id → folder → why: a rule a config turns off for exactly that folder's files. */
+  const folderOffs = new Map<string, Map<string, string>>();
   const notes: string[] = [];
   const add = (ruleId: string, finding: Finding): void => {
     findings.set(ruleId, [...(findings.get(ruleId) ?? []), finding]);
   };
+  const addFolderOff = (ruleId: string, folder: string, because: string): void => {
+    const folders = folderOffs.get(ruleId) ?? new Map<string, string>();
+    folders.set(folder, folders.has(folder) ? `${folders.get(folder)!}; ${because}` : because);
+    folderOffs.set(ruleId, folders);
+  };
+  /** ESLint options as the port's `config`, only where the port accepts them as a stored rule setting would be. */
+  const mappedOptions = (ruleId: string, declared: Declared, options: readonly unknown[]): MappedOptions => {
+    const config = eslintOptionsConfig(declared, options);
+    if (!config.ok) return config;
+    const configured = configureBundledCodeRule(bundle, ruleId, config.config);
+    return configured.ok ? config : { ok: false, reason: configured.reason };
+  };
+  const eslint = files.eslint;
   for (const [ruleId, port] of ports) {
-    for (const [key, value] of Object.entries(files.eslint?.rules ?? {})) {
-      if (!port.eslint.includes(key)) continue;
-      const because = entryText(files.eslint!.file, key, value);
-      const severity = severityOf(value, "eslint");
-      if (severity === undefined) {
-        notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+    for (const key of new Set(port.eslint)) {
+      if (eslint === undefined) break;
+      const why = eslint.unresolved.get(key);
+      if (why !== undefined) {
+        // The repository sets the rule, to what Rerail cannot tell without running the config.
+        add(ruleId, { off: true, because: `${eslint.file}: ${JSON.stringify(key)} is not read (${why})` });
         continue;
       }
-      let config = severity.off || severity.options.length === 0 ? undefined : eslintOptionsConfig(port.declared, severity.options);
-      if (config?.ok === true) {
-        // Only a config the port accepts, as a rule setting's config is checked when it is stored.
-        const configured = configureBundledCodeRule(bundle, ruleId, config.config);
-        if (!configured.ok) config = { ok: false, reason: configured.reason };
+      const later = eslint.scoped.filter(entry => entry.key === key);
+      if (Object.hasOwn(eslint.rules, key)) {
+        const value = eslint.rules[key];
+        const because = entryText(eslint.file, key, value);
+        const severity = severityOf(value, "eslint");
+        if (severity === undefined) {
+          notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+        } else {
+          const back = severity.off ? later.find(entry => severityOf(entry.value, "eslint")?.off === false) : undefined;
+          if (back !== undefined) {
+            notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
+          } else {
+            const config = severity.off || severity.options.length === 0 ? undefined : mappedOptions(ruleId, port.declared, severity.options);
+            add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
+          }
+        }
       }
-      add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
+      for (const entry of later) {
+        const because = `${entryText(eslint.file, key, entry.value)} for ${entry.files}`;
+        const severity = severityOf(entry.value, "eslint");
+        if (severity === undefined) {
+          notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+        } else if (severity.off && entry.folders !== undefined) {
+          for (const folder of entry.folders) addFolderOff(ruleId, folder, because);
+        } else if (severity.off) {
+          notes.push(`${ruleId}: ${because} turns it off only for some files; it stays on.`);
+        } else if (severity.options.length > 0) {
+          // Options apply to the whole repository: a rule setting's config has no folder.
+          add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
+        }
+      }
     }
     for (const rule of port.oxlint) {
       // oxlint applies a rule's last key: `{"no-unused-vars": "off", "typescript/no-unused-vars": "error"}` keeps it on.
@@ -488,8 +823,24 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       if (!severity.off && severity.options.length > 0) notes.push(`${ruleId}: option not mapped: Rerail maps ESLint options, not oxlint's (${because}).`);
       add(ruleId, { off: severity.off, because });
     }
-    for (const { file, key, selector } of files.ruff) {
-      if (port.noqa.some(code => ruffSelects(selector, code))) add(ruleId, { off: true, because: `${file}: ${JSON.stringify(selector)} in ${key}` });
+    const ruff = files.ruff;
+    if (ruff !== undefined) {
+      for (const code of new Set(port.noqa)) {
+        const decision = ruffDecision(ruff, code);
+        if (decision?.enabled === false && decision.by !== undefined) {
+          add(ruleId, { off: true, because: ruffText(decision.by) });
+          continue;
+        }
+        if (decision?.enabled === true && decision.by !== undefined) {
+          const overridden = ruff.layers.flatMap(layer => layer.ignore).find(by => ruffSelects(by.selector, code));
+          if (overridden !== undefined) notes.push(`${ruleId}: ${ruffText(overridden)} is overridden by ${ruffText(decision.by)}, which Ruff applies after it; it stays on.`);
+        }
+        for (const { pattern, folder, ignore } of ruff.perFileIgnores) {
+          if (!ruffSelects(ignore.selector, code)) continue;
+          if (folder !== undefined) addFolderOff(ruleId, folder, ruffText(ignore));
+          else notes.push(`${ruleId}: ${ruffText(ignore)} ignores it only in the files ${JSON.stringify(pattern)} matches; it stays on.`);
+        }
+      }
     }
   }
   const settings: LintConfigSetting[] = [];
@@ -498,7 +849,9 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
     if (offs.length > 0) {
       const kept = found.filter(finding => !finding.off);
       if (kept.length > 0) notes.push(`${ruleId}: ${kept[0]!.because} keeps it on, but ${offs[0]!.because} turns it off; it starts off.`);
-      settings.push({ ruleId, on: false, config: null, because: offs.map(finding => finding.because).join("; ") });
+      settings.push({ ruleId, folder: "", on: false, config: null, because: offs.map(finding => finding.because).join("; ") });
+      // Off everywhere: no folder needs its own setting.
+      folderOffs.delete(ruleId);
       continue;
     }
     const configured = found.flatMap(finding => (finding.config === undefined ? [] : [{ because: finding.because, mapped: finding.config }]));
@@ -514,8 +867,11 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
     }
     const config = configs[0];
     if (config !== undefined && Object.keys(config).length > 0) {
-      settings.push({ ruleId, on: null, config, because: configured.map(finding => finding.because).join("; ") });
+      settings.push({ ruleId, folder: "", on: null, config, because: configured.map(finding => finding.because).join("; ") });
     }
+  }
+  for (const [ruleId, folders] of folderOffs) {
+    for (const [folder, because] of folders) settings.push({ ruleId, folder, on: false, config: null, because });
   }
   const linters = new Set<LintConfigLinter>([...ports.values()].flatMap(port => [
     ...(port.eslint.length > 0 ? ["eslint" as const] : []),

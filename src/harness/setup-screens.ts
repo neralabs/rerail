@@ -258,9 +258,10 @@ export function renderReadRepoQuestion(input: ReadRepoInput, lane: SetupLane): s
 
 /** What set-up takes from the repository's own lint config: `repository-lint-config.ts`'s result. */
 export interface LintConfigInput {
-  /** Rules that start off (`on: false`) or with option values (`config`), and the config entry that says so. */
+  /** Rules that start off (`on: false`) or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
   readonly settings: readonly {
     readonly ruleId: string;
+    readonly folder: string;
     readonly on: false | null;
     readonly config: Readonly<Record<string, unknown>> | null;
     readonly because: string;
@@ -291,7 +292,7 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   const rows = [
     ...settings.map(setting => {
       const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
-      const change = setting.on === false ? "starts off" : `starts with ${options}`;
+      const change = setting.on === false ? (setting.folder === "" ? "starts off" : `starts off in ${clean(setting.folder)}/`) : `starts with ${options}`;
       return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
     }),
     ...notes.map(note => `    ${style.dim(clean(note))}`),

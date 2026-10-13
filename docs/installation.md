@@ -119,9 +119,33 @@ settings, owned by the repository. Nothing is executed or imported.
 
 | Linter | Read | Not read |
 |---|---|---|
-| ESLint | the config ESLint itself would use: `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`; JSON with comments and trailing commas; its own top-level `rules` | flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), which ESLint prefers over every `.eslintrc`; `.eslintrc.{js,cjs,yaml,yml}`; `extends`, `overrides`, plugins' presets |
+| ESLint | the config ESLint itself would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), parsed and never run; else `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`, JSON with comments and trailing commas, its own `rules` and its `overrides`' `rules` | in a flat config, a value Rerail would have to run code for (an imported config such as `js.configs.recommended`, a call, an imported variable); `.eslintrc.{js,cjs,yaml,yml}`; `extends` and plugins' presets of an `.eslintrc` |
 | oxlint | `.oxlintrc.json`, top-level `rules`; each key resolved to a built-in rule as oxlint 1.88.0 resolves it, and a rule's last key applies | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options |
-| Ruff | `ignore` and `extend-ignore` (top level or `[lint]`) of the file Ruff uses: `.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]` | `select`/`extend-select` (a more specific `select` that re-enables an ignored code is not seen), `per-file-ignores`, `extend`; Bandit config |
+| Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores` and `extend-per-file-ignores` (each from `[lint]` where it is set there, else the top level) of the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and of the configs its `extend` names inside the repository | a config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config |
+
+A flat config is read as ESLint applies it: its exported array (through
+`export default`, `module.exports`, same-file `const`s, spreads,
+`defineConfig(...)`, typescript-eslint's `config(...)` and `extends`), one
+config object after another, a later one replacing a rule's entry (and
+keeping its options when it sets only a severity). An entry in an object
+with `files`, `ignores` or `basePath` applies to some files only: its options
+become the port's options for the whole repository, it turns a rule off only
+in a folder it covers whole (`files: ["scripts/**"]` turns it off in
+`scripts`), and an "off" for narrower files leaves the rule on with a note,
+as does an "off" a later object turns back on for some files. A rule entry
+whose value Rerail cannot read without running the config turns the port
+off, and the screen says why; the shared configs it does not read are named.
+An `.eslintrc`'s `overrides` are read the same way, after its own `rules`.
+
+Ruff's selection is resolved as Ruff resolves it: its selectors apply from
+the least specific (`ALL`, then `E`, `E7`, ...) to the most specific (`E711`),
+a select before an ignore of the same specificity, so the most specific
+selector that names a code decides. The configs `extend` names come first,
+and a later config's `select` replaces what they decided. A rule starts off
+only when an ignore decides it; when a more specific or later select
+re-enables it, it stays on and the screen says so. A per-file ignore turns a
+rule off in a folder its pattern covers whole (`"tests/**"`); for a narrower
+pattern (`"**/test_*.py"`) the rule stays on with a note.
 
 A port matches an upstream rule through the names its document honours
 suppression comments for (`violation.suppress`): an ESLint key in
@@ -133,9 +157,9 @@ oxlint's `react/x`; eslint-plugin-n's `n/x` is oxlint's `node/x`), so
 `custom/no-console` (another plugin's rule) changes nothing; a Ruff selector
 that selects one of its `noqa.codes` (`E7` selects `E711`, `E` does not
 select `ERA001`, `ALL` selects every code). A rule set to `"off"`/`0` (oxlint
-also `"allow"`),
-or ignored by Ruff, starts off; when one config turns a rule off and another
-keeps it on, it starts off and the screen says so. ESLint options become the
+also `"allow"`) for every file, or ignored by Ruff, starts off; when one
+config turns a rule off and another keeps it on, it starts off and the screen
+says so. ESLint options become the
 port's `config` when every value lands on an option its document declares:
 the first positional option is `option`, the second `option2`, an option
 object's keys keep their names and a nested object's keys are
@@ -144,7 +168,7 @@ object's keys keep their names and a nested object's keys are
 Options that do not map, or that the document rejects, are left at the port's
 defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
 symlink is not read, and a rule the person already set in the dashboard's
-review keeps that setting. "I'll pick rule packs myself" takes nothing from
+review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
 the lint config.
 
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent

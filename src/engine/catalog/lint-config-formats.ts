@@ -58,10 +58,14 @@ function jsonStringEnd(text: string, start: number): number {
 /** A TOML value as the reader keeps it: strings, arrays and inline tables; any other scalar only as present. */
 type TomlValue = string | TomlValue[] | Map<string, TomlValue> | { readonly scalar: string };
 
-/** What `readTomlStringLists` found: the wanted keys' lists, and every key path the file sets. */
+/** What `readTomlStringLists` found: the wanted lists, tables and strings, and every key path the file sets. */
 export interface TomlStringLists {
   /** Dotted key path (`tool.ruff.lint.ignore`) → its list, for each wanted path the file sets. */
   readonly lists: ReadonlyMap<string, readonly string[]>;
+  /** Dotted table path (`tool.ruff.lint.per-file-ignores`) → each key it sets (unquoted) → its list, for each wanted table. */
+  readonly tables: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>;
+  /** Dotted key path (`tool.ruff.extend`) → its string, for each wanted string path the file sets. */
+  readonly strings: ReadonlyMap<string, string>;
   /** Every key path the file sets, table headers included. */
   readonly paths: readonly string[];
 }
@@ -73,23 +77,30 @@ const dottedPath = (parts: readonly string[]): string => parts.map(part => (BARE
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", "\"": "\"", "\\": "\\" };
 
 /**
- * A TOML reader for exactly what set-up reads: the string lists at `wanted` key paths. It parses the whole file's
- * structure (tables, dotted and quoted keys, strings of each kind, arrays over several lines with comments and
- * trailing commas, inline tables) so another key's value cannot be mistaken for one of them, and keeps other scalars
- * unread. Throws `LintConfigFormatError` (with the line) on what it cannot read, a wanted key that is not a list of
- * strings, or a key set twice.
+ * A TOML reader for exactly what set-up reads: the string lists at `wanted` key paths, in the `wantedTables` tables
+ * every key's string list, and the strings at `wantedStrings`. It parses the whole file's structure (tables, dotted and
+ * quoted keys, strings of each kind, arrays over several lines with comments and trailing commas, inline tables) so
+ * another key's value cannot be mistaken for one of them, and keeps other scalars unread. Throws
+ * `LintConfigFormatError` (with the line) on what it cannot read, a wanted key of another type, or a key set twice.
  */
-export function readTomlStringLists(text: string, wanted: readonly string[]): TomlStringLists {
-  return new TomlReader(text, new Set(wanted)).read();
+export function readTomlStringLists(text: string, wanted: readonly string[], wantedTables: readonly string[] = [], wantedStrings: readonly string[] = []): TomlStringLists {
+  return new TomlReader(text, new Set(wanted), new Set(wantedTables), new Set(wantedStrings)).read();
 }
 
 class TomlReader {
   #index = 0;
   #table: string[] | undefined = [];
   readonly #lists = new Map<string, string[]>();
+  readonly #tables = new Map<string, Map<string, string[]>>();
+  readonly #strings = new Map<string, string>();
   readonly #paths = new Set<string>();
 
-  constructor(readonly text: string, readonly wanted: ReadonlySet<string>) {}
+  constructor(
+    readonly text: string,
+    readonly wanted: ReadonlySet<string>,
+    readonly wantedTables: ReadonlySet<string>,
+    readonly wantedStrings: ReadonlySet<string>,
+  ) {}
 
   read(): TomlStringLists {
     if (this.text.startsWith("\uFEFF")) this.#index = 1;
@@ -100,7 +111,7 @@ class TomlReader {
       else this.#keyValue();
       this.#endOfLine();
     }
-    return { lists: this.#lists, paths: [...this.#paths] };
+    return { lists: this.#lists, tables: this.#tables, strings: this.#strings, paths: [...this.#paths] };
   }
 
   #fail(problem: string): never {
@@ -157,9 +168,16 @@ class TomlReader {
       for (const [key, inner] of value) this.#collect([...path, key], inner);
       return;
     }
-    if (!this.wanted.has(dotted)) return;
+    if (this.wantedStrings.has(dotted)) {
+      if (typeof value !== "string") this.#fail(`${dotted} is not a string`);
+      this.#strings.set(dotted, value);
+      return;
+    }
+    const table = dottedPath(path.slice(0, -1));
+    if (!this.wanted.has(dotted) && !this.wantedTables.has(table)) return;
     if (!Array.isArray(value) || !value.every(item => typeof item === "string")) this.#fail(`${dotted} is not a list of strings`);
-    this.#lists.set(dotted, value as string[]);
+    if (this.wanted.has(dotted)) this.#lists.set(dotted, value as string[]);
+    else this.#tables.set(table, (this.#tables.get(table) ?? new Map<string, string[]>()).set(path.at(-1)!, value as string[]));
   }
 
   /** A dotted key of bare and quoted parts; leaves the index after the blanks that follow it. */
