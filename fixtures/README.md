@@ -48,6 +48,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
+| `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
 | `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |

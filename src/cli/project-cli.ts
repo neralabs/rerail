@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
@@ -37,6 +37,53 @@ export function snapshotDatabaseBeforeUpdate(databasePath = defaultRerailDatabas
   } catch (error) {
     rmSync(staging, { force: true });
     process.stderr.write(`rerail: could not copy ${databasePath} before the update: ${(error as Error).message}\n`);
+  }
+}
+
+/** `PRAGMA user_version` of the SQLite file at `path`, or undefined when it cannot be read. */
+function schemaFloor(path: string): number | undefined {
+  try {
+    const database = new Database(path, { readonly: true, fileMustExist: true });
+    try {
+      return database.pragma("user_version", { simple: true }) as number;
+    } finally {
+      database.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * After `rerail update rollback`: when the update's migrations raised the database's schema floor above the copy
+ * taken before it, the version rolled back to refuses the database, so the pre-update copy goes back in its place.
+ * The replaced database, with what changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor
+ * the update left alone (additive steps only) keeps the database as it is. `stopDaemon` runs first: the daemon
+ * holds the database open. A restore that fails is reported, never fatal: the version has rolled back already.
+ */
+export async function restoreDatabaseForRollback(databasePath: string, stopDaemon: () => Promise<unknown>): Promise<void> {
+  const snapshot = preUpdateSnapshotPath(databasePath);
+  const current = schemaFloor(databasePath);
+  const before = schemaFloor(snapshot);
+  if (current === undefined || before === undefined || current <= before) return;
+  const kept = `${databasePath}.before-rollback`;
+  try {
+    await stopDaemon();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      rmSync(`${kept}${suffix}`, { force: true });
+      if (existsSync(`${databasePath}${suffix}`)) renameSync(`${databasePath}${suffix}`, `${kept}${suffix}`);
+    }
+    copyFileSync(snapshot, databasePath);
+    chmodSync(databasePath, 0o600);
+    process.stdout.write(
+      `The update moved ${databasePath} to schema v${current}, which the version rolled back to cannot read, so it now holds `
+      + `the copy taken before the update (schema v${before}). What changed since the update is in ${kept}.\n`,
+    );
+  } catch (error) {
+    process.stderr.write(
+      `rerail: could not put back ${snapshot} for the rolled-back version: ${(error as Error).message}. `
+      + `Stop Rerail, then copy ${snapshot} to ${databasePath}.\n`,
+    );
   }
 }
 
