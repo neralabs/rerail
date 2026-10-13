@@ -4,6 +4,7 @@
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
 import {
@@ -225,6 +226,24 @@ function publishes(entry: string, path: string): boolean {
   return pattern === path || path.startsWith(`${pattern}/`) || matchesGlob(path, pattern) || matchesGlob(`${path}/x`, pattern);
 }
 
+/**
+ * What is wrong with a packed pack: each entry of its tarball (a path relative to the package root, without npm's
+ * `package/` prefix) must be `package.json` or something `files` publishes, and never validation material, whatever
+ * `files` says. The publish gate runs it on the real `npm pack` tarball.
+ */
+export function packedFileFailures(files: readonly string[], entries: readonly string[]): string[] {
+  const failures: string[] = [];
+  for (const entry of [...entries].sort(compareDeterministicStrings)) {
+    if (VALIDATION_MATERIAL.some(material => entry === material || entry.startsWith(`${material}/`))) failures.push(`${entry}: validation material, never published`);
+    else if (entry !== "package.json" && !files.some(file => publishes(file, entry))) failures.push(`${entry}: package.json files does not publish it`);
+  }
+  return failures;
+}
+
+/** The repository every pack is published from, as the root package.json names it: npm's trusted publishing checks it. */
+const repositoryUrl = (): string =>
+  z.object({ repository: z.object({ url: z.string() }) }).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "package.json"), "utf8"))).repository.url;
+
 /** The SPDX ids an SPDX expression names. */
 const spdxIds = (expression: string): string[] =>
   expression
@@ -425,8 +444,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
   }
 
-  // Check 5: package. Named for the pack, no dependencies, no validation material published, licence agreeing with
-  // what licenses/ records.
+  // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no
+  // dependencies, no validation material published, licence agreeing with what licenses/ records.
   const licences = readLicences(directory);
   const packagePath = join(directory, "package.json");
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
@@ -445,6 +464,11 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (parsed?.success === true) {
       const manifest = parsed.data;
       if (manifest.name !== rulePackPackageName(id)) fail("package", `package.json: name is ${manifest.name}, not ${rulePackPackageName(id)}`);
+      const repository = { type: "git", url: repositoryUrl(), directory: `packs/${id}` };
+      if (!isDeepStrictEqual(manifest.repository, repository))
+        fail("package", `package.json: repository is ${JSON.stringify(manifest.repository) ?? "missing"}, not ${JSON.stringify(repository)}`);
+      if (manifest.publishConfig?.access !== "restricted")
+        fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; packs stay restricted until launch`);
       for (const material of VALIDATION_MATERIAL) {
         const entry = manifest.files.find(file => publishes(file, material));
         if (entry !== undefined) fail("package", `package.json: files entry ${entry} publishes ${material}, which is validation material`);

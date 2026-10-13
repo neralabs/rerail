@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Rerail rule pack: PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail code rules.",
   "license": "Apache-2.0 AND BSD-3-Clause AND MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/php"
+  },
   "files": [
     "pack.json",
     "rules",

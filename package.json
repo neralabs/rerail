@@ -111,6 +111,7 @@
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "package:check": "npm run build && npm pack --dry-run",
+    "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
     "prepack": "node scripts/build/stamp-plugin-versions.mjs stamp",
     "postpack": "node scripts/build/stamp-plugin-versions.mjs restore"
   },
