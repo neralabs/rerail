@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "rule": "sqlfluff-al08-aliasing-unique-column",
+    "source": "fixtures",
+    "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: `'`''a\"'.id` qualifies a column with a string literal, which SQLite reads as an identifier in that position; PostgreSQL and ANSI SQL never take a string as a qualifier. The grammar reads that term as the literal `'`''a\"'`, an ERROR at `.`, then the alias `id` (tree checked with the vendored grammar), so the file has a syntax error and the engine reports nothing on it (T1). Recorded under dialect sqlite only (fixtures.cases.json: reference sqlite3 3.50.4, no postgresDialect entry)."
+  }
+]
