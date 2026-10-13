@@ -229,6 +229,11 @@
             "rules": [
               "react/no-danger-with-children"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
           }
         }
       }
@@ -345,6 +350,11 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
             ]
           }
         }
@@ -510,6 +520,11 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
             ]
           }
         }

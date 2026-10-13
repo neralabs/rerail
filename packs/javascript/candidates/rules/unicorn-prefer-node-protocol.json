@@ -82,6 +82,11 @@
             "rules": [
               "unicorn/prefer-node-protocol"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-node-protocol"
+            ]
           }
         }
       }

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-callback-return",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/callback-return (default callbacks callback, cb, next): a call of one of those names inside a function, unless its nearest block/return/arrow ancestor is a return or an arrow function, it is the last statement of a function body (or the right side of a binary/logical expression statement there), or the statement just before a block's final return.",
   "scope": {
@@ -261,6 +261,11 @@
           "eslint": {
             "rules": [
               "n/callback-return"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "callback-return"
             ]
           }
         }

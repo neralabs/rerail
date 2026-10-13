@@ -1,9 +1,9 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Core does not load
-installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
-`packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)).
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `complexity` and `guardrails`. Core does not load
+installed packs yet: it ships the complexity and guardrails packs inside its own package (`packs/<id>/pack.json` and
+`packs/<id>/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)).
 Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it
 combines the two schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
 
@@ -30,7 +30,7 @@ packs/<id>/
 ├── README.md           what the pack covers, for people
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
-│   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
+│   └── <rule id>.json  code-rule documents (rerail.policy/v1), or conversation rules on tool calls, each named for its id
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
 │
@@ -85,7 +85,8 @@ from the pack:
 { "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
 ```
 
-An example's `path` is required in a pack: it decides the file's language and must be inside the rule's scope.
+An example's `path` is required for a code rule in a pack: it decides the file's language and must be inside the rule's
+scope. A conversation rule's examples take no path; check 1 only checks that its document is a valid conversation rule.
 
 **Rule ids.** Every pack uses one id style, because people turn rules on and off by id and an id must not change once
 its pack is published: lowercase letters, digits and dashes (`RULE_PACK_RULE_ID` in `src/engine/catalog/rule-packs.ts`),
@@ -103,12 +104,13 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools and public corpora, and for each ported rule the upstream tool and rule it reproduces,
-  how findings compare (`line` or `line+column`) and the capabilities it exercises. A port whose document is under
-  `candidates/` is scored and reported but never fails a check; it is scored on the fixtures, whose recording must
-  cover it, and on a corpus only where that corpus's recording covers it. A port may set `fixtures`, `path.matchesGlob`
-  patterns over the tool's fixture paths: it is then evaluated and scored only on the fixtures they match, the tests
-  its upstream configuration ran on. That is how a tool whose tests run each rule with several option sets is
-  scored: one document per option set, each on its own tests.
+  how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
+  ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
+  4). A port whose document is under `candidates/` is scored and reported but never fails a check; it is scored on the
+  fixtures, whose recording must cover it, and on a corpus only where that corpus's recording covers it. A port may
+  set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
+  the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
+  with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
   and on each pinned corpus, produced by the recorder in the same directory. Recorders are run by hand against the
   pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
@@ -142,34 +144,61 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
+| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, it is a code rule that does not compile against core's capabilities, or it is neither a code rule nor a valid conversation rule; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
-| 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
-| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
+| 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one; a conversation rule's example has a `path` |
+| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
 
 Precisely:
 
 1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each rule's `id` is
-   lowercase letters, digits and dashes, and its `document` is `rules/<id>.json`. Each document must be a valid code
-   rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
-   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it. Every rule document under `candidates/`
+   lowercase letters, digits and dashes, and its `document` is `rules/<id>.json`. Each document is read as the
+   catalog reads it (`parseRuleDocument`): one with a `format` must be a valid code rule (`rerail.policy/v1`, the
+   host's schema) and compile in the engine with core's `native/src/code_rule_dsl/capabilities.json`, as the catalog
+   compiles it; any other must be a valid conversation rule (`conversationRuleSchema`), such as a rule on an agent's
+   tool calls. Every rule document under `candidates/`
    (each JSON file in a `rules/` directory there, and any file there whose `format` names a policy, such as the older
    `tempo.policy/v1`) must be `rerail.policy/v1`, sit in a `rules/` directory and be named `<id>.json`
    (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`); candidates need not compile. Every port in the
    pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its document's `id`.
-   Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under `candidates/` that
-   does not parse (`packSchema`) or has a port whose document does not exist.
+   Check 1 also fails a `conformance.json` under `candidates/` that does not parse (`packSchema`) or has a port whose
+   document does not exist, since check 4 loads only the root `conformance.json`.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A
-   violation counts when its code is one of the rule's clauses' codes.
+   violation counts when its code is one of the rule's clauses' codes. A conversation rule's examples are the
+   commands an agent runs: they take no `path`, as the catalog requires, and are not evaluated.
 4. The fixture tier of the conformance runner (`conformance/languages/runner.ts`, the `language-conformance` test's),
    over the production workspace path: an unexplained false positive fails on every source, an unexplained false
    negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.
    Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too; their false positives,
    false negatives and engine failures are reported and fail nothing.
+
+   Every port, candidates included, must also honour the suppression comments of its upstream tool, as the tool
+   does: each violation of its document carries the `suppress` key below naming the port's `upstream.rule`. The
+   data has to be in the document, because `conformance.json` never ships. A port of any other tool (Bladestan,
+   tlint, blade-parser, lizard) needs none.
+
+   | `upstream.tool` | The comment it honours | `violation.suppress` |
+   |---|---|---|
+   | `eslint`, `eslint-plugin-*`, `typescript-eslint` | `// eslint-disable-line <rule>` and the other `eslint-disable` forms | `eslint.rules` |
+   | `ruff` | `# noqa: <code>` | `noqa.codes` |
+   | `bandit` | `# nosec <id>` | `nosec.codes` |
+   | `phpstan` | `@phpstan-ignore <identifier>` | `phpstan.identifiers` |
+   | `psalm` | `@psalm-suppress <issue>` | `psalm.issues` |
+   | `phpcs` | `phpcs:ignore <sniff>` | `phpcs.sniffs`: the sniff or one of its message codes, `<sniff>.<code>` |
+
+   A port whose document does not model the comment is listed in `conformance.json` `suppressionExemptions`, as
+   `{ "rule": <port id>, "reason": … }`: one whose recording ran with the comments ignored (Bandit's `--ignore-nosec`),
+   or one with a clause the engine cannot suppress (it refuses `suppress` on a `regex` query). An exemption for a port
+   that carries the suppression on every violation, or whose tool honours no comment, fails as stale.
+
+   A port of a rule that Oxlint 1.88.0 also implements carries `oxlint.rules` too, with Oxlint's rule name without its
+   plugin (`rules-of-hooks`, `no-console`), so `oxlint-disable` comments silence it as they silence Oxlint's. The two
+   name the same rule and Oxlint reads `eslint-disable` comments as well, so once any violation of a document carries
+   `suppress.oxlint`, each violation that carries `suppress.eslint` must carry it, and none may carry it alone.
 5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
    repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,

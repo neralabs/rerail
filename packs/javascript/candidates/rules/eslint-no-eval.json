@@ -163,6 +163,11 @@
             "rules": [
               "no-eval"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
           }
         }
       }
@@ -229,6 +234,11 @@
         "message": "`eval` can be harmful.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-eval"
             ]
@@ -327,6 +337,11 @@
         "message": "`eval` can be harmful.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-eval"
             ]
@@ -1087,6 +1102,11 @@
         "message": "`eval` can be harmful.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-eval"
             ]

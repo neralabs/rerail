@@ -2298,6 +2298,11 @@
             "rules": [
               "vitest/expect-expect"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "expect-expect"
+            ]
           }
         }
       }

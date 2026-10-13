@@ -1368,6 +1368,11 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
           }
         }
       }
@@ -1586,6 +1591,11 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
           }
         }
       }
@@ -1660,6 +1670,11 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
             ]
           }
         }
@@ -1736,6 +1751,11 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
             ]
           }
         }
@@ -1851,6 +1871,11 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
           }
         }
       }
@@ -1921,6 +1946,11 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
             ]
           }
         }
@@ -1994,6 +2024,11 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
             ]
           }
         }

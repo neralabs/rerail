@@ -362,6 +362,105 @@ describe("validatePack", () => {
       { id: "pass-statement", status: "ok" },
     ]);
   });
+
+  it("passes a pack whose ESLint port honours ESLint's suppression comments", async () => {
+    const validation = await validatePack(join(FIXTURES, "eslint-port"), { corpora: false });
+    expect(failing(validation)).toEqual({});
+    expect(validation.rules).toEqual([{ id: "eslint-port:no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
+  });
+
+  /** The eslint-port pack with its port's `suppress` removed, scored on a fixture with no directive to honour. */
+  const withoutSuppress = (directory: string): void => {
+    editJson(join(directory, "rules", "no-debugger.json"), document => ({
+      ...document,
+      clauses: z
+        .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+        .parse(document.clauses)
+        .map(({ violation: { suppress: _suppress, ...violation }, ...clause }) => ({ ...clause, violation })),
+    }));
+    writeFileSync(join(directory, "upstream", "eslint", "fixtures", "debugger.js"), "debugger;\n");
+  };
+  const exempted = (directory: string): void =>
+    editJson(join(directory, "conformance.json"), pack => ({ ...pack, suppressionExemptions: [{ rule: "no-debugger", reason: "recorded before the port modelled eslint-disable comments" }] }));
+
+  it("fails an ESLint port whose violation does not suppress its upstream rule", async () => {
+    const validation = await validatePack(changed("eslint-port", withoutSuppress), { corpora: false });
+    expect(failing(validation)).toEqual({
+      ports: [
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+      ],
+    });
+    expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "eslint-port:no-debugger", status: "failed" }]);
+  });
+
+  it("passes a port without suppress that conformance.json exempts with a reason", async () => {
+    const validation = await validatePack(
+      changed("eslint-port", directory => {
+        withoutSuppress(directory);
+        exempted(directory);
+      }),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+  });
+
+  it("fails a stale suppression exemption, for a port that suppresses its upstream rule", async () => {
+    const validation = await validatePack(changed("eslint-port", exempted), { corpora: false });
+    expect(failing(validation)).toEqual({ ports: ["no-debugger: stale suppression exemption: every violation of rules/no-debugger.json names no-debugger in suppress.eslint.rules"] });
+  });
+
+  it("fails a port whose violation carries suppress.oxlint without suppress.eslint", async () => {
+    const validation = await validatePack(
+      changed("eslint-port", directory =>
+        editJson(join(directory, "rules", "no-debugger.json"), document => ({
+          ...document,
+          clauses: z
+            .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+            .parse(document.clauses)
+            .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { oxlint: { rules: ["no-debugger"] } } } })),
+        })),
+      ),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({
+      ports: [
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+        "no-debugger: rules/no-debugger.json carries suppress.eslint and suppress.oxlint on different violations (clause debugger-statement); Oxlint reads eslint-disable comments too, so both go on the same violations",
+      ],
+    });
+  });
+
+  it("passes a pack whose rule is a conversation rule, its examples without a path", async () => {
+    const validation = await validatePack(join(FIXTURES, "conversation"), { corpora: false });
+    expect(failing(validation)).toEqual({});
+    expect(validation.rules).toEqual([{ id: "conversation:no-force-push", document: "rules/no-force-push.json", status: "ok" }]);
+  });
+
+  it("fails a conversation rule that is not valid", async () => {
+    const validation = await validatePack(
+      changed("conversation", directory => editJson(join(directory, "rules", "no-force-push.json"), ({ action: _action, ...rule }) => rule)),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({
+      rules: [expect.stringMatching(/^conversation:no-force-push: rules\/no-force-push\.json is neither a code rule \(it has no format\) nor a valid conversation rule: rule\.action /u)],
+    });
+  });
+
+  it("fails a conversation rule example that names a file", async () => {
+    const validation = await validatePack(
+      changed("conversation", directory =>
+        editJson(join(directory, "pack.json"), pack => ({
+          ...pack,
+          rules: z
+            .array(z.looseObject({ examples: z.looseObject({ caught: z.record(z.string(), z.unknown()) }) }))
+            .parse(pack.rules)
+            .map(rule => ({ ...rule, examples: { ...rule.examples, caught: { ...rule.examples.caught, path: "a.sh" } } })),
+        })),
+      ),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({ examples: ["conversation:no-force-push: the caught example has a path; a conversation rule's examples take none"] });
+  });
 });
 
 describe("packedFileFailures", () => {

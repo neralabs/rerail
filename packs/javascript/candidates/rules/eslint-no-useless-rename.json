@@ -187,6 +187,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
           }
         }
       }
@@ -242,6 +247,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
           }
         }
       }
@@ -292,6 +302,11 @@
         "fix": "$V",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-useless-rename"
             ]
@@ -350,6 +365,11 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
           }
         }
       }
@@ -400,6 +420,11 @@
         "fix": "$K",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-useless-rename"
             ]
@@ -455,6 +480,11 @@
         "message": "Export $KT unnecessarily renamed.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-useless-rename"
             ]

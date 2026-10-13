@@ -70,6 +70,11 @@
             "rules": [
               "react/void-dom-elements-no-children"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
           }
         }
       }
@@ -126,6 +131,11 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
             ]
           }
         }
@@ -294,6 +304,11 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
             ]
           }
         }
@@ -484,6 +499,11 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
             ]
           }
         }

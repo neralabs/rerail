@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-multi-str",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-multi-str` rule (https://eslint.org/docs/latest/rules/no-multi-str). Reports a string literal whose source text contains a line break (a backslash line continuation), unless its parent is a JSX attribute or JSX expression container.",
   "scope": {
@@ -37,7 +37,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-multi-str",
-        "message": "Multiline support is limited to browsers supporting ES5 only."
+        "message": "Multiline support is limited to browsers supporting ES5 only.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-multi-str"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-multi-str"
+            ]
+          }
+        }
       }
     }
   ]

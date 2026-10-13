@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-img-element",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-img-element: an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext).",
   "scope": {
@@ -222,6 +222,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-img-element"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-img-element"
             ]
           }
         }

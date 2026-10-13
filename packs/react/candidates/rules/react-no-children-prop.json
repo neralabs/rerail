@@ -41,6 +41,11 @@
             "rules": [
               "react/no-children-prop"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
+            ]
           }
         }
       }
@@ -215,6 +220,11 @@
           "eslint": {
             "rules": [
               "react/no-children-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
             ]
           }
         }

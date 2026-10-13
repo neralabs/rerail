@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-script-url",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 no-script-url, default options. Port of ESLint's `no-script-url` rule (https://eslint.org/docs/latest/rules/no-script-url). Flags string literals and untagged, substitution-free template literals whose value starts with `javascript:` (case-insensitive): cooked, or for a JSX attribute string raw with HTML character references decoded.",
   "scope": {
@@ -60,6 +60,11 @@
         "message": "Script URL is a form of eval.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-script-url"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-script-url"
             ]

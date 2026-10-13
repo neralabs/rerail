@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-prefer-template",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Port of ESLint's `prefer-template` rule (https://eslint.org/docs/latest/rules/prefer-template). Flags the outermost `+` concatenation chain that mixes a string literal with a non-string operand.",
  "scope": {
@@ -163,7 +163,19 @@
    "violation": {
     "anchor": "witness.span",
     "code": "prefer-template",
-    "message": "Unexpected string concatenation."
+    "message": "Unexpected string concatenation.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "prefer-template"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "prefer-template"
+      ]
+     }
+    }
    }
   }
  ]

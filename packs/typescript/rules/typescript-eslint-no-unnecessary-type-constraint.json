@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-unnecessary-type-constraint",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-unnecessary-type-constraint` (https://typescript-eslint.io/rules/no-unnecessary-type-constraint). Flags type parameters constrained to `any` or `unknown`.",
   "scope": {
@@ -59,7 +59,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-unnecessary-type-constraint",
-        "message": "Constraining the generic type `$NAME` to `$CONSTRAINT` does nothing and is unnecessary."
+        "message": "Constraining the generic type `$NAME` to `$CONSTRAINT` does nothing and is unnecessary.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-unnecessary-type-constraint"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unnecessary-type-constraint"
+            ]
+          }
+        }
       }
     }
   ]

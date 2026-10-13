@@ -11,6 +11,7 @@ import {
   languageFor,
   languageNotSupportedOf,
   codeRuleSchema,
+  parseConversationRule,
   parseJsonWithoutDuplicateKeys,
   loadNativeBinding,
   type NativeCompiledCodeRuleDsl,
@@ -21,7 +22,7 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
 } from "../src/engine/index.js";
-import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
 
@@ -97,6 +98,7 @@ const documentSchema = z.object({
 
 type Compiled =
   | { kind: "compiled"; compiled: NativeCompiledCodeRuleDsl; codes: ReadonlySet<string> }
+  | { kind: "conversation" }
   | { kind: "not-supported-yet"; reason: string }
   | { kind: "failed"; message: string };
 
@@ -182,16 +184,25 @@ function idFailures(directory: string): string[] {
 }
 
 /**
- * A code-rule document compiled as the catalog would take it: valid `rerail.policy/v1`, then compiled by the engine
- * against core's capabilities. `language-not-supported` is not a failure: the rule is stored inactive until core reads
- * its language.
+ * A rule document as the catalog would take it (`parseRuleDocument`). A code rule, which has a `format`, must be valid
+ * `rerail.policy/v1` and is then compiled by the engine against core's capabilities; `language-not-supported` is not a
+ * failure: the rule is stored inactive until core reads its language. Any other document must be a valid conversation
+ * rule, which compiles nothing.
  */
-function compileCodeRule(text: string): Compiled {
+function compileRule(text: string): Compiled {
   let document: unknown;
   try {
     document = JSON.parse(text);
   } catch (error) {
     return { kind: "failed", message: `is not JSON: ${message(error)}` };
+  }
+  if (typeof document === "object" && document !== null && !("format" in document)) {
+    try {
+      parseConversationRule(document);
+      return { kind: "conversation" };
+    } catch (error) {
+      return { kind: "failed", message: `is neither a code rule (it has no format) nor a valid conversation rule: ${message(error)}` };
+    }
   }
   const valid = codeRuleSchema.safeParse(document);
   if (!valid.success) return { kind: "failed", message: `is not a valid code rule (rerail.policy/v1): ${z.prettifyError(valid.error)}` };
@@ -203,6 +214,61 @@ function compileCodeRule(text: string): Compiled {
     const notSupported = languageNotSupportedOf(message(error));
     return notSupported === undefined ? { kind: "failed", message: `does not compile: ${message(error)}` } : { kind: "not-supported-yet", reason: notSupported.reason };
   }
+}
+
+/** The `violation.suppress` key and list that name an upstream rule (code-rule DSL reference, `suppress`). */
+interface Suppression {
+  key: string;
+  list: string;
+}
+const SUPPRESSION_BY_TOOL: Record<string, Suppression> = {
+  ruff: { key: "noqa", list: "codes" },
+  bandit: { key: "nosec", list: "codes" },
+  phpstan: { key: "phpstan", list: "identifiers" },
+  psalm: { key: "psalm", list: "issues" },
+  phpcs: { key: "phpcs", list: "sniffs" },
+};
+
+/**
+ * The suppression a tool's own inline comments give its findings (`// eslint-disable-line <rule>`, `# noqa: <code>`,
+ * `# nosec <id>`, `@phpstan-ignore <identifier>`, `@psalm-suppress <issue>`, `phpcs:ignore <sniff>`), which a port of
+ * its rule must honour as the tool does. Other tools (Bladestan, tlint, blade-parser, lizard) read none Rerail models.
+ */
+function suppressionOf(tool: string): Suppression | undefined {
+  if (tool === "eslint" || tool === "typescript-eslint" || tool.startsWith("eslint-plugin-")) return { key: "eslint", list: "rules" };
+  return SUPPRESSION_BY_TOOL[tool];
+}
+
+const suppressingDocumentSchema = z.object({
+  clauses: z.array(z.looseObject({ id: z.string(), violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional() })),
+});
+
+/**
+ * In a port's document, the ids of the clauses whose violation does not name the upstream `rule` under `suppression`
+ * (`unsuppressed`), and, once any violation carries `suppress.oxlint`, of those that carry only one of
+ * `suppress.eslint` and `suppress.oxlint` (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a
+ * rule Oxlint implements honours both on the same violations. `undefined` when the document cannot be read (check 1
+ * reports that). A PHP_CodeSniffer port names its sniff's message codes, `<sniff>.<code>`, as `phpcs:ignore` does.
+ */
+function suppressionGaps(text: string, suppression: Suppression, tool: string, rule: string): { unsuppressed: string[]; oxlintApart: string[] } | undefined {
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const parsed = suppressingDocumentSchema.safeParse(document);
+  if (!parsed.success) return undefined;
+  const violations = parsed.data.clauses.flatMap(clause => (clause.violation === undefined ? [] : [{ id: clause.id, suppress: clause.violation.suppress ?? {} }]));
+  const unsuppressed = violations
+    .filter(({ suppress }) => {
+      const names = suppress[suppression.key]?.[suppression.list];
+      return !(Array.isArray(names) && names.some(name => name === rule || (tool === "phpcs" && typeof name === "string" && name.startsWith(`${rule}.`))));
+    })
+    .map(violation => violation.id);
+  const oxlint = suppression.key === "eslint" && violations.some(({ suppress }) => suppress.oxlint !== undefined);
+  const oxlintApart = oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [];
+  return { unsuppressed, oxlintApart };
 }
 
 /** Every file under `directory`, as posix paths relative to `root`, sorted. */
@@ -329,7 +395,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   };
 
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
-  // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
+  // carries the listed id and is a code rule that compiles against core's capabilities or a valid conversation rule;
+  // candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
@@ -367,7 +434,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const text = readFileSync(path, "utf8");
       const documentId = documentIdOf(text);
       if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
-      const result = compileCodeRule(text);
+      const result = compileRule(text);
       compiled.set(rule.id, result);
       if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
     }
@@ -389,7 +456,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
 
   // Check 2: proof. Every rule has examples or a port entry.
-  // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
+  // Check 3: examples. A caught example produces a violation of the rule, a passes example none. A conversation rule's
+  // examples are commands an agent runs, with no path, as the catalog requires; nothing evaluates them here.
   if (pack === undefined) {
     fail("proof", "pack.json does not parse; see check 1");
     fail("examples", "pack.json does not parse; see check 1");
@@ -397,7 +465,13 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     for (const rule of pack.rules) {
       if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
-      if (rule.examples === undefined || result?.kind !== "compiled") continue;
+      if (rule.examples === undefined) continue;
+      if (result?.kind === "conversation") {
+        for (const side of ["caught", "passes"] as const)
+          if (rule.examples[side].path !== undefined) fail("examples", `${rule.id}: the ${side} example has a path; a conversation rule's examples take none`, rule.id);
+        continue;
+      }
+      if (result?.kind !== "compiled") continue;
       for (const side of ["caught", "passes"] as const) {
         const example = rule.examples[side];
         if (example.path === undefined) {
@@ -418,7 +492,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   }
 
   // Check 4: ports. The fixture tier (and corpora) of the conformance runner, with rules not supported yet skipped,
-  // plus capability coverage.
+  // plus capability coverage and each port's suppression comments.
   const notSupported = new Map<string, string>();
   if (loaded !== undefined) {
     const ruleOfPort = new Map<string, string>();
@@ -428,7 +502,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const result = listed === undefined ? undefined : compiled.get(listed.id);
       if (result?.kind === "not-supported-yet") notSupported.set(port.id, result.reason);
       else if (result === undefined && existsSync(join(directory, port.policy))) {
-        const candidate = compileCodeRule(readFileSync(join(directory, port.policy), "utf8"));
+        const candidate = compileRule(readFileSync(join(directory, port.policy), "utf8"));
         if (candidate.kind === "not-supported-yet") notSupported.set(port.id, candidate.reason);
       }
     }
@@ -448,6 +522,32 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       fail("ports", failure, port === undefined ? undefined : ruleOfPort.get(port.id));
     }
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
+    // A port of a tool that honours its own suppression comments names the upstream rule in that suppression on every
+    // violation, unless conformance.json exempts it with a reason; an exemption the port does not need is stale. A
+    // port that also honours Oxlint's comments does so on the same violations as ESLint's.
+    const exempt = new Set(loaded.pack.suppressionExemptions.map(exemption => exemption.rule));
+    for (const port of loaded.pack.rules) {
+      const path = join(directory, port.policy);
+      if (!existsSync(path)) continue;
+      const { tool, rule } = port.upstream;
+      const suppression = suppressionOf(tool);
+      const gaps = suppression === undefined ? { unsuppressed: [], oxlintApart: [] } : suppressionGaps(readFileSync(path, "utf8"), suppression, tool, rule);
+      if (gaps === undefined) continue;
+      const document = documentPath(port.policy);
+      const owner = ruleOfPort.get(port.id);
+      if (exempt.has(port.id)) {
+        if (suppression === undefined) fail("ports", `${port.id}: stale suppression exemption: ${tool} has no suppression comment a port must honour`, owner);
+        else if (gaps.unsuppressed.length === 0) fail("ports", `${port.id}: stale suppression exemption: every violation of ${document} names ${rule} in suppress.${suppression.key}.${suppression.list}`, owner);
+      } else if (suppression !== undefined && gaps.unsuppressed.length > 0) {
+        fail(
+          "ports",
+          `${port.id}: ${document} reports ${tool}'s ${rule} without suppress.${suppression.key}.${suppression.list} naming it (clause ${gaps.unsuppressed.join(", ")}), so the comments that silence ${rule} are ignored; add it, or exempt the port in suppressionExemptions with a reason`,
+          owner,
+        );
+      }
+      if (gaps.oxlintApart.length > 0)
+        fail("ports", `${port.id}: ${document} carries suppress.eslint and suppress.oxlint on different violations (clause ${gaps.oxlintApart.join(", ")}); Oxlint reads eslint-disable comments too, so both go on the same violations`, owner);
+    }
   }
 
   // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no

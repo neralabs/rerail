@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-case-declarations",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Port of ESLint's `no-case-declarations` rule (https://eslint.org/docs/latest/rules/no-case-declarations). Flags a let/const, function or class declaration that is a direct statement of a `case` or `default` clause. `using` declarations, which tree-sitter-typescript 0.23.2 parses as assignments with a `using` token, count as lexical declarations.",
  "scope": {
@@ -77,7 +77,19 @@
    "violation": {
     "anchor": "witness.span",
     "code": "no-case-declarations",
-    "message": "Unexpected lexical declaration in case block."
+    "message": "Unexpected lexical declaration in case block.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-case-declarations"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-case-declarations"
+      ]
+     }
+    }
    }
   }
  ]

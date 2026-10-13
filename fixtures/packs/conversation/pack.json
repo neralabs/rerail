@@ -1,0 +1,24 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "conversation",
+  "name": "Conversation",
+  "category": "repository",
+  "covers": "A fixture pack whose rule is a conversation rule on an agent's tool calls.",
+  "reason": "fits any repository",
+  "rules": [
+    {
+      "id": "conversation:no-force-push",
+      "document": "rules/no-force-push.json",
+      "title": "Do not force-push",
+      "group": "Git",
+      "examples": {
+        "caught": {
+          "text": "git push --force origin main"
+        },
+        "passes": {
+          "text": "git push origin main"
+        }
+      }
+    }
+  ]
+}

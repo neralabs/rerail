@@ -1094,6 +1094,11 @@
             "rules": [
               "@typescript-eslint/prefer-optional-chain"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-optional-chain"
+            ]
           }
         }
       }

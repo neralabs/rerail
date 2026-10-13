@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-as-const",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/prefer-as-const, default options. Port of typescript-eslint's `prefer-as-const` rule (https://typescript-eslint.io/rules/prefer-as-const). Flags a literal type that repeats the raw text of the literal it asserts (`x as 'a'`, `<'a'>x`) or annotates (`let v: 'a' = 'a'`, class fields); assertions are fixed to `const`.",
   "scope": {
@@ -119,6 +119,11 @@
             "rules": [
               "@typescript-eslint/prefer-as-const"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-as-const"
+            ]
           }
         }
       }
@@ -215,6 +220,11 @@
           "eslint": {
             "rules": [
               "@typescript-eslint/prefer-as-const"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-as-const"
             ]
           }
         }

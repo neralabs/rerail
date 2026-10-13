@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-useless-catch",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-useless-catch` rule (https://eslint.org/docs/latest/rules/no-useless-catch). Flags a catch clause whose first statement rethrows its own identifier parameter: the whole try statement when there is no finally block, else the catch clause.",
   "scope": {
@@ -105,7 +105,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-catch",
-        "message": "Unnecessary try/catch wrapper."
+        "message": "Unnecessary try/catch wrapper.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-catch"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-catch"
+            ]
+          }
+        }
       }
     },
     {
@@ -198,7 +210,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-catch",
-        "message": "Unnecessary catch clause."
+        "message": "Unnecessary catch clause.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-useless-catch"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-catch"
+            ]
+          }
+        }
       }
     }
   ]

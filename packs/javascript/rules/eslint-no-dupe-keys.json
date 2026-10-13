@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-dupe-keys",
-  "revision": 4,
+  "revision": 5,
   "mode": "steer",
   "description": "ESLint 10.11.0 no-dupe-keys, default options. Port of ESLint's `no-dupe-keys` rule (https://eslint.org/docs/latest/rules/no-dupe-keys). Flags an object-literal property whose static key (ESLint's getStaticPropertyName, via `compare` text `key`) repeats an earlier property of the same object; a getter may pair with a setter, and a non-computed `__proto__: value` is not a key.",
   "scope": {
@@ -274,6 +274,11 @@
         "message": "Duplicate key '$KT'.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-dupe-keys"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-dupe-keys"
             ]

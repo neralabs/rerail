@@ -154,7 +154,19 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break;"
+        "fix": "break;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          }
+        }
       }
     },
     {
@@ -302,7 +314,19 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break"
+        "fix": "break",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          }
+        }
       }
     },
     {
@@ -448,7 +472,19 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue;"
+        "fix": "continue;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          }
+        }
       }
     },
     {
@@ -596,7 +632,19 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue"
+        "fix": "continue",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          }
+        }
       }
     },
     {
@@ -737,7 +785,19 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary."
+        "message": "This label '$L' is unnecessary.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          }
+        }
       }
     }
   ]

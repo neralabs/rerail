@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-unwanted-polyfillio",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-unwanted-polyfillio: a <script> (or the first local name an import from next/script binds) with a plain string src on a polyfill.io host whose first features parameter lists a feature Next.js already polyfills.",
   "scope": {
@@ -182,6 +182,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-unwanted-polyfillio"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unwanted-polyfillio"
             ]
           }
         }

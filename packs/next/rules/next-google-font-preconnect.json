@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-google-font-preconnect",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/google-font-preconnect: a <link> whose literal href starts with https://fonts.gstatic.com and whose rel is not the literal \"preconnect\".",
   "scope": {
@@ -124,6 +124,11 @@
           "eslint": {
             "rules": [
               "@next/next/google-font-preconnect"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "google-font-preconnect"
             ]
           }
         }

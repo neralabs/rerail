@@ -296,7 +296,19 @@
     "anchor": "capture.IF",
     "code": "no-lonely-if",
     "message": "Unexpected if as the only statement in an else block.",
-    "fix": "$IF"
+    "fix": "$IF",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     }
+    }
    }
   },
   {
@@ -582,7 +594,19 @@
     "anchor": "capture.IF",
     "code": "no-lonely-if",
     "message": "Unexpected if as the only statement in an else block.",
-    "fix": " $IF"
+    "fix": " $IF",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     }
+    }
    }
   },
   {
@@ -862,7 +886,19 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block."
+    "message": "Unexpected if as the only statement in an else block.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     }
+    }
    }
   }
  ]

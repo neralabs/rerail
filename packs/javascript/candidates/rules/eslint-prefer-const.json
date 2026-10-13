@@ -231,6 +231,11 @@
             "rules": [
               "prefer-const"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-const"
+            ]
           }
         }
       }

@@ -190,7 +190,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope."
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          }
+        }
       }
     },
     {
@@ -345,7 +357,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope."
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          }
+        }
       }
     },
     {
@@ -500,7 +524,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope."
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          }
+        }
       }
     },
     {
@@ -520,7 +556,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vars-on-top",
-        "message": "All 'var' declarations must be at the top of the function scope."
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          }
+        }
       }
     }
   ]

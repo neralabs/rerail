@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-with",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-with` rule (https://eslint.org/docs/latest/rules/no-with). Reports every `with` statement, at its `with` keyword.",
   "scope": {
@@ -27,7 +27,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-with",
-        "message": "Unexpected use of 'with' statement."
+        "message": "Unexpected use of 'with' statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-with"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-with"
+            ]
+          }
+        }
       }
     }
   ]

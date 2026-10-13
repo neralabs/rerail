@@ -407,6 +407,11 @@
             "rules": [
               "react/jsx-key"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-key"
+            ]
           }
         }
       }
@@ -444,6 +449,11 @@
           "eslint": {
             "rules": [
               "react/jsx-key"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-key"
             ]
           }
         }

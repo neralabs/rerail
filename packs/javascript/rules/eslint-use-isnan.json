@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-use-isnan",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 use-isnan, default options. Port of ESLint's `use-isnan` rule (https://eslint.org/docs/latest/rules/use-isnan). Flags comparisons with NaN and, by default, `switch(NaN)` / `case NaN`. NaN and Number are resolved with `resolves` so a shadowing binding does not fire. Default options: enforceForSwitchCase true, enforceForIndexOf false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
   "scope": {
@@ -169,6 +169,11 @@
             "rules": [
               "use-isnan"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "use-isnan"
+            ]
           }
         }
       }
@@ -199,6 +204,11 @@
         "message": "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "use-isnan"
             ]
@@ -234,6 +244,11 @@
         "message": "'case NaN' can never match. Use Number.isNaN before the switch.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "use-isnan"
             ]
@@ -349,6 +364,11 @@
         "message": "Array prototype method '$M' cannot find NaN.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "use-isnan"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "use-isnan"
             ]

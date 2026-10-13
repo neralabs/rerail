@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-ternary",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-ternary` rule (https://eslint.org/docs/latest/rules/no-ternary). Reports every conditional expression.",
   "scope": {
@@ -24,7 +24,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-ternary",
-        "message": "Ternary operator used."
+        "message": "Ternary operator used.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-ternary"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-ternary"
+            ]
+          }
+        }
       }
     }
   ]

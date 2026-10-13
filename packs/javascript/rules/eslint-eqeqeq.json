@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-eqeqeq",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 eqeqeq, default options. Port of ESLint's `eqeqeq` rule (https://eslint.org/docs/latest/rules/eqeqeq). Default options (`always`, null `always`): requires === and !==; autofixes only when an operand is typeof or both operands are literals of one type. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
   "scope": {
@@ -335,6 +335,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "eqeqeq"
+            ]
           }
         }
       }
@@ -410,6 +415,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "eqeqeq"
+            ]
           }
         }
       }
@@ -443,6 +453,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "eqeqeq"
+            ]
           }
         }
       }
@@ -472,6 +487,11 @@
         "message": "Expected '==' and instead saw '==='.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "eqeqeq"
             ]
@@ -508,6 +528,11 @@
             "rules": [
               "eqeqeq"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "eqeqeq"
+            ]
           }
         }
       }
@@ -537,6 +562,11 @@
         "message": "Expected '!=' and instead saw '!=='.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "eqeqeq"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "eqeqeq"
             ]

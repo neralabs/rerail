@@ -81,7 +81,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Class cannot have method named `new`."
+        "message": "Class cannot have method named `new`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-misused-new"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-misused-new"
+            ]
+          }
+        }
       }
     },
     {
@@ -137,7 +149,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Interfaces cannot be constructed, only classes."
+        "message": "Interfaces cannot be constructed, only classes.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-misused-new"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-misused-new"
+            ]
+          }
+        }
       }
     },
     {
@@ -175,7 +199,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Interfaces cannot be constructed, only classes."
+        "message": "Interfaces cannot be constructed, only classes.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-misused-new"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-misused-new"
+            ]
+          }
+        }
       }
     }
   ]

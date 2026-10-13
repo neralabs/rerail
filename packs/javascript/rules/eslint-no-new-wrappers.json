@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-new-wrappers",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "ESLint 10.11.0 no-new-wrappers, default options. Port of ESLint's `no-new-wrappers` rule (https://eslint.org/docs/latest/rules/no-new-wrappers). Flags `new` of the global String, Number or Boolean (resolved with `resolves`).",
   "scope": {
@@ -68,6 +68,11 @@
         "message": "Do not use $FN as a constructor.",
         "suppress": {
           "eslint": {
+            "rules": [
+              "no-new-wrappers"
+            ]
+          },
+          "oxlint": {
             "rules": [
               "no-new-wrappers"
             ]

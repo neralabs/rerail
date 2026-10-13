@@ -82,6 +82,11 @@
             "rules": [
               "react/no-array-index-key"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-array-index-key"
+            ]
           }
         }
       }

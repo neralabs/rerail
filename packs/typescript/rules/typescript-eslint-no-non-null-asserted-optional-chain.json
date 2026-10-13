@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-non-null-asserted-optional-chain",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-non-null-asserted-optional-chain` rule (https://typescript-eslint.io/rules/no-non-null-asserted-optional-chain). Flags a non-null assertion that ends an optional chain (`x?.y!`), and a parenthesized optional chain that is non-null asserted (`(x?.y)!`, reported at the chain).",
   "scope": {
@@ -100,7 +100,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-non-null-asserted-optional-chain",
-        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong."
+        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-non-null-asserted-optional-chain"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-non-null-asserted-optional-chain"
+            ]
+          }
+        }
       }
     },
     {
@@ -166,7 +178,19 @@
       "violation": {
         "anchor": "capture.CHAIN",
         "code": "@typescript-eslint/no-non-null-asserted-optional-chain",
-        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong."
+        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-non-null-asserted-optional-chain"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-non-null-asserted-optional-chain"
+            ]
+          }
+        }
       }
     }
   ]
