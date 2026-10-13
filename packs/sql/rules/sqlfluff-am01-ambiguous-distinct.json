@@ -1,0 +1,18 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-am01-ambiguous-distinct",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's AM01 (ambiguous.distinct): flag DISTINCT in a SELECT statement that also has GROUP BY.",
+  "scope": { "include": ["**/*.sql"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "distinct-with-group-by",
+      "forbid": { "ast": { "language": "sql", "rule": {
+        "kind": "keyword_distinct",
+        "inside": { "kind": "select", "has": { "kind": "group_by" } }
+      } } },
+      "violation": { "anchor": "witness.start", "code": "AM01", "message": "DISTINCT is ambiguous with GROUP BY." }
+    }
+  ]
+}

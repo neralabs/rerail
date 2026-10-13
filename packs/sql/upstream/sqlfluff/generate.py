@@ -1,5 +1,5 @@
-"""Records SQLFluff 4.4.0 for the SQL pack's chosen T4 rules (RULES; the draft manifest is ../conformance.draft.json). Run
-offline by a maintainer, never in CI, with the pinned venv (../../common.py):
+"""Records SQLFluff 4.4.0 for the SQL pack's chosen T4 rules (RULES; the pack's conformance.json lists them). Run
+offline by a maintainer, never in CI, with the pinned venv (fixtures/sql/common.py):
 
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py fixtures
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py corpus [<name> ...]   # default: every T4 corpus
@@ -37,7 +37,7 @@ import sys
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[3] / "fixtures" / "sql"))
 import common  # noqa: E402
 import reference  # noqa: E402
 

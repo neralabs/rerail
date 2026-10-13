@@ -63,12 +63,12 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
 
 `ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next,
-complexity) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools'
-copied tests and recordings, their candidates and their licence records. `vue/`, `rust/` and `sql/` have upstream
+complexity, sql) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools'
+copied tests and recordings, their candidates and their licence records. `vue/` and `rust/` have upstream
 recordings but no rules yet, so they have no pack directory: `<id>/upstream/` holds the upstream linters' recorders,
 their copied tests (`<tool>/fixtures/`) and recordings on those tests and on pinned public corpora
 (`<tool>/corpus-<name>.expected.json`), laid out as a pack's `upstream/`, beside the planned rule list
-(`rust/upstream/conformance.draft.json`, `sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`). When a
+(`rust/upstream/conformance.draft.json`, `vue/upstream/rules.json`). When a
 language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json` and `<id>/upstream/` moves to
 `packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
 
@@ -97,7 +97,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/blade/directives.php` | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
-| `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |
 
 Verbatim copies keep the upstream licence alone; derived files and excerpts are under the upstream licence and
 Apache-2.0 together.

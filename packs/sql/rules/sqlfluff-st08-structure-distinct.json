@@ -1,0 +1,30 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-st08-structure-distinct",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's ST08 (structure.distinct): flag DISTINCT whose first selected expression is parenthesized, or DISTINCT used as a function around a non-subquery expression.",
+  "scope": { "include": ["**/*.sql"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "distinct-select-parentheses",
+      "forbid": { "ast": { "language": "sql", "rule": {
+        "all": [
+          { "kind": "parenthesized_expression" },
+          { "inside": { "kind": "term", "inside": { "kind": "select_expression", "has": { "kind": "keyword_distinct" } } } }
+        ]
+      } } },
+      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses." }
+    },
+    {
+      "id": "distinct-function-parentheses",
+      "forbid": { "ast": { "language": "sql", "rule": {
+        "all": [
+          { "kind": "keyword_distinct" },
+          { "inside": { "kind": "invocation", "has": { "kind": "parenthesized_expression", "not": { "has": { "kind": "subquery" } } } } }
+        ]
+      } } },
+      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses." }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al08-aliasing-unique-column",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0 AL08: in each SELECT list, report each later reused explicit alias or column-reference name, case-insensitively with identifier quote delimiters ignored.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-column-name",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "has": {
+              "kind": "identifier",
+              "capture": "A"
+            },
+            "follows": {
+              "stopBy": "end",
+              "kind": "term",
+              "has": {
+                "kind": "identifier",
+                "capture": "B"
+              },
+              "compare": {
+                "left": "A",
+                "op": "eq",
+                "right": "B",
+                "text": "tokens"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "AL08",
+        "message": "Reuse of column alias."
+      }
+    }
+  ]
+}

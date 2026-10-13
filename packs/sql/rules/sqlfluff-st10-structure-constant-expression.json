@@ -1,0 +1,36 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-st10-structure-constant-expression",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): flag =, !=, or <> comparisons whose adjacent operands are identical non-literals of the same kind, or literal comparisons other than the explicit exceptions 1 = 1 and 1 = 0; ignore operands adjacent to non-AND/OR binary operators.",
+  "scope": { "include": ["**/*.sql"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "identical-nonliteral-operands",
+      "forbid": { "ast": { "language": "sql", "rule": {
+        "all": [
+          { "kind": "binary_expression" },
+          { "has": { "field": "operator", "pattern": "$OP", "regex": "^(?:=|!=|<>)$" } },
+          { "has": { "field": "left", "pattern": "$L", "not": { "kind": "literal" } } },
+          { "has": { "field": "right", "pattern": "$R", "not": { "kind": "literal" } } },
+          { "compare": { "left": "L", "op": "eq", "right": "R" } }
+        ]
+      } } },
+      "violation": { "anchor": "capture.OP", "code": "ST10", "message": "Redundant constant expression." }
+    },
+    {
+      "id": "disallowed-literal-comparison",
+      "forbid": { "ast": { "language": "sql", "rule": {
+        "all": [
+          { "kind": "binary_expression" },
+          { "regex": "(?s)^(?!\\s*1\\s*(?:=|!=|<>)\\s*(?:1|0)\\s*$).*$" },
+          { "has": { "field": "operator", "pattern": "$OP", "regex": "^(?:=|!=|<>)$" } },
+          { "has": { "field": "left", "kind": "literal" } },
+          { "has": { "field": "right", "kind": "literal" } }
+        ]
+      } } },
+      "violation": { "anchor": "capture.OP", "code": "ST10", "message": "Redundant constant expression." }
+    }
+  ]
+}

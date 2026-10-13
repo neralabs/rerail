@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al04-aliasing-unique-table",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0 AL04: report each later table relation whose explicit alias matches an earlier alias in the same FROM clause under PostgreSQL name comparison.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-explicit-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "relation",
+            "has": {
+              "field": "alias",
+              "pattern": "$A"
+            },
+            "follows": {
+              "stopBy": "end",
+              "kind": "relation",
+              "has": {
+                "field": "alias",
+                "pattern": "$B"
+              },
+              "compare": {
+                "left": "A",
+                "op": "eq",
+                "right": "B",
+                "text": "name"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "AL04",
+        "message": "Duplicate table alias."
+      }
+    }
+  ]
+}

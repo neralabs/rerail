@@ -1,0 +1,26 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-st02-structure-simple-case",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's ST02 (structure.simple_case): report searched CASE expressions with one WHEN that reduce to boolean COALESCE or a NULL-filling expression; simple CASE, multiple WHENs, compound NULL predicates, and DISTINCT FROM remain untouched. Anchor the WHEN condition.",
+  "scope": {"include": ["**/*.sql"], "exclude": []},
+  "clauses": [
+    {
+      "id": "boolean-case",
+      "forbid": {"ast": {"language": "sql", "rule": {
+        "kind": "case",
+        "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>.*?)\\s+THEN\\s+(?:TRUE\\s+ELSE\\s+FALSE|FALSE\\s+ELSE\\s+TRUE)\\s+END$"
+      }}},
+      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead."}
+    },
+    {
+      "id": "null-filling-case",
+      "forbid": {"ast": {"language": "sql", "rule": {
+        "kind": "case",
+        "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>[^\\r\\n]+?\\s+IS(?:\\s+NOT)?\\s+NULL)\\s+THEN\\s+.+?\\s+(?:ELSE\\s+.+?\\s+)?END$"
+      }}},
+      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead."}
+    }
+  ]
+}

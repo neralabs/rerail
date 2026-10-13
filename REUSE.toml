@@ -255,13 +255,6 @@ precedence = "override"
 SPDX-FileCopyrightText = "The Rust Project Contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-# SQLFluff 4.4.0 (sql/licenses/sqlfluff/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/sql/upstream/sqlfluff/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
-SPDX-License-Identifier = "MIT"
-
 # eslint-plugin-vue 10.11.1 (vue/licenses/eslint-plugin-vue/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
@@ -683,6 +676,24 @@ SPDX-License-Identifier = "MIT"
 path = "packs/php/upstream/psalm/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2016 Vimeo"
+SPDX-License-Identifier = "MIT"
+
+# packs/sql
+
+# Rule documents: Rerail's re-implementations of SQLFluff's rules, annotated with the licence the pack publishes them
+# under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
+# (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/sql/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# SQLFluff 4.4.0 (packs/sql/licenses/sqlfluff/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/sql/upstream/sqlfluff/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
 SPDX-License-Identifier = "MIT"
 
 # packs/blade

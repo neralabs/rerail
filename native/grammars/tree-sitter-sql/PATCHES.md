@@ -3,7 +3,7 @@
 Upstream: https://github.com/DerekStride/tree-sitter-sql, version 0.3.11 (commit
 `7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8`), MIT. Rerail reads every `.sql` file with this one grammar
 (`languages/sql.json`): PostgreSQL, SQLite, MySQL and ANSI files alike. The patches make it read what the
-SQL pack's oracles hold: SQLFluff 4.4.0's rule fixtures (`fixtures/sql/upstream/sqlfluff/fixtures/`) and
+SQL pack's oracles hold: SQLFluff 4.4.0's rule fixtures (`packs/sql/upstream/sqlfluff/fixtures/`) and
 PostgreSQL 18.6's names, values and arguments oracles (`fixtures/sql/{scope,arguments}/postgres.sql`),
 all of which parse without an `ERROR` node except `ansi/ST10/test_pass_array_access.sql` (a bare `[1]`
 array literal, BigQuery syntax).

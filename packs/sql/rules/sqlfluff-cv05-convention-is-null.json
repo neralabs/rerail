@@ -1,0 +1,26 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-cv05-convention-is-null",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's CV05 (convention.is_null): reject =, !=, and <> when their right operand is the NULL literal, while excluding assignment and exclusion-constraint contexts; anchor the operator.",
+  "scope": {"include": ["**/*.sql"], "exclude": []},
+  "clauses": [
+    {
+      "id": "relational-null-comparison",
+      "forbid": {"ast": {"language": "sql", "rule": {
+        "kind": "=",
+        "regex": "^(?<OP>=|!=|<>)$",
+        "follows": {"stopBy": "neighbor", "kind": "literal", "has": {"kind": "keyword_null"}},
+        "not": {"inside": {"any": [
+          {"kind": "set_clause_list"},
+          {"kind": "execute_script_statement"},
+          {"kind": "options_segment"},
+          {"kind": "assignment_operator"},
+          {"kind": "exclusion_constraint_element"}
+        ]}}
+      }}},
+      "violation": {"anchor": "capture.OP", "code": "CV05", "message": "Comparisons with NULL should use IS or IS NOT."}
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al09-aliasing-self-alias-column",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0 AL09: report direct column aliases whose raw source is identical, and ambiguous case-only changes between unquoted identifiers.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "exact-self-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "all": [
+              {
+                "has": {
+                  "kind": "field",
+                  "has": {
+                    "kind": "identifier",
+                    "capture": "C"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "alias",
+                  "has": {
+                    "kind": "identifier",
+                    "capture": "A"
+                  }
+                }
+              }
+            ],
+            "compare": {
+              "left": "C",
+              "op": "eq",
+              "right": "A",
+              "text": "source"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AL09",
+        "message": "Column should not be self-aliased."
+      }
+    },
+    {
+      "id": "ambiguous-unquoted-self-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "all": [
+              {
+                "has": {
+                  "kind": "field",
+                  "has": {
+                    "kind": "identifier",
+                    "capture": "C"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "alias",
+                  "has": {
+                    "kind": "identifier",
+                    "capture": "A"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "field",
+                    "regex": "\""
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "alias",
+                    "regex": "\""
+                  }
+                }
+              }
+            ],
+            "compare": {
+              "left": "C",
+              "op": "eq",
+              "right": "A",
+              "text": "name"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AL09",
+        "message": "Ambiguous self alias. Either remove unnecessary alias, or quote alias/reference to make case change explicit."
+      }
+    }
+  ]
+}
