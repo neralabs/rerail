@@ -40,8 +40,8 @@
     {"id": "clippy-builtin-type-shadow", "upstream": {"tool": "clippy", "rule": "builtin_type_shadow"}, "policy": "rules/clippy-builtin-type-shadow.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "clippy-redundant-field-names", "upstream": {"tool": "clippy", "rule": "redundant_field_names"}, "policy": "rules/clippy-redundant-field-names.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "clippy-single-char-lifetime-names", "upstream": {"tool": "clippy", "rule": "single_char_lifetime_names"}, "policy": "rules/clippy-single-char-lifetime-names.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
-    {"id": "clippy-single-component-path-imports", "upstream": {"tool": "clippy", "rule": "single_component_path_imports"}, "policy": "rules/clippy-single-component-path-imports.json", "capabilities": ["scope", "suppression"], "match": "line+column"},
-    {"id": "clippy-many-single-char-names", "upstream": {"tool": "clippy", "rule": "many_single_char_names"}, "policy": "rules/clippy-many-single-char-names.json", "capabilities": ["scope", "suppression"], "match": "line+column"},
+    {"id": "clippy-single-component-path-imports", "upstream": {"tool": "clippy", "rule": "single_component_path_imports"}, "policy": "rules/clippy-single-component-path-imports.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
+    {"id": "clippy-many-single-char-names", "upstream": {"tool": "clippy", "rule": "many_single_char_names"}, "policy": "rules/clippy-many-single-char-names.json", "capabilities": ["syntax", "scope", "suppression"], "match": "line+column"},
     {"id": "clippy-allow-attributes", "upstream": {"tool": "clippy", "rule": "allow_attributes"}, "policy": "rules/clippy-allow-attributes.json", "capabilities": ["suppression"], "match": "line+column"},
     {"id": "clippy-allow-attributes-without-reason", "upstream": {"tool": "clippy", "rule": "allow_attributes_without_reason"}, "policy": "rules/clippy-allow-attributes-without-reason.json", "capabilities": ["suppression"], "match": "line+column"}
   ]
