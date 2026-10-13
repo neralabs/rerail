@@ -47,6 +47,9 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/bandit/fixtures/rerail/nosec/B610.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B615.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B701.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/probes/b104-docstring-concatenation.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/b108-docstring-concatenation.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/probes/b108-parenthesized-statement.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/b502-keyword-only.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/probes/b701-select-autoescape-import.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/nosec-lines.py` | written by Rerail |

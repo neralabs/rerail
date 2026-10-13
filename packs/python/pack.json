@@ -194,18 +194,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-b017-assert-raises-exception",
-      "document": "rules/ruff-b017-assert-raises-exception.json",
-      "title": "Ruff B017: Assert raises exception",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-b019-cached-instance-method",
-      "document": "rules/ruff-b019-cached-instance-method.json",
-      "title": "Ruff B019: Cached instance method",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-b020-loop-variable-overrides-iterator",
       "document": "rules/ruff-b020-loop-variable-overrides-iterator.json",
       "title": "Ruff B020: Loop variable overrides iterator",
@@ -301,27 +289,6 @@
       "on": false
     },
     {
-      "id": "ruff-e712-true-false-comparison",
-      "document": "rules/ruff-e712-true-false-comparison.json",
-      "title": "Ruff E712: True false comparison",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-e713-not-in-test",
-      "document": "rules/ruff-e713-not-in-test.json",
-      "title": "Ruff E713: Not in test",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-e714-not-is-test",
-      "document": "rules/ruff-e714-not-is-test.json",
-      "title": "Ruff E714: Not is test",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-e721-type-comparison",
       "document": "rules/ruff-e721-type-comparison.json",
       "title": "Ruff E721: Type comparison",
@@ -364,12 +331,6 @@
       "title": "Ruff F403: Undefined local with import star",
       "group": "Ruff",
       "on": false
-    },
-    {
-      "id": "ruff-f404-late-future-import",
-      "document": "rules/ruff-f404-late-future-import.json",
-      "title": "Ruff F404: Late future import",
-      "group": "Ruff"
     },
     {
       "id": "ruff-f405-undefined-local-with-import-star-usage",
@@ -500,12 +461,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-f631-assert-tuple",
-      "document": "rules/ruff-f631-assert-tuple.json",
-      "title": "Ruff F631: Assert tuple",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-f632-is-literal",
       "document": "rules/ruff-f632-is-literal.json",
       "title": "Ruff F632: Is literal",
@@ -515,12 +470,6 @@
       "id": "ruff-f633-invalid-print-syntax",
       "document": "rules/ruff-f633-invalid-print-syntax.json",
       "title": "Ruff F633: Invalid print syntax",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-f634-if-tuple",
-      "document": "rules/ruff-f634-if-tuple.json",
-      "title": "Ruff F634: If tuple",
       "group": "Ruff"
     },
     {
@@ -579,12 +528,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-pie790-unnecessary-placeholder",
-      "document": "rules/ruff-pie790-unnecessary-placeholder.json",
-      "title": "Ruff PIE790: Unnecessary placeholder",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-pie794-duplicate-class-field-definition",
       "document": "rules/ruff-pie794-duplicate-class-field-definition.json",
       "title": "Ruff PIE794: Duplicate class field definition",
@@ -615,12 +558,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-pie808-unnecessary-range-start",
-      "document": "rules/ruff-pie808-unnecessary-range-start.json",
-      "title": "Ruff PIE808: Unnecessary range start",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-pie810-multiple-starts-ends-with",
       "document": "rules/ruff-pie810-multiple-starts-ends-with.json",
       "title": "Ruff PIE810: Multiple starts ends with",
@@ -636,13 +573,6 @@
       "id": "ruff-ret502-implicit-return-value",
       "document": "rules/ruff-ret502-implicit-return-value.json",
       "title": "Ruff RET502: Implicit return value",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ret504-unnecessary-assign",
-      "document": "rules/ruff-ret504-unnecessary-assign.json",
-      "title": "Ruff RET504: Unnecessary assign",
       "group": "Ruff",
       "on": false
     },
@@ -707,24 +637,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-sim115-open-file-with-context-handler",
-      "document": "rules/ruff-sim115-open-file-with-context-handler.json",
-      "title": "Ruff SIM115: Open file with context handler",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim201-negate-equal-op",
-      "document": "rules/ruff-sim201-negate-equal-op.json",
-      "title": "Ruff SIM201: Negate equal op",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim202-negate-not-equal-op",
-      "document": "rules/ruff-sim202-negate-not-equal-op.json",
-      "title": "Ruff SIM202: Negate not equal op",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-sim208-double-negation",
       "document": "rules/ruff-sim208-double-negation.json",
       "title": "Ruff SIM208: Double negation",
@@ -748,18 +660,6 @@
       "title": "Ruff SIM212: If expr with twisted arms",
       "group": "Ruff",
       "on": false
-    },
-    {
-      "id": "ruff-sim220-expr-and-not-expr",
-      "document": "rules/ruff-sim220-expr-and-not-expr.json",
-      "title": "Ruff SIM220: Expr and not expr",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim221-expr-or-not-expr",
-      "document": "rules/ruff-sim221-expr-or-not-expr.json",
-      "title": "Ruff SIM221: Expr or not expr",
-      "group": "Ruff"
     },
     {
       "id": "ruff-sim300-yoda-conditions",
@@ -807,18 +707,6 @@
       "id": "bandit-b102-exec-used",
       "document": "rules/bandit-b102-exec-used.json",
       "title": "Bandit B102: Exec used",
-      "group": "Bandit"
-    },
-    {
-      "id": "bandit-b104-hardcoded-bind-all-interfaces",
-      "document": "rules/bandit-b104-hardcoded-bind-all-interfaces.json",
-      "title": "Bandit B104: Hardcoded bind all interfaces",
-      "group": "Bandit"
-    },
-    {
-      "id": "bandit-b108-hardcoded-tmp-directory",
-      "document": "rules/bandit-b108-hardcoded-tmp-directory.json",
-      "title": "Bandit B108: Hardcoded tmp directory",
       "group": "Bandit"
     },
     {
@@ -1047,12 +935,6 @@
       "id": "bandit-b615-huggingface-unsafe-download",
       "document": "rules/bandit-b615-huggingface-unsafe-download.json",
       "title": "Bandit B615: Huggingface unsafe download",
-      "group": "Bandit"
-    },
-    {
-      "id": "bandit-b701-jinja2-autoescape-false",
-      "document": "rules/bandit-b701-jinja2-autoescape-false.json",
-      "title": "Bandit B701: Jinja2 autoescape false",
       "group": "Bandit"
     }
   ]

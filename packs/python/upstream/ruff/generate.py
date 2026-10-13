@@ -489,6 +489,34 @@ PROBES = {
     "SIM905-comment-before-argument.py": "SEP = \",\"\n\"a,b\".split(  # configured separator\n    SEP\n)\n"
                                          "\"a,b\".split(\n    # the separator\n    \",\"\n)\n"
                                          "\"a b\".split(None,  # at most once\n    1)\n",
+    # From Moti's review of #29: parentheses, comments, `\` continuations and t-strings that change the tree-sitter
+    # shape but not Python's AST. Each port still misreads its case, so it stays a candidate until it agrees.
+    "B017-comment-before-argument.py": "import pytest\ndef test_a():\n    with pytest.raises(Exception,  # c\n"
+                                       "                       \"op()\"):\n        pass\n",
+    "B017-continuation.py": "import pytest\ndef test_b():\n    with pytest.raises(Exception, \\\n    ):\n        pass\n",
+    "B019-parenthesized-decorator.py": "import functools\nclass C:\n    @(staticmethod)\n    @functools.cache\n"
+                                       "    def f(x):\n        return x\n    @(classmethod)\n    @functools.cache\n"
+                                       "    def g(cls):\n        return cls\n",
+    "E712-comment-in-tuple.py": "if True == (1,  # c\n            2):\n    pass\n",
+    "E713-E714-comment-in-operator.py": "a = b = c = 1\nif not (a in b not  # c\n        in c):\n    pass\n"
+                                        "if not (a is b is  # c\n        not c):\n    pass\n",
+    "F404-concatenated-docstring.py": "(\"module \"  # comment\n \"docstring\")\nfrom __future__ import annotations\n",
+    "F631-F634-continuation-empty-tuple.py": "assert ( \\\n)\nif ( \\\n):\n    pass\n",
+    "PIE790-parenthesized-type-checking.py": "from typing import TYPE_CHECKING\nif (TYPE_CHECKING):\n    pass\nelse:\n"
+                                             "    ...\nif (TYPE_CHECKING):\n    \"\"\"doc\"\"\"\n    ...\n",
+    "PIE808-comment-after-start.py": "for i in range(0,  # c\n               ):\n    pass\n",
+    "RET504-parenthesized-suppress.py": "from contextlib import suppress\ndef f():\n"
+                                        "    with (suppress(ValueError)) as cm:\n        value = int(\"1\")\n"
+                                        "    return value\n",
+    "SIM115-parenthesized-argument.py": "import contextlib\nwith contextlib.ExitStack() as stack:\n"
+                                        "    f = stack.enter_context((open(\"f\")))\n",
+    "SIM201-SIM202-dunder-comprehension-lambda.py": "class C:\n    def __ne__(self, other):\n"
+                                                    "        a = [x for x in (not self == other,)]\n"
+                                                    "        g = lambda y=not self == other: y\n        return a, g\n"
+                                                    "    def __eq__(self, other):\n"
+                                                    "        a = [x for x in (not self != other,)]\n"
+                                                    "        g = lambda y=not self != other: y\n        return a, g\n",
+    "SIM220-SIM221-t-strings.py": "a = True\nx = a and (t\"x\" + t\"y\") and not a\ny = a or (t\"x\" + t\"y\") or not a\n",
 }
 
 

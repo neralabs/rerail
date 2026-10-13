@@ -590,8 +590,21 @@
    "rerail/noqa/SIM905.py",
    "rerail/noqa/SIM910.py",
    "rerail/noqa/T100.py",
+   "rerail/probes/B017-comment-before-argument.py",
+   "rerail/probes/B017-continuation.py",
+   "rerail/probes/B019-parenthesized-decorator.py",
    "rerail/probes/B025-nested-try.py",
+   "rerail/probes/E712-comment-in-tuple.py",
+   "rerail/probes/E713-E714-comment-in-operator.py",
+   "rerail/probes/F404-concatenated-docstring.py",
    "rerail/probes/F602-string-and-name-key.py",
+   "rerail/probes/F631-F634-continuation-empty-tuple.py",
+   "rerail/probes/PIE790-parenthesized-type-checking.py",
+   "rerail/probes/PIE808-comment-after-start.py",
+   "rerail/probes/RET504-parenthesized-suppress.py",
+   "rerail/probes/SIM115-parenthesized-argument.py",
+   "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
+   "rerail/probes/SIM220-SIM221-t-strings.py",
    "rerail/probes/SIM905-comment-before-argument.py",
    "ruff/RUF050_F401.py",
    "ruff/RUF072_RUF047_SIM105.py",
@@ -3055,6 +3068,12 @@
    "column": 5
   },
   {
+   "rule": "B007",
+   "path": "rerail/probes/PIE808-comment-after-start.py",
+   "line": 1,
+   "column": 5
+  },
+  {
    "rule": "B008",
    "path": "flake8_bugbear/B006_B008.py",
    "line": 126,
@@ -3959,6 +3978,12 @@
    "path": "rerail/noqa/B017.py",
    "line": 28,
    "column": 14
+  },
+  {
+   "rule": "B017",
+   "path": "rerail/probes/B017-continuation.py",
+   "line": 3,
+   "column": 10
   },
   {
    "rule": "B018",
@@ -9545,6 +9570,18 @@
    "path": "pyflakes/F821_33.py",
    "line": 21,
    "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "E731",
+   "path": "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
+   "line": 8,
+   "column": 9
   },
   {
    "rule": "E741",
@@ -28763,6 +28800,12 @@
    "path": "rerail/noqa/F823.py",
    "line": 24,
    "column": 5
+  },
+  {
+   "rule": "F841",
+   "path": "rerail/probes/RET504-parenthesized-suppress.py",
+   "line": 3,
+   "column": 36
   },
   {
    "rule": "F841",

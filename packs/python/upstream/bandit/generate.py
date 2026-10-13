@@ -263,6 +263,14 @@ PROBES = {
                       "requests.get(\n    \"https://example.com\",\n)  # nosec\nrequests.get(\n"
                       "    \"https://example.com\",  # nosec B101\n)\ntry:\n    run()\nexcept Exception:\n"
                       "    pass  # nosec B110\n",
+    # From Moti's review of #29. Each port still misreads its case, so it stays a candidate until it agrees.
+    # B104: a string statement is skipped, and an implicit concatenation is one string.
+    "b104-docstring-concatenation.py": "\"0.0.0.0\"\nx = \"not-\" \"0.0.0.0\"\n",
+    # B108: a parenthesized string statement is still a statement.
+    "b108-parenthesized-statement.py": "(\"/tmp/x\")\n",
+    # B701: Bandit exempts any call named `select_autoescape`, however it is imported.
+    "b701-select-autoescape-import.py": "import jinja2\nfrom jinja2.utils import select_autoescape\n"
+                                        "env = jinja2.Environment(autoescape=select_autoescape())\n",
 }
 
 
