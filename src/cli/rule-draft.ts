@@ -65,8 +65,8 @@ export interface RuleDraftCaseResult {
   caught: boolean;
   ok: boolean;
   label: string;
-  /** Why a clause of the rule did not read the case's file, which then decides nothing: never `ok`. */
-  notRead?: string;
+  /** Why a clause of the rule could not check the case's file, which then decides nothing: never `ok`. */
+  notChecked?: string;
 }
 
 export interface RuleDraftRepositoryMatch {
@@ -76,8 +76,8 @@ export interface RuleDraftRepositoryMatch {
   text: string;
 }
 
-/** A file the Engine did not read for some clause of the rule: the first such failure's message. */
-export interface RuleDraftUnreadFile {
+/** A file some clause of the rule could not check: the first such failure's message. */
+export interface RuleDraftUncheckedFile {
   path: string;
   message: string;
 }
@@ -87,7 +87,12 @@ export interface RuleDraftReport {
   valid: boolean;
   error?: string;
   cases: RuleDraftCaseResult[];
-  repository: { matches: number; examples: RuleDraftRepositoryMatch[]; unread: { count: number; examples: RuleDraftUnreadFile[] } } | null;
+  repository: {
+    matches: number;
+    examples: RuleDraftRepositoryMatch[];
+    /** Files some clause could not check, and the messages of such failures that name no file. */
+    unchecked: { count: number; examples: RuleDraftUncheckedFile[]; unattributed: string[] };
+  } | null;
 }
 
 /** A draft the schema, the Engine, or a case rejects; `rules test` reports it rather than throwing. */
@@ -221,15 +226,19 @@ async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRule
 }
 
 /**
- * Per path, the first failure that left some clause of the rule not evaluated there: anything but `source-partial`,
- * where the clauses ran around syntax errors and what they found stands.
+ * What some clause of the rule could not check: per path, the first such failure's message, and the distinct messages
+ * of such failures that name no file (a cross-file query or a budget), which leave every file's verdict unknown. A
+ * `source-partial` failure is neither: the clauses ran around syntax errors and what they found stands.
  */
-function unreadFiles(failures: Evaluation["failures"]): Map<string, string> {
-  const unread = new Map<string, string>();
+function uncheckedPlaces(failures: Evaluation["failures"]): { files: Map<string, string>; unattributed: string[] } {
+  const files = new Map<string, string>();
+  const unattributed = new Set<string>();
   for (const failure of failures) {
-    if (failure.path !== undefined && failure.code !== "source-partial" && !unread.has(failure.path)) unread.set(failure.path, failure.message);
+    if (failure.code === "source-partial") continue;
+    if (failure.path === undefined) unattributed.add(failure.message);
+    else if (!files.has(failure.path)) files.set(failure.path, failure.message);
   }
-  return unread;
+  return { files, unattributed: [...unattributed] };
 }
 
 function moduleFor(binding: NativeBinding, root: string, path: string, language: string): { module?: string | string[] } {
@@ -252,9 +261,10 @@ async function policyCaseResult(
     const file = { path: sample.path, language, source: sample.content, ...moduleFor(binding, root, sample.path, language) };
     const evaluation = await evaluate(binding, compiled, [file]);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
-    // A violation stands whatever else failed; without one, a clause that did not read the file decides nothing.
-    const notRead = caught ? undefined : unreadFiles(evaluation.failures).get(sample.path);
-    if (notRead !== undefined) return { expected, caught, ok: false, label: sample.path, notRead };
+    // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
+    const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
+    const notChecked = unchecked === undefined ? undefined : (unchecked.files.get(sample.path) ?? unchecked.unattributed[0]);
+    if (notChecked !== undefined) return { expected, caught, ok: false, label: sample.path, notChecked };
   }
   return { expected, caught, ok: caught === (expected === "caught"), label: `${sample.path}${note}` };
 }
@@ -329,10 +339,15 @@ async function repositoryPass(
     ...match,
     text: (sources.get(match.path)?.split("\n")[match.line - 1] ?? "").trim().slice(0, EXAMPLE_TEXT_LENGTH),
   }));
-  const unread = [...unreadFiles(evaluation.failures)]
+  const { files: uncheckedFiles, unattributed } = uncheckedPlaces(evaluation.failures);
+  const unchecked = [...uncheckedFiles]
     .map(([path, message]) => ({ path, message }))
     .sort((left, right) => left.path.localeCompare(right.path));
-  return { matches: located.length, examples, unread: { count: unread.length, examples: unread.slice(0, REPOSITORY_EXAMPLES) } };
+  return {
+    matches: located.length,
+    examples,
+    unchecked: { count: unchecked.length, examples: unchecked.slice(0, REPOSITORY_EXAMPLES), unattributed },
+  };
 }
 
 function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }>): RuleDraftCaseResult[] {
@@ -423,7 +438,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
 }
 
 function caseLine(result: RuleDraftCaseResult): string {
-  if (result.notRead !== undefined) return `  ✗ not read (${result.notRead}), expected ${result.expected}: ${result.label}`;
+  if (result.notChecked !== undefined) return `  ✗ not checked (${result.notChecked}), expected ${result.expected}: ${result.label}`;
   const outcome = result.caught ? "caught" : "passed";
   return result.ok
     ? `  ✓ ${outcome}, as expected: ${result.label}`
@@ -432,15 +447,16 @@ function caseLine(result: RuleDraftCaseResult): string {
 
 function repositoryLines(repository: RuleDraftReport["repository"]): string[] {
   if (repository === null) return ["  Repo: not checked for conversation rules."];
-  const { matches, examples, unread } = repository;
+  const { matches, examples, unchecked } = repository;
   const lines = [`  Repo: ${matches} ${matches === 1 ? "place matches" : "places match"}.`];
   for (const example of examples) lines.push(`    ${example.path}:${example.line}:${example.column}  ${example.text}`);
   if (matches > examples.length) lines.push(`    … and ${matches - examples.length} more.`);
-  if (unread.count > 0) {
-    lines.push(`  ${unread.count} ${unread.count === 1 ? "file was" : "files were"} not read, so the rule may miss places there:`);
-    for (const file of unread.examples) lines.push(`    ${file.path}  ${file.message}`);
-    if (unread.count > unread.examples.length) lines.push(`    … and ${unread.count - unread.examples.length} more.`);
+  if (unchecked.count > 0) {
+    lines.push(`  ${unchecked.count} ${unchecked.count === 1 ? "file was" : "files were"} not checked, so the rule may miss places there:`);
+    for (const file of unchecked.examples) lines.push(`    ${file.path}  ${file.message}`);
+    if (unchecked.count > unchecked.examples.length) lines.push(`    … and ${unchecked.count - unchecked.examples.length} more.`);
   }
+  for (const message of unchecked.unattributed) lines.push(`  Not checked in any one file (${message}), so the rule may miss places anywhere.`);
   return lines;
 }
 

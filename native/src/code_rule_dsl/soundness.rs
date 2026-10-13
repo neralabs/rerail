@@ -382,10 +382,11 @@ impl SyntaxErrors {
             .sum()
     }
 
-    /// How a file of `source_len` bytes with these (non-empty) regions is read.
+    /// How a file of `source_len` bytes with these (non-empty) regions is read. An empty file's
+    /// regions (zero-width MISSING tokens) cover none of it.
     pub(super) fn reading(&self, lines: &LineTable, source_len: usize) -> SyntaxReading {
         let covered = self.covered_bytes();
-        if covered * 100 < source_len * UNREAD_PERCENT {
+        if source_len == 0 || covered * 100 < source_len * UNREAD_PERCENT {
             return SyntaxReading::Partial(self.partial_message(lines));
         }
         let (line, column) = lines.point(self.regions[0].start);
@@ -465,6 +466,8 @@ mod tests {
                     .into()
             )
         );
+        // An empty file's MISSING point covers nothing of it.
+        assert!(reading(&region(0..0), "").is_ok());
     }
 
     #[test]
@@ -483,7 +486,7 @@ mod tests {
                     .into()
             )
         );
-        let partial = "debugger; // read: the error region is the function below\nfunction f( {\n  debugger;\n";
+        let partial = "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n";
         assert!(reading(&syntax_errors(GrammarDialect::TypeScript, partial), partial).is_ok());
     }
 
@@ -604,7 +607,7 @@ mod tests {
             &compiled,
             "typescript",
             "open.ts",
-            "debugger; // read: the error region is the function below\nfunction f( {\n",
+            "debugger; // clean text keeps the error region under half the file\nfunction f( {\n",
         );
         assert_eq!(result["violations"][0]["span"]["startLine"], 0, "{result}");
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
@@ -616,7 +619,7 @@ mod tests {
             &compiled,
             "typescript",
             "open.ts",
-            "debugger; // read: the error region is the function below\nfunction f( {\n",
+            "debugger; // clean text keeps the error region under half the file\nfunction f( {\n",
         );
         assert_eq!(result["violations"], json!([]), "{result}");
     }

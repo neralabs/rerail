@@ -15,6 +15,7 @@ import {
   CODE_RULE_DIALECTS,
   codeRuleLanguageFamily,
   compareDeterministicStrings,
+  isUnreadFailure,
 } from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
@@ -122,13 +123,11 @@ const SYNTAX_ERROR_FAILURE = { code: "source-incomplete", message: "file has syn
 /** The engine's `source-partial` message names the first error region (`first at line L, column C`, both 1-based). */
 const FIRST_SYNTAX_ERROR = /first at line (\d+), column (\d+)$/u;
 /**
- * How every AST clause skips a file whose error regions cover half of it or more: the grammar did not read it, which is
- * T1's too. The message names the first region, so no probe is needed.
+ * Every AST clause skips a file whose error regions cover half of it or more (`isUnreadFailure`): the grammar did not
+ * read it, which is T1's too. The message names the first region (`FIRST_SYNTAX_ERROR`), so no probe is needed.
  */
-const UNREAD_FAILURE = /^file did not parse: error regions cover \d+% of it, first at line (\d+), column (\d+)$/u;
-
 function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation | undefined {
-  const match = failure.code === "source-incomplete" && failure.path !== undefined ? UNREAD_FAILURE.exec(failure.message) : null;
+  const match = isUnreadFailure(failure) && failure.path !== undefined ? FIRST_SYNTAX_ERROR.exec(failure.message) : null;
   return match === null ? undefined : { path: failure.path!, line: Number(match[1]), column: Number(match[2]) };
 }
 
@@ -222,7 +221,7 @@ interface RuleActual {
   /** Failures other than `source-partial` and the syntax-error skips below. */
   engineFailures: number;
   partialPaths: Set<string>;
-  /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`UNREAD_FAILURE`), at the first syntax error. */
+  /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`isUnreadFailure`), at the first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
 }
 

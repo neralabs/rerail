@@ -19,7 +19,7 @@ export {
 export { auditRequestSchema } from "./audit/audit-control-schema.js";
 export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
-export { type AuditInput, type AuditRecorder, type AuditResult } from "./audit/audit.js";
+export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadBundledRules } from "./catalog/bundled-rule-documents.js";
 export { loadBundledCatalog } from "./catalog/bundled-rules.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";

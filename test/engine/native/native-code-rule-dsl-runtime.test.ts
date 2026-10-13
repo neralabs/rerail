@@ -2192,7 +2192,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       nativeWorkspace.addCodeRule(compiled);
       try {
         const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
-        const broken = { language: "typescript", path: "broken.ts", source: "debugger; // read: the error region is the function below\nfunction f( {\n  debugger;\n" };
+        const broken = { language: "typescript", path: "broken.ts", source: "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n" };
         const actual = await applyWorkspace(nativeWorkspace, 1, [clean, broken]);
         expect(actual.violations.map(item => [item.clauseId, item.path, item.span?.startLine])).toEqual([
           ["debugger", "broken.ts", 0],
@@ -2229,6 +2229,15 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         tsClause("debugger", { kind: "debugger_statement" }),
         tsClause("unguarded", { all: [{ kind: "debugger_statement" }, { not: { follows: { kind: "import_statement", stopBy: "end" } } }] }),
         { id: "regex", forbid: { regex: { pattern: "debugger", source: "file.content" } }, violation: violation("REGEX") },
+        // A cross-file query names the unread file and reports its detail too.
+        {
+          id: "gated",
+          forbid: { select_when: {
+            exists: { regex: { pattern: "debugger", source: "file.content" } },
+            select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+          } },
+          violation: violation("GATED"),
+        },
       ]);
       nativeWorkspace.addCodeRule(compiled);
       try {
@@ -2244,12 +2253,15 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         ]);
         expect(full.violations).toEqual(actual.violations.filter(item => item.path === "notes.ts"));
         const unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
-        expect(actual.failures.map(({ clauseId, code, path, message }) => ({ clauseId, code, path, message })).sort((left, right) => left.clauseId.localeCompare(right.clauseId)))
-          .toEqual([
-            { clauseId: "debugger", code: "source-incomplete", path: "notes.ts", message: unread },
-            { clauseId: "unguarded", code: "source-incomplete", path: "notes.ts", message: unread },
-          ]);
-        expect(identities(full.failures)).toEqual(identities(actual.failures));
+        const failures = (evaluation: { failures: ReadonlyArray<{ clauseId: string; code: string; path?: string | undefined; message: string }> }) => evaluation.failures
+          .map(({ clauseId, code, path, message }) => ({ clauseId, code, path, message }))
+          .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
+        expect(failures(actual)).toEqual([
+          { clauseId: "debugger", code: "source-incomplete", path: "notes.ts", message: unread },
+          { clauseId: "gated", code: "source-incomplete", path: "notes.ts", message: unread },
+          { clauseId: "unguarded", code: "source-incomplete", path: "notes.ts", message: unread },
+        ]);
+        expect(failures(full)).toEqual(failures(actual));
 
         const repaired = await applyWorkspace(nativeWorkspace, 2, [{ ...prose, source: "debugger;\n" }]);
         expect(repaired).toMatchObject({ status: "completed", failures: [] });

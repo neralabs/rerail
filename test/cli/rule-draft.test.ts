@@ -183,11 +183,11 @@ describe("rerail rules test", () => {
         { path: "src/a.ts", line: 3, column: 1, text: "console.log(a);" },
         { path: "src/nested/b.ts", line: 1, column: 1, text: "console.log('b');" },
       ],
-      unread: { count: 0, examples: [] },
+      unchecked: { count: 0, examples: [], unattributed: [] },
     });
   });
 
-  it("reports a case and repo files a clause did not read, rather than passing them", async () => {
+  it("reports a case and repo files a clause could not check, rather than passing them", async () => {
     // The negated `inside` is an absence claim over ancestors the parser may not have read, so the clause does not
     // run on a file with syntax errors.
     const policy = {
@@ -210,15 +210,75 @@ describe("rerail rules test", () => {
 
     expect(exit).toBe(1);
     expect(report.cases).toEqual([
-      { expected: "caught", caught: false, ok: false, label: "src/a.ts", notRead: "file has syntax errors" },
-      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notRead: "file has syntax errors" },
+      { expected: "caught", caught: false, ok: false, label: "src/a.ts", notChecked: "file has syntax errors" },
+      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "file has syntax errors" },
     ]);
     expect(report.repository).toMatchObject({
       matches: 1,
-      unread: { count: 1, examples: [{ path: "src/broken.ts", message: "file has syntax errors" }] },
+      unchecked: { count: 1, examples: [{ path: "src/broken.ts", message: "file has syntax errors" }], unattributed: [] },
     });
-    expect(stdout).toContain("✗ not read (file has syntax errors), expected caught: src/a.ts");
-    expect(stdout).toContain("1 file was not read, so the rule may miss places there:\n    src/broken.ts  file has syntax errors");
+    expect(stdout).toContain("✗ not checked (file has syntax errors), expected caught: src/a.ts");
+    expect(stdout).toContain("1 file was not checked, so the rule may miss places there:\n    src/broken.ts  file has syntax errors");
+  });
+
+  // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end: 95% of the bytes, so the parser did
+  // not read the file and no AST clause runs there, sound or not.
+  const prose = `debugger;\n${"Install it: run the script, then open the page.\n".repeat(5)}`;
+  const unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+  const debuggerPolicy = (forbid: unknown) => ({
+    ...noConsolePolicy(),
+    clauses: [{ id: "debugger", forbid, violation: { anchor: "witness.span", code: "DEBUGGER", message: "No debugger." } }],
+  });
+
+  it.each([
+    ["a sound local clause", { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }],
+    ["a cross-file select_when clause", {
+      select_when: {
+        exists: { regex: { pattern: "debugger", source: "file.content" } },
+        select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+      },
+    }],
+  ])("never passes a file the parser did not read, through %s", async (_name, forbid) => {
+    const repo = await repository({ "src/notes.ts": prose, "src/clean.ts": "const a = 1;\n" });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: debuggerPolicy(forbid),
+      cases: { caught: [], passed: [{ path: "src/notes.ts", content: prose }] },
+    });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([{ expected: "passed", caught: false, ok: false, label: "src/notes.ts", notChecked: unread }]);
+    expect(report.repository).toMatchObject({
+      matches: 0,
+      unchecked: { count: 1, examples: [{ path: "src/notes.ts", message: unread }], unattributed: [] },
+    });
+    expect(stdout).toContain(`✗ not checked (${unread}), expected passed: src/notes.ts`);
+    expect(stdout).toContain(`1 file was not checked, so the rule may miss places there:\n    src/notes.ts  ${unread}`);
+  });
+
+  it("never passes a case on a failure that names no file, and reports it in the repo pass", async () => {
+    // The `llm` clause fails without a path: the rule's verdict on any file is unknown.
+    const policy = {
+      ...noConsolePolicy(),
+      clauses: [{
+        id: "intent",
+        llm: { input: { source: "changed-symbol" }, rubric: "Fail on direct persistence access", verdicts: ["pass", "fail"] },
+        violation: { anchor: "witness.span", code: "INTENT", message: "intent" },
+      }],
+    };
+    const repo = await repository({ "src/a.ts": "const a = 1;\n" });
+    const file = writeDraft(repo, { kind: "code", rule: policy, cases: { caught: [], passed: [{ path: "src/b.ts", content: "const b = 1;\n" }] } });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([
+      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "LLM capability is unavailable" },
+    ]);
+    expect(report.repository?.unchecked).toEqual({ count: 0, examples: [], unattributed: ["LLM capability is unavailable"] });
+    expect(stdout).toContain("Not checked in any one file (LLM capability is unavailable), so the rule may miss places anywhere.");
   });
 
   it("writes nothing: no library rule, and the repository is left as it was", async () => {

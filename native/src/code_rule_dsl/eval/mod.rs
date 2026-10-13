@@ -13,7 +13,6 @@ pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
     violation_ids,
 };
-use query::query_failure_path;
 pub(super) use query::{
     WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
@@ -139,14 +138,21 @@ pub(super) fn evaluate_clauses(
                     ));
                     continue;
                 }
-                let Some(matches) = matches else {
-                    evaluation.failures.push(failure(
-                        &clause.id,
-                        "source-incomplete",
-                        "query source is incomplete",
-                        query_failure_path(query, snapshot, &code_rule.scope),
-                    ));
-                    continue;
+                let matches = match matches {
+                    Ok(matches) => matches,
+                    Err(incomplete) => {
+                        // A file the parser did not read reports how much of it the errors cover.
+                        evaluation.failures.push(failure(
+                            &clause.id,
+                            "source-incomplete",
+                            incomplete
+                                .unread
+                                .as_deref()
+                                .unwrap_or("query source is incomplete"),
+                            Some(&incomplete.path),
+                        ));
+                        continue;
+                    }
                 };
                 for (path, message) in &partial {
                     evaluation.failures.push(failure(
@@ -286,7 +292,7 @@ fn stateless_rows(
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
-            Some(witnesses)
+            Ok(witnesses)
                 if util_limit.is_none()
                     && partial.is_empty()
                     && file_metrics.witnesses <= limits.max_witnesses =>
@@ -406,7 +412,7 @@ fn stateless_calls(
             metrics.visited_nodes = seed_metrics.visited_nodes;
             let starts = match witnesses {
                 // Past the witness budget the witnesses stop short: the file's seeds are unknown.
-                Some(witnesses)
+                Ok(witnesses)
                     if util_limit.is_none()
                         && partial.is_empty()
                         && seed_metrics.witnesses <= limits.max_witnesses =>

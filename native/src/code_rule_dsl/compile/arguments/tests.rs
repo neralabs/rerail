@@ -453,7 +453,7 @@ fn arguments_are_sound_under_syntax_errors() {
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     assert!(grammar_matchers(&compiled)[0].sound_under_errors);
-    let source = "f(1)  # read: only the broken def below is an error region\ndef (:\n";
+    let source = "f(1)  # clean text keeps the error region under half the file\ndef (:\n";
     let result = evaluate_file(&compiled, "python", "a.py", source);
     assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
     assert_violations_texts(&result, source, &["f(1)"]);
