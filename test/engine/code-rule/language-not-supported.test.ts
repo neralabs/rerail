@@ -12,9 +12,16 @@ import {
   LANGUAGE_NOT_SUPPORTED,
   codeRuleLanguageNotSupported,
 } from "../../../src/engine/code-rule/code-rule-language-support.js";
-import { CODE_RULE_PLANNED_LANGUAGES } from "../../../src/engine/code-rule/code-rule-language-registry.generated.js";
+import { EXEMPLAR } from "../support/exemplar-registry.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
+
+// The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
+vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
+  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
+vi.mock("../../../src/engine/native/native.js", async importOriginal =>
+  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 /** One forbid clause over an ast query of `language`, reporting every identifier of every file. */
 function astCodeRule(id: string, language: string): CodeRule {
@@ -51,7 +58,8 @@ afterEach(async () => {
 });
 
 describe("a rule for a planned language", () => {
-  it.each(CODE_RULE_PLANNED_LANGUAGES)("is a valid document that compiles to language-not-supported for %s, in the engine and the host alike", language => {
+  it("is a valid document that compiles to language-not-supported for the exemplar, in the host", () => {
+    const language = EXEMPLAR;
     const rule = astCodeRule(`planned:${language}`, language);
     let refused: unknown;
     try {
@@ -67,9 +75,9 @@ describe("a rule for a planned language", () => {
   it("is reported for a define of a planned language, and never for a supported one", () => {
     const rule = codeRuleSchema.parse({
       ...astCodeRule("planned:define", "python"),
-      clauses: [{ id: "d", define: { language: "vue", utils: { u: { kind: "identifier" } } } }, astCodeRule("x", "python").clauses[0]],
+      clauses: [{ id: "d", define: { language: EXEMPLAR, utils: { u: { kind: "identifier" } } } }, astCodeRule("x", "python").clauses[0]],
     });
-    expect(codeRuleLanguageNotSupported(rule)).toEqual({ code: LANGUAGE_NOT_SUPPORTED, reason: "/clauses/0/define/language: `vue` is not supported yet" });
+    expect(codeRuleLanguageNotSupported(rule)).toEqual({ code: LANGUAGE_NOT_SUPPORTED, reason: `/clauses/0/define/language: \`${EXEMPLAR}\` is not supported yet` });
     expect(codeRuleLanguageNotSupported(astCodeRule("supported", "typescript"))).toBeUndefined();
     expect(() => assertCodeRuleCompiles(astCodeRule("supported", "typescript"))).not.toThrow();
   });
@@ -79,7 +87,7 @@ describe("a rule for a planned language", () => {
     gitRepository(workspace);
     const databasePath = join(root, "rerail.sqlite");
     setUpTestRepository(workspace, {
-      library: [{ kind: "code", rule: astCodeRule("planned:vue", "vue") }, { kind: "code", rule: astCodeRule("supported:python", "python") }],
+      library: [{ kind: "code", rule: astCodeRule(`planned:${EXEMPLAR}`, EXEMPLAR) }, { kind: "code", rule: astCodeRule("supported:python", "python") }],
     }, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath);
     try {
@@ -87,7 +95,7 @@ describe("a rule for a planned language", () => {
       const catalog = catalogs.catalog(workspace);
       expect(catalog.snapshot().codeRules.map(entry => entry.id)).toEqual(["supported:python"]);
       expect(catalog.quarantined()).toEqual([
-        { ruleId: "planned:vue", kind: "code", owner: "library", reason: reason("vue"), code: LANGUAGE_NOT_SUPPORTED },
+        { ruleId: `planned:${EXEMPLAR}`, kind: "code", owner: "library", reason: reason(EXEMPLAR), code: LANGUAGE_NOT_SUPPORTED },
       ]);
       expect(warnings).not.toHaveBeenCalled();
     } finally {
@@ -106,25 +114,25 @@ describe("a rule for a planned language", () => {
     } as unknown as ConstructorParameters<typeof DatabaseApiStores>[1]);
     try {
       const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
-      const inactive = { code: LANGUAGE_NOT_SUPPORTED, reason: reason("sql") };
+      const inactive = { code: LANGUAGE_NOT_SUPPORTED, reason: reason(EXEMPLAR) };
       const put = async (rule: CodeRule) => app.request(`/api/library-rules/${rule.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json", host: "127.0.0.1:4737" },
         body: JSON.stringify({ kind: "code", rule, checkout: workspace, attach: true }),
       });
-      const stored = await put(astCodeRule("planned:sql", "sql"));
+      const stored = await put(astCodeRule(`planned:${EXEMPLAR}`, EXEMPLAR));
       expect(stored.status).toBe(200);
       expect(((await stored.json()) as { rule: { inactive?: unknown } }).rule.inactive).toEqual(inactive);
       expect((await put(astCodeRule("supported:python", "python"))).status).toBe(200);
 
       const get = async <T>(path: string) => (await (await app.request(path, { headers: { host: "127.0.0.1:4737" } })).json()) as T;
       const library = await get<{ rules: { rule: { id: string }; inactive?: unknown }[]; quarantined: unknown[] }>("/api/library-rules");
-      expect(library.rules.map(entry => [entry.rule.id, entry.inactive])).toEqual([["planned:sql", inactive], ["supported:python", undefined]]);
+      expect(library.rules.map(entry => [entry.rule.id, entry.inactive])).toEqual([[`planned:${EXEMPLAR}`, inactive], ["supported:python", undefined]]);
       expect(library.quarantined).toEqual([]);
       const effective = await get<{ rules: { rule: { id: string }; inactive?: unknown }[] }>(`/api/repository/rules?${new URLSearchParams({ checkout: workspace })}`);
-      expect(effective.rules.map(entry => [entry.rule.id, entry.inactive]).toSorted()).toEqual([["planned:sql", inactive], ["supported:python", undefined]]);
+      expect(effective.rules.map(entry => [entry.rule.id, entry.inactive]).toSorted()).toEqual([[`planned:${EXEMPLAR}`, inactive], ["supported:python", undefined]]);
       const activity = await get<{ rules: Record<string, { measured: boolean; inactive?: unknown }> }>("/api/rules/activity?since=0");
-      expect(activity.rules["planned:sql"]).toEqual(expect.objectContaining({ measured: false, inactive }));
+      expect(activity.rules[`planned:${EXEMPLAR}`]).toEqual(expect.objectContaining({ measured: false, inactive }));
       expect(activity.rules["supported:python"]).toEqual(expect.objectContaining({ measured: true }));
       expect(activity.rules["supported:python"]).not.toHaveProperty("inactive");
     } finally {
@@ -132,14 +140,14 @@ describe("a rule for a planned language", () => {
     }
   });
 
-  it("makes a repository audit read .vue, .sql and .rs files as text: their planned languages' rules evaluate nothing, a regex rule reads them, and nothing fails", async () => {
+  it("makes a repository audit read .exemplar files as text: a planned language's rules evaluate nothing, a regex rule reads them, and nothing fails", async () => {
     const workspaceRoot = join(root, "workspace");
-    for (const [path, text] of [["ui/App.vue", "<script>const a = 1</script>\n"], ["db/schema.sql", "select a from b;\n"], ["src/main.rs", "fn main() { let a = 1; }\n"]] as const) {
+    for (const [path, text] of [["ui/app.exemplar", "name a = 1\n"], ["db/schema.exemplar", "select a from b;\n"]] as const) {
       await mkdir(dirname(join(workspaceRoot, path)), { recursive: true });
       await writeFile(join(workspaceRoot, path), text);
     }
     const catalog = testCodeRuleCatalog([
-      ...CODE_RULE_PLANNED_LANGUAGES.map(language => astCodeRule(`planned:${language}`, language)),
+      astCodeRule(`planned:${EXEMPLAR}`, EXEMPLAR),
       astCodeRule("supported:python", "python"),
       codeRuleSchema.parse({
         format: "rerail.policy/v1", id: "text:a", revision: 1, mode: "steer",
@@ -160,7 +168,7 @@ describe("a rule for a planned language", () => {
       const [auditId] = await enforcer.audit("planned", { scope: "repository", mode: "log" });
       const result = audits.get(auditId!)?.result;
       expect(result).toEqual(expect.objectContaining({ status: "completed", failures: [] }));
-      expect((result?.violations ?? []).map(violation => [violation.path, violation.ruleId]).sort()).toEqual([["db/schema.sql", "text:a"], ["src/main.rs", "text:a"], ["ui/App.vue", "text:a"]]);
+      expect((result?.violations ?? []).map(violation => [violation.path, violation.ruleId]).sort()).toEqual([["db/schema.exemplar", "text:a"], ["ui/app.exemplar", "text:a"]]);
       expect([...audits.values()].flatMap(audit => audit.result?.failures ?? [])).toEqual([]);
       expect(enforcer.snapshotStatus().failures).toEqual([]);
     } finally {

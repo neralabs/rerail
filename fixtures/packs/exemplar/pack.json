@@ -1,0 +1,36 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "exemplar",
+  "name": "Exemplar",
+  "category": "framework",
+  "covers": "A fixture pack for the exemplar language, which tests plan but core never reads.",
+  "reason": "matches exemplar",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.exemplar"
+        ],
+        "label": "*.exemplar files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "exemplar:no-identifier",
+      "document": "rules/no-identifier.json",
+      "title": "No identifier",
+      "group": "Exemplar",
+      "examples": {
+        "caught": {
+          "path": "src/app.exemplar",
+          "text": "name\n"
+        },
+        "passes": {
+          "path": "src/app.exemplar",
+          "text": "nothing here\n"
+        }
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, Region, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{SourceType, is_stub_file};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -1309,9 +1309,24 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         return None;
     }
     let root = node.root().root();
-    // A Blade template's names are its embedded program's (`blade::view`): its region's.
-    let root = with_adapter!(Family::of(language), A => A::regions(&root).next())
-        .map_or(root, |region| region.root);
+    // A Blade template's names are its embedded program's (`blade::view`): those of the region
+    // that holds `node`, else of its first region.
+    let at = node.range();
+    let holds = |region: &Region<'_, D>| {
+        let range = region.root.range();
+        range.start <= at.start && at.end <= range.end
+    };
+    let root = with_adapter!(Family::of(language), A => {
+        let mut regions = A::regions(&root, language);
+        regions.next().map(|first| {
+            if holds(&first) {
+                first
+            } else {
+                regions.find(|region| holds(region)).unwrap_or(first)
+            }
+        })
+    })
+    .map_or(root, |region| region.root);
     let build = |cap| PhpNames::build(root.clone(), cap, &budget::matcher_budget_exhausted);
     let clause = CURRENT_CLAUSE.get();
     let steps = UTIL_STEPS_LEFT.get();

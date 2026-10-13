@@ -9,7 +9,6 @@ use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::value::Context;
 use crate::code_rule_dsl::value::php::{decode, tests::agrees};
-use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,8 +61,10 @@ pub(super) fn region_bytes(source: &str, regions: &Json) -> (BTreeSet<usize>, BT
                     .map(range)
             }),
     );
-    let native = StrDoc::new(source, GrammarDialect::Blade);
-    let rerail = View::build(native.tree.root_node(), source)
+    let tree = super::forte::tree::parse_tree(source.as_bytes());
+    let rerail = View::build(&tree, source, &|| false)
+        .expect("an unbounded budget")
+        .view
         .map(|view| code_bytes(source, view.copied()))
         .unwrap_or_default();
     (blade, rerail)
@@ -120,9 +121,7 @@ fn blade_view_reads_the_regions_blade_compiles() {
 /// A Blade tape of `source`: the template and its embedded program.
 fn tape(source: &str) -> AstGrep<TapeDoc> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
-    let native = StrDoc::new(source, GrammarDialect::Blade);
-    let image =
-        TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).expect("encodes");
+    let image = TapeImage::encode_template(&grammar, source, &|| false).expect("encodes");
     AstGrep::doc(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
             .expect("restores"),

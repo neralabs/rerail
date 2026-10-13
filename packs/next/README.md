@@ -9,11 +9,11 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group; two rules carry examples |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group; six rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (shadcn-ui, next-examples, commerce) |
+| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises, the shipped rules first and then the candidates; the pinned plugin and the pinned corpora (shadcn-ui, next-examples, commerce) |
 | `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`, `fixtures.cases.json`) and the recorder (`generate.mjs`) |
-| `candidates/` | Ports that cannot pass their fixtures yet or that fail the V1 rule validation gates (`conformance.json`, `rules/`), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
+| `candidates/` | Ports that cannot pass their fixtures yet or that fail the V1 rule validation gates (`rules/`; scored through `conformance.json`, never gating), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
 | `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, listing every copied file |
 
 The rule documents, `conformance.json`'s and `pack.json`'s rule lists and the candidates are generated, offline:
@@ -30,9 +30,8 @@ under `.rerail/corpora/next` (Node 23.6 or later):
 node packs/next/upstream/eslint-plugin-next/generate.mjs
 ```
 
-Scoring one rule with every false positive and false negative printed, and the candidates:
+Scoring one rule, shipped or candidate, with every false positive and false negative printed:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack next --rule next-no-img-element --fixtures
-node --import tsx conformance/languages/cli.ts --pack-dir packs/next/candidates --fixtures
 ```

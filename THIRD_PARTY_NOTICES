@@ -329,24 +329,22 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
-Bundled grammar: EmranMR/tree-sitter-blade 0.12.2
-Files: native/grammars/tree-sitter-blade/ (LICENSE, src/grammar.json, src/scanner.c,
-  src/tag.h, src/tree_sitter/{alloc,array,parser}.h; each byte-identical to upstream)
-Revision: b5291d1ba207a8ebb8383b2ecb8a8a6535210a50
-Source: https://github.com/EmranMR/tree-sitter-blade
-License: MIT (the verbatim upstream LICENSE is in that directory)
+Ported code: fortephp/forte 1.1.0, the Blade lexer, tree builder and directive registry
+Files: native/src/code_rule_dsl/blade/forte/ (a Rust port, method by method, of Forte's
+  src/Lexer, src/Parser, src/Support/ScanPrimitives.php and the AST reads in ast.rs), and
+  native/src/code_rule_dsl/blade/forte/directives/resources/*.json (Forte's
+  resources/directives/*.json, byte-identical)
+Revision: v1.1.0, commit 9c9597d0b7080d16c25f53a940a0449ff1aab19b
+Source: https://github.com/fortephp/forte
+License: MIT
 
-Upstream's generated src/parser.c is not vendored: native/build.rs generates
-it from src/grammar.json at build time with tree-sitter-generate 0.27.0, which
-reproduces upstream's parser.c at this revision byte for byte.
-
-Upstream's src/scanner.c and src/tag.h are derived from tree-sitter-html
-(https://github.com/tree-sitter/tree-sitter-html, src/scanner.c and src/tag.h),
-whose notice follows:
+Modified by the Rerail authors: the PHP is translated to Rust one method to one
+function; extension hooks are left out, recursion is bounded and loops spend
+from a step budget. See docs/blade-parser.md.
 
 The MIT License (MIT)
 
-Copyright (c) 2014 Max Brunsfeld
+Copyright (c) <Johnathon Koster>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -355,16 +353,16 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 ----------------------------------------------------------------------
 
@@ -416,8 +414,8 @@ Source: https://github.com/tree-sitter/tree-sitter-typescript
 License: MIT (the verbatim upstream LICENSE is in that directory)
 
 The patches, why each is carried and how grammar.json is regenerated are in
-native/grammars/tree-sitter-typescript/PATCHES.md. As for Blade, native/build.rs
-generates each parser.c from its grammar.json with tree-sitter-generate 0.27.0.
+native/grammars/tree-sitter-typescript/PATCHES.md. native/build.rs generates
+each parser.c from its grammar.json with tree-sitter-generate 0.27.0.
 
 ----------------------------------------------------------------------
 

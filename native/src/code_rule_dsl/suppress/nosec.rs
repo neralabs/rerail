@@ -3,11 +3,32 @@
 //! `_get_nosecs_from_contexts`; `bandit/core/utils.py`'s `get_nosec`), at
 //! `92ae8b82fb422a639f0ed8d99e96cea769594e08`.
 
+use super::names;
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
+
+/// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress the
+/// violation.
+pub(super) fn spec(nosec: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(nosec, at)?, &["codes"], at)?;
+    names(
+        nosec.get("codes"),
+        &format!("{at}/codes"),
+        bandit_test,
+        "Bandit test ids",
+        "a Bandit test id (B, then digits: B101)",
+    )
+}
+
+/// A Bandit test id a `# nosec` list can name: `B`, then digits.
+fn bandit_test(id: &str) -> bool {
+    id.len() > 1 && id.starts_with('B') && id[1..].bytes().all(|byte| byte.is_ascii_digit())
+}
 
 /// Bandit 1.9.4's registered tests, by id and name (`extension_loader.MANAGER`'s
 /// `plugins_by_id`/`blacklist_by_id` and `plugins_by_name`/`blacklist_by_name`). A `# nosec` list

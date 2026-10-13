@@ -2,7 +2,8 @@
 //! of a corpus file's local suppression annotations, against the reports Rerail's suppression of
 //! the same dialect drops.
 
-use super::{PhpcsIndex, PhpcsVersion, PhpstanIndex, PsalmIndex};
+use super::phpcs::PhpcsVersion;
+use super::{PhpcsIndex, PhpstanIndex, PsalmIndex};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::suppress::psalm::parent_issue_type;

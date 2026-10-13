@@ -1,4 +1,5 @@
-import { LANGUAGE_NOT_SUPPORTED } from "../code-rule/code-rule-language-support.js";
+import { assertCodeRuleCompiles, CodeRuleCompileError } from "../code-rule/code-rule-compile.js";
+import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "../code-rule/code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_KINDS, type RuleKind } from "../storage/schema.js";
 import { ruleDocumentDigest } from "../stable-json.js";
@@ -11,12 +12,25 @@ export function storedDocumentDigest(kind: RuleKind, rule: unknown): string {
 
 export type StoredCodeRuleRead = { ok: true; rule: CodeRule } | { ok: false; reason: string };
 
-/** Validate a stored code-rule body against the current schema. Never throws. */
+/**
+ * Validate a stored code-rule body as a write validates it: the current schema, then the engine compile. Other
+ * processes and plain SQL write these rows too, so a body the engine refuses is quarantined with the engine's reason.
+ * One it refuses only as `language-not-supported` reads, as the write stored it: kept inactive. Without the engine the
+ * schema alone decides, and the catalog, which needs the engine to run any rule, refuses the rest. Never throws.
+ */
 export function readStoredCodeRule(stored: unknown): StoredCodeRuleRead {
   const parsed = codeRuleSchema.safeParse(stored);
-  if (parsed.success) return { ok: true, rule: parsed.data };
-  const issue = parsed.error.issues[0];
-  return { ok: false, reason: issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}` };
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return { ok: false, reason: issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}` };
+  }
+  try {
+    assertCodeRuleCompiles(parsed.data);
+  } catch (error) {
+    // The compile throws only CodeRuleCompileError or, without the engine, EngineUnavailableError.
+    if (error instanceof CodeRuleCompileError && languageNotSupportedOf(error.reason) === undefined) return { ok: false, reason: error.reason };
+  }
+  return { ok: true, rule: parsed.data };
 }
 
 const isRuleKind = (value: unknown): value is RuleKind => (RULE_KINDS as readonly unknown[]).includes(value);

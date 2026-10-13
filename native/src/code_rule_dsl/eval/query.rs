@@ -15,7 +15,6 @@ use crate::code_rule_dsl::violations::{self, Captures, Span, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
-use ast_grep_language::LanguageExt;
 use napi::Result;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -645,15 +644,10 @@ pub(super) fn file_tape(
 ) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
     use crate::code_rule_dsl::tape;
     let never = || false;
-    let root = language.ast_grep(file.source.as_str());
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let image = tape::TapeImage::encode(
-        root.root().get_doc().tree.root_node(),
-        &tape_grammar,
-        &file.source,
-        &never,
-    )
-    .map_err(invalid)?;
+    let image = tape::TapeImage::parse(&tape_grammar, &file.source, &never)
+        .ok_or_else(|| invalid("file could not be parsed"))?
+        .map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     #[cfg(test)]
     crate::code_rule_dsl::matcher::note_line_table_construction();

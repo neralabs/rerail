@@ -330,3 +330,56 @@ pub(super) fn recursive_call_branch_orders() -> [Value; 2] {
     let w = json!({ "matches": { "W": { "P": "$X" } } });
     [json!([v.clone(), w.clone()]), json!([w, v])]
 }
+
+/// The text `json_encode` with `JSON_INVALID_UTF8_SUBSTITUTE` writes for bytes: one U+FFFD per
+/// sequence `php_next_utf8_char` refuses, skipping as far as it does.
+pub(super) fn php_lossy(bytes: &[u8]) -> String {
+    let lead = |b: u8| b < 0x80 || (0xc2..=0xf4).contains(&b);
+    let trail = |b: Option<&u8>| b.is_some_and(|b| (0x80..=0xbf).contains(b));
+    let mut out = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let c = bytes[at];
+        let width = match c {
+            0..=0x7f => Ok(1),
+            0xc2..=0xdf => {
+                if trail(bytes.get(at + 1)) {
+                    Ok(2)
+                } else {
+                    Err(if bytes.get(at + 1).is_none_or(|b| lead(*b)) {
+                        1
+                    } else {
+                        2
+                    })
+                }
+            }
+            0xe0..=0xf4 => {
+                let width = if c < 0xf0 { 3 } else { 4 };
+                match (1..width).find(|offset| !trail(bytes.get(at + offset))) {
+                    Some(offset) => Err((1..=offset)
+                        .find(|i| bytes.get(at + i).is_none_or(|b| lead(*b)))
+                        .unwrap_or(offset + 1)),
+                    None => {
+                        if std::str::from_utf8(&bytes[at..at + width]).is_ok() {
+                            Ok(width)
+                        } else {
+                            Err(width)
+                        }
+                    }
+                }
+            }
+            _ => Err(1),
+        };
+        match width {
+            Ok(width) => {
+                out.push_str(std::str::from_utf8(&bytes[at..at + width]).expect("UTF-8"));
+                at += width;
+            }
+            Err(skip) => {
+                out.push('\u{fffd}');
+                at += skip;
+            }
+        }
+    }
+    out
+}

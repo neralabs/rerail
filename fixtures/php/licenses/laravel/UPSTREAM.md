@@ -11,3 +11,4 @@ Paths are relative to `php/`.
 | File | Upstream path | Copy |
 |---|---|---|
 | `literal/laravel/phpdoc.expected.json` | doc comments of the repository's `*.php` files | excerpt: the first 1,500 distinct doc comments in SHA-1 order, each verbatim as the first element of its record; the trees are Rerail's recording. |
+| `../blade/blade/forte/corpus/laravel.expected.json` | `*.blade.php` templates of the repository | excerpt: the first 25 templates of at most 6 KiB in SHA-1 order of their path, each verbatim as its case's `source`; the trees are Rerail's recording of Forte 1.1.0. |

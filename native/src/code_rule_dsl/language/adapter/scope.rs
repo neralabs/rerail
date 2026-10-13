@@ -1,7 +1,7 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
-use crate::code_rule_dsl::language::SourceType;
+use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
@@ -805,7 +805,7 @@ impl ScopeRules for Blade {
         root: &Node<'_, D>,
         _: Reading,
     ) -> Result<(), BuildError> {
-        for region in <Self as Adapter>::regions(root) {
+        for region in <Self as Adapter>::regions(root, GrammarDialect::Blade) {
             php::visit_blade_program(builder, &region.root)?;
         }
         Ok(())
@@ -923,7 +923,6 @@ pub(super) mod kit {
     use crate::code_rule_dsl::scope::{Form, ScopeTable};
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use ast_grep_core::AstGrep;
-    use ast_grep_core::tree_sitter::StrDoc;
     use std::sync::Arc;
 
     /// What one family's scope rules answer.
@@ -949,11 +948,12 @@ pub(super) mod kit {
         pub(crate) unpackaged: Option<&'static str>,
     }
 
-    /// A tape of `source` in `dialect`, as files are read.
+    /// A tape of `source` in `dialect`, as files are read: Blade's from its Forte tree, the rest
+    /// from tree-sitter's.
     fn tape(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
         let grammar = Grammar::new(dialect).expect("grammar");
-        let native = StrDoc::new(source, dialect);
-        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .expect("parses")
             .expect("encodes");
         AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)

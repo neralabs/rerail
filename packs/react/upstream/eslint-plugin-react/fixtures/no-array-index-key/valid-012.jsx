@@ -1,0 +1,1 @@
+foo.map((baz, i) => cloneElement(someChild, { ...someChild.props }))
