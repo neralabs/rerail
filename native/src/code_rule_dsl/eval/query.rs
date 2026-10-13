@@ -693,6 +693,12 @@ fn evaluate_file_clause(
     let mut outcome = FileOutcome::Continue;
     let result = with_file_memo(&target, || {
         let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
+        // A suppressed binding does not spend the violation's output allowance, so where a comment may
+        // suppress one the enumeration continues past it, as the workspace evaluator does.
+        let suppressible = violation.is_some_and(|violation| {
+            (honour_suppressions && violation.suppress.is_some())
+                || crate::code_rule_dsl::violations::names_rerail_ignore(violation, &target.root())
+        });
         run_clause(
             &target,
             grammar,
@@ -702,7 +708,11 @@ fn evaluate_file_clause(
             |node, first, work| {
                 let matches = match each {
                     Some(name) => {
-                        let room = (limits.max_witnesses + 1).saturating_sub(metrics.witnesses);
+                        let room = if suppressible {
+                            usize::MAX
+                        } else {
+                            (limits.max_witnesses + 1).saturating_sub(metrics.witnesses)
+                        };
                         enumerate(&target, grammar, node, first, work, name, room)?
                     }
                     None => vec![first],

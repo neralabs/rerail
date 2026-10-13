@@ -2381,6 +2381,37 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         }
       }
     });
+    // Review round 2: with a one-witness allowance, the stateless evaluator enumerated only as many `each` bindings
+    // as the allowance, so two bindings a comment suppresses left the third unread and nothing was reported. A
+    // suppressed binding spends no allowance on either path.
+    it.each([
+      ["rerail-ignore", "// rerail-ignore runtime-contract", undefined],
+      ["an eslint directive the violation opts into", "// eslint-disable-line no-console", { eslint: { rules: ["no-console"] } }],
+    ] as const)("reads every binding past ones %s suppresses under a one-witness allowance, statelessly and in a workspace", async (_name, directive, suppress) => {
+      const constrained = capabilities({ limits: { ...defaultLimits, maxWitnesses: 1 } });
+      const clause = {
+        violation: { ...violation("STATEMENT"), anchor: "capture.X", each: "X", ...(suppress === undefined ? {} : { suppress }) },
+        // Statements only: `$X` alone also binds the comments, which no directive covers.
+        forbid: { ast: { language: "typescript", rule: { kind: "program", has: { kind: "expression_statement", pattern: "$X" } } } },
+        id: "statement",
+      };
+      const file = { language: "typescript" as const, path: "a.ts", source: `first; ${directive}\nsecond; ${directive}\nthird;\n` };
+      const text = (item: { span?: { startByte: number; endByte: number } | undefined }) => file.source.slice(item.span!.startByte, item.span!.endByte);
+
+      const stateless = evaluate(compileJson([clause], constrained), snapshot([file]));
+      expect(stateless).toMatchObject({ status: "completed", failures: [] });
+      expect(stateless.violations.map(text)).toEqual(["third;"]);
+
+      const nativeWorkspace = workspace();
+      try {
+        nativeWorkspace.addCodeRule(compileJson([clause], constrained));
+        const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(text)).toEqual(["third;"]);
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
 
   });
 
