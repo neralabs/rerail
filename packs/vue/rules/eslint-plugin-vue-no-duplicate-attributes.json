@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-duplicate-attributes",
+  "id": "eslint-plugin-vue-no-duplicate-attributes",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-duplicate-attributes` with default options (allowCoexistClass and allowCoexistStyle true): in one start tag, a plain attribute or a `v-bind:NAME`/`:NAME`/`.NAME` directive with a static argument whose name an earlier attribute of the tag also has; `class` and `style` may coexist as one plain plus one bound attribute but not two of the same kind. Dynamic arguments and other directives are ignored. Reported at the later attribute.",

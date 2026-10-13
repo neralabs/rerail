@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:valid-v-for",
+  "id": "eslint-plugin-vue-valid-v-for",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/valid-v-for` with default options (allowEmptyAlias: false). Syntax checks on every `v-for` attribute inside the template (the SFC's root `<template>` itself is never visited): an argument or modifiers (reported at the first one, after its dot), a missing or empty value, and the alias list of `(value, key, index) in source` read from the attribute text like vue-eslint-parser's `for (let [aliases] in source)` parse: an empty value, key or index position (reported at the start of the value) and a key or index that is not a plain identifier (a pattern, default or rest; reported at it). Key checks, per checkKey from each `v-for` (own element, or through keyless `<template>` children whose own `v-for` source does not read a name the outer `v-for` declares): a custom component (the `custom-tag` family shared with `no-v-text-v-html-on-component`) without a key is reported at its start tag, and a `v-bind:key` that reads none of the `v-for`'s alias names at the key directive. The name comparisons read the view program (the v-for arrow `(SRC), (ALIAS) => { <element> }` spans its element and is matched to it by source text; names compare as text, as upstream compares `references` to `variables` by name). Unreachable upstream: `unexpectedExpression` (vue-eslint-parser yields no expression for a value it cannot parse as `<alias> in <expression>`).",

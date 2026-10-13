@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-template-shadow",
+  "id": "eslint-plugin-vue-no-template-shadow",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-template-shadow` with default options (no allow list): a template variable (v-for alias or slot parameter, the parameters of the view's v-for / slot arrows) whose name is already an outer template variable (a parameter of an enclosing view arrow), a top-level binding of `<script setup>`, a `defineProps` prop name (runtime array or object keys, `defineProps<{...}>()` type-literal properties, a local interface or type alias named as the type argument), or a static key of the Options API groups props, computed, data, asyncData, methods and setup (array strings, object members, and the object a data/asyncData/setup function returns) of `export default {}`, `defineComponent({})`, `Vue.extend/component/mixin(...)` or `new Vue({})`. Names compare as text. Reported at the variable identifier.",

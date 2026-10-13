@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-use-v-if-with-v-for",
+  "id": "eslint-plugin-vue-no-use-v-if-with-v-for",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-use-v-if-with-v-for` with default options (allowUsingIterationVar: false): a `v-if` directive on an element that also has `v-for`, reported at the `v-if` attribute. If the condition reads a name the element's `v-for` declares (a reference whose text equals a parameter name of the v-for arrow, as upstream compares names of `references` and `variables`) the message names the iterated source (`<source>` variable when it is an identifier, else expression); otherwise it asks to move the `v-if` to a wrapper. Reads the view program: the `v-if` of an element with a `v-for` is `if (C) { (SRC), (ALIAS) => { <element> } }`, the arrow spanning the element (matched to the Vue element by source text), so the alias parameters, the condition's identifier reads and the source expression `(SRC)` are program nodes.",

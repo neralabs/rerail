@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-v-text-v-html-on-component",
+  "id": "eslint-plugin-vue-no-v-text-v-html-on-component",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-v-text-v-html-on-component` with default options (allow: [], ignoreElementNamespaces: false): a `v-text`/`v-html` directive (any argument or modifiers) on a component tag inside the template, reported at the directive attribute. A tag is a component as eslint-plugin-vue utils.isCustomComponent decides: a static `is` attribute, `:is`/`v-bind:is`/`.is` or `v-is` (case-insensitive), or its raw tag name (case-sensitive) is not in the well-known list of its namespace (HTML, SVG under `<svg>`, MathML under `<math>`; namespace propagation follows vue-eslint-parser: foreignObject/desc/title and MathML text integration points switch children back to HTML); the element lists are the shared regexes in the `custom-tag` utility.",

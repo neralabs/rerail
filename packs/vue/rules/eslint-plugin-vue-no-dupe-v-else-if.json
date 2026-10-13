@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-dupe-v-else-if",
+  "id": "eslint-plugin-vue-no-dupe-v-else-if",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-dupe-v-else-if` with default options. Reads the view program's `if (...) { } else if (...) { }` chain (v-if / v-else-if elements, nested chains stay separate): for each else-if test it applies eslint-plugin-vue's or/and set-cover (the test and, when it is a `&&`, each flattened `&&` operand are the conditions; a condition is dead when every `||` operand of it is a superset, as a set of `&&` operands compared by tokens with `||`/`&&` operands in either order, of an `||` operand of some earlier test in the chain) and reports the first condition to become dead walking the chain from the nearest earlier branch, operands in source order and the whole test last, at that condition (parentheses excluded, as ESTree).",

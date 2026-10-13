@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-export-in-script-setup",
+  "id": "eslint-plugin-vue-no-export-in-script-setup",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement whose nearest earlier script marker, the empty statement the view puts before each script, is the setup block's start tag) is reported at the statement's start, except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). Reads only syntax and the view's script markers.",

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-v-html",
+  "id": "eslint-plugin-vue-no-v-html",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-v-html` with default options (no ignorePattern): every `v-html` directive attribute, with or without an argument, modifiers or value; reads the directive_name token. Reported at the directive attribute.",

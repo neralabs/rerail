@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-unused-refs",
+  "id": "eslint-plugin-vue-no-unused-refs",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 vue/no-unused-refs (no options): a static template `ref=\"name\"` attribute is reported at its value literal (quotes included) unless the file uses the name, or has an unknown use of $refs. Used: `$refs.name`/`$refs['name']`/object-pattern destructuring of `$refs` (script `this.$refs` and bare `$refs`, template bare `$refs`), `useTemplateRef('name')`, a name `setup()` of a Vue object (export default, defineComponent/Vue.component/..., new Vue) returns, and, when the file has a <script setup>, any module/global binding of the program. Unknown use (`const a = $refs`, `a = $refs`, `f($refs)`, `return $refs`, `for (k in $refs)`, dynamic key or rest/computed destructuring) suppresses every report in the file. Reads syntax, scope (binds) and compare over the view program.",

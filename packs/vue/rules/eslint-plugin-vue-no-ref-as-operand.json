@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-ref-as-operand",
+  "id": "eslint-plugin-vue-no-ref-as-operand",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-ref-as-operand` (default options): an identifier that holds a value wrapped by `ref`/`computed`/`toRef`/`customRef`/`shallowRef`/`toRefs` imported from `vue`, `@vue/composition-api`, `@nuxtjs/composition-api` or `#imports` (or by the `defineModel` macro, or an alias or `toRefs` destructuring of one), used as an operand: `if`/`switch` test, unary, update, binary, assignment (not the right of `=`), conditional test, template literal (untagged), left of a `const` logical operator, or member object (not `.value`/`.effect`), plus ref arguments of an emit call (`defineEmits` result, `setup(props, { emit })`, `ctx.emit`) whose first argument is a string. Reads the script program only (template expressions are not visited by upstream), import resolution and variable bindings. Reported at the identifier.",

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:no-setup-props-reactivity-loss",
+  "id": "eslint-plugin-vue-no-setup-props-reactivity-loss",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 vue/no-setup-props-reactivity-loss (no options). Props containers are the first parameter of a `setup` function of a Vue component object (export default, Vue.component/mixin/extend, defineComponent, createApp, defineNuxtComponent, new Vue) and the variable(s) `const x = defineProps(...)`/`withDefaults(defineProps(...), ...)` binds at the top level of `<script setup>`. Reports a destructuring parameter / array or nested object pattern of the macro (destructuring), and, only for references in the root scope of the setup function or of `<script setup>` (no nested function, block, loop, class or catch between), a call holding a props member access, an array/object variable initializer or assignment holding one, a variable initializer or assignment whose member-chain base is a props member access or a plain destructured prop, a first template-literal/conditional part holding one, and a destructuring declarator/assignment of a props container (getProperty). Reads syntax and the file's scope table (binding definition names).",

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:attribute-hyphenation",
+  "id": "eslint-plugin-vue-attribute-hyphenation",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/attribute-hyphenation` with default options (always, ignore: [], ignoreTags: []): on a component tag or a `<slot>`, a static attribute name, or the static argument of `v-bind`/`:`/`.`/`v-model`, that contains an upper-case letter and no `data-`, `aria-`, `slot-scope` or SVG weird-case attribute name (substring test) is reported at the attribute, with its key (modifiers included) in the message. A tag is a component as eslint-plugin-vue utils.isCustomComponent decides: a static `is` attribute, `:is`/`v-bind:is`/`.is` or `v-is` (case-insensitive), or its raw tag name (case-sensitive) is not in the well-known list of its namespace (HTML, SVG under `<svg>`, MathML under `<math>`; namespace propagation follows vue-eslint-parser: foreignObject/desc/title and MathML text integration points switch children back to HTML); the element lists are the shared regexes in the `custom-tag` utility.",

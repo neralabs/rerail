@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint-plugin-vue:return-in-computed-property",
+  "id": "eslint-plugin-vue-return-in-computed-property",
   "revision": 1,
   "mode": "steer",
   "description": "Ports eslint-plugin-vue 10.11.1 `vue/return-in-computed-property` (default options, treatUndefinedAsUnspecified: true). Reports a computed getter that can fall off its end or whose last `return` has no value: an Options API getter (`foo() {}`, `foo: function () {}`, `foo: { get() {} }`, `foo: { get: function () {} }`) of the `computed` object of a Vue object (`export default` outside `<script setup>`, `Vue.component`/`mixin`/`extend`, `app.component`/`mixin`, `defineComponent`, `createApp`, `defineNuxtComponent`, `new Vue`, or an object on the line after a `@vue/component` comment), and a composition getter given to `computed(...)` imported from `vue`, `@vue/composition-api`, `@nuxtjs/composition-api` or `#imports` (a function, or `{ get }`). Reads ESLint's code-path end reachability as the recursive `nc` utility (return, throw, break, continue, blocks, if/else, switch with a default, try/catch/finally, labelled statements, loops with a constant truthy test) and the last `return` statement in source order. Reported at the function (a method at its parameters).",
