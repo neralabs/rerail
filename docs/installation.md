@@ -302,14 +302,17 @@ migration steps the file has run is recorded in its `schema_migrations` table.
 When a newer Rerail first opens the file (the daemon, `rerail start`, set-up,
 or a command, hook or status line that only reads), it runs the steps the file
 has not run, in one transaction: a step that fails leaves the file as it was.
+A process that only reads and cannot write the file (its permissions) gets an
+error naming those steps instead, and the file, its mode included, is left as
+it was.
 Most steps add a column or a table, which older versions read correctly, so
 they keep the floor and an older Rerail still opens the file. A step an older
 version would misread raises the floor and waits for the new version's daemon
 or a command that writes; from then on older versions refuse the file, and
 `rerail update rollback` puts back the copy `rerail update` took before that
-version change, keeping the replaced database as
-`rerail.sqlite.before-rollback`. An update that finds nothing newer, or fails,
-keeps the copy of the last change.
+version change when the floor is now above what the version rolled back to
+opens, keeping the replaced database as `rerail.sqlite.before-rollback`. An
+update that finds nothing newer, or fails, keeps the copy of the last change.
 
 A database file written by a newer Rerail (a floor above this release's), or
 by other software, is refused with an error and left untouched. So is a file

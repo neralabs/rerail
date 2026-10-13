@@ -400,8 +400,12 @@ describe("the migration path", () => {
     settledBytes(locked);
     chmodSync(locked, 0o400);
     try {
-      expect(() => openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }))
-        .toThrow(/needs this Rerail's schema steps \(add-rule-settings-note\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+      // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        expect(() => openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }))
+          .toThrow(/needs this Rerail's schema steps \(add-rule-settings-note\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+        expect(statSync(locked).mode & 0o777).toBe(0o400);
+      }
     } finally {
       chmodSync(locked, 0o600);
     }
