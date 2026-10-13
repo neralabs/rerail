@@ -97,8 +97,12 @@ pub(super) fn view(source: &str) -> Cow<'_, str> {
                     pos = end;
                 }
                 None => {
-                    // What follows `__halt_compiler();` is the file's data, not PHP.
-                    if let Some(data) = halt_compiler_data(&mut view, bytes, pos) {
+                    // What follows `__halt_compiler();` is the file's data, not PHP. PHP reads the
+                    // directive only as a statement: where the PHP before it ends one (or there is
+                    // none), not after `$`, `->`, `::` or within an expression.
+                    if matches!(last, None | Some(Last::Code(b';' | b'}')))
+                        && let Some(data) = halt_compiler_data(&mut view, bytes, pos)
+                    {
                         view.blank(data..len);
                         break;
                     }
@@ -204,6 +208,7 @@ fn short_echo(view: &mut Masked<'_>, source: &[u8], tag: &Range<usize>) -> bool 
 
 /// Where the data after a `__halt_compiler();` at `at` starts (PHP stops compiling there; a `?>`
 /// may end the call, as it ends any statement, and becomes its `;`), `None` where none is at `at`.
+/// The caller decides that `at` starts a statement.
 fn halt_compiler_data(view: &mut Masked<'_>, source: &[u8], at: usize) -> Option<usize> {
     const HALT: &[u8] = b"__halt_compiler";
     let word = source.get(at..at + HALT.len())?;
