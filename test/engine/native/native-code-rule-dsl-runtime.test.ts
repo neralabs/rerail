@@ -2587,6 +2587,20 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       }
     });
 
+    // Self-review round 3: rerail-ignore in either HTML-like comment form covers the node after it, as `//` does (the
+    // comment comes after code, so it is not the file-wide form).
+    it("reads rerail-ignore in HTML-like comments", () => {
+      const clause = { violation: violation("DEBUGGER"), forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }, id: "debugger" };
+      const files = ["<!--", "-->", "//"].map((opener, index) => ({
+        language: "typescript" as const,
+        path: `f${index}.cts`,
+        source: `debugger;\n${opener} rerail-ignore runtime-contract -- generated\ndebugger;\ndebugger;\n`,
+      }));
+      const result = evaluate(compileJson([clause]), snapshot(files));
+      expect(result).toMatchObject({ status: "completed", failures: [] });
+      expect(result.violations.map(item => `${item.path}:${item.span!.startLine}`).sort()).toEqual(["f0.cts:0", "f0.cts:3", "f1.cts:0", "f1.cts:3", "f2.cts:0", "f2.cts:3"]);
+    });
+
   });
 
   describe("utils, matches, and constraints", () => {

@@ -104,7 +104,8 @@ fn rule_ids(comment: &str) -> Vec<&str> {
     {
         text = inner;
     }
-    let Some(inner) = ["{{--", "<!--", "//", "/*", "#", "--"]
+    // A script's HTML-like comment opens with `<!--`, or with `-->` at the start of a line.
+    let Some(inner) = ["{{--", "<!--", "-->", "//", "/*", "#", "--"]
         .into_iter()
         .find_map(|opener| text.strip_prefix(opener))
     else {
@@ -257,6 +258,8 @@ mod tests {
             ("/** rerail-ignore a */", vec!["a"]),
             ("{{-- rerail-ignore a --}}", vec!["a"]),
             ("<!-- rerail-ignore a -->", vec!["a"]),
+            ("<!-- rerail-ignore a", vec!["a"]),
+            ("--> rerail-ignore a -- generated", vec!["a"]),
             ("# rerail-ignore a\n", vec!["a"]),
             // No id: nothing.
             ("// rerail-ignore", vec![]),
