@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
@@ -116,21 +116,37 @@ function snapshotTransition(databasePath: string): SnapshotTransition | undefine
 }
 
 /**
- * Whether this process is alone in having the database open. SQLite leaves WAL mode only for its last connection, so
- * the switch succeeds only then; it also writes the WAL's pages into the file, so the file holds the whole database.
+ * Puts copy `snapshot` back into the database at `path`, in place and through SQLite, after saving what the database
+ * holds as `kept`. Writing the same file, rather than renaming another over it, keeps every connection, open or opening,
+ * on the restored database: none goes on writing to a file that has been moved aside. False, with nothing changed, while
+ * another connection has the database in WAL mode (a coding agent session): SQLite leaves WAL mode only for its last
+ * connection, and that session would go on with the database it already read.
  */
-function aloneWithDatabase(path: string): boolean {
+async function restoreInPlace(path: string, snapshot: string, kept: string): Promise<boolean> {
+  const database = new Database(path, { fileMustExist: true });
   try {
-    const database = new Database(path, { fileMustExist: true });
+    database.pragma("busy_timeout = 0");
+    let mode: unknown;
     try {
-      database.pragma("busy_timeout = 0");
-      return database.pragma("journal_mode = DELETE", { simple: true }) === "delete";
-    } finally {
-      database.close();
+      mode = database.pragma("journal_mode = DELETE", { simple: true });
+    } catch {
+      // SQLITE_BUSY: another connection holds the database.
+      return false;
     }
-  } catch {
-    return false;
+    if (mode !== "delete") return false;
+    for (const suffix of ["", "-wal", "-shm", "-journal"]) rmSync(`${kept}${suffix}`, { force: true });
+    database.prepare("VACUUM INTO ?").run(kept);
+  } finally {
+    database.close();
   }
+  const source = new Database(snapshot, { readonly: true, fileMustExist: true });
+  try {
+    await source.backup(path);
+  } finally {
+    source.close();
+  }
+  chmodSync(path, 0o600);
+  return true;
 }
 
 /**
@@ -140,9 +156,9 @@ function aloneWithDatabase(path: string): boolean {
  * changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor `from` still opens (additive steps, or
  * a floor it already supported) keeps the database as it is, and a copy taken for another change is never used. A
  * record from before `fromReads` was kept is judged by the copy's own floor. `stopDaemon` runs first: the daemon holds
- * the database open. A coding agent session can hold it open too, and would keep writing to the replaced file, so the
- * copy is put back only when nothing else has it open; otherwise the person is told how to finish. A restore that
- * fails is reported, never fatal: the version has rolled back already.
+ * the database open. The copy is written into the database file itself (`restoreInPlace`), and not while a coding agent
+ * session has it open in WAL mode; the person is then told how to finish. A restore that fails is reported, never
+ * fatal: the version has rolled back already.
  */
 export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
   const leaving = (await updater.status()).current.version;
@@ -156,7 +172,7 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
-    if (!aloneWithDatabase(databasePath)) {
+    if (!await restoreInPlace(databasePath, snapshot, kept)) {
       process.stderr.write(
         `rerail: ${databasePath} is at schema v${current}, which the version rolled back to cannot read, and coding agent `
         + `sessions still have it open. Close them, then copy ${snapshot} to ${databasePath} (keep the current file if you need what `
@@ -164,12 +180,6 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
       );
       return result;
     }
-    for (const suffix of ["", "-wal", "-shm"]) {
-      rmSync(`${kept}${suffix}`, { force: true });
-      if (existsSync(`${databasePath}${suffix}`)) renameSync(`${databasePath}${suffix}`, `${kept}${suffix}`);
-    }
-    copyFileSync(snapshot, databasePath);
-    chmodSync(databasePath, 0o600);
     process.stdout.write(
       `The update moved ${databasePath} to schema v${current}, which the version rolled back to cannot read, so it now holds `
       + `the copy taken before the update (schema v${before}). What changed since the update is in ${kept}.\n`,
