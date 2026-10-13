@@ -289,6 +289,26 @@ commands, file contents, and URLs alike:
 Matching `input` sees JSON escaping (`\"`, `\n` as two characters), so keep patterns on it free of
 quotes and line anchors. For anything command-shaped, read `input.command`.
 
+## Shipped rule: new linter suppression comments
+
+The [guardrails pack](rule-packs.md#the-packs), which set-up recommends for every repository, ships one
+tool-call rule built from these pieces: `guardrails-no-new-lint-suppression`
+(`packs/guardrails/rules/guardrails-no-new-lint-suppression.json`). Rerail's ported rules honour the linters' own
+suppression comments, so it steers, every time, when an agent's file write or edit adds one
+(`eslint-disable`, `oxlint-disable`, `biome-ignore`, `@ts-ignore`, `# noqa`, `# nosec`, `# type: ignore`,
+`# pylint: disable`, `@phpstan-ignore`, `@psalm-suppress`, `phpcs:ignore`): fix the cause, or ask the person,
+who can add it.
+
+It shows how to read only the text a call adds. `tool.name` restricts it to `write`, `edit`, `multiedit`,
+`ast_edit` and `apply_patch` (case-insensitive), so `grep -rn eslint-disable .` in a shell passes. Then `any` of:
+`input.content` (a `Write`), `input.new_string` (an `Edit`; its `old_string` is never read, so removing a
+suppression passes), the `+` lines of a patch in `input.command`, `input.patch` or `input.input`
+(`(?m)^\+[^\n]*?…`; removed and context lines pass), and, for `MultiEdit`, whose `edits` array no `input.<key>`
+path reaches, `input` itself with `"new_string":"(?:[^"\\]|\\.)*?…`: the match cannot leave that JSON string,
+so its `old_string` stays unread. It cannot tell a suppression the call adds from one already in the text a
+`Write` or `new_string` repeats; [the pack's README](../packs/guardrails/README.md#limits) lists its limits, and
+`test/engine/catalog/guardrails-pack.test.ts` its cases.
+
 ---
 
 ## Test it, then install it

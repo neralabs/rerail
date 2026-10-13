@@ -8,13 +8,14 @@ Rerail recommends packs for a repository by matching the repository's files agai
 
 ## The packs
 
-Only rules that already exist ship as packs. Rerail ships one:
+Only rules that already exist ship as packs. Rerail ships two:
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
 | Cyclomatic complexity (limit 6) | language | 3 | never recommended; runs only in repositories that add it | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `packs/complexity/rules/`. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
+| Guardrails | repository | 1 | recommended for every repository (its match is any file), for the whole repository | `guardrails-no-new-lint-suppression`, a [tool-call rule](tool-call-rules.md#shipped-rule-new-linter-suppression-comments) that steers a coding agent whose file write or edit adds a linter suppression comment (`eslint-disable`, `# noqa`, `# nosec`, `@ts-ignore`, `@phpstan-ignore` and the like): fix the cause, or ask the person to add it. The document is in `packs/guardrails/rules/`. Group: Suppressions. |
 
-The rule list is the pack file itself: `packs/complexity/pack.json`. A rule's title comes from its document's description. Core ships the pack inside its own package (`CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`, and `package.json` `files`); its rules run only in repositories that add it. It has no match definition, so setting a repository up adds no pack. The other packs under `packs/` are not shipped yet.
+The rule list is the pack file itself: `packs/<id>/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`, and `package.json` `files`); their rules run only in repositories that add them. Complexity has no match definition, so set-up never adds it; guardrails matches any file, so set-up recommends and adds it unless the person drops it in the review or picks packs themselves. The other packs under `packs/` are not shipped yet.
 
 A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
@@ -22,7 +23,7 @@ Every rule is listed in the mode its own document has (all `steer` today). A por
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it; a rule or pack setting in the repository or a checkout overrides them.
 
-A rule honours its linter's suppression comments only where its document says so (`suppress`); none of the shipped rules does today.
+A rule honours its linter's suppression comments only where its document says so (`suppress`), and only while the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)); the pack's `honourSuppressionComments` is the value its rules start with. None of the shipped rules reads a linter's comments today.
 
 ## Format
 
@@ -57,7 +58,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one, and `{a,b}` gives alternatives.
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
-- `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
+- `honourSuppressionComments` (optional, default `true`): whether the pack's rules start out honouring their linters' suppression comments, the pack's start for the `suppressions` rule setting. With `false`, no comment silences them until a repository or checkout sets `suppressions: "honour"`.
 - `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended; neither is a pack whose rules all start off.
   - `id` is lowercase letters, digits and dashes, the upstream tool's name then its rule (`eslint-eqeqeq`, `ruff-b011-assert-false`); every pack uses this one style. It names the rule's document and its port in `conformance.json`, and people turn the rule on and off by it, so it does not change once the pack is published.
   - `title` and `group` are what the dashboard shows.
@@ -67,7 +68,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/engine/catalog/rule-packs.test.ts` holds the shipped packs to this: complexity is the only one and lists exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
+`test/engine/catalog/rule-packs.test.ts` holds the shipped packs to this: complexity lists exactly its three rules and guardrails its one, every rule starts in its document's mode, and every code rule's example is caught or passes as it says; `test/engine/catalog/guardrails-pack.test.ts` proves guardrails' examples, as a file a coding agent writes.
 
 ## Matching
 

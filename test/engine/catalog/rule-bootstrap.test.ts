@@ -41,14 +41,14 @@ function codeRule(id: string, revision = 1, message = "No print"): CodeRule {
 }
 
 describe("bundled rules", () => {
-  it("ships only the complexity pack core carries: every document is a code rule, read by file name", () => {
+  it("ships the complexity and guardrails packs core carries: code rules and one conversation rule, read by file name", () => {
     const documents = loadBundledRules();
-    expect(documents.map(document => document.rule.id)).toEqual([
-      "complexity-cyclomatic-javascript",
-      "complexity-cyclomatic-python",
-      "complexity-cyclomatic-typescript",
+    expect(documents.map(document => [document.rule.id, document.kind])).toEqual([
+      ["complexity-cyclomatic-javascript", "code"],
+      ["complexity-cyclomatic-python", "code"],
+      ["complexity-cyclomatic-typescript", "code"],
+      ["guardrails-no-new-lint-suppression", "conversation"],
     ]);
-    expect(documents.every(document => document.kind === "code")).toBe(true);
   });
 
   it("reads each pack's rules/ in pack order and by file name, ignoring non-JSON files and a pack without rules/, and rejects a duplicate id", async () => {

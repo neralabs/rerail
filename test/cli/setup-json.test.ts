@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
+// Of the packs core ships only guardrails has a match definition, and it fits any repository; set-up's recommendation
+// flow is exercised with the TypeScript pack added.
 vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
   const actual = await importOriginal<{ corePackDirectories(): string[] }>();
   const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
@@ -138,7 +139,7 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
 
     const packs = await runSetupStep(requestFrom(yes.next.args, setup, environment));
     expect(packs.step).toBe("confirm-packs");
-    expect(packs.screen).toContain("Of the rule packs that come with Rerail, 1 looks right for acme api.");
+    expect(packs.screen).toContain("Of the rule packs that come with Rerail, 2 look right for acme api.");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
     const other = packs.question!.options.find(option => option.answer === "other")!;
     expect(other.input).toEqual({ flag: "--agents", prompt: "Which coding agents should Rerail connect to?", hint: "comma-separated ids from: claude-code (Claude Code), cursor (Cursor)" });
@@ -146,11 +147,11 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const start = packs.question!.options.find(option => option.answer === "start")!;
     const done = await runSetupStep(requestFrom(start.next.args, setup, environment));
     expect(done).toMatchObject({ step: "done", question: null });
-    expect(done.screen).toContain("● Rerail is on in acme api. 1 rule pack is on");
+    expect(done.screen).toContain("● Rerail is on in acme api. 2 rule packs are on");
     expect(done.screen).toContain("── Good to know · optional");
     expectPersonText(done);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
-    expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["typescript"]);
+    expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["guardrails", "typescript"]);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
   });
 
@@ -191,7 +192,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
     const again = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
     expect(again).toMatchObject({ step: "done", question: null });
-    expect(again.screen.split("\n")[0]).toMatch(/^● Rerail is already on in acme api\. \d+ rules are on\.$/u);
+    expect(again.screen.split("\n")[0]).toMatch(/^● Rerail is already on in acme api\. \d+ rules? (?:is|are) on\.$/u);
   });
 
   it("ends on the rules dashboard's link, scoped to the repository, where it is set up already", async () => {
@@ -291,7 +292,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     const answer = ["--agents", "only Claude Code", "--answer", "start", "--repo", setup.repo];
     expect(await runSetupCommand(answer, context, io)).toBe(0);
     expect(said.join("\n")).toContain("Unknown coding agent: only Claude Code.");
-    expect(said.join("\n")).toContain("Start Rerail in acme api with this rule pack?");
+    expect(said.join("\n")).toContain("Start Rerail in acme api with these 2 rule packs?");
 
     said.length = 0;
     expect(await runSetupCommand(["--json", ...answer], context, io)).toBe(0);

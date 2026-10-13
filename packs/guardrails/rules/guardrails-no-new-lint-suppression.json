@@ -1,0 +1,50 @@
+{
+  "id": "guardrails-no-new-lint-suppression",
+  "mode": "steer",
+  "match": {
+    "all": [
+      {
+        "field": "tool.name",
+        "regex": "(?i)^(?:write|edit|multiedit|ast_edit|apply_patch)$"
+      },
+      {
+        "any": [
+          {
+            "field": "input.content",
+            "regex": "(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          },
+          {
+            "field": "input.new_string",
+            "regex": "(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          },
+          {
+            "field": "input",
+            "regex": "\"new_string\":\"(?:[^\"\\\\]|\\\\.)*?(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          },
+          {
+            "field": "input.command",
+            "regex": "(?m)^\\+[^\\n]*?(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          },
+          {
+            "field": "input.patch",
+            "regex": "(?m)^\\+[^\\n]*?(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          },
+          {
+            "field": "input.input",
+            "regex": "(?m)^\\+[^\\n]*?(?:eslint-disable|oxlint-disable|biome-ignore|/\\*[ \\t]*eslint[ \\t]+[-@/\\w]+[ \\t]*:[ \\t]*(?:off|0)\\b|@ts-(?:ignore|expect-error|nocheck)|@phpstan-ignore|@psalm-suppress|phpcs:(?:ignore|disable)|#[ \\t]*(?i:noqa|nosec)\\b|#[ \\t]*type:[ \\t]*ignore\\b|#[ \\t]*pylint:[ \\t]*disable)"
+          }
+        ]
+      }
+    ]
+  },
+  "sample": {
+    "source": "tool:*",
+    "boundary": "tool-call"
+  },
+  "action": {
+    "content": "This edit adds a linter suppression comment (such as eslint-disable, # noqa, # nosec, @ts-ignore or @phpstan-ignore). Do not silence the linter: fix the code the rule flags instead. If you are sure the finding is wrong or the suppression is genuinely needed, leave the comment out, tell the person which rule and line it is and why, and let them add the suppression themselves."
+  },
+  "repeat": {
+    "mode": "always"
+  }
+}

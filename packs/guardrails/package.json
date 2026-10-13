@@ -1,0 +1,24 @@
+{
+  "name": "@neralabs/rerail-pack-guardrails",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: steers a coding agent that adds a linter suppression comment.",
+  "license": "Apache-2.0",
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

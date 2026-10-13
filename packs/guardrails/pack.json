@@ -1,0 +1,32 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "guardrails",
+  "name": "Guardrails",
+  "category": "repository",
+  "covers": "Steers a coding agent whose edit adds a linter suppression comment (eslint-disable, # noqa, # nosec, @ts-ignore, @phpstan-ignore and the like), so it fixes the cause instead of silencing the check.",
+  "reason": "fits every repository: an agent can silence a linter in any of them",
+  "match": {
+    "any": [
+      {
+        "files": ["**"],
+        "label": "any file"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "guardrails-no-new-lint-suppression",
+      "document": "rules/guardrails-no-new-lint-suppression.json",
+      "title": "Do not add linter suppression comments",
+      "group": "Suppressions",
+      "examples": {
+        "caught": {
+          "text": "console.log(user); // eslint-disable-line no-console"
+        },
+        "passes": {
+          "text": "logger.debug(user);"
+        }
+      }
+    }
+  ]
+}
