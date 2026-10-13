@@ -368,6 +368,44 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
+Bundled grammar: tree-sitter-grammars/tree-sitter-vue 0.1.0
+Files: native/grammars/tree-sitter-vue/ (LICENSE, src/grammar.json, src/scanner.c,
+  src/tag.h, src/tree_sitter/{alloc,array,parser}.h; each byte-identical to upstream)
+Revision: ce8011a414fdf8091f4e4071752efc376f4afb08
+Source: https://github.com/tree-sitter-grammars/tree-sitter-vue
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+Upstream's generated src/parser.c is not vendored: native/build.rs generates
+it from src/grammar.json at build time with tree-sitter-generate 0.27.0.
+
+Upstream's src/scanner.c and src/tag.h are derived from tree-sitter-html
+(https://github.com/tree-sitter/tree-sitter-html, src/scanner.c and src/tag.h),
+whose notice follows:
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
 Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
 Files: native/grammars/tree-sitter-typescript/ (LICENSE, common/scanner.h and
   {typescript,tsx}/src/scanner.c byte-identical to upstream; {typescript,tsx}/src/grammar.json

@@ -82,6 +82,20 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2023 Emran Mashhadi Ramezan", "2014 Max Brunsfeld"]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter-grammars/tree-sitter-vue 0.1.0, vendored byte-identical.
+[[annotations]]
+path = "native/grammars/tree-sitter-vue/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024 Amaan Qureshi"
+SPDX-License-Identifier = "MIT"
+
+# Upstream's scanner and tag table, derived from tree-sitter-html.
+[[annotations]]
+path = ["native/grammars/tree-sitter-vue/src/scanner.c", "native/grammars/tree-sitter-vue/src/tag.h"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2024 Amaan Qureshi", "2014 Max Brunsfeld"]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
