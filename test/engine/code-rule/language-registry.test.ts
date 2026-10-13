@@ -22,10 +22,10 @@ function supported(id: string, suffix: string, tapeTag: number): LanguageEntry {
   });
 }
 
-function planned(id: string, suffix: string): LanguageEntry {
+function planned(id: string, suffix: string, tapeTag?: number): LanguageEntry {
   return languageEntrySchema.parse({
     format: "rerail.language/v1", id, status: "planned", family: id,
-    dialects: [{ label: id, suffixes: [suffix] }],
+    dialects: [{ label: id, suffixes: [suffix], ...(tapeTag === undefined ? {} : { tapeTag }) }],
     capabilities: capabilities("not-supported-yet"), suppressions: [],
   });
 }
@@ -47,6 +47,21 @@ describe("the language registry", () => {
     expect(problems(supported("one", ".one", 1), supported("one", ".two", 2))).toContain("languages/one.json: id one is also languages/one.json's");
     expect(problems(supported("one", ".one", 1), planned("two", ".one"))).toEqual(["languages/two.json: suffix .one is also languages/one.json's"]);
     expect(problems(supported("one", ".one", 1), supported("two", ".two", 1))).toEqual(["languages/two.json: tape tag 1 is also languages/one.json's"]);
+  });
+
+  it("allows reserved tape tags on planned dialects", () => {
+    const future = planned("future", ".future", 9);
+    expect(future.dialects[0]!.tapeTag).toBe(9);
+    expect(problems(future)).toEqual([]);
+  });
+
+  it("refuses a planned dialect reusing another entry's tape tag", () => {
+    expect(problems(supported("one", ".one", 1), planned("future", ".future", 1))).toEqual([
+      "languages/future.json: tape tag 1 is also languages/one.json's",
+    ]);
+    expect(problems(planned("one", ".one", 1), planned("future", ".future", 1))).toEqual([
+      "languages/future.json: tape tag 1 is also languages/one.json's",
+    ]);
   });
 
   it("requires a grammar, parser, variant and tape tag of every supported dialect, and none of a planned one", () => {

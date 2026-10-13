@@ -6,7 +6,8 @@
   "dialects": [
     {
       "label": "sql",
-      "suffixes": [".sql"]
+      "suffixes": [".sql"],
+      "tapeTag": 10
     }
   ],
   "capabilities": {

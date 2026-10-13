@@ -180,7 +180,8 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "label": "rust",
         "suffixes": [
           ".rs"
-        ]
+        ],
+        "tapeTag": 9
       }
     ],
     "capabilities": {
@@ -202,7 +203,8 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "label": "sql",
         "suffixes": [
           ".sql"
-        ]
+        ],
+        "tapeTag": 10
       }
     ],
     "capabilities": {
@@ -224,7 +226,8 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "label": "vue",
         "suffixes": [
           ".vue"
-        ]
+        ],
+        "tapeTag": 12
       }
     ],
     "capabilities": {
