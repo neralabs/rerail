@@ -1,0 +1,1038 @@
+{
+ "tools": {
+  "rust-analyzer": "rust-analyzer 1.99.0 (b940084d 2026-09-28)",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "scanner": "syn 2.0.119 / proc-macro2 1.0.107"
+ },
+ "files": [
+  "src/lib.rs",
+  "src/net/mod.rs",
+  "src/net/tcp.rs",
+  "src/util.rs"
+ ],
+ "definitions": [
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 root().",
+   "path": "src/lib.rs",
+   "line": 7,
+   "column": 8,
+   "name": "root",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "path": "src/lib.rs",
+   "line": 8,
+   "column": 4,
+   "name": "helper",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 imports().",
+   "path": "src/lib.rs",
+   "line": 15,
+   "column": 8,
+   "name": "imports",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 nested().",
+   "path": "src/lib.rs",
+   "line": 25,
+   "column": 8,
+   "name": "nested",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Point#",
+   "path": "src/lib.rs",
+   "line": 28,
+   "column": 12,
+   "name": "Point#",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Shape#",
+   "path": "src/lib.rs",
+   "line": 29,
+   "column": 10,
+   "name": "Shape#",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Shape#Circle#",
+   "path": "src/lib.rs",
+   "line": 29,
+   "column": 18,
+   "name": "Shape#Circle#",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Shape#Square#",
+   "path": "src/lib.rs",
+   "line": 29,
+   "column": 31,
+   "name": "Shape#Square#",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]new().",
+   "path": "src/lib.rs",
+   "line": 31,
+   "column": 12,
+   "name": "impl#[Point]new",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 0",
+   "path": "src/lib.rs",
+   "line": 31,
+   "column": 16,
+   "name": "local 0",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 1",
+   "path": "src/lib.rs",
+   "line": 31,
+   "column": 24,
+   "name": "local 1",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]m().",
+   "path": "src/lib.rs",
+   "line": 32,
+   "column": 12,
+   "name": "impl#[Point]m",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 2",
+   "path": "src/lib.rs",
+   "line": 32,
+   "column": 15,
+   "name": "local 2",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#",
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 11,
+   "name": "Trait#",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#f().",
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 22,
+   "name": "Trait#f",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 3",
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 25,
+   "name": "local 3",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#defaulted().",
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 35,
+   "name": "Trait#defaulted",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 4",
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 46,
+   "name": "local 4",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point][Trait]f().",
+   "path": "src/lib.rs",
+   "line": 37,
+   "column": 8,
+   "name": "impl#[Point][Trait]f",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 5",
+   "path": "src/lib.rs",
+   "line": 37,
+   "column": 11,
+   "name": "local 5",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point][Trait]defaulted().",
+   "path": "src/lib.rs",
+   "line": 38,
+   "column": 8,
+   "name": "impl#[Point][Trait]defaulted",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "local 6",
+   "path": "src/lib.rs",
+   "line": 38,
+   "column": 19,
+   "name": "local 6",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]associated().",
+   "path": "src/lib.rs",
+   "line": 41,
+   "column": 12,
+   "name": "impl#[Point]associated",
+   "kind": "constructor"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 methods().",
+   "path": "src/lib.rs",
+   "line": 44,
+   "column": 8,
+   "name": "methods",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 7",
+   "path": "src/lib.rs",
+   "line": 44,
+   "column": 16,
+   "name": "local 7",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 8",
+   "path": "src/lib.rs",
+   "line": 44,
+   "column": 26,
+   "name": "local 8",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 9",
+   "path": "src/lib.rs",
+   "line": 49,
+   "column": 9,
+   "name": "local 9",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 10",
+   "path": "src/lib.rs",
+   "line": 51,
+   "column": 9,
+   "name": "local 10",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 map_fn().",
+   "path": "src/lib.rs",
+   "line": 52,
+   "column": 8,
+   "name": "map_fn",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 11",
+   "path": "src/lib.rs",
+   "line": 53,
+   "column": 9,
+   "name": "local 11",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 constructors().",
+   "path": "src/lib.rs",
+   "line": 57,
+   "column": 8,
+   "name": "constructors",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 local_calls!",
+   "path": "src/lib.rs",
+   "line": 64,
+   "column": 14,
+   "name": "local_calls!",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 macros().",
+   "path": "src/lib.rs",
+   "line": 65,
+   "column": 8,
+   "name": "macros",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 std_calls().",
+   "path": "src/lib.rs",
+   "line": 71,
+   "column": 8,
+   "name": "std_calls",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 12",
+   "path": "src/lib.rs",
+   "line": 71,
+   "column": 18,
+   "name": "local 12",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 13",
+   "path": "src/lib.rs",
+   "line": 71,
+   "column": 36,
+   "name": "local 13",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 14",
+   "path": "src/lib.rs",
+   "line": 74,
+   "column": 13,
+   "name": "local 14",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 recursive().",
+   "path": "src/lib.rs",
+   "line": 79,
+   "column": 8,
+   "name": "recursive",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 15",
+   "path": "src/lib.rs",
+   "line": 79,
+   "column": 18,
+   "name": "local 15",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 mutually_a().",
+   "path": "src/lib.rs",
+   "line": 80,
+   "column": 4,
+   "name": "mutually_a",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 16",
+   "path": "src/lib.rs",
+   "line": 80,
+   "column": 15,
+   "name": "local 16",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 mutually_b().",
+   "path": "src/lib.rs",
+   "line": 81,
+   "column": 4,
+   "name": "mutually_b",
+   "kind": "function"
+  },
+  {
+   "symbol": "local 17",
+   "path": "src/lib.rs",
+   "line": 81,
+   "column": 15,
+   "name": "local 17",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 tests/",
+   "path": "src/lib.rs",
+   "line": 84,
+   "column": 5,
+   "name": "",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 tests/test_only().",
+   "path": "src/lib.rs",
+   "line": 87,
+   "column": 8,
+   "name": "test_only",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 async_fn().",
+   "path": "src/lib.rs",
+   "line": 90,
+   "column": 14,
+   "name": "async_fn",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 async_caller().",
+   "path": "src/lib.rs",
+   "line": 91,
+   "column": 14,
+   "name": "async_caller",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 net/",
+   "path": "src/net/mod.rs",
+   "line": 1,
+   "column": 1,
+   "name": "",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 net/tcp/",
+   "path": "src/net/tcp.rs",
+   "line": 1,
+   "column": 1,
+   "name": "",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 net/tcp/net_call().",
+   "path": "src/net/tcp.rs",
+   "line": 2,
+   "column": 8,
+   "name": "net_call",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 net/tcp/h().",
+   "path": "src/net/tcp.rs",
+   "line": 3,
+   "column": 8,
+   "name": "h",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/",
+   "path": "src/util.rs",
+   "line": 1,
+   "column": 1,
+   "name": "",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "path": "src/util.rs",
+   "line": 2,
+   "column": 8,
+   "name": "f",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/g().",
+   "path": "src/util.rs",
+   "line": 3,
+   "column": 8,
+   "name": "g",
+   "kind": "function"
+  },
+  {
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/h().",
+   "path": "src/util.rs",
+   "line": 4,
+   "column": 8,
+   "name": "h",
+   "kind": "function"
+  }
+ ],
+ "calls": [
+  {
+   "path": "src/lib.rs",
+   "line": 7,
+   "column": 17,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 16,
+   "column": 5,
+   "text": "renamed_f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 17,
+   "column": 5,
+   "text": "g",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/g().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 3,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 18,
+   "column": 5,
+   "text": "renamed_h",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/h().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 4,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 19,
+   "column": 5,
+   "text": "reexported_f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 20,
+   "column": 5,
+   "text": "net_call",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 net/tcp/net_call().",
+   "target": {
+    "path": "src/net/tcp.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 21,
+   "column": 18,
+   "text": "f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 22,
+   "column": 11,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 23,
+   "column": 11,
+   "text": "f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 24,
+   "column": 5,
+   "text": "nested",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 nested().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 25,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 25,
+   "column": 19,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 31,
+   "column": 42,
+   "text": "Point",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Point#",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 28,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 32,
+   "column": 23,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 35,
+   "column": 54,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 37,
+   "column": 24,
+   "text": "m",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]m().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 32,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 38,
+   "column": 33,
+   "text": "m",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]m().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 32,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 41,
+   "column": 41,
+   "text": "new",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]new().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 31,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 45,
+   "column": 7,
+   "text": "f",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#f().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 35,
+    "column": 22
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 46,
+   "column": 7,
+   "text": "defaulted",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#defaulted().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 35,
+    "column": 35
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 47,
+   "column": 19,
+   "text": "f",
+   "kind": "call_qself",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#f().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 35,
+    "column": 22
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 48,
+   "column": 12,
+   "text": "f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Trait#f().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 35,
+    "column": 22
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 50,
+   "column": 5,
+   "text": "p",
+   "kind": "call_path",
+   "symbol": "local 9",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 49,
+    "column": 9
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 51,
+   "column": 16,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 54,
+   "column": 31,
+   "text": "count",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core iter/traits/iterator/Iterator#count().",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core iter/traits/iterator/Iterator#count()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 54,
+   "column": 19,
+   "text": "map",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core iter/traits/iterator/Iterator#map().",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core iter/traits/iterator/Iterator#map()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 54,
+   "column": 12,
+   "text": "iter",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core slice/impl#[`[T]`]iter().",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core slice/impl#[`[T]`]iter()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 58,
+   "column": 13,
+   "text": "Point",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Point#",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 28,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 59,
+   "column": 20,
+   "text": "new",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 impl#[Point]new().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 31,
+    "column": 12
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 60,
+   "column": 20,
+   "text": "Circle",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 Shape#Circle#",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 29,
+    "column": 18
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 61,
+   "column": 13,
+   "text": "Some",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/Option#Some#",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/Option#Some#"
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 66,
+   "column": 22,
+   "text": "helper",
+   "kind": "m:call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 67,
+   "column": 10,
+   "text": "g",
+   "kind": "m:call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/g().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 3,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 72,
+   "column": 15,
+   "text": "len",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc vec/impl#[`Vec<T, A>`]len().",
+   "target": {
+    "external": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc vec/impl#[`Vec<T, A>`]len()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 73,
+   "column": 15,
+   "text": "to_string",
+   "kind": "call_method",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc string/impl#[T][ToString]to_string().",
+   "target": {
+    "external": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc string/impl#[T][ToString]to_string()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 74,
+   "column": 22,
+   "text": "new",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc vec/impl#[`Vec<T>`]new().",
+   "target": {
+    "external": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc vec/impl#[`Vec<T>`]new()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 75,
+   "column": 15,
+   "text": "swap",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core mem/swap().",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core mem/swap()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 76,
+   "column": 5,
+   "text": "drop",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core mem/drop().",
+   "target": {
+    "external": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core mem/drop()."
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 79,
+   "column": 41,
+   "text": "mutually_a",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 mutually_a().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 80,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 79,
+   "column": 60,
+   "text": "recursive",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 recursive().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 79,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 80,
+   "column": 38,
+   "text": "mutually_b",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 mutually_b().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 81,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 81,
+   "column": 38,
+   "text": "mutually_a",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 mutually_a().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 80,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 87,
+   "column": 22,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   },
+   "cfg": "test"
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 90,
+   "column": 27,
+   "text": "helper",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 helper().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 8,
+    "column": 4
+   }
+  },
+  {
+   "path": "src/lib.rs",
+   "line": 91,
+   "column": 31,
+   "text": "async_fn",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 async_fn().",
+   "target": {
+    "path": "src/lib.rs",
+    "line": 90,
+    "column": 14
+   }
+  },
+  {
+   "path": "src/util.rs",
+   "line": 3,
+   "column": 14,
+   "text": "f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  },
+  {
+   "path": "src/util.rs",
+   "line": 4,
+   "column": 14,
+   "text": "f",
+   "kind": "call_path",
+   "symbol": "rust-analyzer cargo rerail_calls_fixture 0.1.0 util/f().",
+   "target": {
+    "path": "src/util.rs",
+    "line": 2,
+    "column": 8
+   }
+  }
+ ]
+}

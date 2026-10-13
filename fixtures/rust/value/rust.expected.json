@@ -1,0 +1,4858 @@
+{
+ "tool": "rustc",
+ "version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "edition": "2024",
+ "cases": [
+  {
+   "src": "-0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "--1",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "warnings": [
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ],
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ]
+   ]
+  },
+  {
+   "src": "-127",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "-127"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "-127"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "-2"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "-2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "--1",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": [
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ],
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ]
+   ]
+  },
+  {
+   "src": "-2147483647",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "-2147483647"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "-2147483647"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "-2"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "-2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-0",
+   "type": "i128",
+   "const": [
+    "int",
+    "i128",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i128",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "--1",
+   "type": "i128",
+   "const": [
+    "int",
+    "i128",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i128",
+    "1"
+   ],
+   "warnings": [
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ],
+    [
+     "warning",
+     "double_negations",
+     "use of a double negation"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ]
+   ]
+  },
+  {
+   "src": "-9223372036854775807",
+   "type": "i128",
+   "const": [
+    "int",
+    "i128",
+    "-9223372036854775807"
+   ],
+   "eval": [
+    "int",
+    "i128",
+    "-9223372036854775807"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1",
+   "type": "isize",
+   "const": [
+    "int",
+    "isize",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "isize",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-2",
+   "type": "isize",
+   "const": [
+    "int",
+    "isize",
+    "-2"
+   ],
+   "eval": [
+    "int",
+    "isize",
+    "-2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "253"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "253"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "65535"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "65535"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "65533"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "65533"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "4294967295"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "4294967295"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "4294967293"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "4294967293"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "18446744073709551615"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "18446744073709551615"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "18446744073709551613"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "18446744073709551613"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "u128",
+   "const": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211455"
+   ],
+   "eval": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211455"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "u128",
+   "const": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211453"
+   ],
+   "eval": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211453"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!0",
+   "type": "usize",
+   "const": [
+    "int",
+    "usize",
+    "18446744073709551615"
+   ],
+   "eval": [
+    "int",
+    "usize",
+    "18446744073709551615"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "!2",
+   "type": "usize",
+   "const": [
+    "int",
+    "usize",
+    "18446744073709551613"
+   ],
+   "eval": [
+    "int",
+    "usize",
+    "18446744073709551613"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1+2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `1_u8 - 2_u8`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0-0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_u8` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_u8` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `1_u16 - 2_u16`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0-0",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_u16` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_u16` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "u32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `1_u32 - 2_u32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0-0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "u32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_u32` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "u32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_u32` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "u64",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `1_u64 - 2_u64`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0-0",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "u64",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_u64` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "u64",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_u64` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0-0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "i8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_i8` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "i8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_i8` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0-0",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "i16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_i16` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "i16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_i16` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0-0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "i32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_i32` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "i32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_i32` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1+2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0+0",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1-2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "-1"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "-1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0-0",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1*2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0*0",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1/2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0/0",
+   "type": "i64",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to divide `0_i64` by zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1%2",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0%0",
+   "type": "i64",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to calculate the remainder of `0_i64` with a divisor of zero"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1<<0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "4"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "4"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<8",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift left by `8_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1>>0",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>8",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift right by `8_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0&1",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255&15",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "15"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "15"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3|5",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "7"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "7"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0^1",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255^15",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "240"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "240"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<7",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "128"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "128"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<32",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift left by `32_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1>>1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>7",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>32",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift right by `32_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "3&5",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0|1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255|15",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3^5",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "4"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "4"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<8",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "256"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "256"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>0",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>2",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>8",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0&1",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255&15",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "15"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "15"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3|5",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "7"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "7"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0^1",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255^15",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "240"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "240"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<1",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<7",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "128"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "128"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<32",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "4294967296"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "4294967296"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>1",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>7",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>32",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3&5",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0|1",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255|15",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3^5",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "4"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "4"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<8",
+   "type": "i8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift left by `8_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1>>0",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>2",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>8",
+   "type": "i8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift right by `8_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "0&1",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255&15",
+   "type": "i8",
+   "const": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `i8`"
+   ],
+   "eval": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `i8`"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3|5",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "7"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "7"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0^1",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255^15",
+   "type": "i8",
+   "const": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `i8`"
+   ],
+   "eval": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `i8`"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<1",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<7",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "128"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "128"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<32",
+   "type": "i16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift left by `32_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "1>>1",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>7",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>32",
+   "type": "i16",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to shift right by `32_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "3&5",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0|1",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255|15",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3^5",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "4"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "4"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<8",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "256"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "256"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>8",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0&1",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255&15",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "15"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "15"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3|5",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "7"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "7"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0^1",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255^15",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "240"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "240"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<1",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<7",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "128"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "128"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1<<32",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "4294967296"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "4294967296"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>1",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>7",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1>>32",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3&5",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0|1",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255|15",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3^5",
+   "type": "i64",
+   "const": [
+    "int",
+    "i64",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "true && false",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "true && true",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "false && 1 == 0",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "false || true",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "false || false",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.1 + 0.2",
+   "type": "f32",
+   "const": [
+    "float",
+    "f32",
+    "0.3",
+    "3e99999a"
+   ],
+   "eval": [
+    "float",
+    "f32",
+    "0.3",
+    "3e99999a"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.0 / 0.0",
+   "type": "f32",
+   "const": [
+    "float",
+    "f32",
+    "NaN",
+    "7fc00000"
+   ],
+   "eval": [
+    "float",
+    "f32",
+    "NaN",
+    "7fc00000"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3.0 - 1.25",
+   "type": "f32",
+   "const": [
+    "float",
+    "f32",
+    "1.75",
+    "3fe00000"
+   ],
+   "eval": [
+    "float",
+    "f32",
+    "1.75",
+    "3fe00000"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.1 + 0.2",
+   "type": "f64",
+   "const": [
+    "float",
+    "f64",
+    "0.30000000000000004",
+    "3fd3333333333334"
+   ],
+   "eval": [
+    "float",
+    "f64",
+    "0.30000000000000004",
+    "3fd3333333333334"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.0 / 0.0",
+   "type": "f64",
+   "const": [
+    "float",
+    "f64",
+    "NaN",
+    "7ff8000000000000"
+   ],
+   "eval": [
+    "float",
+    "f64",
+    "NaN",
+    "7ff8000000000000"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "3.0 - 1.25",
+   "type": "f64",
+   "const": [
+    "float",
+    "f64",
+    "1.75",
+    "3ffc000000000000"
+   ],
+   "eval": [
+    "float",
+    "f64",
+    "1.75",
+    "3ffc000000000000"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "300 as u8",
+   "type": "u8",
+   "const": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `u8`"
+   ],
+   "eval": [
+    "error",
+    "overflowing_literals",
+    "literal out of range for `u8`"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1i8 as u128",
+   "type": "u128",
+   "const": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211455"
+   ],
+   "eval": [
+    "int",
+    "u128",
+    "340282366920938463463374607431768211455"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "f64::NAN as i32",
+   "type": "i32",
+   "unknown": "associated const",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "255u8 as i16",
+   "type": "i16",
+   "const": [
+    "int",
+    "i16",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "i16",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "97u8 as char",
+   "type": "char",
+   "const": [
+    "char",
+    "a",
+    97
+   ],
+   "eval": [
+    "char",
+    "a",
+    97
+   ],
+   "warnings": []
+  },
+  {
+   "src": "true as i32",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1 < 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1 < 0",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "2 <= 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1 > 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1 > 0",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "2 >= 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1 == 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1 == 0",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "2 != 2",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.1 < 0.2",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0.1 != 0.2",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1.0 < 2.0",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1.0 != 2.0",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "f32::NAN < 1.0",
+   "type": "bool",
+   "unknown": "float comparison",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": [
+    [
+     "warning",
+     "invalid_nan_comparisons",
+     "incorrect NaN comparison, NaN is not orderable"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ],
+    [
+     "warning",
+     "invalid_nan_comparisons",
+     "incorrect NaN comparison, NaN is not orderable"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ]
+   ]
+  },
+  {
+   "src": "f32::NAN != 1.0",
+   "type": "bool",
+   "unknown": "float comparison",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": [
+    [
+     "warning",
+     "invalid_nan_comparisons",
+     "incorrect NaN comparison, NaN cannot be directly compared to itself"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ],
+    [
+     "warning",
+     "invalid_nan_comparisons",
+     "incorrect NaN comparison, NaN cannot be directly compared to itself"
+    ],
+    [
+     "warning",
+     "",
+     "1 warning emitted"
+    ]
+   ]
+  },
+  {
+   "src": "f64::INFINITY < 0.0",
+   "type": "bool",
+   "unknown": "float comparison",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "f64::INFINITY != 0.0",
+   "type": "bool",
+   "unknown": "float comparison",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "'a' < 'b'",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "'a' != 'b'",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "'z' < 'a'",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "'z' != 'a'",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "true < false",
+   "type": "bool",
+   "const": [
+    "bool",
+    false
+   ],
+   "eval": [
+    "bool",
+    false
+   ],
+   "warnings": []
+  },
+  {
+   "src": "true != false",
+   "type": "bool",
+   "const": [
+    "bool",
+    true
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": []
+  },
+  {
+   "src": "if true { 1 } else { 2 }",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "{ let x = 2; x + 3 }",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "5"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "5"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "[1, 2][0]",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "b\"abc\"",
+   "type": "&[u8; 3]",
+   "const": [
+    "bytes",
+    "[u8; 3]",
+    "616263"
+   ],
+   "eval": [
+    "bytes",
+    "[u8; 3]",
+    "616263"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "\"hello\"",
+   "type": "&str",
+   "const": [
+    "str",
+    "hello",
+    "68656c6c6f"
+   ],
+   "eval": [
+    "str",
+    "hello",
+    "68656c6c6f"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "\"a\" < \"b\"",
+   "type": "bool",
+   "unknown": "str comparison",
+   "const": [
+    "error",
+    "E0015",
+    "cannot call non-const operator in constants"
+   ],
+   "eval": [
+    "bool",
+    true
+   ],
+   "warnings": [
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0015`."
+    ]
+   ]
+  },
+  {
+   "src": "1 << 40",
+   "type": "u64",
+   "const": [
+    "int",
+    "u64",
+    "1099511627776"
+   ],
+   "eval": [
+    "int",
+    "u64",
+    "1099511627776"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1u8 + 2",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "i32::MIN / -1",
+   "type": "i32",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `i32::MIN / -1_i32`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "unconditional_panic",
+    "this operation will panic at runtime"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "-(128i8)",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "-128"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "-128"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "u8::MAX",
+   "type": "u8",
+   "unknown": "associated const",
+   "const": [
+    "int",
+    "u8",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "f64::EPSILON",
+   "type": "f64",
+   "unknown": "associated const",
+   "const": [
+    "float",
+    "f64",
+    "2.220446049250313e-16",
+    "3cb0000000000000"
+   ],
+   "eval": [
+    "float",
+    "f64",
+    "2.220446049250313e-16",
+    "3cb0000000000000"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(1 + 1) * 3",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(3 + 1) * 5",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "20"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "20"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(5 + 1) * 7",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "42"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "42"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(7 + 1) * 9",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "72"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "72"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(9 + 1) * 11",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "110"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "110"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(11 + 1) * 13",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "156"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "156"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(13 + 1) * 15",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "210"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "210"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(15 + 1) * 17",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "272"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "272"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(17 + 1) * 19",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "342"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "342"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(19 + 1) * 21",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "420"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "420"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(21 + 1) * 23",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "506"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "506"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(23 + 1) * 25",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "600"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "600"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "0u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "2u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "3"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "3"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "4u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "5"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "5"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "6u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "7"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "7"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "8u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "9"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "9"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "10u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "11"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "11"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "12u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "13"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "13"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "14u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "15"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "15"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "16u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "17"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "17"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "18u8 as u16 + 1",
+   "type": "u16",
+   "const": [
+    "int",
+    "u16",
+    "19"
+   ],
+   "eval": [
+    "int",
+    "u16",
+    "19"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(0i32) << 0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(2i32) << 2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "8"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "8"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(4i32) << 4",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "64"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "64"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(6i32) << 0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "6"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "6"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(8i32) << 2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "32"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "32"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(10i32) << 4",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "160"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "160"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(12i32) << 0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "12"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "12"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(14i32) << 2",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "56"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "56"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1i32 as u32",
+   "type": "u32",
+   "const": [
+    "int",
+    "u32",
+    "4294967295"
+   ],
+   "eval": [
+    "int",
+    "u32",
+    "4294967295"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1e20 as i32",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "2147483647"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "2147483647"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-1.5 as u8",
+   "type": "u8",
+   "const": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "eval": [
+    "int",
+    "u8",
+    "0"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "u8::MAX as i32",
+   "type": "i32",
+   "unknown": "associated const",
+   "const": [
+    "int",
+    "i32",
+    "255"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "255"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "(1, 2).0",
+   "type": "i32",
+   "const": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "eval": [
+    "int",
+    "i32",
+    "1"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "\"ab\".len()",
+   "type": "usize",
+   "unknown": "method call",
+   "const": [
+    "int",
+    "usize",
+    "2"
+   ],
+   "eval": [
+    "int",
+    "usize",
+    "2"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "1u8 + 2u16",
+   "type": "u16",
+   "const": [
+    "error",
+    "E0308",
+    "mismatched types"
+   ],
+   "eval": [
+    "error",
+    "E0308",
+    "mismatched types"
+   ],
+   "warnings": [
+    [
+     "failure-note",
+     "",
+     "Some errors have detailed explanations: E0277, E0308."
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about an error, try `rustc --explain E0277`."
+    ],
+    [
+     "failure-note",
+     "",
+     "Some errors have detailed explanations: E0277, E0308."
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about an error, try `rustc --explain E0277`."
+    ]
+   ]
+  },
+  {
+   "src": "255u8 + 1",
+   "type": "u8",
+   "const": [
+    "error",
+    "E0080",
+    "attempt to compute `u8::MAX + 1_u8`, which would overflow"
+   ],
+   "eval": [
+    "error",
+    "arithmetic_overflow",
+    "this arithmetic operation will overflow"
+   ],
+   "warnings": [
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "note",
+     "",
+     "erroneous constant encountered"
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0080`."
+    ]
+   ]
+  },
+  {
+   "src": "-1u32",
+   "type": "u32",
+   "const": [
+    "error",
+    "E0600",
+    "cannot apply unary operator `-` to type `u32`"
+   ],
+   "eval": [
+    "error",
+    "E0600",
+    "cannot apply unary operator `-` to type `u32`"
+   ],
+   "warnings": [
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0600`."
+    ],
+    [
+     "failure-note",
+     "",
+     "For more information about this error, try `rustc --explain E0600`."
+    ]
+   ]
+  },
+  {
+   "src": "i64::MIN",
+   "type": "i64",
+   "unknown": "associated const",
+   "const": [
+    "int",
+    "i64",
+    "-9223372036854775808"
+   ],
+   "eval": [
+    "int",
+    "i64",
+    "-9223372036854775808"
+   ],
+   "warnings": []
+  },
+  {
+   "src": "-128i8",
+   "type": "i8",
+   "const": [
+    "int",
+    "i8",
+    "-128"
+   ],
+   "eval": [
+    "int",
+    "i8",
+    "-128"
+   ],
+   "warnings": []
+  }
+ ]
+}
