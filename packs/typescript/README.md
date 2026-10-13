@@ -3,9 +3,8 @@
 22 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
 experimental. Each is scored against the tool's own findings on the tool's test fixtures and on a pinned corpus
-(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`: 4
-today, all `rerail-unknown`, each a file the tree-sitter grammars read with a syntax error. ESLint's core rules are in
-the [JavaScript pack](../javascript/README.md).
+(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`
+(none today). ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack typescript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).

@@ -20,6 +20,8 @@ enum TokenType {
     MINUS,
     // Never returned: valid only after an arrow function's block body.
     ARROW_BODY_END,
+    // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
+    JSX_CLOSING_TAG_LT,
 };
 
 void *tree_sitter_javascript_external_scanner_create() { return NULL; }
@@ -33,6 +35,33 @@ void tree_sitter_javascript_external_scanner_deserialize(void *p, const char *b,
 static inline void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
 
 static inline void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
+
+// Whitespace as the grammar's extras read it (`\s`, `\p{Zs}`, U+FEFF, U+2028, U+2029, U+2060, U+200B): every
+// ECMAScript WhiteSpace and LineTerminator, such as U+00A0 and U+3000, whatever the C library's locale says.
+static bool is_space(int32_t c) {
+    switch (c) {
+        case '\t':
+        case '\n':
+        case '\v':
+        case '\f':
+        case '\r':
+        case ' ':
+        case 0x0085:
+        case 0x00A0:
+        case 0x1680:
+        case 0x200B:
+        case 0x2028:
+        case 0x2029:
+        case 0x202F:
+        case 0x205F:
+        case 0x2060:
+        case 0x3000:
+        case 0xFEFF:
+            return true;
+        default:
+            return c >= 0x2000 && c <= 0x200A;
+    }
+}
 
 static bool scan_template_chars(TSLexer *lexer) {
     lexer->result_symbol = TEMPLATE_CHARS;
@@ -70,7 +99,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
     bool saw_block_newline = false;
 
     for (;;) {
-        while (iswspace(lexer->lookahead)) {
+        while (is_space(lexer->lookahead)) {
             skip(lexer);
         }
 
@@ -150,7 +179,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             break;
         }
 
-        if (!iswspace(lexer->lookahead)) {
+        if (!is_space(lexer->lookahead)) {
             return false;
         }
 
@@ -249,7 +278,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
 
 static bool scan_ternary_qmark(TSLexer *lexer) {
     for (;;) {
-        if (!iswspace(lexer->lookahead)) {
+        if (!is_space(lexer->lookahead)) {
             break;
         }
         skip(lexer);
@@ -277,8 +306,21 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
     return false;
 }
 
+// The rest of an HTML comment's line, once its `<!--` or `-->` is read.
+static bool scan_html_comment_rest(TSLexer *lexer) {
+    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
+           lexer->lookahead != 0x2029) {
+        advance(lexer);
+    }
+
+    lexer->result_symbol = HTML_COMMENT;
+    lexer->mark_end(lexer);
+
+    return true;
+}
+
 static bool scan_html_comment(TSLexer *lexer) {
-    while (iswspace(lexer->lookahead) || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
+    while (is_space(lexer->lookahead)) {
         skip(lexer);
     }
 
@@ -303,15 +345,7 @@ static bool scan_html_comment(TSLexer *lexer) {
         return false;
     }
 
-    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-           lexer->lookahead != 0x2029) {
-        advance(lexer);
-    }
-
-    lexer->result_symbol = HTML_COMMENT;
-    lexer->mark_end(lexer);
-
-    return true;
+    return scan_html_comment_rest(lexer);
 }
 
 // After an `&`: is what follows the rest of an HTML character reference
@@ -408,6 +442,29 @@ bool tree_sitter_javascript_external_scanner_scan(void *payload, TSLexer *lexer,
 
     if (valid_symbols[JSX_TEXT] && scan_jsx_text(lexer)) {
         return true;
+    }
+
+    // A `<` before `/` and a comment, where a JSX closing tag may start: the `<` alone, so the lexer does not read
+    // `</` across the comment. Any other `<` is the lexer's, but for an HTML comment's `<!--`, read here as below.
+    if (valid_symbols[JSX_CLOSING_TAG_LT] && lexer->lookahead == '<') {
+        advance(lexer);
+        if (lexer->lookahead == '/') {
+            lexer->mark_end(lexer);
+            advance(lexer);
+            lexer->result_symbol = JSX_CLOSING_TAG_LT;
+            return lexer->lookahead == '*';
+        }
+        if (valid_symbols[HTML_COMMENT] && !valid_symbols[LOGICAL_OR] && !valid_symbols[ESCAPE_SEQUENCE] &&
+            !valid_symbols[REGEX_PATTERN]) {
+            for (unsigned i = 0; i < 3; i++) {
+                if (lexer->lookahead != "!--"[i]) {
+                    return false;
+                }
+                advance(lexer);
+            }
+            return scan_html_comment_rest(lexer);
+        }
+        return false;
     }
 
     if (valid_symbols[AUTOMATIC_SEMICOLON]) {

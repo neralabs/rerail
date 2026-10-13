@@ -1964,4 +1964,410 @@ mod tests {
             );
         }
     }
+
+    /// In a generator, `yield++⏎x` is `yield (++x)`, as ECMAScript reads it: a `yield` with an
+    /// operand outweighs the `yield` name that `yield++;` alone still is (Patch 10 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_javascript_generator_yields_a_prefix_update_after_yield() {
+        let root = javascript("function* g(x) { yield++\nx; yield--\nx; }\nyield++;\nyield--;\n");
+        let updates = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "update_expression")
+            .map(|node| {
+                let parent = node.parent().expect("an update has a parent");
+                format!("{}>{}", parent.kind(), node.text())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            updates,
+            [
+                "yield_expression>++\nx",
+                "yield_expression>--\nx",
+                "expression_statement>yield++",
+                "expression_statement>yield--",
+            ]
+        );
+    }
+
+    /// The scanner reads every ECMAScript whitespace the grammar's extras skip, such as U+3000,
+    /// U+00A0 and U+2028, so an automatic semicolon goes in after it (Patch 11 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_reads_unicode_whitespace_before_an_automatic_semicolon() {
+        let root = javascript(
+            "`\u{3000}template`\u{3000}\na\u{a0}= 1\u{3000}\nb = 2\u{2028}c = 3\u{feff}\n",
+        );
+        assert_eq!(
+            named_children_text(&root, "program"),
+            ["`\u{3000}template`", "a\u{a0}= 1", "b = 2", "c = 3"]
+        );
+    }
+
+    /// A JSX name may be a reserved word or start with `this`, as Babel and TypeScript read it
+    /// (Patch 12 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_jsx_names_may_be_reserved_words_or_this() {
+        let root = javascript(
+            "<a default=\"x\" class=\"y\" for=\"z\" if />;\n<a.class />;\n\
+             <this.props.tag></this.props.tag>;\n",
+        );
+        let names = root
+            .root()
+            .dfs()
+            .filter(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "property_identifier" | "identifier" | "this"
+                )
+            })
+            .map(|node| format!("{}:{}", node.kind(), node.text()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "identifier:a",
+                "property_identifier:default",
+                "property_identifier:class",
+                "property_identifier:for",
+                "property_identifier:if",
+                "identifier:a",
+                "property_identifier:class",
+                "this:this",
+                "property_identifier:props",
+                "property_identifier:tag",
+                "this:this",
+                "property_identifier:props",
+                "property_identifier:tag",
+            ]
+        );
+    }
+
+    /// A comment may stand between a JSX closing tag's `<` and `/`, as Babel and TypeScript read
+    /// it (Patch 13 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_comment_may_follow_a_javascript_jsx_closing_tag_lt() {
+        let root = javascript("<></* c *//>;\n<a>\n  </* d *//a>;\n<a>x</a>;\n");
+        let closings = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "jsx_closing_element")
+            .map(|node| {
+                node.children()
+                    .map(|child| child.kind().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            closings,
+            [
+                "< comment / >",
+                "< comment / identifier >",
+                "</ identifier >"
+            ]
+        );
+    }
+
+    /// In a generator, `yield++⏎x` is `yield (++x)`, as ECMAScript reads it, while `yield++;`
+    /// alone is the `yield` name's update (Patch 14 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_typescript_generator_yields_a_prefix_update_after_yield() {
+        for root in typescript_and_tsx(
+            "function* g(x: number) { yield++\nx; yield--\nx; }\nyield++;\nyield--;\n",
+        ) {
+            let updates = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "update_expression")
+                .map(|node| {
+                    let parent = node.parent().expect("an update has a parent");
+                    format!("{}>{}", parent.kind(), node.text())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                updates,
+                [
+                    "yield_expression>++\nx",
+                    "yield_expression>--\nx",
+                    "expression_statement>yield++",
+                    "expression_statement>yield--",
+                ]
+            );
+        }
+    }
+
+    /// An import type is a primary type: an array type, an indexed access or type arguments may
+    /// follow it (Patch 15 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_import_types_are_primary_types() {
+        for root in typescript_and_tsx(
+            "let a: import('x').T[];\nlet b: readonly import('x').T[];\n\
+             let c: import('x').T['a']['b'][number];\nlet d: import('x').I<T>;\n\
+             let e: typeof import('x');\n",
+        ) {
+            let types = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "type_annotation")
+                .map(|node| {
+                    let ty = node.child(1).expect("an annotation has a type");
+                    format!("{}:{}", ty.kind(), ty.text())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                types,
+                [
+                    "array_type:import('x').T[]",
+                    "readonly_type:readonly import('x').T[]",
+                    "lookup_type:import('x').T['a']['b'][number]",
+                    "generic_type:import('x').I<T>",
+                    "type_query:typeof import('x')",
+                ]
+            );
+        }
+    }
+
+    /// A tuple member may be named by a type keyword (Patch 16 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_tuple_members_may_be_named_by_type_keywords() {
+        for root in typescript_and_tsx(
+            "const s: [spoken: string, symbol: string][] = [];\n\
+             type T = [string: number, any?: boolean, ...unknown: number[]];\ntype U = [any?, string];\n",
+        ) {
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    node.parent()
+                        .is_some_and(|parent| parent.kind() == "tuple_type")
+                })
+                .filter(|node| node.is_named())
+                .map(|node| format!("{}:{}", node.kind(), node.text()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "required_parameter:spoken: string",
+                    "required_parameter:symbol: string",
+                    "required_parameter:string: number",
+                    "optional_parameter:any?: boolean",
+                    "required_parameter:...unknown: number[]",
+                    "optional_type:any?",
+                    "predefined_type:string",
+                ]
+            );
+        }
+    }
+
+    /// A default export's overloads and ambient declaration may be anonymous function signatures
+    /// (Patch 17 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_default_exports_may_be_anonymous_function_signatures() {
+        for root in typescript_and_tsx(
+            "export default function (): void;\nexport default function (x: string): string;\n\
+             export default function (x?: string): string | void { return x; }\n\
+             declare module 'm' {\n  export default function (\n    port?: number,\n  ): Promise<void>;\n}\n",
+        ) {
+            let exported = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "export_statement")
+                .map(|node| {
+                    let value = node
+                        .field("declaration")
+                        .or_else(|| node.field("value"))
+                        .expect("a default export has a declaration or a value");
+                    format!("{}:{}", value.kind(), value.field("name").is_some())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                exported,
+                [
+                    "function_signature:false",
+                    "function_signature:false",
+                    "function_expression:false",
+                    "function_signature:false",
+                ]
+            );
+        }
+    }
+
+    /// `accessor` follows `static`, `abstract` and `override`, and still names a member or a
+    /// variable (Patch 18 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_accessor_follows_other_modifiers() {
+        for root in typescript_and_tsx(
+            "abstract class A {\n  static accessor a = 1;\n  private abstract accessor b: number;\n  \
+             override accessor c = () => {};\n  public static override accessor d = 2;\n  \
+             accessor e = 3;\n  accessor = 4;\n  static accessor;\n  accessor() {}\n}\n\
+             const o = { accessor, r: 1 };\naccessor.dispose();\n",
+        ) {
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "public_field_definition" | "method_definition"
+                    )
+                })
+                .map(|node| {
+                    // The modifiers: the member's text before its name.
+                    let name = node.field("name").expect("a member has a name");
+                    let text = node.text();
+                    let modifiers = text[..name.range().start - node.range().start].trim_end();
+                    format!("{modifiers}|{}", name.text())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "static accessor|a",
+                    "private abstract accessor|b",
+                    "override accessor|c",
+                    "public static override accessor|d",
+                    "accessor|e",
+                    "|accessor",
+                    "static|accessor",
+                    "|accessor",
+                ]
+            );
+            assert_eq!(
+                root.root()
+                    .dfs()
+                    .filter(|node| node.text() == "accessor")
+                    .filter(|node| {
+                        matches!(
+                            node.kind().as_ref(),
+                            "identifier" | "shorthand_property_identifier"
+                        )
+                    })
+                    .count(),
+                2
+            );
+        }
+    }
+
+    /// A type-only re-export of a whole module (Patch 19 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_type_only_star_re_exports_parse() {
+        for root in typescript_and_tsx(
+            "export type * from 'hello';\nexport type * as Bar from 'module';\n\
+             export type * from './x.json' with { type: 'json' };\n",
+        ) {
+            let exports = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "export_statement")
+                .map(|node| {
+                    node.children()
+                        .map(|child| child.kind().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                exports,
+                [
+                    "export type * from string ;",
+                    "export type namespace_export from string ;",
+                    "export type * from string import_attribute ;",
+                ]
+            );
+        }
+    }
+
+    /// The scanner reads every ECMAScript whitespace and line terminator the grammar's extras
+    /// skip, such as U+3000, U+00A0 and U+2028, so an automatic semicolon goes in after it
+    /// (Patch 20 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_reads_unicode_whitespace_before_an_automatic_semicolon() {
+        for root in typescript_and_tsx(
+            "`\u{3000}template`\u{3000}\na\u{a0}= 1\u{3000}\nb = 2\u{2028}c = 3 // d\u{2028}e = 4\u{feff}\n\
+             f = g\u{3000}? h : i\n",
+        ) {
+            assert_eq!(
+                named_children_text(&root, "program"),
+                [
+                    "`\u{3000}template`",
+                    "a\u{a0}= 1",
+                    "b = 2",
+                    "c = 3 // d",
+                    "e = 4",
+                    "f = g\u{3000}? h : i",
+                ]
+            );
+        }
+    }
+
+    /// A comment may stand between a TSX closing tag's `<` and `/` (Patch 21 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_comment_may_follow_a_tsx_closing_tag_lt() {
+        let root = GrammarDialect::Tsx.ast_grep("<></* c *//>;\n<a>\n  </* d *//a>;\n<a>x</a>;\n");
+        assert!(!root.root().get_inner_node().has_error());
+        let closings = root
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "jsx_closing_element")
+            .map(|node| {
+                node.children()
+                    .map(|child| child.kind().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            closings,
+            [
+                "< comment / >",
+                "< comment / identifier >",
+                "</ identifier >"
+            ]
+        );
+    }
+
+    /// `abstract` may name a member or a variable, and still starts an abstract class or member
+    /// (Patch 22 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn abstract_may_name_a_typescript_member() {
+        for root in typescript_and_tsx(
+            "function f(): { abstract: Set<string>; concrete: number } { return x; }\n\
+             interface I { abstract?(): void }\nclass C { abstract = 1; abstract() {} }\n\
+             let abstract = 2;\nabstract class A { abstract m(): void; abstract x: number }\n",
+        ) {
+            let names = root
+                .root()
+                .dfs()
+                .filter(|node| node.text() == "abstract" && node.is_named())
+                .map(|node| node.kind().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                [
+                    "property_identifier",
+                    "property_identifier",
+                    "property_identifier",
+                    "property_identifier",
+                    "identifier",
+                ]
+            );
+            assert_eq!(
+                root.root()
+                    .dfs()
+                    .filter(|node| {
+                        matches!(
+                            node.kind().as_ref(),
+                            "abstract_class_declaration" | "abstract_method_signature"
+                        )
+                    })
+                    .count(),
+                2
+            );
+        }
+    }
 }

@@ -2073,41 +2073,46 @@
       "type": "PREC_RIGHT",
       "value": 0,
       "content": {
-        "type": "SEQ",
+        "type": "CHOICE",
         "members": [
+          {
+            "type": "PREC_DYNAMIC",
+            "value": 3,
+            "content": {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "yield"
+                },
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": "*"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "expression"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "expression"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
           {
             "type": "STRING",
             "value": "yield"
-          },
-          {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": "*"
-                  },
-                  {
-                    "type": "SYMBOL",
-                    "name": "expression"
-                  }
-                ]
-              },
-              {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "SYMBOL",
-                    "name": "expression"
-                  },
-                  {
-                    "type": "BLANK"
-                  }
-                ]
-              }
-            ]
           }
         ]
       }
@@ -2771,8 +2776,12 @@
           "value": "identifier"
         },
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "RESERVED",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          },
+          "context_name": "properties"
         }
       ]
     },
@@ -2789,8 +2798,16 @@
               "type": "CHOICE",
               "members": [
                 {
+                  "type": "RESERVED",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  },
+                  "context_name": "properties"
+                },
+                {
                   "type": "SYMBOL",
-                  "name": "identifier"
+                  "name": "this"
                 },
                 {
                   "type": "ALIAS",
@@ -2812,13 +2829,17 @@
             "type": "FIELD",
             "name": "property",
             "content": {
-              "type": "ALIAS",
+              "type": "RESERVED",
               "content": {
-                "type": "SYMBOL",
-                "name": "identifier"
+                "type": "ALIAS",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "identifier"
+                },
+                "named": true,
+                "value": "property_identifier"
               },
-              "named": true,
-              "value": "property_identifier"
+              "context_name": "properties"
             }
           }
         ]
@@ -2867,8 +2888,31 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "STRING",
-          "value": "</"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "</"
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_jsx_closing_tag_lt"
+                  },
+                  "named": false,
+                  "value": "<"
+                },
+                {
+                  "type": "STRING",
+                  "value": "/"
+                }
+              ]
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -7271,6 +7315,10 @@
     {
       "type": "SYMBOL",
       "name": "_arrow_body_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_jsx_closing_tag_lt"
     }
   ],
   "inline": [
