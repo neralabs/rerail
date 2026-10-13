@@ -1,0 +1,102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b029-except-with-empty-tuple",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B029 (except-with-empty-tuple): an `except`/`except*` clause whose type is the empty tuple `()` (inside any parentheses, with or without `as`). Reported on the whole clause.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "except-with-empty-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "type-slot": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^(except|\\*)$"
+                  },
+                  "not": {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "as_pattern",
+                    "matches": "type-slot"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "type-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "except_clause",
+            "has": {
+              "stopBy": {
+                "kind": "block"
+              },
+              "kind": "tuple",
+              "matches": "type-slot",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[(),]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B029",
+        "message": "Using `except ():` with an empty tuple does not catch anything; add exceptions to handle",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B029"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

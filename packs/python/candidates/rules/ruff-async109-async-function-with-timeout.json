@@ -1,0 +1,235 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-async109-async-function-with-timeout",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's ASYNC109 (async-function-with-timeout): a positional-only, positional or keyword-only parameter named `timeout` of an `async def` not decorated with `override` from `typing`, `_typeshed` or `typing_extensions` (resolved through imports), reported on the parameter. `asyncio.timeout` exists from 3.11, so below it (`when`) a parameter is flagged only after Ruff's traversal has visited an absolute import of `trio` or `anyio` (Ruff's seen_module, M10a `resolves.seenBefore`) (async_function_with_timeout.rs: `module == AsyncModule::AsyncIo && target_version < PY311`).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "override": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing.override",
+        "_typeshed.override",
+        "typing_extensions.override"
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "async-function-with-timeout",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.11"
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "kind": "identifier",
+        "regex": "^timeout$",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "parameters"
+        }
+       },
+       {
+        "any": [
+         {
+          "kind": "default_parameter"
+         },
+         {
+          "kind": "typed_parameter"
+         },
+         {
+          "kind": "typed_default_parameter"
+         }
+        ],
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "parameters"
+        },
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "identifier",
+         "regex": "^timeout$",
+         "not": {
+          "follows": {
+           "stopBy": "end",
+           "regex": "^[=:]$"
+          }
+         }
+        }
+       }
+      ],
+      "inside": {
+       "stopBy": "neighbor",
+       "kind": "parameters",
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "function_definition",
+        "has": {
+         "stopBy": "neighbor",
+         "regex": "^async$"
+        },
+        "not": {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "decorated_definition",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "decorator",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "override"
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC109",
+    "message": "Async function definition with a `timeout` parameter",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC109"
+        ]
+      }
+    }
+   }
+  },
+  {
+   "id": "async-function-with-timeout-trio-anyio",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.10"
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "identifier",
+          "regex": "^timeout$",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "parameters"
+          }
+         },
+         {
+          "any": [
+           {
+            "kind": "default_parameter"
+           },
+           {
+            "kind": "typed_parameter"
+           },
+           {
+            "kind": "typed_default_parameter"
+           }
+          ],
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "parameters"
+          },
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "identifier",
+           "regex": "^timeout$",
+           "not": {
+            "follows": {
+             "stopBy": "end",
+             "regex": "^[=:]$"
+            }
+           }
+          }
+         }
+        ],
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "parameters",
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "function_definition",
+          "has": {
+           "stopBy": "neighbor",
+           "regex": "^async$"
+          },
+          "not": {
+           "inside": {
+            "stopBy": "neighbor",
+            "kind": "decorated_definition",
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "decorator",
+             "has": {
+              "stopBy": "neighbor",
+              "matches": "override"
+             }
+            }
+           }
+          }
+         }
+        }
+       },
+       {
+        "resolves": {
+         "imported": [
+          "trio",
+          "anyio"
+         ],
+         "seenBefore": true
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC109",
+    "message": "Async function definition with a `timeout` parameter",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC109"
+        ]
+      }
+    }
+   }
+  }
+ ]
+}

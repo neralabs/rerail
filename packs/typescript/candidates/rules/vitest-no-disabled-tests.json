@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "vitest:no-disabled-tests",
+  "id": "vitest-no-disabled-tests",
   "revision": 1,
   "mode": "log",
   "description": "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",

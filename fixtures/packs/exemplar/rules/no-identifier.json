@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "exemplar:no-identifier",
+  "id": "no-identifier",
   "revision": 1,
   "mode": "steer",
   "description": "An identifier, which the exemplar language never has a reader for.",

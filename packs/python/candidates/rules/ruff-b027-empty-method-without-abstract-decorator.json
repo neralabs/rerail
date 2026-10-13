@@ -1,0 +1,390 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b027-empty-method-without-abstract-decorator",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B027 (empty-method-without-abstract-decorator): in a class whose only base or keyword is `abc.ABC` or `metaclass=abc.ABCMeta`, a method directly in the class body whose body is only `pass`, string literals and `...`, with no `abc` abstract decorator and no `typing.overload` / `typing_extensions.overload` decorator. Names resolve with `resolves` (imports and shadowing as Ruff's semantic model sees them). Not in stubs. Reported on the whole definition, decorators included.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/*.pyi"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "empty-method-without-abstract-decorator",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "abc-abc": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.ABC"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-abc"
+                  }
+                }
+              ]
+            },
+            "abc-meta": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.ABCMeta"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-meta"
+                  }
+                }
+              ]
+            },
+            "abc-abstract": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.abstractmethod",
+                      "abc.abstractclassmethod",
+                      "abc.abstractstaticmethod",
+                      "abc.abstractproperty"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-abstract"
+                  }
+                }
+              ]
+            },
+            "overload": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.overload",
+                  "typing_extensions.overload"
+                ]
+              }
+            },
+            "abc-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^metaclass$",
+                                "precedes": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                },
+                                "matches": "abc-meta"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              },
+                              {
+                                "kind": "list_splat"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          },
+                          "matches": "abc-abc"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "abstract-decorated": {
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "abc-abstract"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty-body": {
+              "kind": "block",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "pass_statement"
+                      },
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "^;$"
+                      },
+                      {
+                        "kind": "expression_statement",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          },
+                          "max": 1
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "string-or-ellipsis"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "string-or-ellipsis": {
+              "any": [
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "string-or-ellipsis"
+                  }
+                }
+              ]
+            },
+            "overload-decorator": {
+              "kind": "decorator",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "overload"
+              }
+            },
+            "empty-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$METHOD"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "matches": "empty-body"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "function_definition",
+                "matches": "empty-function",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-class",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$CLS"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "decorated_definition",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "empty-function"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "abstract-decorated"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "overload-decorator"
+                      }
+                    }
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-class",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$CLS"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B027",
+        "message": "`$CLS.$METHOD` is an empty method in an abstract base class, but has no abstract decorator",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B027"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

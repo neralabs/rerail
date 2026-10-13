@@ -1,0 +1,442 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim102-collapsible-if",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM102 (collapsible-if) with default settings: an `if` whose body (or whose last `elif` clause's body, when the last clause is an `elif`) is exactly one `if` without `elif`/`else`, when the `if`'s own body is one statement, the tested condition is not `__name__ == \"__main__\"` or a boolean literal, and the `if` is not a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Every `if` of a nested chain is reported, as Ruff does (its parent-chain exemption compares the parent with itself and never applies). Reported at the `if` or `elif` keyword.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "bool-literal": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bool-literal"
+                }
+              }
+            ]
+          },
+          "main-check": {
+            "kind": "comparison_operator",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                }
+              },
+              "min": 2,
+              "max": 2
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "regex": "^__name__$",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^[uUrR]?(?:\"__main__\"|'__main__'|\\\"\\\"\\\"__main__\\\"\\\"\\\"|'''__main__''')$"
+                }
+              }
+            ]
+          },
+          "nests-if": {
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^;$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "all": [
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "plain-if"
+                  }
+                ]
+              }
+            }
+          },
+          "plain-if": {
+            "kind": "if_statement",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "elif_clause"
+                  },
+                  {
+                    "kind": "else_clause"
+                  }
+                ]
+              }
+            }
+          },
+          "skip-test": {
+            "any": [
+              {
+                "matches": "bool-literal"
+              },
+              {
+                "matches": "main-check"
+              }
+            ]
+          },
+          "sys-version": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "sys.version_info",
+                "sys.platform"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "collapsible-if",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "if_statement",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^if$"
+                    },
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "sys-version"
+                        }
+                      },
+                      {
+                        "matches": "sys-version"
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "regex": "^TYPE_CHECKING$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "resolves": {
+                              "import": [
+                                "typing.TYPE_CHECKING",
+                                "_typeshed.TYPE_CHECKING",
+                                "typing_extensions.TYPE_CHECKING"
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "attribute",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "regex": "^TYPE_CHECKING$",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^\\.$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "else_clause"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^if$"
+                    },
+                    "matches": "skip-test"
+                  }
+                }
+              },
+              {
+                "matches": "nests-if"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM102",
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM102"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "collapsible-elif",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "elif_clause",
+            "not": {
+              "precedes": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "elif_clause"
+                  },
+                  {
+                    "kind": "else_clause"
+                  }
+                ]
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^elif$"
+                    },
+                    "matches": "skip-test"
+                  }
+                }
+              },
+              {
+                "matches": "nests-if"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^;$"
+                                }
+                              ]
+                            }
+                          },
+                          "min": 1,
+                          "max": 1
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^if$"
+                          },
+                          "any": [
+                            {
+                              "has": {
+                                "stopBy": "end",
+                                "matches": "sys-version"
+                              }
+                            },
+                            {
+                              "matches": "sys-version"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "identifier",
+                                  "regex": "^TYPE_CHECKING$"
+                                },
+                                {
+                                  "kind": "identifier",
+                                  "resolves": {
+                                    "import": [
+                                      "typing.TYPE_CHECKING",
+                                      "_typeshed.TYPE_CHECKING",
+                                      "typing_extensions.TYPE_CHECKING"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "kind": "attribute",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^TYPE_CHECKING$",
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^\\.$"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM102",
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM102"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

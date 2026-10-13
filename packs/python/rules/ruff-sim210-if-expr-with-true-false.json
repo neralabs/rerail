@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim210-if-expr-with-true-false",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM210 (if-expr-with-true-false): a conditional expression whose body is the literal `True` and whose `else` arm is `False` (through any parentheses), reported on the whole expression. Ruff's message and fix differ when the test is a comparison or `bool` is shadowed; what is flagged does not.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "if-expr-with-true-false",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "true": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "true"
+                  }
+                }
+              ]
+            },
+            "false": {
+              "any": [
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "false"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "conditional_expression",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "true",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^if$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "false",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^else$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM210",
+        "message": "Use `bool(...)` instead of `True if ... else False`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM210"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

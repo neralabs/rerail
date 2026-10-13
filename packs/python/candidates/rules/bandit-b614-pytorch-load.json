@@ -1,0 +1,91 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b614-pytorch-load",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect unsafe PyTorch model loading",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B614",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "any": [
+                  {
+                    "arguments": {
+                      "signature": [
+                        "f",
+                        "map_location",
+                        "pickle_module",
+                        "*",
+                        "weights_only",
+                        "mmap"
+                      ],
+                      "absent": [
+                        "weights_only"
+                      ]
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "f",
+                        "map_location",
+                        "pickle_module",
+                        "*",
+                        "weights_only",
+                        "mmap"
+                      ],
+                      "bind": {
+                        "WEIGHTS": "weights_only"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "torch.load",
+                  "torch.serialization.load"
+                ]
+              }
+            },
+            "WEIGHTS": {
+              "value": {
+                "eq": false
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B614",
+        "anchor": "capture.F",
+        "message": "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B614"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -641,12 +641,12 @@ SPDX-License-Identifier = "MIT AND Apache-2.0"
 # publishes them under (its package.json); whether adapted rule documents need the upstream licence is an open legal
 # question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/python/rules/**"
+path = ["packs/python/rules/**", "packs/python/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# Bandit 1.8.6 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
+# Bandit 1.9.4 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/python/upstream/bandit/fixtures/**"
 precedence = "override"
@@ -663,14 +663,29 @@ SPDX-License-Identifier = "MIT"
 # Ruff 0.16.9 (packs/python/licenses/ruff/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
+  "packs/python/upstream/ruff/fixtures/flake8_async/**",
+  "packs/python/upstream/ruff/fixtures/flake8_blind_except/**",
   "packs/python/upstream/ruff/fixtures/flake8_bugbear/**",
+  "packs/python/upstream/ruff/fixtures/flake8_debugger/**",
   "packs/python/upstream/ruff/fixtures/flake8_pie/**",
-  "packs/python/upstream/ruff/fixtures/flake8_simplify/SIM222.py",
+  "packs/python/upstream/ruff/fixtures/flake8_pyi/**",
+  "packs/python/upstream/ruff/fixtures/flake8_return/**",
+  "packs/python/upstream/ruff/fixtures/flake8_simplify/**",
+  "packs/python/upstream/ruff/fixtures/pep8_naming/**",
   "packs/python/upstream/ruff/fixtures/pycodestyle/**",
+  "packs/python/upstream/ruff/fixtures/ruff/**",
+  "packs/python/upstream/ruff/fixtures/syntax_errors/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
+
+# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md).
+[[annotations]]
+path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
 
 # packs/php
 
@@ -741,7 +756,7 @@ SPDX-License-Identifier = "MIT"
 # the licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json", "packs/typescript/candidates/typescript-eslint-no-explicit-any.json"]
+path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

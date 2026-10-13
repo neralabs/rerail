@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim208-double-negation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM208 (double-negation): `not` applied to another `not` expression, through any parentheses, reported on the outer `not` expression (each outer `not` of a longer chain).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "double-negation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "negation": {
+              "any": [
+                {
+                  "kind": "not_operator"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "negation"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "not_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "negation"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM208",
+        "message": "Use the operand instead of `not (not ...)`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM208"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

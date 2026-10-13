@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b703-django-mark-safe",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect calls resolved to Django safestring APIs that mark a value as safe, including the legacy SafeText, SafeUnicode, SafeString, and SafeBytes aliases covered by Bandit B703.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "django-mark-safe-dynamic-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "django.utils.safestring.mark_safe",
+                  "django.utils.safestring.SafeText",
+                  "django.utils.safestring.SafeUnicode",
+                  "django.utils.safestring.SafeString",
+                  "django.utils.safestring.SafeBytes"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B703",
+        "anchor": "witness.span",
+        "message": "Potentially dynamic content is passed to a Django safestring API.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B703"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f702-continue-outside-loop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F702 (continue-outside-loop, a semantic syntax error) with default settings: `continue` with no enclosing `for`/`while` body between it and the nearest function or class definition. A loop's `else` block does not count as inside that loop.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "continue-outside-loop",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "continue_statement",
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "while_statement"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F702",
+        "message": "`continue` not properly in loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F702"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

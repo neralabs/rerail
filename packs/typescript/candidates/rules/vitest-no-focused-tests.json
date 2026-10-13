@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "vitest:no-focused-tests",
+  "id": "vitest-no-focused-tests",
   "revision": 1,
   "mode": "steer",
   "description": "A focused test (`.only`), which makes Vitest skip every other test in the file.",

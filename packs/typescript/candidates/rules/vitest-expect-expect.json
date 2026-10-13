@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "vitest:expect-expect",
+  "id": "vitest-expect-expect",
   "revision": 1,
   "mode": "steer",
   "description": "A test whose function never calls `expect` or `assert`.",

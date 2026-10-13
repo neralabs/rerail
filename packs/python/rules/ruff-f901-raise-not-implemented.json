@@ -1,0 +1,97 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f901-raise-not-implemented",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F901 (raise-not-implemented) with default settings: the exception of a `raise` (not its `from` cause) that is the name `NotImplemented` or a call whose callee is that name, parentheses transparent. Reported on the name. Ruff matches the name itself, not the builtin binding.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raise-not-implemented",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^raise$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "raised"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "matches": "raised-direct"
+                  }
+                }
+              ]
+            },
+            "raised-direct": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^raise$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "raised-direct"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^NotImplemented$",
+            "matches": "raised"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F901",
+        "message": "`raise NotImplemented` should be `raise NotImplementedError`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F901"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

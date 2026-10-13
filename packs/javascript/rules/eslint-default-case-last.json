@@ -1,0 +1,35 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-default-case-last",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `default-case-last` (https://eslint.org/docs/latest/rules/default-case-last). Flags a `default` clause followed by a `case` clause.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "not-last",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "switch_default",
+            "precedes": {
+              "kind": "switch_case",
+              "stopBy": "end"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "default-case-last",
+        "message": "Default clause should be the last clause."
+      }
+    }
+  ]
+}

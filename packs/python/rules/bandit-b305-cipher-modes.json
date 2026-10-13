@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b305-cipher-modes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect use of the insecure ECB cipher mode",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B305",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "cryptography.hazmat.primitives.ciphers.modes.ECB"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B305",
+        "anchor": "witness.span",
+        "message": "Use of the insecure ECB cipher mode.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B305"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

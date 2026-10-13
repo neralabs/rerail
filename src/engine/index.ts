@@ -48,6 +48,7 @@ export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule }
 export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   loadRulePacks,
+  RULE_PACK_RULE_ID,
   type RulePack,
   type RulePackFile,
   rulePackFileSchema,
