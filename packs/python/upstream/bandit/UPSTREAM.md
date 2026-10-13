@@ -13,9 +13,11 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/bandit/fixtures/rerail/nosec/B113.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B301.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B302.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B303.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B305.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B306.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B307.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B308.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B310.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B311.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B312.py` | written by Rerail |

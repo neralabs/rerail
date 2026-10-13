@@ -53,6 +53,8 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/E721.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/E722.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/E742.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/E743.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/F403.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F404.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F405.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F406.py` | written by Rerail |
@@ -71,6 +73,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/F523.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F524.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F525.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/F541.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F601.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F602.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F622.py` | written by Rerail |
@@ -83,6 +86,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/F706.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F707.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F722.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/F822.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F823.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F842.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F901.py` | written by Rerail |
@@ -116,6 +120,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/SIM212.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM220.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM221.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM300.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM905.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM910.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/T100.py` | written by Rerail |

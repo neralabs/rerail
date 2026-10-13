@@ -150,9 +150,11 @@
    "rerail/nosec/B113.py",
    "rerail/nosec/B301.py",
    "rerail/nosec/B302.py",
+   "rerail/nosec/B303.py",
    "rerail/nosec/B305.py",
    "rerail/nosec/B306.py",
    "rerail/nosec/B307.py",
+   "rerail/nosec/B308.py",
    "rerail/nosec/B310.py",
    "rerail/nosec/B311.py",
    "rerail/nosec/B312.py",
@@ -916,6 +918,18 @@
    "column": 1
   },
   {
+   "rule": "B303",
+   "path": "rerail/nosec/B303.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B303",
+   "path": "rerail/nosec/B303.py",
+   "line": 17,
+   "column": 1
+  },
+  {
    "rule": "B304",
    "path": "ciphers.py",
    "line": 22,
@@ -1352,6 +1366,18 @@
    "path": "mark_safe_secure.py",
    "line": 75,
    "column": 5
+  },
+  {
+   "rule": "B308",
+   "path": "rerail/nosec/B308.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B308",
+   "path": "rerail/nosec/B308.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B310",
@@ -2689,6 +2715,42 @@
    "rule": "B413",
    "path": "pycrypto.py",
    "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B413",
+   "path": "rerail/nosec/B303.py",
+   "line": 16,
    "column": 1
   },
   {
@@ -4634,6 +4696,36 @@
    "path": "mark_safe_insecure.py",
    "line": 167,
    "column": 5
+  },
+  {
+   "rule": "B703",
+   "path": "rerail/nosec/B308.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B703",
+   "path": "rerail/nosec/B308.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B703",
+   "path": "rerail/nosec/B308.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B703",
+   "path": "rerail/nosec/B308.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B703",
+   "path": "rerail/nosec/B308.py",
+   "line": 17,
+   "column": 1
   },
   {
    "rule": "B704",

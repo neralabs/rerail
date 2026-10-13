@@ -519,6 +519,8 @@
    "rerail/noqa/E721.py",
    "rerail/noqa/E722.py",
    "rerail/noqa/E742.py",
+   "rerail/noqa/E743.py",
+   "rerail/noqa/F403.py",
    "rerail/noqa/F404.py",
    "rerail/noqa/F405.py",
    "rerail/noqa/F406.py",
@@ -537,6 +539,7 @@
    "rerail/noqa/F523.py",
    "rerail/noqa/F524.py",
    "rerail/noqa/F525.py",
+   "rerail/noqa/F541.py",
    "rerail/noqa/F601.py",
    "rerail/noqa/F602.py",
    "rerail/noqa/F622.py",
@@ -549,6 +552,7 @@
    "rerail/noqa/F706.py",
    "rerail/noqa/F707.py",
    "rerail/noqa/F722.py",
+   "rerail/noqa/F822.py",
    "rerail/noqa/F823.py",
    "rerail/noqa/F842.py",
    "rerail/noqa/F901.py",
@@ -582,6 +586,7 @@
    "rerail/noqa/SIM212.py",
    "rerail/noqa/SIM220.py",
    "rerail/noqa/SIM221.py",
+   "rerail/noqa/SIM300.py",
    "rerail/noqa/SIM905.py",
    "rerail/noqa/SIM910.py",
    "rerail/noqa/T100.py",
@@ -5654,6 +5659,12 @@
    "column": 5
   },
   {
+   "rule": "B021",
+   "path": "rerail/noqa/F541.py",
+   "line": 1,
+   "column": 1
+  },
+  {
    "rule": "B022",
    "path": "flake8_bugbear/B022.py",
    "line": 9,
@@ -9758,6 +9769,18 @@
    "column": 9
   },
   {
+   "rule": "E743",
+   "path": "rerail/noqa/E743.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "E743",
+   "path": "rerail/noqa/E743.py",
+   "line": 13,
+   "column": 5
+  },
+  {
    "rule": "F401",
    "path": "flake8_async/ASYNC109_0.py",
    "line": 1,
@@ -11004,6 +11027,18 @@
    "path": "pyflakes/F406.py",
    "line": 9,
    "column": 5
+  },
+  {
+   "rule": "F403",
+   "path": "rerail/noqa/F403.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "F403",
+   "path": "rerail/noqa/F403.py",
+   "line": 9,
+   "column": 1
   },
   {
    "rule": "F403",
@@ -12335,6 +12370,18 @@
    "rule": "F541",
    "path": "pyflakes/F541.py",
    "line": 44,
+   "column": 1
+  },
+  {
+   "rule": "F541",
+   "path": "rerail/noqa/F541.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "F541",
+   "path": "rerail/noqa/F541.py",
+   "line": 9,
    "column": 1
   },
   {
@@ -16926,6 +16973,24 @@
    "path": "rerail/noqa/E742.py",
    "line": 13,
    "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/E743.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/E743.py",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/E743.py",
+   "line": 13,
+   "column": 5
   },
   {
    "rule": "F811",
@@ -27158,6 +27223,18 @@
    "column": 5
   },
   {
+   "rule": "F822",
+   "path": "rerail/noqa/F822.py",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "F822",
+   "path": "rerail/noqa/F822.py",
+   "line": 9,
+   "column": 12
+  },
+  {
    "rule": "F823",
    "path": "pyflakes/F823.py",
    "line": 6,
@@ -34889,6 +34966,18 @@
    "rule": "SIM300",
    "path": "pyflakes/F632.py",
    "line": 20,
+   "column": 4
+  },
+  {
+   "rule": "SIM300",
+   "path": "rerail/noqa/SIM300.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "SIM300",
+   "path": "rerail/noqa/SIM300.py",
+   "line": 18,
    "column": 4
   },
   {
