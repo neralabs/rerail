@@ -137,8 +137,8 @@ function storedBody(row: RuleRow): unknown {
 type RowRead = { ok: true; stored: StoredRule } | { ok: false; quarantined: QuarantinedRule };
 
 /**
- * Rows are re-validated on read: other processes, and plain SQL, write this table too. A row that
- * fails the current schema is quarantined, never thrown.
+ * Rows are re-validated on read, schema and engine compile, as a write validates them: other processes, and plain
+ * SQL, write this table too. A row that fails is quarantined, never thrown.
  */
 function readRuleRow(row: RuleRow): RowRead {
   const base: StoredRuleBase = {
