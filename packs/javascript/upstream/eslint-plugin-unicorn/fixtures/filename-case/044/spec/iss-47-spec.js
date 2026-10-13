@@ -1,0 +1,1 @@
+/* Filename: spec/iss-47-spec.js */

@@ -27,6 +27,7 @@ import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
 import type { RuleDocument } from "./rule-store.js";
 import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
+import { clearSetupReview } from "./setup-review.js";
 import { compareDeterministicStrings, ruleDocumentDigest } from "../stable-json.js";
 
 type Queries = Pick<RerailDatabase, "insert" | "delete" | "select" | "update">;
@@ -93,6 +94,11 @@ export interface SetUpChoice {
   readonly packs: readonly { readonly packId: string; readonly folder: string }[];
   readonly rules?: readonly { readonly sourceKind: RuleSourceKind; readonly sourceId: string; readonly folder: string }[];
   readonly settings?: readonly RuleSetting[];
+  /**
+   * The person made this choice in the dashboard, where set-up's review happens: an offered review stands, so set-up
+   * carries on at its confirm question. Any other set-up withdraws the offer (`setup-review.ts`).
+   */
+  readonly inDashboard?: boolean;
 }
 
 /** Records the set-up choice in one transaction and marks the repository set up, even when nothing is added. */
@@ -113,6 +119,7 @@ export function recordSetUp(tx: Queries, repositoryKey: RepositoryKey, choice: S
     writeSetting(tx, setting, now);
   }
   tx.update(repositories).set({ configuredAt: now, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
+  if (choice.inDashboard !== true) clearSetupReview(tx, repositoryKey);
 }
 
 /** Everything one load needs, read once. */

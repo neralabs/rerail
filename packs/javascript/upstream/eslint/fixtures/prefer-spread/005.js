@@ -1,0 +1,1 @@
+a.b.foo.apply(a.b.c, args);

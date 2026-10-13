@@ -3,10 +3,10 @@
  * A conditional GET that answers 304 reports no body; the caller keeps what it has.
  */
 
-/** Resolve `path` against this page and refuse anything that leaves the daemon's `/api/` surface. */
+/** Resolve `path` against this page and refuse anything that leaves the daemon's `/api/` surface or `/healthz`. */
 function apiUrl(path) {
   const url = new URL(path, location.origin);
-  if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) throw new Error(`refusing request outside /api/: ${path}`);
+  if (url.origin !== location.origin || !(url.pathname.startsWith("/api/") || url.pathname === "/healthz")) throw new Error(`refusing request outside /api/: ${path}`);
   return url;
 }
 

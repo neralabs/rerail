@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { DaemonHealth, DaemonState, NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
@@ -45,6 +46,8 @@ export interface RerailDaemonOptions {
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
+  /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
+  codingAgents?: () => Promise<CodingAgentState[]>;
 }
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -205,6 +208,7 @@ export class RerailDaemon {
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
+      ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
     });
     const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
     const app = new Hono();
@@ -461,7 +465,10 @@ async function packageVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }
 
-export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
+/** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
+export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+
+export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
@@ -484,6 +491,7 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
     uiRoot,
     dev,
+    ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
   });
   const health = daemon.health();
@@ -508,17 +516,4 @@ export async function runRerailDaemon(argv: readonly string[]): Promise<void> {
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
-}
-
-const launchedPath = process.argv[1];
-if (
-  launchedPath !== undefined &&
-  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(launchedPath))
-) {
-  try {
-    await runRerailDaemon(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`rerail daemon: ${(error as Error).message}\n`);
-    process.exit(1);
-  }
 }

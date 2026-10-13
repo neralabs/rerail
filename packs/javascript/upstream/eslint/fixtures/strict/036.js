@@ -1,0 +1,1 @@
+'use strict'; class C { static { 'use strict'; 'use strict'; } }

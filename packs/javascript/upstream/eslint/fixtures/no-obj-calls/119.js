@@ -1,0 +1,1 @@
+var foo = window.Atomics; foo();

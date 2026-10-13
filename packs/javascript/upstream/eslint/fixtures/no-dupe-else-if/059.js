@@ -1,0 +1,1 @@
+if (a || b) {} else if (a) {} else if (b) {}

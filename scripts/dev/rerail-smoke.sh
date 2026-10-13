@@ -62,11 +62,12 @@ VERDACCIO_PID=""
 # and with it the one database, rerail.sqlite, all resolve there. Inherited Rerail and npm settings that
 # could point the sandbox elsewhere are dropped; RERAIL_STORAGE_ROOT is pinned so no inherited value can
 # reach a real project's session files, and the device keystore never touches the system keychain.
+# BROWSER=none: set-up shows the dashboard link without opening a browser on this machine.
 sandbox() {
   env -u RERAIL_CONTENT_STORE_PATH -u RERAIL_DEV -u RERAIL_MODEL_PATH -u RERAIL_ENGINE_SOCKET \
     -u RERAIL_ENGINE_PATH -u RERAIL_TAG -u RERAIL_REGISTRY -u RERAIL_AUTOSTART \
     -u NPM_CONFIG_REGISTRY -u npm_config_registry -u NPM_CONFIG_GLOBALCONFIG -u npm_config_globalconfig \
-    HOME="$SANDBOX_HOME" RERAIL_HOME="$RERAIL_DIR" XDG_STATE_HOME="$SMOKE/state" \
+    HOME="$SANDBOX_HOME" RERAIL_HOME="$RERAIL_DIR" XDG_STATE_HOME="$SMOKE/state" BROWSER=none \
     RERAIL_STORAGE_ROOT="$PROJECT/.rerail/sessions" RERAIL_DEVICE_SECRET_STORE=file \
     NPM_CONFIG_USERCONFIG="$SANDBOX_HOME/.npmrc" NPM_CONFIG_CACHE="$SMOKE/npm-cache" "$@"
 }
@@ -173,7 +174,7 @@ printf '%s\n' '{"statusLine":{"type":"command","command":"printf user-status","p
 cd "$PROJECT"
 
 info "just rerail while npm is not logged in stops with a request to npm login"
-if sandbox env RERAIL_REGISTRY="$REGISTRY/" "$NODE" "$REPO_ROOT/scripts/rerail-setup.mjs" --tag next </dev/null >"$SMOKE/logged-out.log" 2>&1; then
+if sandbox env RERAIL_REGISTRY="$REGISTRY/" "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --tag next </dev/null >"$SMOKE/logged-out.log" 2>&1; then
   fail "just rerail installed $PACKAGE without an npm login"
 fi
 cat "$SMOKE/logged-out.log"
@@ -184,13 +185,14 @@ grep -qF 'Run `npm login`' "$SMOKE/logged-out.log" || fail "the logged-out insta
 # would send the package's own dependencies to the throwaway registry, which has no uplink.
 printf '@neralabs:registry=%s/\n//127.0.0.1:%s/:_authToken=%s\n' "$REGISTRY" "$PORT" "$REGISTRY_TOKEN" > "$SANDBOX_HOME/.npmrc"
 
-# Setup starts the daemon from ~/.rerail/current the way it does on a clean machine, but on a
-# sandbox-only port: the default port belongs to whatever real Rerail is running here. cwd is
-# $PROJECT, inside the sandbox HOME, so its repository identity and session files stay in the sandbox.
+# Set-up without a TTY is the coding agent's lane; "skip" installs and connects the coding agents and
+# turns Rerail on nowhere, so no daemon starts. The smoke then starts one on a sandbox-only port: the
+# default port belongs to whatever real Rerail is running here. cwd is $PROJECT, inside the sandbox
+# HOME, so its repository identity and session files stay in the sandbox.
 DAEMON_PORT="$(free_port)"
-info "Running the just rerail installer (--tag next) against the local registry (daemon on port $DAEMON_PORT)"
+info "Running the just rerail installer (--tag next) against the local registry"
 sandbox env RERAIL_REGISTRY="$REGISTRY/" \
-  "$NODE" "$REPO_ROOT/scripts/rerail-setup.mjs" --tag next --project "$PROJECT" --port "$DAEMON_PORT" </dev/null \
+  "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --tag next --answer skip </dev/null \
   | tee "$SMOKE/setup.log"
 grep -qF "$PACKAGE@next is $FIRST_VERSION" "$SMOKE/setup.log" || fail "the installer did not resolve $PACKAGE@next to $FIRST_VERSION"
 
@@ -198,22 +200,18 @@ grep -qF "$PACKAGE@next is $FIRST_VERSION" "$SMOKE/setup.log" || fail "the insta
 [ -x "$LAUNCHER" ] || fail "setup did not write the launcher $LAUNCHER"
 CLAUDE_COMMAND="$SANDBOX_HOME/.claude/commands/rerail.md"
 [ -f "$CLAUDE_COMMAND" ] || fail "setup did not create $CLAUDE_COMMAND"
-
-grep -qF "Daemon started at http://127.0.0.1:$DAEMON_PORT" "$SMOKE/setup.log" || fail "setup did not start the daemon on port $DAEMON_PORT"
-info "rerail status (setup-started daemon)"
-status_output="$(sandbox "$LAUNCHER" status)"
-printf '%s\n' "$status_output"
-case "$status_output" in *"running at http://127.0.0.1:$DAEMON_PORT"*) ;; *) fail "rerail status does not show the setup-started daemon running" ;; esac
-case "$status_output" in *"Native kernel: ok"*) ;; *) fail "the setup-started daemon has no working native kernel" ;; esac
-case "$status_output" in *"Database: "*"${SMOKE##*/}/home/.rerail/rerail.sqlite"*) ;; *) fail "the setup-started daemon reads a database outside the sandbox Rerail home" ;; esac
-info "rerail daemon stop (setup-started daemon)"
-sandbox "$LAUNCHER" daemon stop
+grep -qF "It is not on in any repo yet." "$SMOKE/setup.log" || fail "setup did not end on the skip summary"
+if [ -e "$RERAIL_DIR/daemon.json" ]; then fail "setup started a daemon although Rerail is on nowhere"; fi
 
 info "rerail daemon start --port $DAEMON_PORT"
 sandbox "$LAUNCHER" daemon start --port "$DAEMON_PORT"
 
 info "rerail status"
-sandbox "$LAUNCHER" status
+status_output="$(sandbox "$LAUNCHER" status)"
+printf '%s\n' "$status_output"
+case "$status_output" in *"running at http://127.0.0.1:$DAEMON_PORT"*) ;; *) fail "rerail status does not show the daemon running" ;; esac
+case "$status_output" in *"Engine: ok"*) ;; *) fail "the daemon has no working native kernel" ;; esac
+case "$status_output" in *"Database: "*"${SMOKE##*/}/home/.rerail/rerail.sqlite"*) ;; *) fail "the daemon reads a database outside the sandbox Rerail home" ;; esac
 
 info "Rerail is off until started: the hook does nothing and the HUD says not on here"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke-off",cwd:process.cwd(),source:"startup"}))' \
@@ -222,19 +220,22 @@ status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({sessio
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
 case "$status_output" in *"not on here"*) ;; *) fail "the HUD in a repository that was never started does not say not on here" ;; esac
 
-info "rerail start"
-start_output="$(sandbox "$LAUNCHER" start)"
+info "rerail start (the set-up's start answer, as a coding agent relays it)"
+start_output="$(sandbox "$LAUNCHER" start --answer start)"
 printf '%s\n' "$start_output"
-case "$start_output" in *"Rerail is on in proj."*" rules are on."*) ;; *) fail "rerail start did not set up and start the project" ;; esac
+# The project is an empty folder: no rule pack fits it, so set-up starts Rerail with none.
+case "$start_output" in *"Rerail is on in proj. No rule packs are on yet."*"#rules"*) ;; *) fail "rerail start did not set up and start the project" ;; esac
 
 info "Exercising the installed Claude hook, composed HUD, and exact-session command"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke",cwd:process.cwd(),source:"startup"}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-hook.js" >/dev/null
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke",cwd:process.cwd()}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
+# A fresh session shows the rule count only: `steered N×` appears once Rerail has steered in it.
 case "$status_output" in
-  *user-status*" rules"*"steered 0×"*) ;;
-  *) fail "installed HUD did not preserve the user status and render actual session counters" ;;
+  *steered*) fail "installed HUD shows a steer count for a session Rerail has not steered" ;;
+  *user-status*Rerail*" rules"*) ;;
+  *) fail "installed HUD did not preserve the user status and render the session's rule count" ;;
 esac
 session_output="$(sandbox "$LAUNCHER" session claude-code installer-smoke)"
 case "$session_output" in
@@ -254,7 +255,7 @@ mkdir -p "$SMOKE/next"
 tar -xzf "$SMOKE/$TARBALL" -C "$SMOKE/next"
 "$NODE" -e 'const fs = require("node:fs"); const p = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(p, "utf8")); pkg.version = process.argv[2]; fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");' \
   "$SMOKE/next/package/package.json" "$NEXT_VERSION"
-"$NODE" "$REPO_ROOT/scripts/stamp-plugin-versions.mjs" stamp "$SMOKE/next/package"
+"$NODE" "$REPO_ROOT/scripts/build/stamp-plugin-versions.mjs" stamp "$SMOKE/next/package"
 COPYFILE_DISABLE=1 tar -czf "$SMOKE/next.tgz" -C "$SMOKE/next" package
 assert_plugin_versions "$SMOKE/next.tgz" "$NEXT_VERSION"
 "$NPM" publish "$SMOKE/next.tgz" --registry "$REGISTRY" --userconfig "$SMOKE/npmrc" --loglevel=warn >/dev/null
@@ -293,13 +294,13 @@ read -r RULES_BEFORE MOCK_BEFORE <<<"$(rule_count)"
 [ "$MOCK_BEFORE" -gt 0 ] || fail "rerail seed did not write $MOCK_RULE to $DATABASE"
 
 info "just nuke-rerail --dry-run changes nothing"
-sandbox "$NODE" "$REPO_ROOT/scripts/rerail-nuke.mjs" --dry-run </dev/null | tee "$SMOKE/nuke-dry-run.log"
+sandbox "$NODE" "$REPO_ROOT/scripts/dev/rerail-nuke.mjs" --dry-run </dev/null | tee "$SMOKE/nuke-dry-run.log"
 [ -x "$LAUNCHER" ] || fail "nuke-rerail --dry-run removed $LAUNCHER"
 if compgen -G "$SANDBOX_HOME/.rerail-clean-*" >/dev/null; then fail "nuke-rerail --dry-run created a backup"; fi
 if grep -qF "Stop the dev daemon of" "$SMOKE/nuke-dry-run.log"; then fail "the sandboxed nuke-rerail planned to stop a real checkout's dev daemon"; fi
 
 info "just nuke-rerail --yes"
-sandbox "$NODE" "$REPO_ROOT/scripts/rerail-nuke.mjs" --yes </dev/null | tee "$SMOKE/nuke.log"
+sandbox "$NODE" "$REPO_ROOT/scripts/dev/rerail-nuke.mjs" --yes </dev/null | tee "$SMOKE/nuke.log"
 [ ! -e "$RERAIL_DIR" ] || fail "nuke-rerail left $RERAIL_DIR behind"
 [ ! -e "$CLAUDE_COMMAND" ] || fail "nuke-rerail left $CLAUDE_COMMAND behind"
 [ ! -e "$SANDBOX_HOME/.omp/agent/extensions/rerail" ] || fail "nuke-rerail left the OMP extension link behind"
@@ -317,9 +318,9 @@ sandbox "$NODE" -e '
     if (fs.existsSync(path)) assert.ok(!fs.readFileSync(path, "utf8").includes("/.rerail/"), `${file} still names the Rerail home`);
   }'
 
-info "just rerail --restore"
+info "just rerail --restore (set-up starts Rerail in the project, which brings its daemon up on the sandbox port)"
 sandbox env RERAIL_REGISTRY="$REGISTRY/" \
-  "$NODE" "$REPO_ROOT/scripts/rerail-setup.mjs" --restore --project "$PROJECT" --port "$DAEMON_PORT" </dev/null \
+  "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --restore --repo "$PROJECT" --answer start --port "$DAEMON_PORT" </dev/null \
   | tee "$SMOKE/restore.log"
 grep -qF "Daemon healthy at http://127.0.0.1:$DAEMON_PORT" "$SMOKE/restore.log" || fail "the restored daemon is not healthy on port $DAEMON_PORT"
 [ -f "$CLAUDE_COMMAND" ] || fail "just rerail --restore did not reinstall $CLAUDE_COMMAND"

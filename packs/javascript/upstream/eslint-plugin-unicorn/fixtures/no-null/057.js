@@ -1,0 +1,1 @@
+foo.insertBefore(null, bar)

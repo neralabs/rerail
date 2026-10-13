@@ -1,0 +1,1 @@
+var a = function() { return class { [this.foo] = 5; }; }.bind(b);

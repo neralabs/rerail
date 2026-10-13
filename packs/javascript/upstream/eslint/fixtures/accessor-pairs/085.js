@@ -1,0 +1,1 @@
+class A { set a(foo) {} get a() {} }

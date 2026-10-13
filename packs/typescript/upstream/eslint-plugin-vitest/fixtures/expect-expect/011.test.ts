@@ -1,0 +1,1 @@
+it("should pass", myTest); function myTest() { expect(true).toBeDefined() }

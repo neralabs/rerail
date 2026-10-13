@@ -1,0 +1,1 @@
+A: { if (a) break A; }

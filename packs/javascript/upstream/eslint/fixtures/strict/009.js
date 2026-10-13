@@ -1,0 +1,1 @@
+var fn = x => { return; };

@@ -1,0 +1,1 @@
+class Data<T extends unknown> {}

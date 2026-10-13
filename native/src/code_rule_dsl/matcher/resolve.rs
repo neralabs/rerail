@@ -11,7 +11,7 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -888,6 +888,8 @@ struct FileScopes {
     eslint_directives: Option<Rc<EslintDirectives>>,
     /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
     noqa: Option<Rc<NoqaIndex>>,
+    /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
+    nosec: Option<Rc<NosecIndex>>,
     /// The file's PHPStan ignore comments (`suppress.phpstan`), read on first use.
     phpstan: Option<Rc<PhpstanIndex>>,
     /// The file's Psalm `@psalm-suppress` tags (`suppress.psalm`), read on first use.
@@ -935,6 +937,7 @@ impl FileScopeSlot {
             lines: [None, None],
             eslint_directives: None,
             noqa: None,
+            nosec: None,
             phpstan: None,
             psalm: None,
             phpcs: None,
@@ -1060,6 +1063,23 @@ pub(crate) fn file_noqa(read: impl FnOnce() -> NoqaIndex) -> Rc<NoqaIndex> {
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
             scopes.noqa = Some(Rc::clone(&index));
+        }
+    });
+    index
+}
+
+/// The `nosec` index of the file being matched: read once per file while a file is being matched,
+/// and fresh outside one.
+pub(crate) fn file_nosec(read: impl FnOnce() -> NosecIndex) -> Rc<NosecIndex> {
+    if let Some(index) =
+        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.nosec.clone()))
+    {
+        return index;
+    }
+    let index = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.nosec = Some(Rc::clone(&index));
         }
     });
     index

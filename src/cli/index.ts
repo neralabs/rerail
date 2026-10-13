@@ -18,3 +18,5 @@ export {
   seedRerailDatabase,
 } from "./seed.js";
 export { runInstallCommand } from "./setup-cli.js";
+export { type DashboardPage, type SetupEnvironment, startRerail } from "./repository-setup.js";
+export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";

@@ -1,0 +1,1 @@
+for (var x in o) { if (x) { f(); } g(); }

@@ -1,0 +1,1 @@
+A: { var A = 0; console.log(A); }

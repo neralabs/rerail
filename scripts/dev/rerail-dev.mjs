@@ -318,7 +318,7 @@ export async function stopDevCheckout(checkout = CHECKOUT) {
 const NATIVE_INPUTS = ["native/src", "native/grammars", "native/Cargo.toml", "native/build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const TS_INPUTS = ["src", "package.json", "tsconfig.json", "tsconfig.build.json"];
 const TS_OUTPUTS = [
-  "dist/cli/cli.js", "dist/daemon/daemon.js", "dist/presentation/session-presentation.js", "dist/hosts/omp/default-extension.js", "dist/harness/event-stream.js",
+  "dist/cli/cli.js", "dist/cli/daemon-entry.js", "dist/presentation/session-presentation.js", "dist/hosts/omp/default-extension.js", "dist/harness/event-stream.js",
   "dist/hosts/cursor/cursor-hook.js", "dist/hosts/claude/claude-hook.js", "dist/hosts/codex/codex-hook.js",
 ];
 const TS_BUILD_SCRIPTS = ["build:ts", "build:omp", "build:events", "build:cursor", "build:claude", "build:codex"];

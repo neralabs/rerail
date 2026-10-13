@@ -1,0 +1,10 @@
+
+class A {
+  foo() {
+    return function () {
+      console.log(this);
+      z(x => console.log(x, this));
+    };
+  }
+}
+      

@@ -1,0 +1,1 @@
+const foo = (param: string) => {}; // allow: constructors

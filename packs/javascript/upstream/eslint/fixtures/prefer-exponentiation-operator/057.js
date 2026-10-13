@@ -1,0 +1,1 @@
+f(Math.pow(a, b))

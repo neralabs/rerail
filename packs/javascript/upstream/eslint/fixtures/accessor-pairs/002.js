@@ -1,0 +1,1 @@
+var { set } = foo; ({ get } = foo);

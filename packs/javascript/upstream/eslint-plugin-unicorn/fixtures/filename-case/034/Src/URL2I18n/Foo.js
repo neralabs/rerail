@@ -1,0 +1,1 @@
+/* Filename: Src/URL2I18n/Foo.js */

@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-new",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-new` rule (https://eslint.org/docs/latest/rules/no-new). Reports an expression statement whose expression (through parentheses) is a `new` expression.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "new-statement",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "expression_statement",
+            "has": {
+              "kind": "new_expression",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-new",
+        "message": "Do not use 'new' for side effects."
+      }
+    }
+  ]
+}

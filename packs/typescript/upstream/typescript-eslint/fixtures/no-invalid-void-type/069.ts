@@ -1,0 +1,1 @@
+type Banned<T> = [T];

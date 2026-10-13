@@ -1,0 +1,1 @@
+globalThis.Math['pow'](a, b)

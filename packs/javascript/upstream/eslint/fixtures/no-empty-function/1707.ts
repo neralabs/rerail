@@ -1,0 +1,1 @@
+class A {@decorator() set foo(value: string) {}} // allow: generatorFunctions

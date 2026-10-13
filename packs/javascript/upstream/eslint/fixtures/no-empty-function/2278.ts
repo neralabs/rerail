@@ -1,0 +1,1 @@
+const B = class extends C {override set foo(value: string) {}}; // allow: asyncMethods

@@ -1,0 +1,3 @@
+class B { private constructor() {
+    // empty
+} }

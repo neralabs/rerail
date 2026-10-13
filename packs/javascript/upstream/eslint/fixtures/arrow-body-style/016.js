@@ -1,0 +1,1 @@
+for (var foo = () => { return a in b ? bar : () => {} } ;;);

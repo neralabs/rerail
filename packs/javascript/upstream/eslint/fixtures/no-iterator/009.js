@@ -1,0 +1,1 @@
+test[`__iterator__`] = function () {};

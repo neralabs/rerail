@@ -20,5 +20,5 @@
     "calls": "supported",
     "formatArgs": "supported"
   },
-  "suppressions": ["noqa"]
+  "suppressions": ["noqa", "nosec"]
 }
