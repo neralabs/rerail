@@ -115,9 +115,14 @@ pub(super) struct ViolationSpec {
     /// `suppress`: the other linter's suppression comments this violation honours.
     pub(super) suppress: Option<super::suppress::Suppress>,
     /// The code rule id a `rerail-ignore` comment names to silence this violation's witnesses,
-    /// whatever `suppress` and the `suppressions` setting; `None` where the clause reports
-    /// nothing (an `exists` leaf, a `calls` seed).
+    /// whatever `suppress` and the `suppressions` setting; `None` where the witnesses report
+    /// nothing (an `exists` leaf, a `calls` seed, a `require_each`'s evidence): a comment silences
+    /// a reported violation, never removes a fact another file's violation reads.
     pub(super) ignored_by: Option<Arc<str>>,
+    /// A covered witness is kept and marked (`Witness::ignored`) rather than dropped: a `budget`'s
+    /// rows, counted whatever the comments, whose violation a comment silences only at the row
+    /// it is reported at.
+    pub(super) ignore_marks: bool,
     /// The query's `transform` where one of its sources is a regex group of the witness, computed
     /// again with each witness's groups.
     pub(super) group_transform: Option<Arc<Transform>>,

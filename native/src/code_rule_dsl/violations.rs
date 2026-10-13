@@ -959,6 +959,9 @@ pub(crate) struct Witness {
     pub(crate) message: Option<String>,
     /// The suggested fix: `{ span, text }` replacing the witness span.
     pub(crate) fix: Option<Value>,
+    /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
+    /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
+    pub(crate) ignored: bool,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
@@ -1082,6 +1085,7 @@ pub(super) fn regex_witness(
         captures: Captures::from_spans(captures),
         message,
         fix,
+        ignored: false,
     }
 }
 

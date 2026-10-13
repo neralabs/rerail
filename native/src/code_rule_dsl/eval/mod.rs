@@ -184,14 +184,14 @@ pub(super) fn evaluate_clauses(
                 let subject_rows = stateless_rows(
                     code_rule,
                     clause,
-                    subject,
+                    (subject, evidence::Side::Subject),
                     snapshot,
                     &mut evaluation.metrics,
                 )?;
                 let evidence_rows = stateless_rows(
                     code_rule,
                     clause,
-                    evidence,
+                    (evidence, evidence::Side::Evidence),
                     snapshot,
                     &mut evaluation.metrics,
                 )?;
@@ -206,8 +206,13 @@ pub(super) fn evaluate_clauses(
                 );
             }
             ClauseKind::Budget { query, .. } => {
-                let rows =
-                    stateless_rows(code_rule, clause, query, snapshot, &mut evaluation.metrics)?;
+                let rows = stateless_rows(
+                    code_rule,
+                    clause,
+                    (query, evidence::Side::Counted),
+                    snapshot,
+                    &mut evaluation.metrics,
+                )?;
                 merge(
                     &mut evaluation,
                     evidence::budget(code_rule, clause, query, rows),
@@ -248,12 +253,12 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
-    relation: &FactQuery,
+    (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
-    let violation = evidence::producer_violation(clause, relation);
+    let violation = evidence::producer_violation(clause, relation, side);
     let limits = &code_rule.capabilities.limits;
     let mut rows = evidence::Rows::default();
     // Rows in path order, as the workspace's evidence index keeps them, whatever the snapshot's

@@ -2471,6 +2471,121 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         expect(actual.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(expected);
       }
     });
+    // Review round 2 (engine): every clause's violation answered to a `rerail-ignore`, and a relation's evidence side
+    // cloned it, so a comment over evidence in one file removed the fact and reported a missing-evidence violation in
+    // another. A comment silences a violation where it is reported; it never removes a fact.
+    it("never drops a require_each's evidence under a rerail-ignore, while its subject honours one, statelessly and in a workspace", async () => {
+      const relation = (as: string, path: string) => ({
+        evidence: {
+          as,
+          paths: { include: [path] },
+          query: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+          project: { name: "file.name" },
+        },
+      });
+      const clause = {
+        id: "require",
+        violation: violation("MISSING"),
+        require_each: { subject: relation("subject", "subject.ts"), evidence: relation("evidence", "evidence.ts") },
+      };
+      const ignore = "// rerail-ignore runtime-contract -- ignore this node only\n";
+      for (const [evidenceSource, subjectSource, expected] of [
+        // The evidence under the comment still satisfies the subject.
+        [`${ignore}debugger;\n`, "debugger;\n", []],
+        ["debugger;\n", "debugger;\n", []],
+        // Without evidence the subject is reported, unless the comment covers it.
+        ["const x = 1;\n", "debugger;\n", ["subject.ts:0"]],
+        ["const x = 1;\n", `${ignore}debugger;\n`, []],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "evidence.ts", source: evidenceSource },
+          { language: "typescript" as const, path: "subject.ts", source: subjectSource },
+        ];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`);
+        const stateless = evaluate(compileJson([clause]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${evidenceSource} ${subjectSource}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${evidenceSource} ${subjectSource}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    // The same for a budget's rows: a comment over one leaves the count as it is, and silences the group's violation
+    // only at the row it is reported at (its first, in path order).
+    it("counts a budget's rows under a rerail-ignore, and silences its violation only at the reported row, statelessly and in a workspace", async () => {
+      const clause = {
+        id: "budget",
+        violation: violation("OVER"),
+        budget: {
+          query: { evidence: { as: "usage", query: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }, project: { directory: "file.directory" } } },
+          group_by: ["usage.directory"],
+          count: { lte: 1 },
+        },
+      };
+      const ignore = "// rerail-ignore runtime-contract\n";
+      for (const [first, second, expected] of [
+        ["debugger;\n", "debugger;\n", ["src/a.ts:0"]],
+        ["debugger;\n", `${ignore}debugger;\n`, ["src/a.ts:0"]],
+        [`${ignore}debugger;\n`, "debugger;\n", []],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "src/a.ts", source: first },
+          { language: "typescript" as const, path: "src/b.ts", source: second },
+        ];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`);
+        const stateless = evaluate(compileJson([clause]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${first} ${second}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${first} ${second}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    // Review round 2 (engine): oxlint 1.88.0 and ESLint 9.39.1 read their directives in JavaScript's HTML-like comments
+    // (`<!--`, and `-->` first on its line) in a script; Biome 2.5.15 has none.
+    it("reads oxlint and ESLint directives in HTML-like comments, and no biome-ignore, statelessly and in a workspace", async () => {
+      const clause = (suppress: Record<string, unknown>) => ({
+        violation: { ...violation("DEBUGGER"), suppress },
+        forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+        id: "debugger",
+      });
+      for (const [suppress, directive] of [
+        [{ oxlint: { rules: ["no-debugger"] } }, "oxlint-disable-next-line no-debugger"],
+        [{ eslint: { rules: ["no-debugger"] } }, "eslint-disable-next-line no-debugger"],
+        [{ biome: { rules: ["lint/suspicious/noDebugger"] } }, "biome-ignore lint/suspicious/noDebugger: x"],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "html.cts", source: `<!-- ${directive}\ndebugger;\ndebugger;\n` },
+          { language: "typescript" as const, path: "close.cts", source: `--> ${directive}\ndebugger;\ndebugger;\n` },
+        ];
+        const expected = "biome" in suppress ? ["close.cts:1", "close.cts:2", "html.cts:1", "html.cts:2"] : ["close.cts:2", "html.cts:2"];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`).sort();
+        const stateless = evaluate(compileJson([clause(suppress)]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${directive}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause(suppress)]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${directive}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
 
   });
 

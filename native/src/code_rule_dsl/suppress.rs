@@ -374,10 +374,14 @@ pub(crate) struct EslintDirectives {
 }
 
 impl EslintDirectives {
-    /// Reads every comment of the file `node` belongs to.
+    /// Reads every comment of the file `node` belongs to, HTML-like ones (`html_comment`, which
+    /// ESLint reads as line comments) included.
     pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut directives = Self::default();
-        for comment in root(node).dfs().filter(|node| node.kind() == "comment") {
+        for comment in root(node)
+            .dfs()
+            .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment"))
+        {
             let range = comment.range();
             let text = &source[range.clone()];
             let Some(directive) = Directive::parse(text).filter(Directive::disables) else {

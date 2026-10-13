@@ -984,6 +984,16 @@ debugger;
                 "// biome-ignore-end lint: x\ndebugger;\n// biome-ignore-start lint/suspicious/noDebugger: x\ndebugger;\n// biome-ignore-start lint: x\ndebugger;\n// biome-ignore-end lint: x\ndebugger;\n",
                 vec![1],
             ),
+            // Biome's lexer has no HTML-like comments: `<!--` and `-->` are tokens (a parse
+            // error), and both statements stay reported.
+            (
+                "<!-- biome-ignore lint/suspicious/noDebugger: x\ndebugger;\ndebugger;\n",
+                vec![1, 2],
+            ),
+            (
+                "--> biome-ignore lint/suspicious/noDebugger: x\ndebugger;\ndebugger;\n",
+                vec![1, 2],
+            ),
         ] {
             assert_eq!(debuggers(source), reported, "{source}");
         }

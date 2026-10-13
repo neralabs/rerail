@@ -1276,6 +1276,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
             .map(|suppress| super::suppress::parse(suppress, &format!("{path}/suppress")))
             .transpose()?,
         ignored_by: None,
+        ignore_marks: false,
     })
 }
 

@@ -1,6 +1,10 @@
 //! ESLint's directive comments as ESLint 10.11.0 reads them: `ConfigCommentParser` (in
 //! `@eslint/plugin-kit`) and `SourceCode#getInlineConfigNodes`. Ranges are byte offsets into the
-//! comment's text, its `//` or `/*` included.
+//! comment's text, its `//`, `/*`, `<!--` or `-->` included. An HTML-like comment (Annex B.1.1),
+//! which espree (acorn's `skipLineComment`) reads as a `Line` comment where the source type is
+//! `script` or `commonjs` and does not parse in a module, is a `//` comment's equal: checked
+//! against ESLint 9.39.1 and 10.11.0, whose `-line` and `-next-line` directives in one silence
+//! `no-debugger` and whose `eslint-disable` in one is no directive.
 
 use super::{Grammar, PNode};
 use crate::code_rule_dsl::value::Value;
@@ -55,7 +59,7 @@ pub(crate) struct Directive {
     pub(crate) value_range: Range<usize>,
     /// The text after ` -- `, trimmed (`justification`), when there is one.
     pub(crate) description: Option<Range<usize>>,
-    /// Whether the comment is a `//` comment.
+    /// Whether the comment is a line comment: `//`, `<!--` or `-->`.
     pub(crate) line: bool,
 }
 
@@ -69,12 +73,15 @@ pub(crate) struct Item {
 }
 
 impl Directive {
-    /// A comment's directive, as `getInlineConfigNodes` keeps it: a known label, and in a `//`
+    /// A comment's directive, as `getInlineConfigNodes` keeps it: a known label, and in a line
     /// comment only `eslint-disable-line` and `eslint-disable-next-line`. `comment` is the whole
-    /// comment text, `//` or `/*` included.
+    /// comment text, `//`, `/*`, `<!--` or `-->` included.
     pub(crate) fn parse(comment: &str) -> Option<Self> {
-        let (line, value) = if let Some(rest) = comment.strip_prefix("//") {
-            (true, 2..2 + rest.len())
+        let line = ["//", "<!--", "-->"]
+            .into_iter()
+            .find(|opener| comment.starts_with(opener));
+        let (line, value) = if let Some(opener) = line {
+            (true, opener.len()..comment.len())
         } else {
             let rest = comment.strip_prefix("/*")?.strip_suffix("*/")?;
             (false, 2..2 + rest.len())

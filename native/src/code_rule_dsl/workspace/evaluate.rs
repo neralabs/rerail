@@ -325,6 +325,7 @@ pub(super) fn evaluate_file(
                     captures: Captures::default(),
                     message: None,
                     fix: None,
+                    ignored: false,
                 });
             } else {
                 witnesses.push(violations::regex_witness(
@@ -866,21 +867,27 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             };
-                            for witness in found {
-                                if (honour_suppressions
+                            for mut witness in found {
+                                if honour_suppressions
                                     && violations::suppresses(
                                         Some(violation),
                                         matched.get_node(),
                                         &witness,
-                                    ))
-                                    || (ignorable
-                                        && violations::rerail_ignores(
-                                            Some(violation),
-                                            matched.get_node(),
-                                            &witness,
-                                        ))
+                                    )
                                 {
                                     continue;
+                                }
+                                if ignorable
+                                    && violations::rerail_ignores(
+                                        Some(violation),
+                                        matched.get_node(),
+                                        &witness,
+                                    )
+                                {
+                                    if !violation.ignore_marks {
+                                        continue;
+                                    }
+                                    witness.ignored = true;
                                 }
                                 let witnesses =
                                     file.witnesses.get_mut(&id).expect("eligible check");

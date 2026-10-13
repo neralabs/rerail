@@ -5,6 +5,16 @@
 //! (`6941b4ed45ead21c45bc2164cb80a180eed85b43`), with `respectEslintDisableDirectives` at its
 //! default, `true`.
 //!
+//! The comments are oxc's (`Semantic::comments`), HTML-like ones (Annex B.1.1) included:
+//! `crates/oxc_parser/src/lexer/punctuation.rs`'s `read_left_angle` and `read_minus` leave a
+//! `<!--` anywhere, and a `-->` first on its line, to `skip_single_line_comment` as
+//! `CommentKind::HtmlOpen` and `HtmlClose` (`byte_handlers.rs`), whose `content_span`
+//! (`crates/oxc_ast/src/ast/comment.rs`) starts after the 4- or 3-byte opener, in a script: a
+//! `.cjs` or `.cts` file, or a `.js`, `.jsx`, `.ts` or `.tsx` one without module syntax
+//! (`ModuleKind::Unambiguous`). Elsewhere (`.mjs`, `.mts`, module syntax) oxc does not parse
+//! the file and oxlint reports nothing, so every `html_comment` tree-sitter-javascript's and
+//! tree-sitter-typescript's scanners yield is read as one.
+//!
 //! Ported from oxc (MIT, VoidZero Inc. & Contributors, and Boshen; see THIRD_PARTY_NOTICES)
 //! without its unused-directive bookkeeping and fixes.
 
@@ -42,20 +52,20 @@ pub(crate) struct OxlintDirectives {
 }
 
 impl OxlintDirectives {
-    /// Reads every comment of the file `root` is the root of.
+    /// Reads every comment of the file `root` is the root of, HTML-like ones included.
     pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         Self::build(
             source,
             root.dfs()
-                .filter(|node| node.kind() == "comment")
+                .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment"))
                 .map(|comment| comment.range()),
         )
     }
 
-    /// `build_impl` over comments given by their outer ranges (`//` or `/* */` included), in
-    /// source order. Only pairs build a block interval: `disable` with `enable`, `disable rule`
-    /// with `enable rule`. An `enable rule` inside a `disable` (or an `enable` inside a
-    /// `disable rule`) matches nothing, and the `disable` runs on to the end of the file.
+    /// `build_impl` over comments given by their outer ranges (`//`, `/* */`, `<!--` or `-->`
+    /// included), in source order. Only pairs build a block interval: `disable` with `enable`,
+    /// `disable rule` with `enable rule`. An `enable rule` inside a `disable` (or an `enable`
+    /// inside a `disable rule`) matches nothing, and the `disable` runs on to the end of the file.
     fn build(source: &str, comments: impl IntoIterator<Item = Range<usize>>) -> Self {
         let mut intervals = Vec::new();
         // The first unmatched `disable`, and each rule's first unmatched `disable rule`: where
@@ -184,13 +194,17 @@ impl OxlintDirectives {
     }
 }
 
-/// A comment's `content_span`: inside its `//` or `/* */`.
+/// A comment's `content_span`: inside its `//` or `/* */`, or after its `<!--` or `-->`.
 fn content_span(source: &str, range: Range<usize>) -> Option<Range<usize>> {
     let text = &source[range.clone()];
     if text.starts_with("//") {
         Some(range.start + 2..range.end)
     } else if text.starts_with("/*") && text.ends_with("*/") && text.len() >= 4 {
         Some(range.start + 2..range.end - 2)
+    } else if text.starts_with("<!--") {
+        Some(range.start + 4..range.end)
+    } else if text.starts_with("-->") {
+        Some(range.start + 3..range.end)
     } else {
         None
     }
@@ -569,6 +583,41 @@ function b() {
         let directives = read(source);
         assert!(directives.suppresses(&names(&["rules-of-hooks"]), nth(source, "useA()", 0)));
         assert!(read("").intervals.is_empty());
+    }
+
+    /// HTML-like comments are comments: cases checked against `oxlint` 1.88.0 itself
+    /// (`-A all -D no-debugger`, as `.cjs` files, where oxc lexes them), in every ECMAScript
+    /// dialect. Each keeps only its last `debugger` reported.
+    #[test]
+    fn html_like_comments_are_read() {
+        for source in [
+            "<!-- oxlint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            "--> oxlint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            "  --> oxlint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            "/*\n*/ --> oxlint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            "<!-- oxlint-disable-next-line no-debugger -->\ndebugger;\ndebugger;\n",
+            "debugger; <!-- oxlint-disable-line no-debugger\ndebugger;\n",
+            "debugger; <!-- oxlint-disable-line\ndebugger;\n",
+            "debugger; /* a */ <!-- eslint-disable-line no-debugger\ndebugger;\n",
+            "<!-- oxlint-disable no-debugger\ndebugger;\n--> oxlint-enable no-debugger\ndebugger;\n",
+        ] {
+            for dialect in [
+                GrammarDialect::TypeScript,
+                GrammarDialect::Tsx,
+                GrammarDialect::JavaScript,
+            ] {
+                let root = dialect.ast_grep(source);
+                let directives = OxlintDirectives::read(&root.root(), source);
+                let count = source.matches("debugger;").count();
+                let kept = (0..count)
+                    .filter(|&index| {
+                        !directives
+                            .suppresses(&names(&["no-debugger"]), nth(source, "debugger;", index))
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(kept, [count - 1], "{dialect:?} {source:?}");
+            }
+        }
     }
 
     /// The 0-based lines a rule reporting every `useEffect` call, with `suppress`, keeps on

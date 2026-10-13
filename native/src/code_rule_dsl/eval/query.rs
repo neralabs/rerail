@@ -261,6 +261,7 @@ fn witness_with_groups<'t, D: Doc>(
         captures,
         message,
         fix,
+        ignored: false,
     })
 }
 
@@ -397,6 +398,7 @@ impl<'a> Leaf<'a> {
                             captures: Captures::default(),
                             message: None,
                             fix: None,
+                            ignored: false,
                         });
                     } else {
                         witnesses.push(violations::regex_witness(
@@ -763,21 +765,26 @@ fn evaluate_file_clause(
                             return Ok(false);
                         }
                     };
-                    for witness in found {
+                    for mut witness in found {
                         let matched_node = matched.get_node();
-                        if (honour_suppressions
+                        if honour_suppressions
                             && crate::code_rule_dsl::violations::suppresses(
-                                violation,
-                                matched_node,
-                                &witness,
-                            ))
-                            || crate::code_rule_dsl::violations::rerail_ignores(
                                 violation,
                                 matched_node,
                                 &witness,
                             )
                         {
                             continue;
+                        }
+                        if crate::code_rule_dsl::violations::rerail_ignores(
+                            violation,
+                            matched_node,
+                            &witness,
+                        ) {
+                            if !violation.is_some_and(|violation| violation.ignore_marks) {
+                                continue;
+                            }
+                            witness.ignored = true;
                         }
                         metrics.witnesses += 1;
                         if metrics.witnesses > limits.max_witnesses {

@@ -22,14 +22,41 @@ pub(crate) struct Rows {
     pub(crate) incomplete: BTreeSet<String>,
 }
 
+/// What a producer's rows are to the clause reading them, and so what a comment over one does.
+/// A suppression comment silences a reported violation where it is reported; it never removes a
+/// fact a violation elsewhere reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    /// A `require_each`'s subject: each row reports its own violation, which a `rerail-ignore`
+    /// over it silences by dropping the row.
+    Subject,
+    /// A `require_each`'s evidence: facts, which no comment removes.
+    Evidence,
+    /// A `budget`'s rows: counted whatever the comments; a `rerail-ignore` over one marks it, and
+    /// a group's violation reported at a marked row is silenced.
+    Counted,
+}
+
 /// The violation spec an evidence producer's witnesses use: the clause's projection and same-node
-/// regex groups, without fixes or `each` (a relation row is one match).
-pub(crate) fn producer_violation(clause: &CompiledClause, relation: &FactQuery) -> ViolationSpec {
+/// regex groups, without fixes or `each` (a relation row is one match), and the comments its
+/// `side` answers to.
+pub(crate) fn producer_violation(
+    clause: &CompiledClause,
+    relation: &FactQuery,
+    side: Side,
+) -> ViolationSpec {
     let mut violation = clause.violation.clone();
     violation.project = relation.ast.project.clone();
     violation.fix = None;
     violation.fix_range = None;
     violation.each = None;
+    // Compiling refuses `suppress` on a relation clause: only `rerail-ignore` reaches its rows.
+    violation.suppress = None;
+    match side {
+        Side::Subject => {}
+        Side::Evidence => violation.ignored_by = None,
+        Side::Counted => violation.ignore_marks = true,
+    }
     let Query::Ast { matchers, .. } = &relation.ast.query else {
         unreachable!("evidence relations always use ast queries");
     };
@@ -198,9 +225,10 @@ pub(crate) fn require_each(
 }
 
 /// `budget` over evidence: a group whose count is over the maximum is a violation at its first
-/// witness, with `count` and `subjectId` (the group key). With some file unknown the counts are
-/// lower bounds: one over the maximum is still a violation (reported with `partial`), one within it
-/// is unknown, never clean.
+/// witness, with `count` and `subjectId` (the group key), unless a `rerail-ignore` marks that
+/// witness (`Side::Counted`; marked rows still count). With some file unknown the counts are
+/// lower bounds: one over the maximum is still a violation (reported with `partial`), one within
+/// it is unknown, never clean.
 pub(crate) fn budget(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
@@ -257,7 +285,14 @@ pub(crate) fn budget(
             ));
             continue;
         }
-        let Some(witness) = rows.witnesses.get(group.first).cloned() else {
+        // The group's violation is reported at its first row: a `rerail-ignore` there silences
+        // it, while one over another row leaves the count as it is.
+        let Some(witness) = rows
+            .witnesses
+            .get(group.first)
+            .filter(|witness| !witness.ignored)
+            .cloned()
+        else {
             continue;
         };
         evaluation.metrics.witnesses += 1;
@@ -450,6 +485,7 @@ mod tests {
                 },
                 message: None,
                 fix: None,
+                ignored: false,
             }],
             incomplete: Default::default(),
         };
