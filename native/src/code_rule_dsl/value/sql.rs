@@ -16,7 +16,7 @@ fn digits_ok(s: &str, radix: u32) -> bool {
         && b[0] != b'_'
         && b[b.len() - 1] != b'_'
         && !s.contains("__")
-        && s.chars().all(|c| c == '_' || c.to_digit(radix).is_some())
+        && s.chars().all(|c| c == '_' || c.is_digit(radix))
 }
 
 fn integer(text: &str, radix: u32) -> Option<Value> {
