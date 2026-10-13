@@ -78,7 +78,6 @@
                                   }
                                 },
                                 {
-                                  "kind": "join",
                                   "has": {
                                     "kind": "relation",
                                     "stopBy": "neighbor",
@@ -90,7 +89,25 @@
                                         "pattern": "$OTHER"
                                       }
                                     }
-                                  }
+                                  },
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "join"
+                                        },
+                                        {
+                                          "kind": "cross_join"
+                                        },
+                                        {
+                                          "kind": "lateral_join"
+                                        },
+                                        {
+                                          "kind": "lateral_cross_join"
+                                        }
+                                      ]
+                                    }
+                                  ]
                                 }
                               ]
                             }
@@ -117,7 +134,6 @@
                                   }
                                 },
                                 {
-                                  "kind": "join",
                                   "has": {
                                     "kind": "relation",
                                     "stopBy": "neighbor",
@@ -129,7 +145,25 @@
                                         "pattern": "$OTHER"
                                       }
                                     }
-                                  }
+                                  },
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "join"
+                                        },
+                                        {
+                                          "kind": "cross_join"
+                                        },
+                                        {
+                                          "kind": "lateral_join"
+                                        },
+                                        {
+                                          "kind": "lateral_cross_join"
+                                        }
+                                      ]
+                                    }
+                                  ]
                                 }
                               ]
                             }
@@ -138,7 +172,6 @@
                       },
                       {
                         "inside": {
-                          "kind": "join",
                           "stopBy": "neighbor",
                           "inside": {
                             "kind": "from",
@@ -167,7 +200,6 @@
                                     }
                                   },
                                   {
-                                    "kind": "join",
                                     "has": {
                                       "kind": "relation",
                                       "stopBy": "neighbor",
@@ -179,7 +211,25 @@
                                           "pattern": "$OTHER"
                                         }
                                       }
-                                    }
+                                    },
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "join"
+                                          },
+                                          {
+                                            "kind": "cross_join"
+                                          },
+                                          {
+                                            "kind": "lateral_join"
+                                          },
+                                          {
+                                            "kind": "lateral_cross_join"
+                                          }
+                                        ]
+                                      }
+                                    ]
                                   }
                                 ]
                               }
@@ -206,7 +256,6 @@
                                     }
                                   },
                                   {
-                                    "kind": "join",
                                     "has": {
                                       "kind": "relation",
                                       "stopBy": "neighbor",
@@ -218,10 +267,46 @@
                                           "pattern": "$OTHER"
                                         }
                                       }
-                                    }
+                                    },
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "join"
+                                          },
+                                          {
+                                            "kind": "cross_join"
+                                          },
+                                          {
+                                            "kind": "lateral_join"
+                                          },
+                                          {
+                                            "kind": "lateral_cross_join"
+                                          }
+                                        ]
+                                      }
+                                    ]
                                   }
                                 ]
                               }
+                            }
+                          ],
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "join"
+                                },
+                                {
+                                  "kind": "cross_join"
+                                },
+                                {
+                                  "kind": "lateral_join"
+                                },
+                                {
+                                  "kind": "lateral_cross_join"
+                                }
+                              ]
                             }
                           ]
                         }

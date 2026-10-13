@@ -1,5 +1,53 @@
 [
   {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_ansi_function_not_table_parameter.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "`TO_JSON_STRING(t)` passes the alias `t` as a whole-row reference, which PostgreSQL reads as a use of the relation and ANSI SQL as an unknown column; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared row-reference mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports AL05 at 2:18, `--dialect postgres` reports nothing, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_fail_naked_select_single_quoted_table_wrong_case.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "`FROM tab1 as 'a'` writes the alias as a string literal, which ANSI SQLFluff accepts and PostgreSQL rejects: fixtures.cases.json records libpg_query (PostgreSQL 18.6) `accepts: false` and postgresDialect `parses: false`; checked: `sqlfluff lint --dialect postgres` reports only a parse error (PRS at 2:11). The engine reads the file as PostgreSQL would, so the alias is a syntax error and the port reports nothing there (T1)."
+  },
+  {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "ANSI folds an unquoted identifier to upper case and PostgreSQL to lower case, so `a` and `\"A\"` name the same alias under ANSI and different ones under PostgreSQL, where the alias `\"A\"` is never used; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared QUOTED_CASE mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports nothing, `--dialect postgres` reports AL05 at 2:14, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "ANSI folds an unquoted identifier to upper case and PostgreSQL to lower case, so the subquery's `a.col_4` reads the alias `\"A\"` under ANSI but not under PostgreSQL, where `\"A\"` is never used; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared QUOTED_CASE mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports nothing, `--dialect postgres` reports AL05 at 2:17, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "ANSI folds an unquoted identifier to upper case and PostgreSQL to lower case, so `\"A\".col1` reads the alias `a` under ANSI but not under PostgreSQL, where `a` is never used; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared QUOTED_CASE mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports nothing, `--dialect postgres` reports AL05 at 2:14, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
+    "rule": "sqlfluff-al05-aliasing-unused",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "ANSI folds an unquoted identifier to upper case and PostgreSQL to lower case, so the subquery's `\"A\".col_4` reads the alias `a` under ANSI but not under PostgreSQL, where `a` is never used; the engine resolves names as PostgreSQL does (scope/sql.rs, its oracle's declared QUOTED_CASE mismatch). Checked with sqlfluff 4.4.0: `--dialect ansi` reports nothing, `--dialect postgres` reports AL05 at 2:17, as the port does; fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false."
+  },
+  {
     "rule": "sqlfluff-al08-aliasing-unique-column",
     "source": "fixtures",
     "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
@@ -46,6 +94,54 @@
     "line": 1,
     "kind": "not-comparable",
     "evidence": "SQLFluff's PG01 returns early unless the file's dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py), and this case is recorded under dialect ansi to test exactly that. The engine reads every .sql file with one grammar and no dialect setting, as PostgreSQL would. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false; checked: `sqlfluff lint --dialect postgres --rules PG01` (4.4.0, force_enable = True) reports PG01 at 1:1, as the port does."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "`INNER JOIN foo.qux 'B'` writes the alias as a string literal, which ANSI SQLFluff accepts and PostgreSQL rejects (fixtures.cases.json: libpg_query (PostgreSQL 18.6) `accepts: false`, syntax error at `'B'`; postgresDialect `parses: false`). The vendored grammar reads the file as PostgreSQL would and reports a syntax error at 5:20 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), skips the file."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+    "line": 6,
+    "kind": "not-comparable",
+    "evidence": "`INNER JOIN foo.qux 'B'` writes the alias as a string literal, which ANSI SQLFluff accepts and PostgreSQL rejects (fixtures.cases.json: libpg_query (PostgreSQL 18.6) `accepts: false`, syntax error at `'B'`; postgresDialect `parses: false`). The vendored grammar reads the file as PostgreSQL would and reports a syntax error at 5:20 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), skips the file."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "Grammar gap: the vendored tree-sitter-sql 0.3.11 does not parse a redundantly bracketed join target, `INNER JOIN ((tbl_b AS b INNER JOIN tbl_c AS c ON ...)) ON ...`, which PostgreSQL accepts (fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts it, postgresDialect.sameFindings true). The file has a syntax error at 3:12 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), declines to decide on it and misses `z.x`."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "postgres/RF01/test_fail_postgres_create_policy_unreferenced_table.sql",
+    "line": 8,
+    "kind": "rerail-unknown",
+    "evidence": "Grammar gap: the vendored tree-sitter-sql 0.3.11 has no CREATE POLICY statement, which PostgreSQL accepts (fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file). The file has a syntax error at 1:1 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), declines to decide on it and misses `table_3.id` in the policy's USING subquery."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: `\"`'a\"\"\".id` and `'`''a\"'.id` qualify columns with a quoted name and a string literal that SQLite reads as identifiers in that position (recorded under dialect sqlite only: fixtures.cases.json reference sqlite3 3.50.4, no postgresDialect entry); PostgreSQL and ANSI SQL never take a string as a qualifier. The vendored grammar reads the string as a literal and reports a syntax error at 3:8 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), skips the file."
+  },
+  {
+    "rule": "sqlfluff-rf01-references-from",
+    "source": "fixtures",
+    "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: `\"`'a\"\"\".id` and `'`''a\"'.id` qualify columns with a quoted name and a string literal that SQLite reads as identifiers in that position (recorded under dialect sqlite only: fixtures.cases.json reference sqlite3 3.50.4, no postgresDialect entry); PostgreSQL and ANSI SQL never take a string as a qualifier. The vendored grammar reads the string as a literal and reports a syntax error at 3:8 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), skips the file."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",
