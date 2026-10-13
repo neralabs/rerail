@@ -1614,5 +1614,165 @@
     "line": 445,
     "kind": "upstream-wrong",
     "evidence": "`$mappingException = null;` before the `do` is never read: the `do` body always runs, and every path through it assigns `$mappingException` before the read after the loop (`if ($mappingException)`): the `try` sets it to null before `break`, the `catch (ParseException $exception)` sets it to `$exception`, and any other exception leaves the function. Psalm reports nothing (usage-corpus.divergences.json, class psalm-missed-overwrite, item Inline.php:445 `mappingException`). PHP 8.5.11: `php -r 'function y($ok) { $mappingException = null; do { try { if (!$ok) { throw new RuntimeException(\"bad\"); } $mappingException = null; break; } catch (RuntimeException $exception) { $mappingException = $exception; break; } } while (true); var_export($mappingException === null ? \"null\" : $mappingException->getMessage()); } y(true); y(false);'` prints `'null'` then `'bad'`, each the value the loop assigned."
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+    "line": 317,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $c on each pass (`$c .= $next;`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Console/Helper/Table.php",
+    "line": 666,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $rows on each pass (`$rows = $this->fillNextRows($rows, $rowKey);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/DependencyInjection/Compiler/DecoratorServicePass.php",
+    "line": 174,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $sorted on each pass (`$sorted[] = $delayed[$k];`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/DependencyInjection/Compiler/PriorityTaggedServiceTrait.php",
+    "line": 108,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $attributes on each pass (`array_splice($attributes, $i--, 1, $phpAttributes);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/DependencyInjection/Compiler/ResolveTaggedClassMapArgumentPass.php",
+    "line": 80,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $attributes on each pass (`array_splice($attributes, $i--, 1, $phpAttributes);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/DomCrawler/FormFieldRegistry.php",
+    "line": 55,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $segments on each pass (`$path = array_shift($segments);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/Profiler/FileProfilerStorage.php",
+    "line": 60,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $result on each pass (`$result[$csvToken] = $profile;`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+    "line": 449,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $messages on each pass (`$messages[] = $message;`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Messenger/Bridge/Redis/Transport/Connection.php",
+    "line": 456,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $messages on each pass (`$messages[] = $message;`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Routing/RouteCompiler.php",
+    "line": 329,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $regexp on each pass (`$regexp = substr_replace($regexp, '?:', $i, 0);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Security/Http/Authenticator/OidcLoginAuthenticator.php",
+    "line": 242,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $attemptKeys on each pass (`$session->remove(array_shift($attemptKeys));`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Tui/Widget/Editor/EditorDocument.php",
+    "line": 718,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $this->undoStack on each pass (`$this->undoStackBytes -= self::snapshotBytes(array_shift($this->undoStack));`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Uid/BinaryUtil.php",
+    "line": 89,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $bytes on each pass (`$bytes = $quotient;`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Yaml/Parser.php",
+    "line": 907,
+    "kind": "upstream-wrong",
+    "evidence": "The loop calls `$this->moveToNextLine()`, which replaces `$this->currentLine`, so `strlen($this->currentLine)` has to be re-read on each pass; hoisting it, as the finding says, compares against a stale line. The port does not report a size call on a `$this` property when the loop calls a method on `$this`. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "laravel",
+    "path": "src/Illuminate/Collections/Arr.php",
+    "line": 439,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $parts on each pass (`$part = array_shift($parts);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "laravel",
+    "path": "src/Illuminate/Foundation/Application.php",
+    "line": 1473,
+    "kind": "upstream-wrong",
+    "evidence": "The loop runs `$this->call(...)` on each terminating callback, and a callback may register more, so `count($this->terminatingCallbacks)` is re-read on purpose; hoisting it skips callbacks added during the loop. The port does not report a size call on a `$this` property when the loop calls a method on `$this`. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "laravel",
+    "path": "src/Illuminate/Http/Resources/JsonApi/Concerns/ResolvesJsonApiElements.php",
+    "line": 368,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $this->loadedRelationshipsMap on each pass (`array_push($this->loadedRelationshipsMap, ...($resourceInstance->loadedRelationshipsMap ?? []));`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "laravel",
+    "path": "src/Illuminate/Routing/RouteUrlGenerator.php",
+    "line": 274,
+    "kind": "rerail-unknown",
+    "evidence": "The loop assigns `$namedParameters[$key] = array_shift($parameters);` with an existing key, which does not change $namedParameters's size, so hoisting is safe here. Rerail treats any keyed write to the counted array as a possible growth and stays silent. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "laravel",
+    "path": "src/Illuminate/Support/Str.php",
+    "line": 1151,
+    "kind": "upstream-wrong",
+    "evidence": "The loop changes $string on each pass (`$string .= substr(str_replace(['/', '+', '='], '', base64_encode($bytes)), 0, $size);`), so its size must be re-read in the condition; hoisting it, as the finding says, changes the loop's result. The port does not report a size call whose value the loop writes. (NER-1812)"
+  },
+  {
+    "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Finder/Tests/Iterator/IteratorTestCase.php",
+    "line": 55,
+    "kind": "upstream-wrong",
+    "evidence": "Two of the three size calls in this condition measure values the loop changes: it drains `$values` with `array_shift($values)` and appends to `$temp` with `$temp[] = …`, so `\\count($values)` (column 20) and `\\count($temp)` (column 39) must be re-read on each pass; hoisting either one stops the loop from ending when it should. The port does not report a size call whose value the loop writes, and still reports `\\count($subarray)` (column 55), which the loop leaves alone (NER-1812)."
   }
 ]
