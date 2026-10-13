@@ -1,0 +1,171 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b607-start-process-with-partial-path",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect relative executable string literals passed to configured process APIs, honoring Bandit B607 nosec suppressions",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-b607-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($CMD, $$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "subprocess.Popen",
+                  "subprocess.call",
+                  "os.system",
+                  "os.popen",
+                  "os.popen2",
+                  "os.popen3",
+                  "os.popen4",
+                  "popen2.popen2",
+                  "popen2.popen3",
+                  "popen2.popen4",
+                  "popen2.Popen3",
+                  "popen2.Popen4",
+                  "commands.getoutput",
+                  "commands.getstatusoutput",
+                  "os.execl",
+                  "os.execle",
+                  "os.execlp",
+                  "os.execlpe",
+                  "os.execv",
+                  "os.execve",
+                  "os.execvp",
+                  "os.execvpe",
+                  "os.spawnl",
+                  "os.spawnle",
+                  "os.spawnlp",
+                  "os.spawnlpe",
+                  "os.spawnv",
+                  "os.spawnve",
+                  "os.spawnvp",
+                  "os.spawnvpe",
+                  "os.startfile"
+                ]
+              }
+            },
+            "CMD": {
+              "all": [
+                {
+                  "value": {
+                    "type": "str"
+                  }
+                },
+                {
+                  "not": {
+                    "value": {
+                      "regex": "^(?:[A-Za-z]:|[\\\\/.])"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B607",
+        "anchor": "capture.CMD",
+        "message": "Process executable uses a partial path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B607"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bandit-b607-list",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F([$CMD, $$$REST], $$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "subprocess.Popen",
+                  "subprocess.call",
+                  "os.system",
+                  "os.popen",
+                  "os.popen2",
+                  "os.popen3",
+                  "os.popen4",
+                  "popen2.popen2",
+                  "popen2.popen3",
+                  "popen2.popen4",
+                  "popen2.Popen3",
+                  "popen2.Popen4",
+                  "commands.getoutput",
+                  "commands.getstatusoutput",
+                  "os.execl",
+                  "os.execle",
+                  "os.execlp",
+                  "os.execlpe",
+                  "os.execv",
+                  "os.execve",
+                  "os.execvp",
+                  "os.execvpe",
+                  "os.spawnl",
+                  "os.spawnle",
+                  "os.spawnlp",
+                  "os.spawnlpe",
+                  "os.spawnv",
+                  "os.spawnve",
+                  "os.spawnvp",
+                  "os.spawnvpe",
+                  "os.startfile"
+                ]
+              }
+            },
+            "CMD": {
+              "all": [
+                {
+                  "value": {
+                    "type": "str"
+                  }
+                },
+                {
+                  "not": {
+                    "value": {
+                      "regex": "^(?:[A-Za-z]:|[\\\\/.])"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B607",
+        "anchor": "capture.CMD",
+        "message": "Process executable uses a partial path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B607"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b311-random",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect insecure uses of Python pseudo-random generators",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B311",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "random.Random",
+                  "random.random",
+                  "random.randrange",
+                  "random.randint",
+                  "random.choice",
+                  "random.choices",
+                  "random.uniform",
+                  "random.triangular",
+                  "random.randbytes",
+                  "random.sample",
+                  "random.getrandbits"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B311",
+        "anchor": "witness.span",
+        "message": "Standard pseudo-random generators are not suitable for security or cryptographic purposes.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B311"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

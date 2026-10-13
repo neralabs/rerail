@@ -1,0 +1,77 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b201-flask-debug-true",
+  "revision": 1,
+  "mode": "steer",
+  "description": "After proving flask is imported (including aliases), resolve a call ending in .run and flag debug=True.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b201",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$APP.run($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "host",
+                "port",
+                "debug",
+                "load_dotenv"
+              ],
+              "bind": {
+                "DEBUG": "debug"
+              }
+            }
+          },
+          "constraints": {
+            "APP": {
+              "resolves": {
+                "binding": {
+                  "value": {
+                    "matches": "flask-instance"
+                  }
+                }
+              }
+            },
+            "CTOR": {
+              "resolves": {
+                "import": [
+                  "flask.Flask"
+                ]
+              }
+            },
+            "DEBUG": {
+              "value": {
+                "eq": true
+              }
+            }
+          },
+          "utils": {
+            "flask-instance": {
+              "pattern": "$CTOR($$$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B201",
+        "anchor": "witness.span",
+        "message": "After proving flask is imported (including aliases), resolve a call ending in .run and flag debug=True.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

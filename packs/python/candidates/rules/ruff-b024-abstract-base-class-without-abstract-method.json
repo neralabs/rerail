@@ -1,0 +1,274 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b024-abstract-base-class-without-abstract-method",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B024 (abstract-base-class-without-abstract-method): a class with exactly one base or keyword, which is `abc.ABC` as a base or `abc.ABCMeta` as `metaclass=`, whose body has no method decorated with an `abc` abstract decorator and no annotated attribute without a value. Names resolve with `resolves` (imports and shadowing as Ruff's semantic model sees them). Not in stubs. Reported on the class name.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/*.pyi"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "abstract-base-class-without-abstract-method",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "abc-abc": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.ABC"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-abc"
+                  }
+                }
+              ]
+            },
+            "abc-meta": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.ABCMeta"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-meta"
+                  }
+                }
+              ]
+            },
+            "abc-abstract": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.abstractmethod",
+                      "abc.abstractclassmethod",
+                      "abc.abstractstaticmethod",
+                      "abc.abstractproperty"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-abstract"
+                  }
+                }
+              ]
+            },
+            "abc-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^metaclass$",
+                                "precedes": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^=$"
+                                },
+                                "matches": "abc-meta"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              },
+                              {
+                                "kind": "list_splat"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          },
+                          "matches": "abc-abc"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "abstract-decorated": {
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "abc-abstract"
+                    }
+                  }
+                }
+              ]
+            },
+            "abstract-member": {
+              "any": [
+                {
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^=$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "abstract-decorated"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "class_definition",
+            "matches": "abc-class",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "pattern": "$CLS"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "abstract-member"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CLS",
+        "code": "B024",
+        "message": "`$CLS` is an abstract base class, but it has no abstract methods or properties",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B024"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

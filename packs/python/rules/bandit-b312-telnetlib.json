@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b312-telnetlib",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect insecure telnetlib.Telnet calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B312",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "telnetlib.Telnet"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B312",
+        "anchor": "witness.span",
+        "message": "Telnet is insecure; use SSH or another encrypted protocol.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B312"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

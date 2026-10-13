@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b016-raise-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B016 (raise-literal): the exception of a `raise` statement is a literal (Ruff's `is_literal_expr`: string, bytes, number, `True`/`False`, `None`, `...`; not an f-string or t-string, including an implicit concatenation with one; parentheses transparent). Reported on the literal.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "raise-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "kind": "string",
+              "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[fFtT]" } }
+            },
+            "raised": {
+              "any": [
+                {
+                  "follows": { "stopBy": "neighbor", "regex": "^raise$" },
+                  "inside": { "stopBy": "neighbor", "kind": "raise_statement" }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised" } }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "raised",
+            "any": [
+              { "matches": "plain-string" },
+              { "kind": "concatenated_string", "not": { "has": { "stopBy": "neighbor", "kind": "string", "not": { "matches": "plain-string" } } } },
+              { "kind": "integer" },
+              { "kind": "float" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "none" },
+              { "kind": "ellipsis" }
+            ]
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B016", "message": "Cannot raise a literal. Did you intend to return it or raise an Exception?", "suppress": { "noqa": { "codes": ["B016"] } } }
+    }
+  ]
+}

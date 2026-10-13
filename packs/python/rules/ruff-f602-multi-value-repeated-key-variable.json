@@ -1,0 +1,123 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f602-multi-value-repeated-key-variable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F602 (multi-value-repeated-key-variable) with default settings: a dictionary key that is a bare name equal to an earlier key of the same dict display, reported on each repeat (parentheses transparent).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "multi-value-repeated-key-variable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dict-key": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "pair"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "dict-key"
+                  }
+                }
+              ]
+            },
+            "earlier-same": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  },
+                  "pattern": "$EARLIER",
+                  "kind": "identifier",
+                  "compare": {
+                    "left": "EARLIER",
+                    "op": "eq",
+                    "right": "KEY"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "earlier-same"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "pattern": "$KEY"
+              },
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "kind": "identifier"
+              },
+              {
+                "matches": "dict-key"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "pair"
+                  },
+                  "kind": "pair",
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "matches": "earlier-same"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F602",
+        "message": "Dictionary key `$KEY` repeated",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F602"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

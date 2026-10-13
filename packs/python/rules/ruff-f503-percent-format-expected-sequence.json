@@ -1,0 +1,127 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f503-percent-format-expected-sequence",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F503 (percent-format-expected-sequence): a valid `%`-format string consuming more than one positional value (placeholders without a key, and `*` widths and precisions) applied to a dict display or comprehension. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-expected-sequence",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "format-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "percentFormat",
+                    "not": {
+                      "has": {
+                        "kind": "error"
+                      }
+                    },
+                    "count": {
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "placeholder",
+                            "not": {
+                              "has": {
+                                "kind": "mapping_key"
+                              }
+                            }
+                          },
+                          {
+                            "kind": "star"
+                          }
+                        ]
+                      },
+                      "min": 2
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "format-string"
+                  }
+                }
+              ]
+            },
+            "operand": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "operand"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$S % $R"
+          },
+          "constraints": {
+            "S": {
+              "matches": "format-string"
+            },
+            "R": {
+              "matches": "operand"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F503",
+        "message": "`%`-format string expected sequence but got mapping",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F503"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,299 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b035-static-key-dict-comprehension",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B035 (static-key-dict-comprehension): the key of a dict comprehension is constant: a literal, a name the comprehension's generators never store (targets and walrus targets, nested ones included), or an attribute, subscript, operator or tuple built only from such parts. Reported on the key, inside any parentheses.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "static-key-dict-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target-slot": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^for$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_clause"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "list_splat_pattern"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "list"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "target-slot"
+                  }
+                }
+              ]
+            },
+            "stored": {
+              "kind": "identifier",
+              "pattern": "$X",
+              "any": [
+                {
+                  "matches": "target-slot"
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "named_expression"
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuUbB]{0,2}['\"]"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuUbB]{0,2}['\"]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                }
+              ]
+            },
+            "const": {
+              "any": [
+                {
+                  "matches": "literal"
+                },
+                {
+                  "kind": "identifier",
+                  "not": {
+                    "all": [
+                      {
+                        "pattern": "$X"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "kind": "dictionary_comprehension"
+                          },
+                          "kind": "dictionary_comprehension",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "for_in_clause"
+                              },
+                              {
+                                "kind": "if_clause"
+                              }
+                            ],
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "stored"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "const"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "binary_operator"
+                    },
+                    {
+                      "kind": "boolean_operator"
+                    },
+                    {
+                      "kind": "unary_operator"
+                    },
+                    {
+                      "kind": "not_operator"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "const"
+                          },
+                          {
+                            "regex": "^([-+*/%@<>&|^~()\\[\\],]+|and|or|not)$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "key-slot": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "pair",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "dictionary_comprehension"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "key-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "const",
+            "not": {
+              "kind": "parenthesized_expression"
+            },
+            "all": [
+              {
+                "matches": "key-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B035",
+        "message": "Dictionary comprehension uses static key",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B035"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

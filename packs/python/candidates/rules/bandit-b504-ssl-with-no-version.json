@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b504-ssl-with-no-version",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect ssl.wrap_socket calls without an ssl_version argument",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B504",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "sock",
+                "keyfile",
+                "certfile",
+                "server_side",
+                "cert_reqs",
+                "ssl_version",
+                "ca_certs",
+                "do_handshake_on_connect",
+                "suppress_ragged_eofs",
+                "ciphers"
+              ],
+              "absent": [
+                "ssl_version"
+              ]
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "ssl.wrap_socket"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B504",
+        "anchor": "capture.F",
+        "message": "ssl.wrap_socket called without an explicit ssl_version",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B504"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

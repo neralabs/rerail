@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b506-yaml-load",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Bandit 1.9.4's B506 yaml_load: `yaml.load` without `Loader`, or with a `Loader` (by keyword or second position) other than SafeLoader or CSafeLoader. Port of the kernel test b506_yaml_load_without_a_safe_loader. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "yaml-load",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "yaml.load"
+                ]
+              }
+            },
+            "any": [
+              {
+                "arguments": {
+                  "signature": [
+                    "stream",
+                    "Loader"
+                  ],
+                  "absent": [
+                    "Loader"
+                  ]
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "stream",
+                    "Loader"
+                  ],
+                  "bind": {
+                    "L": "Loader"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "L": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^C?SafeLoader$"
+                  },
+                  {
+                    "kind": "attribute",
+                    "regex": "\\.C?SafeLoader$"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B506",
+        "message": "Bandit B506 (yaml-load)",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B506"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pie800-unnecessary-spread",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PIE800 (unnecessary-spread): a dict display spread with `**` into another dict display, reported on the inner dict (inside any parentheses).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-spread",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "spread-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "dictionary_splat",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "dictionary"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "spread-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "dictionary",
+            "matches": "spread-slot"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE800",
+        "message": "Unnecessary spread `**`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE800"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

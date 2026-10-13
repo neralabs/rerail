@@ -1,0 +1,896 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim114-if-with-same-arms",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM114 (if-with-same-arms): two consecutive `if`/`elif` branches whose bodies are equal as Ruff's ComparableStmt (`text: \"structure\"`; names without NFKC normalization) and whose body ranges hold the same comment texts in the same order, reported at the first branch. A branch's body range runs from the end of its test's line to the end of its last statement's line (M12a `layout`): a comment on the test's line or after the last statement's line is left out. Up to 3 comments per branch are compared; a branch with more is not reported.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "if-with-same-arms",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "in-range": {
+              "params": [
+                "T",
+                "LAST"
+              ],
+              "rule": {
+                "kind": "comment",
+                "all": [
+                  {
+                    "layout": {
+                      "before": {
+                        "to": "capture.T",
+                        "breaks": {
+                          "min": 1
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "layout": {
+                        "before": {
+                          "to": "capture.LAST",
+                          "breaks": {
+                            "min": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "tail": {
+              "params": [
+                "LAST"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "block"
+                        },
+                        {
+                          "kind": "if_statement"
+                        },
+                        {
+                          "kind": "elif_clause"
+                        },
+                        {
+                          "kind": "else_clause"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "try_statement"
+                        },
+                        {
+                          "kind": "except_clause"
+                        },
+                        {
+                          "kind": "finally_clause"
+                        },
+                        {
+                          "kind": "with_statement"
+                        },
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "decorated_definition"
+                        },
+                        {
+                          "kind": "match_statement"
+                        },
+                        {
+                          "kind": "case_clause"
+                        }
+                      ]
+                    },
+                    "pattern": "$LAST"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "if_statement"
+                      },
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "else_clause"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "try_statement"
+                      },
+                      {
+                        "kind": "except_clause"
+                      },
+                      {
+                        "kind": "finally_clause"
+                      },
+                      {
+                        "kind": "with_statement"
+                      },
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "kind": "match_statement"
+                      },
+                      {
+                        "kind": "case_clause"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "kind": "comment"
+                      },
+                      "nthChild": {
+                        "position": 1,
+                        "reverse": true,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "matches": {
+                        "tail": {
+                          "LAST": "$LAST"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "comments-0": {
+              "params": [
+                "T",
+                "LAST"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "comments-1": {
+              "params": [
+                "T",
+                "LAST",
+                "C1"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C1"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "comments-2": {
+              "params": [
+                "T",
+                "LAST",
+                "C1",
+                "C2"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C1"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C2",
+                      "all": [
+                        {
+                          "layout": {
+                            "before": {
+                              "to": "capture.C1",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C2",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C2",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "comments-3": {
+              "params": [
+                "T",
+                "LAST",
+                "C1",
+                "C2",
+                "C3"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C1"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C2",
+                      "all": [
+                        {
+                          "layout": {
+                            "before": {
+                              "to": "capture.C1",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C2",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C1",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "in-range": {
+                          "T": "$T",
+                          "LAST": "$LAST"
+                        }
+                      },
+                      "pattern": "$C3",
+                      "all": [
+                        {
+                          "layout": {
+                            "before": {
+                              "to": "capture.C2",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.C3",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C2",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "in-range": {
+                            "T": "$T",
+                            "LAST": "$LAST"
+                          }
+                        },
+                        "all": [
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "capture.C3",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "same-comments": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "matches": {
+                        "comments-0": {
+                          "T": "$TX",
+                          "LAST": "$LASTX"
+                        }
+                      }
+                    },
+                    {
+                      "matches": {
+                        "comments-0": {
+                          "T": "$TY",
+                          "LAST": "$LASTY"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": {
+                        "comments-1": {
+                          "T": "$TX",
+                          "LAST": "$LASTX",
+                          "C1": "$CX1"
+                        }
+                      }
+                    },
+                    {
+                      "matches": {
+                        "comments-1": {
+                          "T": "$TY",
+                          "LAST": "$LASTY",
+                          "C1": "$CY1"
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX1",
+                        "op": "eq",
+                        "right": "CY1",
+                        "text": "source"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": {
+                        "comments-2": {
+                          "T": "$TX",
+                          "LAST": "$LASTX",
+                          "C1": "$CX1",
+                          "C2": "$CX2"
+                        }
+                      }
+                    },
+                    {
+                      "matches": {
+                        "comments-2": {
+                          "T": "$TY",
+                          "LAST": "$LASTY",
+                          "C1": "$CY1",
+                          "C2": "$CY2"
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX1",
+                        "op": "eq",
+                        "right": "CY1",
+                        "text": "source"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX2",
+                        "op": "eq",
+                        "right": "CY2",
+                        "text": "source"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": {
+                        "comments-3": {
+                          "T": "$TX",
+                          "LAST": "$LASTX",
+                          "C1": "$CX1",
+                          "C2": "$CX2",
+                          "C3": "$CX3"
+                        }
+                      }
+                    },
+                    {
+                      "matches": {
+                        "comments-3": {
+                          "T": "$TY",
+                          "LAST": "$LASTY",
+                          "C1": "$CY1",
+                          "C2": "$CY2",
+                          "C3": "$CY3"
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX1",
+                        "op": "eq",
+                        "right": "CY1",
+                        "text": "source"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX2",
+                        "op": "eq",
+                        "right": "CY2",
+                        "text": "source"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "CX3",
+                        "op": "eq",
+                        "right": "CY3",
+                        "text": "source"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "if_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "condition",
+                      "pattern": "$TX"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "pattern": "$X",
+                      "matches": {
+                        "tail": {
+                          "LAST": "$LASTX"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "elif_clause",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "kind": "elif_clause"
+                        }
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "condition",
+                            "pattern": "$TY"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "consequence",
+                            "pattern": "$Y",
+                            "matches": {
+                              "tail": {
+                                "LAST": "$LASTY"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "X",
+                      "op": "eq",
+                      "right": "Y",
+                      "text": "structure"
+                    }
+                  },
+                  {
+                    "matches": "same-comments"
+                  }
+                ]
+              },
+              {
+                "kind": "elif_clause",
+                "all": [
+                  {
+                    "has": {
+                      "field": "condition",
+                      "pattern": "$TX"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "pattern": "$X",
+                      "matches": {
+                        "tail": {
+                          "LAST": "$LASTX"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "elif_clause",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "condition",
+                            "pattern": "$TY"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "consequence",
+                            "pattern": "$Y",
+                            "matches": {
+                              "tail": {
+                                "LAST": "$LASTY"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "X",
+                      "op": "eq",
+                      "right": "Y",
+                      "text": "structure"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "if_statement",
+                      "matches": "same-comments"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM114",
+        "message": "Combine `if` branches using logical `or` operator",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM114"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

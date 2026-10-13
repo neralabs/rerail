@@ -1,0 +1,256 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ret501-unnecessary-return-none",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's RET501 (unnecessary-return-none): `return None` in a function whose every `return` is bare or returns `None` (nested functions and classes are separate; generators and functions whose body is a lone `return` are skipped), unless the function has a return annotation other than `None` or a property decorator (`property`, `enum.property`, `functools.cached_property`, `abc.abstractproperty`, `types.DynamicClassAttribute`, resolved through the file's bindings and imports). Reported on the `return` statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-return-none",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "analysed-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "kind": "yield"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "return_statement"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "return_statement"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "value-return": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "(?s).",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^return$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "matches": "none-literal"
+                    }
+                  ]
+                }
+              }
+            },
+            "own-return": {
+              "kind": "return_statement"
+            },
+            "has-result": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "matches": "value-return"
+              }
+            },
+            "property-decorated": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "property-name"
+                      },
+                      {
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "(?s)."
+                            }
+                          },
+                          "matches": "property-name"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "property-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "property"
+                    ],
+                    "import": [
+                      "builtins.property",
+                      "enum.property",
+                      "functools.cached_property",
+                      "abc.abstractproperty",
+                      "types.DynamicClassAttribute"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "property-name"
+                  }
+                }
+              ]
+            },
+            "none-or-no-annotation": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "none-literal"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "return_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "none-literal"
+            },
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              },
+              "kind": "function_definition",
+              "all": [
+                {
+                  "matches": "analysed-function"
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "has-result"
+                      },
+                      {
+                        "matches": "property-decorated"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "none-or-no-annotation"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RET501",
+        "message": "Do not explicitly `return None` in function if it is the only possible return value",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET501"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

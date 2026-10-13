@@ -1,0 +1,197 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-t100-debugger",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's T100 (debugger): imports of debugger modules (`is_debugger_import`) and of debugger functions (`from M import n` with `M.n` in `is_debugger_call`), once per imported name, matched by module with `resolves.imported`, relative imports by the module's text (`relative: \"text\"`: Ruff ignores the level). It also flags calls whose callee resolves to a debugger function (`resolve_qualified_name` through the file's imports, or the builtin `breakpoint`).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "debugger-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "dotted_name",
+                  "resolves": {
+                    "imported": [
+                      "pdb",
+                      "pudb",
+                      "ipdb",
+                      "debugpy",
+                      "ptvsd",
+                      "IPython.terminal.embed",
+                      "IPython.frontend.terminal.embed",
+                      "celery.contrib.rdb"
+                    ],
+                    "relative": "text"
+                  },
+                  "pattern": "$D"
+                }
+              },
+              {
+                "kind": "import_from_statement",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "dotted_name",
+                  "resolves": {
+                    "imported": [
+                      "pdb.set_trace",
+                      "pudb.set_trace",
+                      "ipdb.set_trace",
+                      "ipdb.sset_trace",
+                      "IPython.terminal.embed.InteractiveShellEmbed",
+                      "IPython.frontend.terminal.embed.InteractiveShellEmbed",
+                      "celery.contrib.rdb.set_trace",
+                      "builtins.breakpoint",
+                      "debugpy.breakpoint",
+                      "debugpy.listen",
+                      "debugpy.wait_for_client",
+                      "ptvsd.break_into_debugger",
+                      "ptvsd.wait_for_attach",
+                      "sys.breakpointhook",
+                      "sys.__breakpointhook__"
+                    ],
+                    "relative": "text"
+                  },
+                  "pattern": "$D"
+                }
+              },
+              {
+                "kind": "import_from_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "relative_import",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name"
+                    }
+                  }
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "pdb",
+                          "pudb",
+                          "ipdb",
+                          "debugpy",
+                          "ptvsd"
+                        ],
+                        "relative": "text"
+                      },
+                      "pattern": "$D"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "T100",
+        "message": "Import for a debugger found",
+        "each": "D",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "T100"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "debugger-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "debugger-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "breakpoint"
+                    ],
+                    "import": [
+                      "pdb.set_trace",
+                      "pudb.set_trace",
+                      "ipdb.set_trace",
+                      "ipdb.sset_trace",
+                      "IPython.terminal.embed.InteractiveShellEmbed",
+                      "IPython.frontend.terminal.embed.InteractiveShellEmbed",
+                      "celery.contrib.rdb.set_trace",
+                      "builtins.breakpoint",
+                      "debugpy.breakpoint",
+                      "debugpy.listen",
+                      "debugpy.wait_for_client",
+                      "ptvsd.break_into_debugger",
+                      "ptvsd.wait_for_attach",
+                      "sys.breakpointhook",
+                      "sys.__breakpointhook__"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "debugger-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "debugger-callee",
+              "precedes": {
+                "stopBy": "neighbor",
+                "kind": "argument_list"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "T100",
+        "message": "Trace found: debugger used",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "T100"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
