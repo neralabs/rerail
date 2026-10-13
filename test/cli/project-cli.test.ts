@@ -97,6 +97,26 @@ describe("rerail update and rerail update rollback", () => {
     expect(repositoryKeys(`${path}.before-rollback`)).toEqual(["after", "before"]);
   });
 
+  // Self-review round 3: a coding agent session's own connection would keep writing to the replaced file, so the copy
+  // is not put back while one is open; the person is told how to finish.
+  it("leaves the database in place while a session still has it open", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const session = new Database(path);
+    try {
+      session.pragma("journal_mode = WAL");
+      await rollbackWithSnapshot(updater, path, async () => undefined);
+      session.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('during', 'during', 0, 0)");
+    } finally {
+      session.close();
+    }
+    expect(repositoryKeys(path)).toEqual(["after", "before", "during"]);
+    expect(existsSync(`${path}.before-rollback`)).toBe(false);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining("coding agent sessions still have it open. Close them, then copy"));
+  });
+
   // An update that finds nothing newer, or fails, must not replace the copy of the change a rollback undoes.
   it.each(["2.0.0", "broken"])("keeps the copy of the last version change through a later update to %s", async channel => {
     const path = await database();

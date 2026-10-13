@@ -311,8 +311,11 @@ version would misread raises the floor and waits for the new version's daemon
 or a command that writes; from then on older versions refuse the file, and
 `rerail update rollback` puts back the copy `rerail update` took before that
 version change when the floor is now above what the version rolled back to
-opens, keeping the replaced database as `rerail.sqlite.before-rollback`. An
-update that finds nothing newer, or fails, keeps the copy of the last change.
+opens, keeping the replaced database as `rerail.sqlite.before-rollback`. While
+a coding agent session still has the database open, the copy is not put back
+(the session would keep writing to the replaced file): close the sessions, then
+copy it over yourself, as the message says. An update that finds nothing newer,
+or fails, keeps the copy of the last change.
 
 A database file written by a newer Rerail (a floor above this release's), or
 by other software, is refused with an error and left untouched. So is a file
