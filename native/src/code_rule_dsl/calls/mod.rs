@@ -7,6 +7,7 @@
 pub(crate) mod closure;
 pub(crate) mod names;
 pub(crate) mod php;
+mod rust;
 pub(crate) mod summary;
 
 #[cfg(test)]
