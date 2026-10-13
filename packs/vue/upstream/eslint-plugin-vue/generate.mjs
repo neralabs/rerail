@@ -14,7 +14,8 @@
 // through espree with JSX on (Options API render functions).
 //
 // `fixtures` reads each rule's own RuleTester cases (`read_tests.mjs`) and keeps those this configuration
-// reproduces: a case with the rule's default options, no settings and no type information, whose findings for its
+// reproduces: a case with the rule's default options (or options `DEFAULT_EQUIVALENT_OPTIONS` lists as spelling
+// them), no settings and no type information, whose findings for its
 // rule here are exactly the upstream expectation (the number of errors of an invalid case, at the expected line and
 // column where the case gives them; none for a valid one). A case's code is written verbatim as
 // `fixtures/<rule>/<valid|invalid>-<index>.vue` when the case is a .vue file (a `.vue` filename, or none, which
@@ -34,11 +35,24 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../fixtures/vue/tools.mjs";
+import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = toolsDirectory(HERE);
 const RULES = JSON.parse(readFileSync(join(HERE, "../../conformance.json"), "utf8")).rules;
+
+/**
+ * Per upstream rule, option lists a case may carry and still be reproduced by `CONFIG`, because they spell the rule's
+ * defaults (any other non-empty options make `fixtures` refuse the case as "non-default options").
+ */
+const DEFAULT_EQUIVALENT_OPTIONS = {
+  "vue/no-duplicate-attributes": [[{ allowCoexistStyle: true }]],
+  "vue/valid-v-for": [[{ allowEmptyAlias: false }]],
+  "vue/no-v-text-v-html-on-component": [[{ ignoreElementNamespaces: false }]],
+  "vue/v-on-event-hyphenation": [["always", { autofix: true }]],
+  "vue/attribute-hyphenation": [["always"], ["always", { ignore: [] }]],
+  "vue/return-in-computed-property": [[{ treatUndefinedAsUnspecified: true }]],
+};
 const UPSTREAM_TAG = "v10.11.1";
 const UPSTREAM_COMMIT = "ec9c53a6fbed637d7b0fbcd6893b0206ae32839f";
 const ORIGIN = `https://github.com/vuejs/eslint-plugin-vue@${UPSTREAM_COMMIT}`;
@@ -107,7 +121,7 @@ function write(file, source, findings) {
 /** Why a case cannot be reproduced by `CONFIG`, or undefined. */
 function refusal(testCase, run, rule) {
   const options = testCase.options ?? [];
-  const equivalent = (rule.defaultEquivalentOptions ?? []).some(list => JSON.stringify(list) === JSON.stringify(options));
+  const equivalent = (DEFAULT_EQUIVALENT_OPTIONS[rule.upstream.rule] ?? []).some(list => JSON.stringify(list) === JSON.stringify(options));
   if (options.length > 0 && !equivalent) return "non-default options";
   if (testCase.settings !== undefined) return "settings";
   const languageOptions = { ...run.config.languageOptions, ...testCase.languageOptions };
@@ -249,7 +263,7 @@ function vueFiles(root, paths) {
 }
 
 function corpus(names) {
-  const corpora = JSON.parse(readFileSync(join(HERE, "../../../fixtures/vue/corpora.json"), "utf8"));
+  const corpora = JSON.parse(readFileSync(join(HERE, "../../../../fixtures/vue/corpora.json"), "utf8"));
   const base = corporaDirectory(HERE);
   for (const corpus of corpora) {
     if (names.length > 0 && !names.includes(corpus.name)) continue;
