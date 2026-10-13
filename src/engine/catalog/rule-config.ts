@@ -4,6 +4,7 @@
  * document as written (`BundledCatalog.sources`) and that is resolved again, as the engine resolves options.
  */
 import { ZodError } from "zod";
+import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { applyCodeRuleConfig, CodeRuleOptionError } from "../code-rule/code-rule-options.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
@@ -24,13 +25,29 @@ function reasonOf(error: unknown): string {
     const issue = error.issues[0];
     return issue === undefined ? error.message : `${issue.path.join(".")}: ${issue.message}`;
   }
+  if (error instanceof CodeRuleCompileError) return `config: the engine refuses the rule with these values: ${error.reason}`;
   throw error;
 }
 
 /**
+ * The configured document, compiled as the catalog compiles it: a value its declaration allows can still make a
+ * clause the engine refuses (a pattern option that is no valid regex). Without an engine, the schema's reading stands;
+ * the catalog cannot run the rule then either.
+ */
+function configuredRule(document: unknown): CodeRule {
+  try {
+    return storableCodeRule(document).rule;
+  } catch (error) {
+    if (error instanceof EngineUnavailableError) return codeRuleSchema.parse(document);
+    throw error;
+  }
+}
+
+/**
  * Bundled code rule `ruleId` with `config` (option name → value) set: its document as written with each value in the
- * `config` of the define declaring the option, then resolved and validated. Not ok when the rule is not a code rule
- * by Rerail, names an option the document does not declare, or a value its declaration does not allow.
+ * `config` of the define declaring the option, then resolved, validated and compiled. Not ok when the rule is not a
+ * code rule by Rerail, names an option the document does not declare, or a value its declaration or the engine does
+ * not allow.
  */
 export function configureBundledCodeRule(bundle: BundledCatalog, ruleId: string, config: RuleConfig): ConfiguredCodeRule {
   const key = `${ruleId}\0${stableJsonText(config) ?? ""}`;
@@ -46,7 +63,7 @@ export function configureBundledCodeRule(bundle: BundledCatalog, ruleId: string,
       outcome = { ok: false, reason: `config applies to code rules by Rerail; ${ruleId} is not one` };
     } else {
       try {
-        outcome = { ok: true, rule: codeRuleSchema.parse(applyCodeRuleConfig(source, { ...config })) };
+        outcome = { ok: true, rule: configuredRule(applyCodeRuleConfig(source, { ...config })) };
       } catch (error) {
         outcome = { ok: false, reason: reasonOf(error) };
       }

@@ -17,13 +17,14 @@ import {
   readBundledCatalog,
   recordCheckout,
   setUpRepository,
+  ruleSettings,
   upsertLibraryRule,
 } from "../../src/engine/index.js";
 
 const RULE = "typescript-eslint:consistent-type-definitions";
-const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
+const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript"), join(PACKAGE_ROOT, "packs", "python")]);
 
-/** The API over a machine whose bundle is the TypeScript pack, whose rules declare options. */
+/** The API over a machine whose bundle is the TypeScript and Python packs, whose rules declare options. */
 class TypeScriptPackStores extends DatabaseApiStores {
   override bundle(): BundledCatalog {
     return typescriptPack;
@@ -100,6 +101,18 @@ describe("rule settings: suppressions and config", () => {
     expect(wrongType.status).toBe(400);
     expect(wrongType.body).toMatchObject({ error: "invalid-setting", message: expect.stringMatching(/config\.option: is not a value of the option's type/u) });
     expect(await ruleView()).toMatchObject({ config: null });
+  });
+
+  // A value the option's declaration allows can still make a clause the engine refuses: F841's dummy-variable-rgx
+  // is any string, but `[` is no regex. The update is refused and the stored setting stays as it was.
+  it("refuses a config the engine cannot compile, keeping the setting before it", async () => {
+    const f841 = { kind: "rule", id: "python-conformance:ruff-f841-unused-variable" };
+    expect(await setting({ config: { "dummy-variable-rgx": "^_$" } }, f841)).toMatchObject({ status: 200 });
+    const refused = await setting({ config: { "dummy-variable-rgx": "[" } }, f841);
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({ error: "invalid-setting", message: expect.stringMatching(/config: the engine refuses the rule with these values: .*regex/u) });
+    const rows = stores.database().select().from(ruleSettings).all().filter(row => row.targetId === f841.id);
+    expect(rows.map(row => row.config)).toEqual([{ "dummy-variable-rgx": "^_$" }]);
   });
 
   it("refuses config on a pack, in a folder, and on a library rule", async () => {
