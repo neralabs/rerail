@@ -77,6 +77,8 @@ export function readEslintFlatConfig(text: string, name: string): FlatConfigRead
 
 class FlatConfigReader {
   readonly #consts = new Map<string, t.Expression>();
+  /** Consts the file may change after setting them (`#findMutations`): their initializer is not their value. */
+  readonly #mutated = new Set<string>();
   /** Local name → the module it is imported from and the name imported (`default`, `*` or the export). */
   readonly #imports = new Map<string, { readonly module: string; readonly imported: string }>();
   readonly #entries: Entry[] = [];
@@ -96,11 +98,58 @@ class FlatConfigReader {
       else if (statement.type === "ExpressionStatement") exported = moduleExports(statement.expression) ?? exported;
     }
     if (exported === undefined) throw new LintConfigFormatError("it exports no config Rerail can find (export default or module.exports)");
+    this.#findMutations();
     this.#elements(exported, { kind: "all" }, 0);
     if (this.#unread.length > 0) {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
     }
     return { entries: this.#entries, notes: this.#notes };
+  }
+
+  /**
+   * The `const`s whose value the file may change after it is set: assigned into, updated, deleted from, a method
+   * called on, or passed to a function other than a config helper, anywhere in the file (a function body included),
+   * through any other `const` that names it or that it holds. Their initializer is not their value, so they are not read.
+   */
+  #findMutations(): void {
+    const roots = new Set<string>();
+    const root = (node: t.Node): string | undefined => {
+      let current = node;
+      for (;;) {
+        if (current.type === "MemberExpression" || current.type === "OptionalMemberExpression") current = current.object;
+        else if (current.type === "TSAsExpression" || current.type === "TSSatisfiesExpression" || current.type === "TSNonNullExpression"
+          || current.type === "TSTypeAssertion" || current.type === "ParenthesizedExpression") current = current.expression;
+        else return current.type === "Identifier" ? current.name : undefined;
+      }
+    };
+    const mark = (node: t.Node): void => {
+      const name = root(node);
+      if (name !== undefined) roots.add(name);
+    };
+    walk(this.program, node => {
+      if (node.type === "AssignmentExpression") mark(node.left);
+      else if (node.type === "UpdateExpression") mark(node.argument);
+      else if (node.type === "UnaryExpression" && node.operator === "delete") mark(node.argument);
+      else if (node.type === "CallExpression" || node.type === "OptionalCallExpression" || node.type === "NewExpression") {
+        if (node.callee.type === "MemberExpression" || node.callee.type === "OptionalMemberExpression") mark(node.callee.object);
+        if (!this.#isConfigHelper(node.callee)) for (const argument of node.arguments) mark(argument.type === "SpreadElement" ? argument.argument : argument);
+      }
+    });
+    // A const that names another, or is named by one, may share objects with it: changing one may change the other.
+    const linked = new Map<string, Set<string>>([...this.#consts.keys()].map(name => [name, new Set<string>()]));
+    for (const [name, init] of this.#consts) {
+      walk(init, inner => {
+        if (inner.type !== "Identifier" || !this.#consts.has(inner.name) || inner.name === name) return;
+        linked.get(name)!.add(inner.name);
+        linked.get(inner.name)!.add(name);
+      });
+    }
+    const queue = [...roots].filter(name => this.#consts.has(name));
+    for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
+      if (this.#mutated.has(name)) continue;
+      this.#mutated.add(name);
+      queue.push(...linked.get(name)!);
+    }
   }
 
   #import(statement: t.ImportDeclaration): void {
@@ -134,7 +183,7 @@ class FlatConfigReader {
       if (current.type === "TSAsExpression" || current.type === "TSSatisfiesExpression" || current.type === "TSNonNullExpression"
         || current.type === "TSTypeAssertion" || current.type === "ParenthesizedExpression") {
         current = current.expression;
-      } else if (current.type === "Identifier" && this.#consts.has(current.name)) {
+      } else if (current.type === "Identifier" && this.#consts.has(current.name) && !this.#mutated.has(current.name)) {
         current = this.#consts.get(current.name)!;
       } else {
         return current;
@@ -190,7 +239,10 @@ class FlatConfigReader {
     return false;
   }
 
-  /** A config object's properties by name; undefined where a spread or computed key hides which they are. */
+  /**
+   * A config object's properties by name; undefined where a spread, a computed key or a method (a getter could return
+   * anything) hides what they are.
+   */
   #properties(object: t.ObjectExpression, depth: number): Map<string, t.Expression> | undefined {
     const properties = new Map<string, t.Expression>();
     for (const property of object.properties) {
@@ -201,10 +253,10 @@ class FlatConfigReader {
         for (const [name, value] of inner) properties.set(name, value);
         continue;
       }
-      const name = property.type === "ObjectProperty" || property.type === "ObjectMethod" ? propertyName(property) : undefined;
+      if (property.type !== "ObjectProperty" || !isExpression(property.value)) return undefined;
+      const name = propertyName(property);
       if (name === undefined) return undefined;
-      if (property.type === "ObjectProperty" && isExpression(property.value)) properties.set(name, property.value);
-      else properties.delete(name);
+      properties.set(name, property.value);
     }
     return properties;
   }
@@ -337,6 +389,27 @@ class FlatConfigReader {
       }
       default:
         return unread();
+    }
+  }
+}
+
+const NOT_CHILDREN = new Set(["loc", "extra", "leadingComments", "trailingComments", "innerComments", "comments", "tokens"]);
+
+const isNode = (value: unknown): value is t.Node =>
+  typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
+
+/** Calls `visit` on `node` and every node under it, without Babel's runtime: by each property holding nodes. */
+function walk(node: t.Node, visit: (node: t.Node) => void): void {
+  const pending: t.Node[] = [node];
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    visit(current);
+    for (const [key, value] of Object.entries(current)) {
+      if (NOT_CHILDREN.has(key)) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) if (isNode(item)) pending.push(item);
+      } else if (isNode(value)) {
+        pending.push(value);
+      }
     }
   }
 }

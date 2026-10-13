@@ -582,4 +582,41 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     expect((await flat(`${shared}export default [{ rules: { ...shared.rules, "no-console": "off" } }];`, ["javascript"])).settings)
       .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
+
+  // Self-review round 2, each checked against ESLint 9.39.1 --print-config on the same config.
+  it("keeps an entry a later unread element may replace unused through a severity alone after it", async () => {
+    const shared = "import shared from \"./shared.js\";\n";
+    expect((await flat(`${shared}export default [{ rules: { "no-console": ["error", { allow: ["log"] }] } }, shared, { rules: { "no-console": ["warn"] } }];`, ["javascript"])).settings).toEqual([]);
+    // A full replacement after it is read again.
+    expect((await flat(`${shared}export default [{ rules: { "no-console": "off" } }, shared, { rules: { "no-console": ["warn", { allow: ["info"] }] } }];`, ["javascript"])).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["info"] } }]);
+  });
+
+  it("does not turn a port off for an unread value that a later unread element may replace", async () => {
+    expect(await flat("import shared from \"./shared.js\";\nexport default [{ rules: { \"no-console\": shared.rules[\"no-console\"] } }, shared];", ["javascript"])).toEqual({
+      settings: [],
+      notes: [
+        "eslint.config.ts: the rules of shared are not read: Rerail does not run code to find them.",
+        "eslint-no-console: eslint.config.ts: \"no-console\" is not read (it is shared.rules[\"no-console\"], which Rerail does not run) and is not used: shared, after it, is not read and may replace it.",
+      ],
+    });
+  });
+
+  it("reads a config object with a getter as one it cannot read, never calling the getter", async () => {
+    const text = "export default [{ rules: { \"no-console\": \"off\" } }, { get rules() { throw new Error(\"ran\"); } }];";
+    expect((await flat(text, ["javascript"], "eslint.config.js")).settings).toEqual([]);
+  });
+
+  it("does not read a const the file changes after setting it, however it does", async () => {
+    for (const text of [
+      "const rules = { \"no-console\": \"off\" };\nrules[\"no-console\"] = \"error\";\nexport default [{ rules }];",
+      "const config = [{ rules: { \"no-console\": \"off\" } }];\nconfig.push({ rules: { \"no-console\": \"error\" } });\nexport default config;",
+      "const rules = { \"no-console\": \"off\" };\nconst base = { rules };\nfunction tweak(r) { r.rules[\"no-console\"] = \"error\"; }\ntweak(base);\nexport default [{ rules }];",
+    ]) {
+      expect((await flat(text, ["javascript"], "eslint.config.js")).settings).toEqual([]);
+    }
+    // A const nothing changes is read.
+    expect((await flat("const rules = { \"no-console\": \"off\" };\nexport default [{ rules }];", ["javascript"], "eslint.config.js")).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
 });

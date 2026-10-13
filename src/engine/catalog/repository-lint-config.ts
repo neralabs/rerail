@@ -181,10 +181,16 @@ export interface LintConfigRules {
   readonly rules: Readonly<Record<string, unknown>>;
   /** A flat config's entries limited to some files; none for other configs. */
   readonly scoped: readonly ScopedRule[];
-  /** A flat config's rule keys whose value cannot be read without running the config, with why. */
-  readonly unresolved: ReadonlyMap<string, string>;
+  /** A flat config's rule keys whose value cannot be read without running the config: why, and what may replace it. */
+  readonly unresolved: ReadonlyMap<string, UnreadEntry>;
   /** Rule keys of `rules` that something after them Rerail does not read may replace, with what. */
   readonly shadowed: ReadonlyMap<string, string>;
+}
+
+/** A flat config entry Rerail cannot read: why, and what after it Rerail does not read either and may replace it. */
+export interface UnreadEntry {
+  readonly why: string;
+  readonly shadowedBy?: string;
 }
 
 /** A Ruff selector in one of the rule selection options, with the file and key path that hold it. */
@@ -354,40 +360,46 @@ function withEarlierOptions(earlier: unknown, later: unknown): unknown {
 /**
  * A flat config's entries as ESLint applies them, in order: a later entry every file gets replaces the earlier ones
  * (keeping their options when it sets only a severity), and the entries limited to some files that come after it are
- * kept apart. An entry Rerail cannot read stands for its rule until a later entry for every file replaces it.
+ * kept apart. An entry Rerail cannot read stands for its rule until a later entry for every file replaces it. What a
+ * later unread element may replace stays so through a severity alone, which keeps whatever options it set.
  */
 function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
   const rules: Record<string, unknown> = {};
-  const unresolved = new Map<string, string>();
+  const unresolved = new Map<string, UnreadEntry>();
   const shadowed = new Map<string, string>();
-  const scopedUnresolved = new Map<string, string>();
+  const scopedUnresolved = new Map<string, UnreadEntry>();
+  const unread = (why: string, by: string | undefined): UnreadEntry => (by === undefined ? { why } : { why, shadowedBy: by });
   let scoped: ScopedRule[] = [];
   for (const { key, scope, value, shadowedBy } of read.entries) {
     if (scope.kind !== "all") {
       if (value.ok) {
         scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files, ...(shadowedBy === undefined ? {} : { shadowedBy }) });
       } else if (!scopedUnresolved.has(key)) {
-        scopedUnresolved.set(key, `${value.why} (for ${scope.files})`);
+        scopedUnresolved.set(key, unread(`${value.why} (for ${scope.files})`, shadowedBy));
       }
       continue;
     }
     scoped = scoped.filter(entry => entry.key !== key);
     scopedUnresolved.delete(key);
-    // Only a value that replaces the earlier one entirely stands in for an unread one: an "off", or a severity with options.
-    const replaces = value.ok && (!severityAlone(value.value) || severityOf(value.value, "eslint")?.off === true);
+    // A severity alone keeps the earlier options; an "off" or a severity with options replaces them.
+    const alone = value.ok && severityAlone(value.value) && severityOf(value.value, "eslint")?.off !== true;
+    const earlier = unresolved.get(key);
     if (!value.ok) {
-      unresolved.set(key, value.why);
+      unresolved.set(key, unread(value.why, shadowedBy));
       delete rules[key];
-    } else if (unresolved.has(key) && !replaces) {
+      shadowed.delete(key);
+    } else if (earlier !== undefined && alone) {
       // Rerail cannot tell the options a severity keeps.
+      unresolved.set(key, unread(earlier.why, shadowedBy ?? earlier.shadowedBy));
     } else {
       unresolved.delete(key);
+      const by = shadowedBy ?? (alone ? shadowed.get(key) : undefined);
       Object.defineProperty(rules, key, { value: withEarlierOptions(rules[key], value.value), enumerable: true, writable: true, configurable: true });
+      if (by === undefined) shadowed.delete(key);
+      else shadowed.set(key, by);
     }
-    if (shadowedBy === undefined) shadowed.delete(key);
-    else shadowed.set(key, shadowedBy);
   }
-  for (const [key, why] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, why);
+  for (const [key, entry] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, entry);
   return { file, rules, scoped, unresolved, shadowed };
 }
 
@@ -781,15 +793,18 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
   for (const [ruleId, port] of ports) {
     for (const key of new Set(port.eslint)) {
       if (eslint === undefined) break;
-      const why = eslint.unresolved.get(key);
-      if (why !== undefined) {
-        // The repository sets the rule, to what Rerail cannot tell without running the config.
-        add(ruleId, { off: true, because: `${eslint.file}: ${JSON.stringify(key)} is not read (${why})` });
+      const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
+      const unreadEntry = eslint.unresolved.get(key);
+      if (unreadEntry !== undefined) {
+        const because = `${eslint.file}: ${JSON.stringify(key)} is not read (${unreadEntry.why})`;
+        // The repository sets the rule, to what Rerail cannot tell without running the config; unless something after
+        // it that Rerail cannot read either may replace it, in which case it is not used at all.
+        if (unreadEntry.shadowedBy === undefined) add(ruleId, { off: true, because });
+        else notes.push(`${ruleId}: ${because} and is not used: ${replacedBy(unreadEntry.shadowedBy)}.`);
         continue;
       }
       const later = eslint.scoped.filter(entry => entry.key === key);
       const global = Object.hasOwn(eslint.rules, key);
-      const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
       if (global) {
         const value = eslint.rules[key];
         const because = entryText(eslint.file, key, value);
