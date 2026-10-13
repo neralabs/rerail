@@ -113,8 +113,10 @@ function chainLinks({ modifiers, conditions, terminals, alone }) {
   return chains;
 }
 
-/** A member access between links, line breaks and spaces aside (upstream reads the chain's accessors, not its text). */
-const SEP = "\\s*\\.\\s*";
+/** Spaces, line breaks and comments, which upstream's accessors never see. */
+const TRIVIA = "(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*";
+/** A member access between links (upstream reads the chain's accessors, not its text). */
+const SEP = `${TRIVIA}\\.${TRIVIA}`;
 /** A head: any identifier, since an import or `.extend` may rename the function (`import { test as check }`). */
 const HEAD = "[\\w$]+";
 
@@ -126,23 +128,49 @@ function linksPattern(chains) {
     if (first === undefined) end = true;
     else tree.set(first, [...(tree.get(first) ?? []), rest]);
   }
-  const branches = [...tree].sort(([a], [b]) => (a < b ? -1 : 1)).map(([link, rests]) => `${SEP}${link}${linksPattern(rests)}`);
+  const branches = [...tree].sort(([a], [b]) => (a < b ? -1 : 1)).map(([link, rests]) => `${link}${linksPattern(rests)}`);
   if (branches.length === 0) return "";
-  return `(?:${branches.join("|")})${end ? "?" : ""}`;
+  return `(?:${SEP}(?:${branches.join("|")}))${end ? "?" : ""}`;
 }
 
 /**
  * The links a callee may carry after its head: `keep` over a valid chain's links; `free`, the pattern for a head whose
- * chain upstream does not check (a test context, `vi`, `vitest`); and `expect`, the pattern after `expect` or
- * `expectTypeOf`, whose links upstream reads as modifiers then a matcher (none where the spec leaves it out).
+ * chain upstream does not check (a test context, `vi`, `vitest`); and `expect`/`expectTypeOf`, the pattern after that
+ * function, whose links upstream reads as modifiers before a matcher (absent where a spec leaves it out).
  */
 const ANY_LINKS = { keep: () => true, free: `(?:${SEP}${HEAD})*` };
 const NO_LINKS = { keep: links => links.length === 0, free: "" };
+
+/** Chai's chainable properties upstream reads as language chains before an `expect` matcher (parseExpectCallExpression). */
+const CHAI_CHAINS = [
+  ...["also", "and", "at", "be", "been", "but", "does", "has", "have", "is", "itself", "of", "same", "still", "that", "to", "which", "with"],
+  ...["all", "any", "deep", "nested", "ordered", "own"],
+  ...["a", "an", "contain", "contains", "include", "includes", "length", "lengthOf", "respondTo"],
+];
+/** expectTypeOf's modifiers besides `not` (expectTypeOfModifiers). */
+const EXPECT_TYPE_OF_MODIFIERS = ["resolves", "returns", "branded", "asserts", "constructorParameters", "parameters", "thisParameter", "guards", "instance", "items"];
+
+/**
+ * `expect.<links>.<matcher>`: language chains anywhere, at most one `not` and one of `resolves`/`rejects`
+ * (hasInvalidExpectChain), an uncalled `assert` first. `expectTypeOf.<links>.<matcher>`: its modifiers, one `not`.
+ */
+function expectPatterns(matcher) {
+  const chains = `(?:${SEP}(?:${CHAI_CHAINS.join("|")}))*`;
+  const promise = `${SEP}(?:resolves|rejects)`;
+  const not = `${SEP}not`;
+  const orders = ["", `${not}${chains}`, `${promise}${chains}`, `${not}${chains}${promise}${chains}`, `${promise}${chains}${not}${chains}`];
+  const modifiers = `(?:${SEP}(?:${EXPECT_TYPE_OF_MODIFIERS.join("|")}))*`;
+  return {
+    expect: `(?:${SEP}assert)?${chains}(?:${orders.join("|")})${SEP}${matcher}`,
+    expectTypeOf: `${modifiers}(?:${not}${modifiers})?${SEP}${matcher}`,
+  };
+}
+
 const including = member => ({
   keep: links => links.includes(member),
   free: `(?:${SEP}${HEAD})*${SEP}${member}(?:${SEP}${HEAD})*`,
-  // `expect.skip()`, `expect.not.skip()`: the member is the matcher, after `not`/`resolves`/`rejects` modifiers.
-  expect: `(?:${SEP}(?:not|resolves|rejects))*${SEP}${member}`,
+  // `expect.skip()`, `expect.not.skip()`: for `expect`, the member is the matcher.
+  ...expectPatterns(member),
 });
 const among = allowed => ({ keep: links => links.every(link => allowed.includes(link)), free: `(?:${SEP}(?:${allowed.join("|")}))*` });
 /** A table call (`.each`/`.for`) the test is made by: `it.each([...])('x', fn)`, `it.only.for([...])('x', fn)`. */
@@ -257,8 +285,9 @@ function vitestCallee(utils, names, links) {
   }
   const unchecked = names.filter(name => UNCHECKED.includes(name));
   if (unchecked.length > 0) any.push({ regex: `^${HEAD}${links.free}$`, matches: namedCallee(utils, unchecked) });
-  const expects = names.filter(name => EXPECTS.includes(name));
-  if (expects.length > 0 && links.expect !== undefined) any.push({ regex: `^${HEAD}${links.expect}$`, matches: namedCallee(utils, expects) });
+  for (const name of names.filter(name => EXPECTS.includes(name))) {
+    if (links[name] !== undefined) any.push({ regex: `^${HEAD}${links[name]}$`, matches: namedCallee(utils, [name]) });
+  }
   any.push({ regex: `^${HEAD}${links.free}$`, matches: contextCallee(utils, names) });
   return { any };
 }
@@ -457,6 +486,17 @@ function withDefine(build, modifiers = []) {
 const violation = (rule, message, anchor = "witness.span") => ({ anchor, code: `vitest/${rule}`, message, suppress: { eslint: { rules: [`vitest/${rule}`] } } });
 const ast = rule => ({ ast: { language: "typescript", rule } });
 
+/**
+ * An assertion call as expect-expect's default `assertFunctionNames` read it (`expect`, `assert`, case-insensitive): a
+ * call whose name (getNodeName: the chain through members and calls, parentheses aside) starts with one of them. A
+ * tagged template (`` expect`x` ``) is no call upstream, though the grammar reads it as one.
+ */
+function assertionCall(utils) {
+  utils["vitest-assertion-name"] = { kind: "identifier", regex: "(?i)^(?:expect|assert)$" };
+  utils["vitest-assertion-callee"] = chain("vitest-assertion-callee", "vitest-assertion-name");
+  return { kind: "call_expression", has: { field: "function", matches: "vitest-assertion-callee" }, not: { has: { field: "arguments", kind: "template_string" } } };
+}
+
 const DOCUMENTS = {
   "vitest-expect-expect": {
     mode: "steer",
@@ -487,7 +527,7 @@ const DOCUMENTS = {
                 field: "arguments",
                 not: {
                   any: [
-                    { has: { stopBy: "end", kind: "call_expression", has: { field: "function", regex: "^(?:expect|assert)\\b" } } },
+                    { has: { stopBy: "end", ...assertionCall(utils) } },
                     {
                       has: {
                         kind: "identifier",
@@ -495,7 +535,7 @@ const DOCUMENTS = {
                           binding: {
                             site: {
                               kind: "function_declaration",
-                              has: { stopBy: "end", kind: "call_expression", has: { field: "function", regex: "^(?:expect|assert)\\b" } },
+                              has: { stopBy: "end", ...assertionCall(utils) },
                             },
                           },
                         },

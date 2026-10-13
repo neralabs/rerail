@@ -43,6 +43,7 @@
    "expect-expect/031.test.ts",
    "expect-expect/032.test.ts",
    "expect-expect/033.test.ts",
+   "expect-expect/rerail-assertion-names.test.ts",
    "expect-expect/rerail-ava.test.ts",
    "expect-expect/rerail-test-without-callback.test.ts",
    "expect-expect/rerail-vitest-extend.test.ts",
@@ -81,6 +82,7 @@
    "no-disabled-tests/032.test.ts",
    "no-disabled-tests/033.test.ts",
    "no-disabled-tests/034.test.ts",
+   "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
    "no-disabled-tests/rerail-unchecked-heads.test.ts",
    "no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts",
    "no-disabled-tests/rerail-vitest-alias.test.ts",
@@ -111,6 +113,7 @@
    "no-focused-tests/019.test.ts",
    "no-focused-tests/020.test.ts",
    "no-focused-tests/rerail-bun-test.test.ts",
+   "no-focused-tests/rerail-comment-between-links.test.ts",
    "no-focused-tests/rerail-global-extend.test.ts",
    "no-focused-tests/rerail-invalid-chains.test.ts",
    "no-focused-tests/rerail-local-binding.test.ts",
@@ -241,6 +244,12 @@
    "path": "expect-expect/033.test.ts",
    "line": 14,
    "column": 6
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-assertion-names.test.ts",
+   "line": 5,
+   "column": 1
   },
   {
    "rule": "vitest/expect-expect",
@@ -712,6 +721,24 @@
   },
   {
    "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 4,
+   "column": 14
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 5,
+   "column": 26
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
    "path": "no-disabled-tests/rerail-unchecked-heads.test.ts",
    "line": 1,
    "column": 4
@@ -905,6 +932,12 @@
   {
    "rule": "vitest/no-focused-tests",
    "path": "no-focused-tests/020.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-comment-between-links.test.ts",
    "line": 1,
    "column": 4
   },
