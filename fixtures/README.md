@@ -43,7 +43,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `{python,php,rust}/literal/` | `literal` | format strings, doc comments and literals |
 | `{ecma,python,php,rust,sql}/suppress/` | `suppress` | suppression comments |
 | `{ecma,python}/matcher/ast-grep/` | `matcher` | relational rules, `field`, `nthChild`, `stopBy`, `utils` against ast-grep (`test/code-rule-dsl-upstream-differential.test.ts`) |
-| `php/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`) |
+| `{php,sql}/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`; SQL's, PostgreSQL's binding, `matcher/arguments_sql.rs`) |
 | `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
 | `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |

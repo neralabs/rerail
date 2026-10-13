@@ -23,7 +23,7 @@ import sys
 from importlib.metadata import version as dist_version
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parents[1]))
 import common  # noqa: E402
 import reference  # noqa: E402
 from pglast import parser as pg  # noqa: E402
