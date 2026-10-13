@@ -4,6 +4,9 @@
 plugin's own findings on the plugin's rule tests, through the engine's production workspace path; no disagreement is
 declared today, so the pack has no `divergences.json`.
 
+The plugin has 22 rules: the 17 here, 4 candidates (`candidates/rules/`), and `no-html-link-for-pages`, which is
+[out of scope](#out-of-scope-no-html-link-for-pages).
+
 The pack follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack next"`.
 
@@ -35,3 +38,21 @@ Scoring one rule, shipped or candidate, with every false positive and false nega
 ```sh
 node --import tsx conformance/languages/cli.ts --pack next --rule next-no-img-element --fixtures
 ```
+
+## Out of scope: `no-html-link-for-pages`
+
+The plugin's rule, on in its `recommended` config, reports an `<a>` whose `href` is the URL of one of the app's own
+pages. It finds the pages when ESLint starts: it lists every `.js`, `.jsx`, `.ts` and `.tsx` file under `pages/`,
+`src/pages/`, `app/` and `src/app/` (relative to the working directory, or to `settings.next.rootDir`) and turns each
+into a URL pattern, where `index` is its directory and a `[param]` segment matches any segment. It then reports each
+`<a>` whose literal `href`, not absolute and without `target="_blank"` or `download`, matches one of the patterns.
+
+Rerail's code rules cannot express this. The engine does read every file of the workspace, but a clause reports a
+witness for what its own file holds (`forbid`), for a correlated file that is missing (`require_each`), or for a query
+that matches anywhere in the workspace, correlated with nothing (`select_when`). No form reports a witness because a
+file matching one of its captures exists, which is the polarity this rule needs. Two smaller gaps sit behind it: an
+evidence relation projects a file's path in pieces, never as a URL, and its `where` compares projected fields only
+for equality, so a `[param]` route could not match.
+
+The rule can be ported once the engine has a clause that reports a subject with matching evidence, and a comparison of
+a captured `href` with a route pattern.

@@ -60,7 +60,10 @@ const CORPUS_COMMITS = {
   commerce: "3761e52e60df9c6a316e067dbfd7032e494d3634",
 };
 
-/** The chosen rules (plugin rule names); every one is recorded on every fixture and corpus file. */
+/**
+ * The chosen rules (plugin rule names); every one is recorded on every fixture and corpus file. The plugin's 22nd rule,
+ * no-html-link-for-pages, is out of scope: the pack README says why.
+ */
 export const RULES = [
   "google-font-display",
   "google-font-preconnect",
