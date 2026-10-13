@@ -61,7 +61,8 @@ export type { CodeRuleAstLanguage };
  * relation exists in the workspace capabilities, or a pattern fits the
  * capabilities' `maxAstPatternBytes` / `maxRegexPatternBytes` limits, and on
  * what a rule's language lacks: every write compiles in the engine
- * (`validateCodeRule`). Anything this schema rejects, the engine rejects too.
+ * (`validateCodeRule`), and every stored row read does (`readStoredCodeRule`).
+ * Anything this schema rejects, the engine rejects too.
  */
 
 export const CODE_RULE_FORMAT = "rerail.policy/v1" as const;
