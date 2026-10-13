@@ -233,7 +233,7 @@ impl CallRules for Php {
     ) {
         let text = name.text();
         key(if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
-            Name::new(Family::Php, &text.to_ascii_lowercase())
+            Name::new(name.family(), &text.to_ascii_lowercase())
         } else {
             name.clone()
         });
@@ -435,7 +435,7 @@ pub(super) mod kit {
                 .expect("restores"),
         );
         let root = doc.root();
-        let read = A::regions(&root)
+        let read = A::regions(&root, dialect)
             .flat_map(|region| {
                 let summary = <C<A> as CallRules>::summary(&region.root, "kit", None, None, false);
                 summary

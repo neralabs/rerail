@@ -8,6 +8,7 @@ use super::php;
 use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -138,7 +139,7 @@ impl Contribution {
                 .and_then(|(module, alternate)| {
                     let rest = name.text().strip_prefix(module.text())?;
                     (rest.is_empty() || rest.starts_with('.'))
-                        .then(|| Name::new(Family::Php, &format!("{alternate}{rest}")))
+                        .then(|| Name::new(name.family(), &format!("{alternate}{rest}")))
                 });
             std::iter::once(name.clone()).chain(renamed)
         };
@@ -187,7 +188,8 @@ impl Contribution {
             .iter()
             .map(|star| summary.interned(*star).clone())
             .collect::<Arc<[_]>>();
-        let alternate = alternate.map(|alternate| Name::new(Family::Php, &alternate));
+        // A path's module name (`path_module`) is Python's.
+        let alternate = alternate.map(|alternate| Name::new(Family::Python, &alternate));
         for name in module.cloned().into_iter().chain(alternate) {
             contribution
                 .modules
@@ -404,7 +406,7 @@ struct ClassMemo {
     followed: Box<[Name]>,
     /// Names a lookup through a star import found no one had named: once one is, the lookup
     /// may find it.
-    missing: Box<[Box<str>]>,
+    missing: Box<[(Family, Box<str>)]>,
 }
 
 type Staged = (Arc<str>, u32, Option<Arc<Summary>>, Option<Arc<Summary>>);
@@ -1370,11 +1372,11 @@ impl Graph {
     pub(crate) fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         let text = name.text();
         if let Some(base) = text.strip_suffix('^') {
-            return self.link_late(&Name::new(Family::Php, base), hops, followed);
+            return self.link_late(&Name::new(name.family(), base), hops, followed);
         }
         if let Some((namespaced, global)) = text.split_once('|') {
             for candidate in [namespaced, global] {
-                let candidate = Name::new(Family::Php, candidate);
+                let candidate = Name::new(name.family(), candidate);
                 let link = self.link_name(&candidate, hops + 1, followed);
                 followed.push(candidate);
                 if link.open || !link.defs.is_empty() {
@@ -1409,12 +1411,16 @@ impl Graph {
                 .filter(move |(_, (_, of))| *of == kind)
                 .map(|(_, (target, _))| target)
         };
-        let member = |class: &Name| Name::new(Family::Php, &format!("{}.{method}", class.text()));
+        let member =
+            |class: &Name| Name::new(class.family(), &format!("{}.{method}", class.text()));
         // Trait adaptations: `T::m as n`, `m as n`.
         let mut names = supers(name, php::ALIAS).cloned().collect::<Vec<_>>();
         for aliased in supers(name, php::ALIAS_TRAITS) {
             names.extend(supers(class, php::TRAIT).map(|used| {
-                Name::new(Family::Php, &format!("{}.{}", used.text(), aliased.text()))
+                Name::new(
+                    used.family(),
+                    &format!("{}.{}", used.text(), aliased.text()),
+                )
             }));
         }
         let excluded = supers(name, php::EXCLUDE).collect::<Vec<_>>();
@@ -1484,7 +1490,7 @@ impl Graph {
                 if !seen.insert(child.clone()) {
                     continue;
                 }
-                let name = Name::new(Family::Php, &format!("{}{suffix}", child.text()));
+                let name = Name::new(child.family(), &format!("{}{suffix}", child.text()));
                 let found = self.link_name(&name, hops + 1, followed);
                 followed.push(name);
                 link.defs.extend(found.defs);
@@ -1561,7 +1567,9 @@ impl Graph {
                 let targets = entries
                     .iter()
                     .filter(|(_, target)| target != prefix)
-                    .map(|(_, target)| Name::new(Family::Php, &format!("{}{rest}", target.text())))
+                    .map(|(_, target)| {
+                        Name::new(target.family(), &format!("{}{rest}", target.text()))
+                    })
                     .collect::<Vec<_>>();
                 if !targets.is_empty() {
                     return self.union(targets, hops, followed);
@@ -1586,7 +1594,7 @@ impl Graph {
                 let stars = entries
                     .iter()
                     .flat_map(|(_, (stars, _))| stars.iter())
-                    .map(|star| Name::new(Family::Php, &format!("{}{rest}", star.text())))
+                    .map(|star| Name::new(star.family(), &format!("{}{rest}", star.text())))
                     .collect::<Vec<_>>();
                 let starred = !stars.is_empty();
                 let mut link = self.union(stars, hops, followed);
@@ -1672,7 +1680,7 @@ impl Graph {
         for orphan in &self.orphans {
             followed.push(orphan.clone());
             link.open |= methods.iter().any(|method| {
-                Name::get(Family::Php, &format!("{}.{method}", orphan.text())).is_some_and(
+                Name::get(orphan.family(), &format!("{}.{method}", orphan.text())).is_some_and(
                     |member| {
                         self.by_name.contains_key(&member)
                             || self.aliases.contains_key(&member)
@@ -1753,7 +1761,7 @@ impl Graph {
             match entry {
                 Mro::Workspace(class) => {
                     let Some(member) =
-                        Name::get(Family::Php, &format!("{}.{attribute}", class.text()))
+                        Name::get(class.family(), &format!("{}.{attribute}", class.text()))
                     else {
                         continue;
                     };
@@ -1817,7 +1825,7 @@ impl Graph {
         name: &Name,
         hops: u32,
         followed: &mut Vec<Name>,
-        missing: &mut Vec<Box<str>>,
+        missing: &mut Vec<(Family, Box<str>)>,
     ) -> Option<Mro> {
         if hops > MAX_HOPS {
             return None;
@@ -1847,7 +1855,7 @@ impl Graph {
             if let Some(entries) = self.aliases.get(prefix)
                 && let Some(target) = only(entries).filter(|target| target != prefix)
             {
-                let renamed = Name::new(Family::Php, &format!("{}{rest}", target.text()));
+                let renamed = Name::new(target.family(), &format!("{}{rest}", target.text()));
                 return self.class_noting(&renamed, hops + 1, followed, missing);
             }
             if self.by_name.contains_key(prefix) || self.opaque.contains_key(prefix) {
@@ -1860,8 +1868,8 @@ impl Graph {
                     .flat_map(|(_, (stars, _))| stars.iter())
                     .find_map(|star| {
                         let text = format!("{}{rest}", star.text());
-                        let Some(starred) = Name::get(Family::Php, &text) else {
-                            missing.push(text.into_boxed_str());
+                        let Some(starred) = Name::get(star.family(), &text) else {
+                            missing.push((star.family(), text.into_boxed_str()));
                             return None;
                         };
                         match self.class_noting(&starred, hops + 1, followed, missing)? {
@@ -1909,7 +1917,7 @@ impl Graph {
                             || memo
                                 .missing
                                 .iter()
-                                .any(|text| Name::get(Family::Php, text).is_some())
+                                .any(|(family, text)| Name::get(*family, text).is_some())
                     })
                     .map(|(class, _)| class.clone())
                     .collect::<HashSet<_>>();
@@ -2226,9 +2234,8 @@ impl Graph {
     }
 
     #[cfg(test)]
-    pub(crate) fn link_is_open(&self, name: &str) -> bool {
-        self.link_name(&Name::new(Family::Php, name), 0, &mut Vec::new())
-            .open
+    pub(crate) fn link_is_open(&self, name: &Name) -> bool {
+        self.link_name(name, 0, &mut Vec::new()).open
     }
 
     /// Whether `from` calls `to`.

@@ -3,13 +3,12 @@
 //! graph walks prefixes without building strings. A name nothing else holds is dropped when the
 //! table has doubled since it was last swept.
 
-use foldhash::{HashMap, HashMapExt, HashSet};
+use crate::code_rule_dsl::language::Family;
+use foldhash::{HashMap, HashSet};
 use parking_lot::RwLock;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
-
-use crate::code_rule_dsl::language::Family;
 
 struct Entry {
     family: Family,

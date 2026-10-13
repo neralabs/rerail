@@ -1552,9 +1552,9 @@ fn corpus() {
     let mut open_names = std::collections::HashMap::<String, usize>::new();
     for (_, summary) in &files {
         for name in &summary.targets {
-            let name = summary.name(*name);
+            let name = summary.interned(*name);
             if graph.link_is_open(name) {
-                *open_names.entry(name.to_owned()).or_default() += 1;
+                *open_names.entry(name.text().to_owned()).or_default() += 1;
             }
         }
     }
@@ -1669,6 +1669,9 @@ fn a_utility_may_hold_calls_but_no_seed_may_reach_one() {
     assert!(rejection(nested).contains("cannot contain calls"));
 }
 
+/// A summary's persisted bytes hold its names' text alone, as they did before names carried
+/// their family: Python and PHP summaries already stored decode unchanged, given the family of
+/// the file they summarize.
 #[test]
 fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
     let summary = |family, text| Summary {
@@ -1687,20 +1690,16 @@ fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
     };
     let python = summary(Family::Python, "pkg.f");
     let php = summary(Family::Php, r"\App\f");
-    let python_bytes: Vec<u8> = [
-        9, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, b'p', b'k', b'g',
-        b'.', b'f',
-    ]
-    .into_iter()
-    .chain([0; 28])
-    .collect();
-    let php_bytes: Vec<u8> = [
-        9, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 1, 0, 0, 0, 6, 0, 0, 0, b'\\', b'A', b'p',
-        b'p', b'\\', b'f',
-    ]
-    .into_iter()
-    .chain([0; 28])
-    .collect();
+    // Extractor version 9, no module, one name, its length and text, then empty tables.
+    let bytes = |text: &[u8]| -> Vec<u8> {
+        [9, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+            .into_iter()
+            .chain(u32::try_from(text.len()).unwrap().to_le_bytes())
+            .chain(text.iter().copied())
+            .chain([0; 28])
+            .collect()
+    };
+    let (python_bytes, php_bytes) = (bytes(b"pkg.f"), bytes(br"\App\f"));
     assert_eq!(python.encode(), python_bytes);
     assert_eq!(php.encode(), php_bytes);
     assert_eq!(
