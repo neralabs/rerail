@@ -204,7 +204,7 @@ fn malformed_resolves_are_rejected() {
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "import": ["os..path"] } } }),
-            "/clauses/0/forbid/ast/rule/resolves/import/0: `os..path` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/import/0: `os..path` is not a dotted name (identifiers joined by `.`), a Rust path (identifiers joined by `::`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
         ),
         (
             json!({ "rule": { "kind": "identifier", "resolves": { "import": ["os"], "directives": "eslint" } } }),
@@ -412,6 +412,107 @@ subprocess.run(l)
             "22:time.sleep",
         ],
         "{result}"
+    );
+}
+
+#[test]
+fn import_matches_rust_paths_through_use_declarations() {
+    let rule = compile(
+        "rust",
+        json!({ "rule": {
+            "any": [{ "kind": "identifier" }, { "kind": "scoped_identifier" }],
+            "resolves": { "import": ["std::process::exit", "crate::a::helper", "regex::Regex"] },
+        } }),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let source = "\
+use std::process;
+use std::process::exit;
+use std::process::exit as quit;
+use self::inner::helper as near;
+use super::a::helper as far;
+use crate::a::helper;
+extern crate regex as re;
+mod inner {
+    pub fn helper() {}
+}
+fn main() {
+    std::process::exit(1);
+    ::std::process::exit(2);
+    process::exit(3);
+    exit(4);
+    quit(5);
+    near();
+    far();
+    helper();
+    crate::a::helper();
+    re::Regex::new(\"\");
+    std::process::abort();
+    let exit = 6;
+    exit;
+    other::exit(7);
+}
+";
+    // `src/a/b.rs` is the module `crate::a::b`: `self::inner` is `crate::a::b::inner`, and
+    // `super::a` names `crate::a::a`; neither is listed.
+    let result = evaluate_file(&rule, "rust", "src/a/b.rs", source);
+    assert_eq!(
+        found(&result, source),
+        [
+            "12:std::process::exit",
+            "13:::std::process::exit",
+            "14:process::exit",
+            "15:exit",
+            "16:quit",
+            "19:helper",
+            "20:crate::a::helper",
+            "21:re::Regex",
+        ],
+        "{result}"
+    );
+    let rule = compile(
+        "rust",
+        json!({ "rule": {
+            "kind": "identifier",
+            "resolves": { "import": ["crate::a::b::inner::helper", "crate::a::a::helper"] },
+        } }),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&rule, "rust", "src/a/b.rs", source);
+    assert_eq!(found(&result, source), ["17:near", "18:far"], "{result}");
+    // A file outside a crate's `src/` is a crate root of its own: `self::inner` is
+    // `crate::inner`, and it has no `super`.
+    let result = evaluate_file(&rule, "rust", "b.rs", source);
+    assert_eq!(found(&result, source), Vec::<String>::new(), "{result}");
+    for (import, expected) in [
+        (
+            json!(["std.process.exit"]),
+            "/clauses/0/forbid/ast/rule/resolves/import/0: `std.process.exit` is a dotted name; Rust paths join identifiers with `::`",
+        ),
+        (
+            json!(["self::a"]),
+            "/clauses/0/forbid/ast/rule/resolves/import/0: `self::a` starts at a module; a listed path starts at a crate (`crate::`, `std::`), and reads through `self::` and `super::` are normalised to `crate::` paths",
+        ),
+    ] {
+        let error = compile(
+            "rust",
+            json!({ "rule": { "kind": "identifier", "resolves": { "import": import } } }),
+        )
+        .err()
+        .map(|error| error.reason);
+        assert_eq!(error.as_deref(), Some(expected));
+    }
+    let error = compile(
+        "python",
+        json!({ "rule": { "kind": "identifier", "resolves": { "import": ["os::path"] } } }),
+    )
+    .err()
+    .map(|error| error.reason);
+    assert_eq!(
+        error.as_deref(),
+        Some(
+            "/clauses/0/forbid/ast/rule/resolves/import/0: `os::path` is a Rust path; Python imports are dotted names"
+        )
     );
 }
 
@@ -2248,7 +2349,7 @@ fn malformed_imported_and_prefix_are_rejected() {
         (
             "python",
             json!({ "rule": { "kind": "dotted_name", "resolves": { "imported": ["a..b"] } } }),
-            "/clauses/0/forbid/ast/rule/resolves/imported/0: `a..b` is not a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
+            "/clauses/0/forbid/ast/rule/resolves/imported/0: `a..b` is not a dotted name (identifiers joined by `.`), a Rust path (identifiers joined by `::`) or a PHP name (labels joined by `\\`) of at most 256 bytes",
         ),
         (
             "python",

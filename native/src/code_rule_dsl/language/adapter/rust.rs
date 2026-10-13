@@ -159,23 +159,6 @@ const PRELUDE: &[&str] = &[
     "'_",
 ];
 
-/// Whether a glob import (`use m::*`) of the reference's module or a block within it may bind a
-/// name: the module it reads is another file's or crate's.
-fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
-    let mut current = Some(reference.scope);
-    while let Some(index) = current {
-        let scope = &table.scopes[index as usize];
-        if !scope.stars.is_empty() {
-            return true;
-        }
-        if scope.kind == ScopeKind::Module {
-            return false;
-        }
-        current = scope.parent;
-    }
-    false
-}
-
 impl ScopeRules for Rust {
     const SUPPORTED: bool = true;
     const FLOW: bool = false;
@@ -226,6 +209,7 @@ impl ScopeRules for Rust {
     ];
     const REFUSED_FILTERS: &'static [&'static str] =
         &["exported", "latest", "outer", "builtin", "directives"];
+    const IMPORT_PATHS: bool = true;
 
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
@@ -309,7 +293,7 @@ impl ScopeRules for Rust {
             && reference.spaces & (MACRO | LABEL) == 0
             && !PRELUDE.contains(&name)
             && !extern_crate
-            && !glob_visible(table, reference)
+            && !scope_rust::glob_visible(table, reference)
     }
 
     fn eslint_options(_: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
@@ -335,6 +319,14 @@ impl ScopeRules for Rust {
 
     fn unpackaged_module(_: &str) -> Option<ModulePath> {
         None
+    }
+
+    fn import_path<D: Doc>(
+        table: &ScopeTable,
+        node: &Node<'_, D>,
+        file: Option<&str>,
+    ) -> Option<String> {
+        scope_rust::import_path(table, node, file)
     }
 
     fn feature(feature: ScopeFeature) -> Result<(), Refusal> {

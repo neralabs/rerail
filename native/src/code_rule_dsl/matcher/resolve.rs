@@ -31,10 +31,12 @@ pub(crate) struct Resolves {
     /// `global`: the node is a reference to one of these names that no file-local binding
     /// visible there shadows.
     pub(crate) globals: BTreeSet<String>,
-    /// `import` (Python): the node is a name or attribute chain whose head is bound by an import,
-    /// and the import's qualified name joined with the rest of the chain is one of these.
+    /// `import`: the node is a name or attribute chain whose head is bound by an import, and the
+    /// import's qualified name joined with the rest of the chain is one of these (Python); or a
+    /// name or path whose path, its head read through the file's imports, is one of these (Rust,
+    /// `ScopeRules::import_path`).
     pub(crate) imports: BTreeSet<String>,
-    /// Attribute-chain kinds, which only `import` accepts.
+    /// Attribute-chain kinds (Python) or path kinds (Rust), which only `import` accepts.
     pub(crate) attribute_kinds: BTreeSet<u16>,
     /// `directives: "eslint"`: `/* global */` comments add and remove global names.
     pub(crate) directives: bool,
@@ -284,8 +286,8 @@ impl Resolves {
         if let Some(mode) = self.unresolved {
             return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
         }
-        let chain =
-            (!self.imports.is_empty() || self.import_any) && self.import_chain(node).is_some();
+        let chain = (!self.imports.is_empty() || self.import_any)
+            && (S::IMPORT_PATHS || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
         // Without language options only a comment can make another name global; without the
         // opt-in no table is needed.
@@ -305,7 +307,26 @@ impl Resolves {
             return false;
         };
         (global && self.is_global(&table, node, text.as_ref()))
-            || (chain && self.is_import(&table, node))
+            || (chain && S::IMPORT_PATHS && self.is_import_path::<S, D>(&table, node))
+            || (chain && !S::IMPORT_PATHS && self.is_import(&table, node))
+    }
+
+    /// Rust: the path the read at `node` names through the file's imports is listed (or with
+    /// `import: true`, there is one).
+    fn is_import_path<S: ScopeRules, D: Doc>(
+        &self,
+        table: &ScopeTable,
+        node: &Node<'_, D>,
+    ) -> bool {
+        let file = file_path();
+        S::import_path(table, node, file.as_deref()).is_some_and(|path| {
+            self.import_any
+                || self.imports.contains(&path)
+                || (self.prefix
+                    && path
+                        .match_indices("::")
+                        .any(|(at, _)| self.imports.contains(&path[..at])))
+        })
     }
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
@@ -853,6 +874,8 @@ struct FileScopes {
     tables: Vec<Arc<ScopeTable>>,
     /// The file's Python module path, which qualifies its definitions and relative imports.
     module: Option<Arc<ModulePath>>,
+    /// The host's path of the file (`FileScopeSlot::path`), which places a Rust file in its crate.
+    path: Option<Arc<str>>,
     /// A build that stopped at its node budget stops again at any budget up to this one.
     failed_within: usize,
     charged: Vec<usize>,
@@ -919,6 +942,7 @@ impl FileScopeSlot {
             tables: cached,
             module,
             failed_within: 0,
+            path: None,
             charged: Vec::new(),
             usage_charged: Vec::new(),
             has_errors,
@@ -949,6 +973,7 @@ impl FileScopeSlot {
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
+                slot.path = Some(Arc::from(path));
             }
         });
         self
@@ -973,6 +998,11 @@ impl Drop for FileScopeSlot {
 /// The module path of the file being matched, if the host or its name gives one.
 pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.module.clone()))
+}
+
+/// The host's path of the file being matched, if it gave one.
+fn file_path() -> Option<Arc<str>> {
+    FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 
 /// A value decoded earlier in this file.

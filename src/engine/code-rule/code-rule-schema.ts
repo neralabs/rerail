@@ -483,19 +483,21 @@ const CODE_RULE_GLOBAL_SETTINGS = ["readonly", "writable", "off", "readable", "w
 /** An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit (the engine's check). */
 const resolveIdentifier = z.string().max(256).regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "Must be an identifier (A-Z, a-z, 0-9, _, $).");
 /**
- * A Python dotted name, or a PHP name: labels (a letter, `_` or any non-ASCII character, then those or digits:
- * the engine's `php_names::is_label`) joined by single `\`, optionally fully qualified. The engine refuses each
- * family the other's shape. It reads Unicode scalar values (no lone surrogate) and bounds a name's UTF-8 bytes.
+ * A Python dotted name, a Rust path (identifiers joined by `::`), or a PHP name: labels (a letter, `_` or any
+ * non-ASCII character, then those or digits: the engine's `php_names::is_label`) joined by single `\`, optionally
+ * fully qualified. The engine refuses each family the others' shapes. It reads Unicode scalar values (no lone
+ * surrogate) and bounds a name's UTF-8 bytes.
  */
 const RESOLVE_DOTTED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+const RESOLVE_RUST_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(::[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 const PHP_LABEL = String.raw`[A-Za-z_\u0080-\ud7ff\ue000-\u{10ffff}][A-Za-z0-9_\u0080-\ud7ff\ue000-\u{10ffff}]*`;
 const RESOLVE_PHP_NAME = new RegExp(String.raw`^\\?${PHP_LABEL}(?:\\${PHP_LABEL})*$`, "u");
 const UTF8 = new TextEncoder();
 const resolveDottedName = z
   .string()
   .max(256)
-  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
-    message: String.raw`Must be a dotted name (identifiers joined by .) or a PHP name (labels joined by \) of at most 256 bytes.`,
+  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_RUST_PATH.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
+    message: String.raw`Must be a dotted name (identifiers joined by .), a Rust path (identifiers joined by ::) or a PHP name (labels joined by \) of at most 256 bytes.`,
   });
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");

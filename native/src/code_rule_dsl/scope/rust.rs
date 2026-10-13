@@ -9,6 +9,7 @@ use super::{
     Binding, BuildError, Builder, Form, Import, NodeRef, Reference, ScopeKind, ScopeTable, Site,
     TYPE, VALUE,
 };
+use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module};
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.
@@ -100,6 +101,137 @@ fn is_item(binding: &Binding, scope_start: usize) -> bool {
         Form::Assignment => binding.offset == scope_start,
         _ => false,
     }
+}
+
+/// Whether a glob import (`use m::*`) of the reference's module or a block within it may bind a
+/// name: the module it reads is another file's or crate's.
+pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
+    let mut current = Some(reference.scope);
+    while let Some(index) = current {
+        let scope = &table.scopes[index as usize];
+        if !scope.stars.is_empty() {
+            return true;
+        }
+        if scope.kind == ScopeKind::Module {
+            return false;
+        }
+        current = scope.parent;
+    }
+    false
+}
+
+/// The path a read at `node` names (`resolves.import`), as rustc resolves its first segment: an
+/// identifier or a path, its head bound by a `use` declaration or `extern crate` item replaced
+/// with the path that imports it, joined with the rest by `::`. `crate::`, `self::` and `super::`
+/// are normalised to `crate::` paths of the module the read sits in (the file's module, which
+/// `file` gives under a crate's `src/`, and the inline `mod` blocks around the read); an unbound
+/// head of a longer path is an extern crate's name (`std::process::exit`), as a path that starts
+/// with `::` is. `None` where the read names no path so: a local or an item of the file, `Self`,
+/// a qualified-type or generic head (`<T as Trait>::f`), a bare unbound name (the prelude's), a
+/// head a glob import may bind, a path no read holds (a `use` path, a visibility), or `self::`
+/// and `super::` where the module is not known. A `use` path that names neither is read as
+/// written (an extern crate's, or a module of the crate the definitions would tell).
+pub(crate) fn import_path<D: Doc>(
+    table: &ScopeTable,
+    node: &Node<'_, D>,
+    file: Option<&str>,
+) -> Option<String> {
+    let mut rest = Vec::new();
+    let mut head = node.clone();
+    let absolute = loop {
+        match head.kind().as_ref() {
+            "scoped_identifier" | "scoped_type_identifier" => {
+                rest.push(head.field("name")?.text().to_string());
+                match head.field("path") {
+                    Some(path) => head = path,
+                    None => break true,
+                }
+            }
+            "identifier" | "type_identifier" | "crate" | "self" | "super" => break false,
+            _ => return None,
+        }
+    };
+    rest.reverse();
+    if node.ancestors().any(|ancestor| {
+        matches!(
+            ancestor.kind().as_ref(),
+            "use_declaration" | "visibility_modifier" | "attribute_item" | "inner_attribute_item"
+        )
+    }) {
+        return None;
+    }
+    let module = || {
+        let module = file.map(crate_module)?.1;
+        let mut inline: Vec<String> = node
+            .ancestors()
+            .filter(|ancestor| ancestor.kind() == "mod_item")
+            .filter_map(|ancestor| ancestor.field("name").map(|name| name.text().to_string()))
+            .collect();
+        inline.reverse();
+        Some([module, inline].concat())
+    };
+    let mut path = if absolute {
+        Vec::new()
+    } else {
+        let name = head.text();
+        match name.as_ref() {
+            "crate" | "self" | "super" if rest.is_empty() => return None,
+            "crate" | "self" | "super" => vec![name.to_string()],
+            _ => {
+                let reference = table.reference(&head.range())?;
+                match resolve_index(table, reference, &name) {
+                    Some((scope, index)) => {
+                        let binding = table.scopes[scope as usize].bindings.get(name.as_ref())?;
+                        match &binding.get(index)?.import {
+                            Some(Import::Qualified(path)) => {
+                                let path = path.strip_prefix("::").unwrap_or(path);
+                                path.split("::").map(str::to_owned).collect()
+                            }
+                            _ => return None,
+                        }
+                    }
+                    None if rest.is_empty() => return None,
+                    None if glob_visible(table, reference)
+                        && !LIBRARY_ROOTS.contains(&name.as_ref()) =>
+                    {
+                        return None;
+                    }
+                    None => vec![name.to_string()],
+                }
+            }
+        }
+    };
+    path.extend(rest);
+    normalise(&path, module)
+}
+
+/// `path` with a leading `self` or `super` (and any `super` after it) read against the module
+/// `module` gives, as a `crate::` path; any other path as written.
+fn normalise(path: &[String], module: impl FnOnce() -> Option<Vec<String>>) -> Option<String> {
+    let (first, rest) = path.split_first()?;
+    let mut joined = match first.as_str() {
+        "self" | "super" => {
+            let mut module = module()?;
+            if first == "super" {
+                module.pop()?;
+            }
+            let mut joined = vec![String::from("crate")];
+            joined.extend(module);
+            joined
+        }
+        _ => vec![first.clone()],
+    };
+    for segment in rest {
+        if segment == "super" {
+            if joined.first().is_some_and(|first| first != "crate") || joined.len() < 2 {
+                return None;
+            }
+            joined.pop();
+        } else {
+            joined.push(segment.clone());
+        }
+    }
+    Some(joined.join("::"))
 }
 
 /// The lexical names a pattern binds rather than reads: rustc reads an identifier pattern as a

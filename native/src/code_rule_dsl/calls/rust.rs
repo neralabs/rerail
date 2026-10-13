@@ -20,7 +20,7 @@ use std::sync::Arc;
 mod tests;
 
 /// The crates whose paths name library code, not the crate itself.
-const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
+pub(crate) const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
 /// Tuple variants of the prelude: calling one builds a value, it calls no function.
 const PRELUDE_CONSTRUCTORS: &[&str] = &["Some", "Ok", "Err"];
 
