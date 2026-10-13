@@ -215,7 +215,10 @@ daemon serves every repository; its pages are scoped to one with
 `?repository=<key>&checkout=<path>`. The rules that ship with Rerail are read
 from the package and run only in repositories that add them (see
 [Rule scoping](rule-scoping.md)).
-`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`;
+`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`,
+and `rerail update rollback` puts that copy back when the update changed the
+database in a way the older version cannot read (see
+[Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 your rules and each repository's configuration by hand. `rerail seed` fills the
 database with mock rules to work against.
@@ -291,30 +294,25 @@ whichever daemon is running and never brings its own version back.
 
 ### Database compatibility
 
-`rerail.sqlite` records the schema version it was written for: 1 in this
-release. A database file written by a newer Rerail, or by other software, is
-refused with an error and left untouched; Rerail never converts data. Move such
-a file aside (or point `RERAIL_HOME` elsewhere) and start again, then re-import
-rules with `rerail rules import`.
+`rerail.sqlite` records its compatibility floor in `PRAGMA user_version`: the
+oldest schema version a Rerail must read to open it, 3 in this release. Which
+migration steps the file has run is recorded in its `schema_migrations` table.
 
-Until this release the tables changed in place under version 1. A database
-from the `0.1.0-next.0` pre-release or from a development build before this
-release is stamped 1 but keeps its older tables, and Rerail cannot tell it
-apart. It opens the file, and:
+When a newer Rerail first opens the file to write to it (the daemon, `rerail
+start`, set-up), it runs the steps the file has not run, in one transaction:
+a step that fails leaves the file as it was. Most steps add a column or a
+table, which older versions read correctly, so they keep the floor and an
+older Rerail still opens the file. A step an older version would misread
+raises the floor; from then on older versions refuse the file, and `rerail
+update rollback` puts back the copy `rerail update` took, keeping the replaced
+database as `rerail.sqlite.before-rollback`.
 
-- from `0.1.0-next.0`, or from a development build before rules belonged to
-  repositories, the rules stored there are not shown: they are in a table this
-  release does not read;
-- from a later development build, which stores code rules as `file`, those
-  rules are quarantined with the reason `unknown rule kind file`.
-
-The old tables also keep the checks they were created with, not this
-release's. Move such a file aside before you start this release. An export
-from those builds names code rules `file` and is not imported.
-
-Some development builds before this release stamped their database 2. This
-release refuses such a file as written by a newer Rerail, but no update opens
-it: move it aside as well.
+A database file written by a newer Rerail (a floor above this release's), or
+by other software, is refused with an error and left untouched. So is a file
+stamped 1 or 2: development builds wrote those before the migration path
+existed, and no release reads them. Move such a file aside (or point
+`RERAIL_HOME` elsewhere) and start again, then re-import rules with `rerail
+rules import`.
 
 ### Resetting session history
 

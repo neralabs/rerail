@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
-import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/schema.js";
+import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 
 const temporaryDirectories: string[] = [];
 
