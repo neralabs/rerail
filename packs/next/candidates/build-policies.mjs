@@ -16,6 +16,8 @@ const PACK_RULES = join(PACK, "rules");
 const CANDIDATES = join(HERE, "rules");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
 const DOCS = "https://nextjs.org/docs/messages";
+// The capabilities a port can exercise, in the order conformance.json lists them.
+const CAPABILITIES = ["syntax", "scope", "value", "suppression"];
 
 // ---- path predicates: the plugin's string tests on context.filename, as regexes over the host path ----------------
 // Strings with no occurrence of "pages" ("pages" overlaps itself nowhere, so this is the 5-state automaton spelled out).
@@ -115,7 +117,8 @@ function policy(rule, description, checks, { candidate = false } = {}) {
   rmSync(join(candidate ? PACK_RULES : CANDIDATES, `next-${rule}.json`), { force: true });
   const text = `${JSON.stringify(document, null, 2)}\n`;
   writeFileSync(join(directory, `next-${rule}.json`), text);
-  const capabilities = ["syntax", ...(text.includes('"resolves"') ? ["scope"] : []), ...(text.includes('"value"') ? ["value"] : []), "suppression"];
+  const exercised = { syntax: true, scope: text.includes('"resolves"'), value: text.includes('"value"'), suppression: true };
+  const capabilities = CAPABILITIES.filter(capability => exercised[capability]);
   WRITTEN.push({ rule, path: join(directory, `next-${rule}.json`), candidate, capabilities });
 }
 
@@ -599,7 +602,7 @@ const candidates = WRITTEN.filter(entry => entry.candidate);
 const listedPorts = [...ported, ...candidates];
 const manifestPath = join(PACK, "conformance.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-manifest.capabilities = ["syntax", "scope", "value", "suppression"].filter(capability => listedPorts.some(entry => entry.capabilities.includes(capability)));
+manifest.capabilities = CAPABILITIES.filter(capability => listedPorts.some(entry => entry.capabilities.includes(capability)));
 manifest.rules = listedPorts.map(({ rule, capabilities, candidate }) => ({
   id: `next-${rule}`,
   upstream: { tool: "eslint-plugin-next", rule: `@next/next/${rule}` },
