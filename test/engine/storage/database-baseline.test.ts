@@ -387,7 +387,9 @@ describe("the migration path", () => {
     expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 
-  it("leaves a step that raises the floor to the writer, and a file it cannot write as it is", async () => {
+  // Self-review: a reader that cannot write the file used to get it in its old shape, which this build's readers would
+  // fail on; it is refused with the steps and the reason instead, and the file is left as it is.
+  it("leaves a step that raises the floor to the writer, and refuses a read-only open of a file it cannot upgrade", async () => {
     const raising = await temporaryDatabase();
     stampedFile(raising, SETTING_ROW);
     openRerailDatabase(raising, { readonly: true, migrations: [noteStep({ count: 0 }, RERAIL_BASELINE_SCHEMA_VERSION + 1)] }).$client.close();
@@ -398,7 +400,8 @@ describe("the migration path", () => {
     settledBytes(locked);
     chmodSync(locked, 0o400);
     try {
-      openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }).$client.close();
+      expect(() => openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }))
+        .toThrow(/needs this Rerail's schema steps \(add-rule-settings-note\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
     } finally {
       chmodSync(locked, 0o600);
     }
