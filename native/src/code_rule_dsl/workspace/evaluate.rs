@@ -28,7 +28,7 @@ use crate::code_rule_dsl::model::{
 };
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::SyntaxErrors;
+use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -459,15 +459,30 @@ fn evaluate_ast_file(
     }
     let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
     if !errors.is_empty() {
-        for &id in &file.candidates.ast {
-            if !file.failures.contains_key(&id)
-                && !candidate_grammar(&code_rules[id.0], id.1, &file.input).sound_under_errors
-            {
-                file.failures
-                    .insert(id, ("source-incomplete", "file has syntax errors"));
+        match errors.reading(&lines, file.input.source.len()) {
+            // No AST clause runs on a file the parser did not read, sound or not; the failure
+            // reports `file.syntax` in place of its static message (`results::failure_message`).
+            SyntaxReading::Unread(message) => {
+                for &id in &file.candidates.ast {
+                    file.failures
+                        .entry(id)
+                        .or_insert(("source-incomplete", UNREAD));
+                }
+                file.syntax = Some(message);
+            }
+            SyntaxReading::Partial(message) => {
+                for &id in &file.candidates.ast {
+                    if !file.failures.contains_key(&id)
+                        && !candidate_grammar(&code_rules[id.0], id.1, &file.input)
+                            .sound_under_errors
+                    {
+                        file.failures
+                            .insert(id, ("source-incomplete", "file has syntax errors"));
+                    }
+                }
+                file.syntax = Some(message);
             }
         }
-        file.syntax = Some(errors.partial_message(&lines));
     }
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();

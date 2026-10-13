@@ -121,6 +121,16 @@ async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[]
 const SYNTAX_ERROR_FAILURE = { code: "source-incomplete", message: "file has syntax errors" } as const;
 /** The engine's `source-partial` message names the first error region (`first at line L, column C`, both 1-based). */
 const FIRST_SYNTAX_ERROR = /first at line (\d+), column (\d+)$/u;
+/**
+ * How every AST clause skips a file whose error regions cover half of it or more: the grammar did not read it, which is
+ * T1's too. The message names the first region, so no probe is needed.
+ */
+const UNREAD_FAILURE = /^file did not parse: error regions cover \d+% of it, first at line (\d+), column (\d+)$/u;
+
+function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation | undefined {
+  const match = failure.code === "source-incomplete" && failure.path !== undefined ? UNREAD_FAILURE.exec(failure.message) : null;
+  return match === null ? undefined : { path: failure.path!, line: Number(match[1]), column: Number(match[2]) };
+}
 
 /**
  * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
@@ -212,7 +222,7 @@ interface RuleActual {
   /** Failures other than `source-partial` and the syntax-error skips below. */
   engineFailures: number;
   partialPaths: Set<string>;
-  /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE`, at the grammar's first syntax error. */
+  /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`UNREAD_FAILURE`), at the first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
 }
 
@@ -253,8 +263,11 @@ function collectActual(
     const rule = failure.ruleId === undefined ? undefined : byCodeRule.get(failure.ruleId);
     if (rule === undefined) continue;
     const located = failure.path === undefined ? undefined : syntaxErrors.get(failure.path);
+    const unread = unreadLocation(failure);
     if (INFORMATIONAL_FAILURE_CODES.has(failure.code)) {
       if (failure.path !== undefined) slot(rule).partialPaths.add(failure.path);
+    } else if (unread !== undefined) {
+      slot(rule).syntaxErrorFiles.set(unread.path, unread);
     } else if (located !== undefined && failure.code === SYNTAX_ERROR_FAILURE.code && failure.message === SYNTAX_ERROR_FAILURE.message) {
       slot(rule).syntaxErrorFiles.set(located.path, located);
     } else slot(rule).engineFailures += 1;

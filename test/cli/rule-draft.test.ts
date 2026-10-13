@@ -71,6 +71,13 @@ async function testReport(file: string, repo: string): Promise<{ exit: number; r
   return { exit, report: JSON.parse(stdout) as RuleDraftReport };
 }
 
+/** The JSON report and the text one `rerail rules test` prints for the same draft. */
+async function testReportText(file: string, repo: string): Promise<{ exit: number; report: RuleDraftReport; stdout: string }> {
+  const { exit, report } = await testReport(file, repo);
+  const { stdout } = await run("test", [file, "--repo", repo]);
+  return { exit, report, stdout };
+}
+
 /** Your library, and `repo`'s repository: whether it is set up and the rules added to it, by id and folder. */
 function rulesOf(repo: string) {
   const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -176,7 +183,42 @@ describe("rerail rules test", () => {
         { path: "src/a.ts", line: 3, column: 1, text: "console.log(a);" },
         { path: "src/nested/b.ts", line: 1, column: 1, text: "console.log('b');" },
       ],
+      unread: { count: 0, examples: [] },
     });
+  });
+
+  it("reports a case and repo files a clause did not read, rather than passing them", async () => {
+    // The negated `inside` is an absence claim over ancestors the parser may not have read, so the clause does not
+    // run on a file with syntax errors.
+    const policy = {
+      ...noConsolePolicy(),
+      clauses: [{
+        id: "top-level-call",
+        forbid: { ast: { language: "typescript", rule: { kind: "call_expression", not: { inside: { kind: "function_declaration", stopBy: "end" } } } } },
+        violation: { anchor: "witness.span", code: "TOP_LEVEL_CALL", message: "No top-level calls." },
+      }],
+    };
+    const broken = "f();\nconst x = (;\n";
+    const repo = await repository({ "src/broken.ts": broken, "src/clean.ts": "f();\n" });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: policy,
+      cases: { caught: [{ path: "src/a.ts", content: broken }], passed: [{ path: "src/b.ts", content: "const y = (;\n" }] },
+    });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([
+      { expected: "caught", caught: false, ok: false, label: "src/a.ts", notRead: "file has syntax errors" },
+      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notRead: "file has syntax errors" },
+    ]);
+    expect(report.repository).toMatchObject({
+      matches: 1,
+      unread: { count: 1, examples: [{ path: "src/broken.ts", message: "file has syntax errors" }] },
+    });
+    expect(stdout).toContain("✗ not read (file has syntax errors), expected caught: src/a.ts");
+    expect(stdout).toContain("1 file was not read, so the rule may miss places there:\n    src/broken.ts  file has syntax errors");
   });
 
   it("writes nothing: no library rule, and the repository is left as it was", async () => {

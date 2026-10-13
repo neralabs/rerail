@@ -75,6 +75,21 @@ fn local_result_round_trips_negative_results_and_failures() {
         assert_eq!(restored_failure, Some(failure));
         assert!(syntax.is_none());
     }
+
+    // A file the parser did not read keeps its static failure and the detail it reports.
+    let detail = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+    let encoded = encode_local_result(
+        &[],
+        Some(("source-incomplete", "file did not parse")),
+        Some(detail),
+    )
+    .unwrap();
+    let (_, restored_failure, syntax) = decode_local_result(&encoded, "src/a.js").unwrap();
+    assert_eq!(
+        restored_failure,
+        Some(("source-incomplete", "file did not parse"))
+    );
+    assert_eq!(syntax.as_deref(), Some(detail));
 }
 
 #[test]
@@ -1624,7 +1639,7 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
         ]
     };
     let files = json!([
-        { "language": "typescript", "path": "broken.ts", "source": "debugger;\nfunction f( {\n" },
+        { "language": "typescript", "path": "broken.ts", "source": "debugger; // read: the error region is the function below\nfunction f( {\n" },
         { "language": "typescript", "path": "danger.ts", "source": "danger();\n" },
     ]);
     let workspace = apply_clauses(clauses(), files.clone());
@@ -1638,7 +1653,8 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
 
 #[test]
 fn broken_files_report_sound_witnesses_and_are_marked_partial() {
-    let source = "debugger;\nfunction f( {\n  debugger;\n";
+    let source =
+        "debugger; // read: the error region is the function below\nfunction f( {\n  debugger;\n";
     let evaluation = apply_clauses(
         vec![
             clause("debugger", json!({ "kind": "debugger_statement" })),
