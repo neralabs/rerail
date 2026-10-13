@@ -11,7 +11,9 @@
 //!   only comments stand between them and it ends on that line; otherwise the smallest ancestor
 //!   of the comment holding the line's first code byte (never the file's root).
 //!
-//! A violation is silenced when its anchor's start falls in a range covered for its rule's id.
+//! A violation is silenced when the byte its anchor names falls in a range covered for its rule's
+//! id: the anchor's start, or for an end anchor the witness's last byte (the point where a witness
+//! ends is where the next node may start).
 
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
@@ -23,7 +25,8 @@ const DIRECTIVE: &str = "rerail-ignore";
 /// A byte range covered for the rule ids a directive names.
 #[derive(Debug, PartialEq, Eq)]
 struct Cover {
-    /// Inclusive of its end, so that an anchor at the covered node's end counts.
+    /// Exclusive of its end, as the covered node's; the whole file's runs to `usize::MAX`, past an
+    /// anchor at the end of the file.
     range: Range<usize>,
     rules: Vec<String>,
 }
@@ -51,7 +54,7 @@ impl RerailIgnores {
             }
             let first = *first.get_or_insert_with(|| first_code(root, source));
             let covered = if range.end <= first {
-                Some(0..source.len())
+                Some(0..usize::MAX)
             } else {
                 covered(&comment, source, lines)
             };
@@ -72,13 +75,11 @@ impl RerailIgnores {
             .any(|cover| cover.rules.iter().any(|name| name == rule))
     }
 
-    /// Whether a violation of `rule` whose anchor starts at byte `at` is silenced.
+    /// Whether a violation of `rule` whose anchor names byte `at` is silenced.
     pub(crate) fn ignores(&self, rule: &str, at: usize) -> bool {
-        self.covers.iter().any(|cover| {
-            cover.range.start <= at
-                && at <= cover.range.end
-                && cover.rules.iter().any(|name| name == rule)
-        })
+        self.covers
+            .iter()
+            .any(|cover| cover.range.contains(&at) && cover.rules.iter().any(|name| name == rule))
     }
 }
 
@@ -279,7 +280,10 @@ mod tests {
         RerailIgnores::read(&root.root(), source, &lines)
             .covers
             .into_iter()
-            .map(|cover| (source[cover.range].to_owned(), cover.rules))
+            .map(|cover| {
+                let end = cover.range.end.min(source.len());
+                (source[cover.range.start..end].to_owned(), cover.rules)
+            })
             .collect()
     }
 
@@ -395,5 +399,43 @@ mod tests {
         );
         let top = format!("{{{{-- rerail-ignore calls --}}}}\n{blade}");
         assert!(reported(blade_rule, "blade", "a.blade.php", &top).is_empty());
+    }
+
+    /// A covered node's range excludes its end: a leading directive over `a();` leaves `b();`,
+    /// which starts where `a();` ends, reported, and a trailing one covers `b();` only. An end
+    /// anchor names its witness's last byte, so `a();`'s, at `b();`'s start, stays covered by the
+    /// directive over `a();` and out of the one over `b();`.
+    #[test]
+    fn a_directive_covers_no_sibling_starting_where_its_node_ends() {
+        let leading = "function f() {\n// rerail-ignore probe\na();b();\n}\n";
+        let spaced = "function f() {\n// rerail-ignore probe\na(); b();\n}\n";
+        let trailing = "a();b(); // rerail-ignore probe\n";
+        for (source, expected) in [(leading, "b();"), (spaced, "b();"), (trailing, "a();")] {
+            for (anchor, at) in [
+                ("witness.span", source.find(expected).expect("statement")),
+                ("witness.start", source.find(expected).expect("statement")),
+                (
+                    "witness.end",
+                    source.find(expected).expect("statement") + expected.len(),
+                ),
+            ] {
+                let mut document = rule("probe", "typescript", "expression_statement", None);
+                document["clauses"][0]["violation"]["anchor"] = json!(anchor);
+                let compiled = compile_document_with(
+                    document,
+                    &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+                )
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+                let result = evaluate_file(&compiled, "typescript", "a.ts", source);
+                assert_eq!(result["failures"], json!([]), "{result}");
+                let starts = result["violations"]
+                    .as_array()
+                    .expect("violations")
+                    .iter()
+                    .map(|violation| violation["span"]["startByte"].as_u64().expect("start"))
+                    .collect::<Vec<_>>();
+                assert_eq!(starts, [at as u64], "{anchor} in {source:?}");
+            }
+        }
     }
 }

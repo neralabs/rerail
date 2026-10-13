@@ -694,11 +694,19 @@ fn evaluate_file_clause(
     let result = with_file_memo(&target, || {
         let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
         // A suppressed binding does not spend the violation's output allowance, so where a comment may
-        // suppress one the enumeration continues past it, as the workspace evaluator does.
+        // suppress one the enumeration, and a regex capture's groups, continue past it, as the workspace
+        // evaluator does.
         let suppressible = violation.is_some_and(|violation| {
             (honour_suppressions && violation.suppress.is_some())
                 || crate::code_rule_dsl::violations::names_rerail_ignore(violation, &target.root())
         });
+        let room = |reported: usize| {
+            if suppressible {
+                usize::MAX
+            } else {
+                (limits.max_witnesses + 1).saturating_sub(reported)
+            }
+        };
         run_clause(
             &target,
             grammar,
@@ -707,14 +715,15 @@ fn evaluate_file_clause(
             util_work,
             |node, first, work| {
                 let matches = match each {
-                    Some(name) => {
-                        let room = if suppressible {
-                            usize::MAX
-                        } else {
-                            (limits.max_witnesses + 1).saturating_sub(metrics.witnesses)
-                        };
-                        enumerate(&target, grammar, node, first, work, name, room)?
-                    }
+                    Some(name) => enumerate(
+                        &target,
+                        grammar,
+                        node,
+                        first,
+                        work,
+                        name,
+                        room(metrics.witnesses),
+                    )?,
                     None => vec![first],
                 };
                 for env in matches {
@@ -732,14 +741,13 @@ fn evaluate_file_clause(
                         continue;
                     }
                     let span = |start, end| lines.span(start, end);
-                    let room = (limits.max_witnesses + 1).saturating_sub(metrics.witnesses);
                     let found = match violation.filter(|_| each.is_some()) {
                         Some(violation) => witnesses_from_match(
                             file,
                             &matched,
                             grammar.language,
                             violation,
-                            room,
+                            room(metrics.witnesses),
                             || false,
                             span,
                         ),

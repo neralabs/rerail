@@ -7,7 +7,7 @@ use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::matcher::{file_lines, file_rerail_ignores, host};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::model::{Anchor, ViolationSpec};
 use crate::code_rule_dsl::suppress::{RerailIgnores, root};
 use ast_grep_core::{Doc, Node};
 use std::rc::Rc;
@@ -35,9 +35,10 @@ pub(crate) fn suppresses<D: Doc>(
     with_adapter!(Family::of(language), A => A::suppresses(violation, suppress, node, source, &lines, anchored.start_byte..anchored.end_byte, span))
 }
 
-/// Whether a `rerail-ignore` comment naming the violation's code rule covers a witness's anchor
-/// start: always honoured, whatever `suppress` and the `suppressions` setting. `node` is the
-/// witness's node, which places the file.
+/// Whether a `rerail-ignore` comment naming the violation's code rule covers the byte a witness's
+/// anchor names: its start, or for `witness.end` the witness's last byte (its end is where the next
+/// node may start). Always honoured, whatever `suppress` and the `suppressions` setting. `node` is
+/// the witness's node, which places the file.
 pub(crate) fn rerail_ignores<D: Doc>(
     violation: Option<&ViolationSpec>,
     node: &Node<'_, D>,
@@ -48,9 +49,12 @@ pub(crate) fn rerail_ignores<D: Doc>(
     else {
         return false;
     };
-    file_ignores(node).is_some_and(|ignores| {
-        ignores.ignores(rule, anchored_span(&violation.anchor, witness).0.start_byte)
-    })
+    let span = witness.span;
+    let at = match violation.anchor {
+        Anchor::End if span.start_byte < span.end_byte => span.end_byte - 1,
+        _ => anchored_span(&violation.anchor, witness).0.start_byte,
+    };
+    file_ignores(node).is_some_and(|ignores| ignores.ignores(rule, at))
 }
 
 /// Whether the file `node` belongs to holds a `rerail-ignore` comment naming the violation's code

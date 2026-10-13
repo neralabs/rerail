@@ -2423,6 +2423,54 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+    // Review round 3: the enumeration read every binding, but a regex capture's node groups were still cut to the
+    // remaining allowance before suppression, so the two suppressed groups filled a one-witness allowance and the
+    // third was never produced.
+    it.each([
+      ["rerail-ignore", "// rerail-ignore runtime-contract", undefined],
+      ["an eslint directive the violation opts into", "// eslint-disable-line no-console", { eslint: { rules: ["no-console"] } }],
+    ] as const)("reads every regex-capture group past ones %s suppresses under a one-witness allowance, statelessly and in a workspace", async (_name, directive, suppress) => {
+      const constrained = capabilities({ limits: { ...defaultLimits, maxWitnesses: 1 } });
+      const clause = {
+        violation: { ...violation("STATEMENT"), anchor: "capture.X", each: "X", ...(suppress === undefined ? {} : { suppress }) },
+        forbid: { ast: { language: "typescript", rule: { kind: "program", regex: "(?<X>first;|second;|third;)" } } },
+        id: "statement",
+      };
+      const file = { language: "typescript" as const, path: "a.ts", source: `first; ${directive}\nsecond; ${directive}\nthird;\n` };
+      const text = (item: { span?: { startByte: number; endByte: number } | undefined }) => file.source.slice(item.span!.startByte, item.span!.endByte);
+
+      const stateless = evaluate(compileJson([clause], constrained), snapshot([file]));
+      expect(stateless).toMatchObject({ status: "completed", failures: [] });
+      expect(stateless.violations.map(text)).toEqual(["third;"]);
+
+      const nativeWorkspace = workspace();
+      try {
+        nativeWorkspace.addCodeRule(compileJson([clause], constrained));
+        const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(text)).toEqual(["third;"]);
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
+    // Review round 3: a covered node's range was matched with an inclusive end, so a leading directive over `a();`
+    // also silenced `b();`, which starts where `a();` ends.
+    it("silences only the covered node, not the sibling starting where it ends", () => {
+      const clause = {
+        violation: violation("STATEMENT"),
+        forbid: { ast: { language: "typescript", rule: { kind: "expression_statement" } } },
+        id: "statement",
+      };
+      for (const [source, expected] of [
+        ["function f() {\n// rerail-ignore runtime-contract\na();b();\n}\n", ["b();"]],
+        ["function f() {\n// rerail-ignore runtime-contract\na(); b();\n}\n", ["b();"]],
+        ["a();b(); // rerail-ignore runtime-contract\n", ["a();"]],
+      ] as const) {
+        const actual = evaluate(compileJson([clause]), snapshot([{ language: "typescript", path: "a.ts", source }]));
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(expected);
+      }
+    });
 
   });
 

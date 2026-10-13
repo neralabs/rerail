@@ -787,6 +787,16 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
+            // A directive does not spend a violation's output allowance, so where one may suppress a
+            // witness the enumeration, and a regex capture's groups, continue past suppressed ones.
+            let suppressible = (honour_suppressions && violation.suppress.is_some()) || ignorable;
+            let room = |reported: usize| {
+                if suppressible {
+                    usize::MAX
+                } else {
+                    (limits.max_witnesses + 1).saturating_sub(reported)
+                }
+            };
             let result = {
                 let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
                 run_clause(
@@ -799,17 +809,16 @@ fn evaluate_clauses(
                         metrics.ast_matcher_calls += 1;
                         let matches = match each {
                             Some(name) => {
-                                // A directive does not spend a violation's output allowance, so the
-                                // enumeration continues past suppressed bindings.
-                                let room = if (honour_suppressions && violation.suppress.is_some())
-                                    || ignorable
-                                {
-                                    usize::MAX
-                                } else {
-                                    (limits.max_witnesses + 1)
-                                        .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len))
-                                };
-                                enumerate(&target, grammar, node, first, work, name, room)?
+                                let reported = file.witnesses.get(&id).map_or(0, Vec::len);
+                                enumerate(
+                                    &target,
+                                    grammar,
+                                    node,
+                                    first,
+                                    work,
+                                    name,
+                                    room(reported),
+                                )?
                             }
                             None => vec![first],
                         };
@@ -829,15 +838,13 @@ fn evaluate_clauses(
                             if errors.overlaps(&matched.get_node().range()) {
                                 continue;
                             }
-                            let room = (limits.max_witnesses + 1)
-                                .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len));
                             let found = if each.is_some() {
                                 witnesses_from_match(
                                     &file.input,
                                     &matched,
                                     grammar.language,
                                     violation,
-                                    room,
+                                    room(file.witnesses.get(&id).map_or(0, Vec::len)),
                                     matcher_budget_exhausted,
                                     |start, end| lines.span(start, end),
                                 )
