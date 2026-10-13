@@ -6,12 +6,24 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 |---|---|
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-ava.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-vitest-extend.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-dynamic-import.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-import.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-renamed.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-whole.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-bun-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-global-extend.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-local-binding.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test-default.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-parameter.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-suite-only.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context-property.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-default-import.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-extend-chain.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-extend-not-a-test.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-require-default-value.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-require.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-type-import.test.ts` | written by Rerail |
