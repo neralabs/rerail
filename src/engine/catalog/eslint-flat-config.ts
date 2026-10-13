@@ -55,6 +55,8 @@ const DEFINE_CONFIG_MODULES = new Set(["eslint/config", "@eslint/config-helpers"
 const TYPESCRIPT_ESLINT_MODULES = new Set(["typescript-eslint"]);
 /** How deep a value may nest or a binding chain may go before it is not read. */
 const MAX_DEPTH = 64;
+/** Globals through which code reaches the file's own bindings or its exported config without being handed them. */
+const CODE_NAMES = new Set(["eval", "module", "exports"]);
 
 /** `<folder>/**` or `<folder>/**\/*`: every file under one folder. A `./` start is allowed. */
 export function folderOfGlob(pattern: string): string | undefined {
@@ -82,6 +84,8 @@ export function readEslintFlatConfig(text: string, name: string): FlatConfigRead
 
 class FlatConfigReader {
   readonly #consts = new Map<string, t.Expression>();
+  /** Every top-level const of the file, exported ones included: none may be handed to a call (`#nonData`). */
+  readonly #locals = new Set<string>();
   /** Local name → the module it is imported from and the name imported (`default`, `*` or the export). */
   readonly #imports = new Map<string, { readonly module: string; readonly imported: string }>();
   readonly #entries: Entry[] = [];
@@ -91,15 +95,22 @@ class FlatConfigReader {
   constructor(readonly text: string, readonly program: t.Program) {}
 
   read(): FlatConfigRead {
+    // The last `export default` or `module.exports = …` is the config.
     let exported: t.Expression | undefined;
     for (const statement of this.program.body) {
       if (statement.type === "ImportDeclaration") this.#import(statement);
-      else if (statement.type === "VariableDeclaration") this.#declare(statement);
-      else if (statement.type === "ExportDefaultDeclaration") exported = isExpression(statement.declaration) ? statement.declaration : undefined;
+      else if (statement.type === "VariableDeclaration") this.#declare(statement, false);
+      else if (statement.type === "ExportNamedDeclaration" && statement.declaration?.type === "VariableDeclaration") this.#declare(statement.declaration, true);
+    }
+    for (const statement of this.program.body) {
+      if (statement.type === "ExportDefaultDeclaration") exported = isExpression(statement.declaration) ? statement.declaration : undefined;
       else if (statement.type === "TSExportAssignment") exported = statement.expression;
-      else if (statement.type === "ExpressionStatement") exported = moduleExports(statement.expression) ?? exported;
+      else if (statement.type === "ExpressionStatement") exported = this.#moduleExports(statement.expression) ?? exported;
     }
     if (exported === undefined) throw new LintConfigFormatError("it exports no config Rerail can find (export default or module.exports)");
+    const esm = this.program.body.some(statement => statement.type === "ExportDefaultDeclaration" || statement.type === "TSExportAssignment");
+    const cjs = this.program.body.some(statement => statement.type === "ExpressionStatement" && this.#moduleExports(statement.expression) !== undefined);
+    if (esm && cjs) throw new LintConfigFormatError("it exports its config both as a module and through module.exports");
     const code = this.#code();
     if (code !== undefined) {
       const line = this.text.slice(0, code.start ?? 0).split("\n").length;
@@ -110,6 +121,11 @@ class FlatConfigReader {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
     }
     return { entries: this.#entries, notes: this.#notes };
+  }
+
+  /** The value of `module.exports = <value>` where `module` is CommonJS's own, not a binding of the file. */
+  #moduleExports(expression: t.Expression): t.Expression | undefined {
+    return this.#locals.has("module") || this.#imports.has("module") ? undefined : moduleExports(expression);
   }
 
   /** The first statement or expression of the file that is code rather than data (see the module comment). */
@@ -164,7 +180,7 @@ class FlatConfigReader {
           continue;
         }
         case "ExpressionStatement": {
-          const value = moduleExports(statement.expression);
+          const value = this.#moduleExports(statement.expression);
           if (value === undefined) return statement;
           const code = this.#nonData(value, false);
           if (code !== undefined) return code;
@@ -179,7 +195,9 @@ class FlatConfigReader {
 
   /**
    * The first part of expression `node` that is code rather than data, or undefined. `given` is whether the value is
-   * handed to a call other than a config helper, which could change any object it is given: a local const there is code.
+   * handed to a call other than a config helper, which could change any object it is given: any of the file's own
+   * bindings there is code. `eval` (which reaches the file's bindings without being handed them), `module` and `exports`
+   * (through which a call reaches the exported config) are code anywhere but in the one `module.exports = …` statement.
    */
   #nonData(node: t.Node, given: boolean): t.Node | undefined {
     const all = (nodes: readonly (t.Node | null | undefined)[], inside: boolean): t.Node | undefined => {
@@ -200,7 +218,8 @@ class FlatConfigReader {
       case "MetaProperty":
         return undefined;
       case "Identifier":
-        return given && this.#consts.has(node.name) ? node : undefined;
+        if (CODE_NAMES.has(node.name) && !this.#locals.has(node.name) && !this.#imports.has(node.name)) return node;
+        return given && this.#locals.has(node.name) ? node : undefined;
       case "TemplateLiteral":
         return all(node.expressions, given);
       case "MemberExpression":
@@ -222,7 +241,7 @@ class FlatConfigReader {
       case "OptionalCallExpression":
       case "NewExpression": {
         // A local const is data, never a function to call.
-        if (node.callee.type === "Identifier" && this.#consts.has(node.callee.name)) return node;
+        if (node.callee.type === "Identifier" && this.#locals.has(node.callee.name)) return node;
         const helper = node.type === "CallExpression" && this.#isConfigHelper(node.callee);
         return this.#nonData(node.callee, true) ?? all(node.arguments, given || !helper);
       }
@@ -254,16 +273,19 @@ class FlatConfigReader {
     }
   }
 
-  #declare(declaration: t.VariableDeclaration): void {
+  #declare(declaration: t.VariableDeclaration, exported: boolean): void {
     // Only a const keeps its value; a `let` or `var` may be reassigned anywhere, so it is not read.
     if (declaration.kind !== "const") return;
     for (const declarator of declaration.declarations) {
       if (declarator.id.type !== "Identifier" || declarator.init == null) continue;
       if (declarator.init.type === "CallExpression" && isRequire(declarator.init)) {
+        // A required module is an import: Rerail takes it to behave as documented, as it does `import`s.
         this.#imports.set(declarator.id.name, { module: requiredModule(declarator.init), imported: "default" });
-      } else {
-        this.#consts.set(declarator.id.name, declarator.init);
+        continue;
       }
+      this.#locals.add(declarator.id.name);
+      // An exported const is not read: a module that imports it may change it.
+      if (!exported) this.#consts.set(declarator.id.name, declarator.init);
     }
   }
 

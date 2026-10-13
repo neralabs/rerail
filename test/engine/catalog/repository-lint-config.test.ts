@@ -680,6 +680,27 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     }
   });
 
+  // Self-review round 5: each of these changes the config at load time (ESLint 9.39.1 turns no-console on for every
+  // one) through eval, module.exports, an exported const handed to a call, or a module binding of the file's own.
+  it("reads nothing from a flat config that reaches its own data through eval, module.exports or an exported const", async () => {
+    const cases: [string, string][] = [
+      ["eslint.config.mjs", "const rules = { \"no-console\": \"off\" };\nconst x = eval('rules[\"no-console\"] = \"error\"');\nexport default [{ rules }];"],
+      ["eslint.config.cjs", "module.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst x = Object.assign(module.exports[0].rules, { \"no-console\": \"error\" });"],
+      ["eslint.config.mjs", "const rules = { \"no-console\": \"off\" };\nexport const alias = { rules };\nconst x = Object.assign(alias.rules, { \"no-console\": \"error\" });\nexport default [{ rules }];"],
+      ["eslint.config.mjs", "const rules = { \"no-console\": \"off\" };\nconst alias = { rules };\nexport { alias };\nconst x = Object.assign(alias.rules, { \"no-console\": \"error\" });\nexport default [{ rules }];"],
+    ];
+    for (const [name, text] of cases) {
+      const proposed = await flat(text, ["javascript"], name);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+    const shadowed = await flat("const module = {};\nexport default [{ rules: { \"no-console\": \"error\" } }];\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs");
+    expect(shadowed.settings).toEqual([]);
+    // A CommonJS config that requires its modules is still read.
+    const required = "const js = require(\"@eslint/js\");\nconst merge = require(\"merge\");\nmodule.exports = [merge(js.configs.recommended), { rules: { \"no-console\": \"off\" } }];";
+    expect((await flat(required, ["javascript"], "eslint.config.cjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
   it("reads a flat config that calls imported functions with nothing of its own", async () => {
     const text = [
       "import { fileURLToPath } from \"node:url\";",
