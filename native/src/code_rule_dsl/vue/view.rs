@@ -137,10 +137,11 @@ impl View {
         self.segments.span(node)
     }
 
-    /// Whether a node is part of a placeholder the view does not keep: never, since every token
-    /// the view writes stands for script, a template expression or the Vue syntax around one.
-    pub(crate) fn omitted(&self, _node: Node<'_>) -> bool {
-        false
+    /// Whether a node is part of a placeholder the view does not keep: the parameter it writes in
+    /// an empty `v-for` alias slot (`(,a)`); every other token the view writes stands for script,
+    /// a template expression or the Vue syntax around one.
+    pub(crate) fn omitted(&self, node: Node<'_>) -> bool {
+        self.segments.omitted(node)
     }
 
     /// The file ranges the program copies byte for byte, in program order.
@@ -513,6 +514,44 @@ impl<'t> Emitter<'t> {
         self.copy(from..range.end);
     }
 
+    /// A parenthesized `v-for` alias, copied, with a placeholder the tape leaves out in each
+    /// empty slot before the last (`(,a,b)`, `(a,,b)`, `(a,b,,)`): compiler-core's `parseFor`
+    /// leaves them unset and its codegen pads them (`createForLoopParams`), so the program
+    /// parses and its parameters are the file's aliases alone.
+    fn parameters(&mut self, alias: Range<usize>) {
+        let source = self.source;
+        let text = &source[alias.clone()];
+        let mut depth = 0usize;
+        let mut slot = alias.start + 1;
+        let mut from = alias.start;
+        for (offset, byte) in text.bytes().enumerate() {
+            let at = alias.start + offset;
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b',' if depth == 1 => {
+                    if source[slot..at].trim().is_empty() {
+                        self.code(from..at);
+                        self.placeholder(at);
+                        from = at;
+                    }
+                    slot = at + 1;
+                }
+                _ => {}
+            }
+        }
+        self.code(from..alias.end);
+    }
+
+    /// A parameter the program needs and the file does not write, at file byte `at`: the tape
+    /// leaves it out (`View::omitted`).
+    fn placeholder(&mut self, at: usize) {
+        let start = self.out.len();
+        self.out.push('_');
+        self.segments
+            .push(start, self.out.len(), at..at, false, true);
+    }
+
     /// A `<script>` block: a `;` marker over its start tag, its content, then a `;` so that no
     /// statement runs on into what follows. The closing `;` may end the content's last statement,
     /// so it stands for the empty range after the content's last non-blank byte.
@@ -637,7 +676,7 @@ impl<'t> Emitter<'t> {
         if parsed.parenthesized
             && let Some(alias) = alias
         {
-            self.code(alias);
+            self.parameters(alias);
         } else {
             self.emit("(", anchor.clone());
             if let Some(alias) = alias {
@@ -858,7 +897,12 @@ mod tests {
         let mut statements = Vec::new();
         let mut loops = Vec::new();
         for node in nodes {
-            assert!(!view.omitted(node), "the view omits nothing");
+            // The only placeholders are empty alias slots' parameters, which the tape leaves out.
+            if view.omitted(node) {
+                assert_eq!(&text[node.byte_range()], "_", "placeholder in {text:?}");
+                assert!(view.span(node).is_empty(), "placeholder in {text:?}");
+                continue;
+            }
             if identifiers && node.kind().ends_with("identifier") {
                 assert_eq!(
                     &source[view.span(node)],
@@ -1042,6 +1086,71 @@ mod tests {
             spans(&view, "formal_parameters")[1],
             find(source, "(item, index)")
         );
+    }
+
+    /// An empty slot of a parenthesized alias gets a placeholder parameter, so the program
+    /// parses; the tape leaves the placeholder out, and the scope reads the file's aliases alone,
+    /// at their spans.
+    #[test]
+    fn for_alias_empty_slots() {
+        use crate::code_rule_dsl::scope::ScopeTable;
+        use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+        use ast_grep_core::AstGrep;
+        use std::sync::Arc;
+        for (alias, program) in [
+            ("(,a,b)", "(_,a,b)"),
+            ("(a,,b)", "(a,_,b)"),
+            ("(a,b,,)", "(a,b,_,)"),
+            ("(,a)", "(_,a)"),
+        ] {
+            let source =
+                format!(r#"<template><li v-for="{alias} in list">{{{{ a }}}}</li></template>"#);
+            let built = view(&source);
+            assert_eq!(
+                built.text(),
+                format!("{{ (list), {program} => {{ (a); }}; }}"),
+                "{alias}"
+            );
+            assert!(!built.root().has_error(), "{alias}");
+            let grammar = Grammar::new(GrammarDialect::Vue).expect("grammar");
+            let tree = parse(&source);
+            let image =
+                TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).expect("encodes");
+            let doc = AstGrep::doc(
+                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false)
+                    .expect("restores"),
+            );
+            let root = doc.root();
+            assert!(
+                root.dfs()
+                    .all(|node| &*node.text() != "_" || node.kind() == "text"),
+                "{alias}: the placeholder is left out"
+            );
+            let table = ScopeTable::build(root, GrammarDialect::Vue, usize::MAX, &|| false)
+                .expect("scope table");
+            let mut names = table
+                .scopes
+                .iter()
+                .flat_map(|scope| scope.bindings.iter())
+                .flat_map(|(name, bindings)| {
+                    bindings.iter().filter_map(move |binding| {
+                        let span = binding.name?;
+                        Some((name.to_string(), span.start as usize..span.end as usize))
+                    })
+                })
+                .collect::<Vec<_>>();
+            names.sort_by_key(|(_, span)| span.start);
+            let at = |name: &str| {
+                let start = source.find(alias).unwrap() + alias.find(name).unwrap();
+                (name.to_owned(), start..start + 1)
+            };
+            let expected = ["a", "b"]
+                .into_iter()
+                .filter(|name| alias.contains(name))
+                .map(at)
+                .collect::<Vec<_>>();
+            assert_eq!(names, expected, "{alias}");
+        }
     }
 
     #[test]
