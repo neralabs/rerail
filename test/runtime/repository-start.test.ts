@@ -21,13 +21,14 @@ import {
   readOnlyStartState,
   sessionNoteRules,
   setUpWithRecommendedPacks,
-  startRerail,
   startStateReader,
   stopRerail,
   workspaceSetUp,
   workspaceStartState,
   type RepositorySetupIo,
 } from "../../src/runtime/repository-start.js";
+import { startRerail } from "../../src/cli/index.js";
+import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
@@ -82,6 +83,11 @@ function attachedPacks(workspace: string, databasePath: string): string[] {
   }
 }
 
+/** `rerail start` where the repository is set up: no question is asked, so the set-up environment is never used. */
+const started = (databasePath: string, extra: { repository?: boolean } = {}) => ({ databasePath, environment: fakeSetupEnvironment(), ...extra });
+/** `rerail start --answer <answer>` where the repository is not set up, as a coding agent relays the person's answer. */
+const answered = (databasePath: string, answer: "start" | "pick-myself") => ({ databasePath, answer, environment: fakeSetupEnvironment() });
+
 describe("repository start state", () => {
   it("is off until started, leaves no trace while off, and keeps rules when started again", async () => {
     const root = await temporary("rerail-start-");
@@ -96,10 +102,11 @@ describe("repository start state", () => {
     expect(readOnlyStartState(main, databasePath)).toBe("stopped");
 
     const first = recorder();
-    const setUp = await startRerail(main, first, { databasePath });
+    const setUp = await startRerail(main, first, answered(databasePath, "start"));
     // No pack core ships has a match definition, so set-up adds none.
-    expect(setUp).toMatchObject({ previous: "stopped", repositoryName: "acme-web", ruleCount: 0, addedPacks: [] });
-    expect(first.lines).toEqual([`● Rerail is on in acme-web. 0 rules are on.\n${NO_PACK_FITS} (/rerail-ui).`]);
+    expect(setUp).toMatchObject({ previous: "stopped", setUpRan: true, repositoryName: "acme-web", ruleCount: 0 });
+    expect(first.lines[0]).toBe("Rerail is on in acme-web. Connected to Claude Code and Cursor.");
+    expect(attachedPacks(main, databasePath)).toEqual([]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
     expect(readOnlyStartState(main, databasePath)).toBe("started");
     expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: 0 });
@@ -120,8 +127,8 @@ describe("repository start state", () => {
     }
     writeFiles(main, { "api/acme_api/app.py": "app = None\n" });
     const again = recorder("terminal");
-    const restarted = await startRerail(main, again, { databasePath });
-    expect(restarted).toMatchObject({ previous: "stopped", ruleCount: complexityRuleCount - 1, addedPacks: [] });
+    const restarted = await startRerail(main, again, started(databasePath));
+    expect(restarted).toMatchObject({ previous: "stopped", setUpRan: false, ruleCount: complexityRuleCount - 1 });
     expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount - 1} rules are on, as you left them.`]);
     expect(attachedPacks(main, databasePath)).toEqual(["complexity@src"]);
     // The session-start note counts the rules on in this checkout, as the person left them.
@@ -139,11 +146,10 @@ describe("repository start state", () => {
       "web/site/src/index.ts": "export {};\n",
     });
 
-    const io = recorder("terminal");
-    const report = await startRerail(main, io, { databasePath });
-    expect(report).toMatchObject({ ruleCount: 0, addedPacks: [] });
+    const io = recorder();
+    const report = await startRerail(main, io, answered(databasePath, "start"));
+    expect(report).toMatchObject({ ruleCount: 0 });
     expect(attachedPacks(main, databasePath)).toEqual([]);
-    expect(io.lines).toEqual([`● Rerail is on in acme. 0 rules are on.\n${NO_PACK_FITS} (rerail ui).`]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
   });
 
@@ -153,13 +159,13 @@ describe("repository start state", () => {
     const main = gitRepository(join(root, "acme-web"));
     writeFiles(main, { "src/index.ts": "export {};\n" });
 
-    const io = recorder("terminal");
-    expect(await startRerail(main, io, { databasePath, rulePacks: "none" })).toMatchObject({ ruleCount: 0, addedPacks: [] });
-    expect(io.lines).toEqual(["● Rerail is on in acme-web. 0 rules are on.\n  No rule packs were added. Pick them on the rules page (rerail ui)."]);
+    const io = recorder();
+    expect(await startRerail(main, io, answered(databasePath, "pick-myself"))).toMatchObject({ setUpRan: true, ruleCount: 0 });
+    expect(io.lines.join("\n")).toContain("Rerail is on in acme-web. No rule packs are on yet.");
     expect(workspaceStartState(main, databasePath)).toBe("started");
 
     stopRerail(main, recorder(), { databasePath });
-    expect(await startRerail(main, recorder(), { databasePath })).toMatchObject({ ruleCount: 0, addedPacks: [] });
+    expect(await startRerail(main, recorder(), started(databasePath))).toMatchObject({ setUpRan: false, ruleCount: 0 });
     expect(attachedPacks(main, databasePath)).toEqual([]);
   });
 
@@ -205,18 +211,18 @@ describe("repository start state", () => {
 
     // Set-up from a worktree starts the repository as a whole.
     const setUp = recorder();
-    await startRerail(outer, setUp, { databasePath });
-    expect(setUp.lines[0]).toMatch(/^● Rerail is on in acme-web\. /u);
+    await startRerail(outer, setUp, answered(databasePath, "start"));
+    expect(setUp.lines[0]).toBe("Rerail is on in acme-web. Connected to Claude Code and Cursor.");
     expect(states()).toEqual({ main: "started", beside: "started", outer: "started", inner: "started" });
 
     // A checkout stop reaches the worktrees inside it, not the ones beside it.
     stopRerail(outer, recorder(), { databasePath });
     expect(states()).toEqual({ main: "started", beside: "started", outer: "stopped", inner: "stopped" });
-    await startRerail(inner, recorder(), { databasePath });
+    await startRerail(inner, recorder(), started(databasePath));
     stopRerail(main, recorder(), { databasePath });
     // The main checkout's stop clears the settings inside it; the sibling worktree keeps following the repository.
     expect(states()).toEqual({ main: "stopped", beside: "started", outer: "stopped", inner: "stopped" });
-    await startRerail(inner, recorder(), { databasePath });
+    await startRerail(inner, recorder(), started(databasePath));
     expect(states()).toEqual({ main: "stopped", beside: "started", outer: "stopped", inner: "started" });
 
     // The daemon resolves the same way over its held connection.
@@ -231,7 +237,7 @@ describe("repository start state", () => {
     // `--repository` acts on every checkout and clears their own settings.
     stopRerail(inner, recorder(), { databasePath, repository: true });
     expect(states()).toEqual({ main: "stopped", beside: "stopped", outer: "stopped", inner: "stopped" });
-    await startRerail(beside, recorder(), { databasePath, repository: true });
+    await startRerail(beside, recorder(), started(databasePath, { repository: true }));
     expect(states()).toEqual({ main: "started", beside: "started", outer: "started", inner: "started" });
   });
 
@@ -241,7 +247,7 @@ describe("repository start state", () => {
     const first = gitRepository(join(root, "first"), "git@github.com:acme/web.git");
     const second = gitRepository(join(root, "second"), "https://github.com/Acme/web");
     const stranger = gitRepository(join(root, "stranger"), "https://github.com/acme/other.git");
-    await startRerail(first, recorder(), { databasePath });
+    await startRerail(first, recorder(), answered(databasePath, "start"));
     const recordedPaths = (): unknown[] => {
       const database = new Database(databasePath, { readonly: true });
       try {
@@ -302,7 +308,7 @@ describe("repository start state", () => {
     expect(workspaceStartState(nested, databasePath)).toBe("stopped");
 
     // Set up from inside the stopped feature worktree: it starts itself, and main keeps its stop.
-    await startRerail(nested, recorder(), { databasePath });
+    await startRerail(nested, recorder(), answered(databasePath, "start"));
     expect([main, feature, nested].map(path => workspaceStartState(path, databasePath))).toEqual(["stopped", "stopped", "started"]);
   });
 
@@ -400,7 +406,7 @@ describe("repository start state", () => {
     const databasePath = join(root, "rerail.sqlite");
     expect(workspaceSetUp(checkout, databasePath)).toBe(false);
     expect(existsSync(databasePath)).toBe(false);
-    await startRerail(checkout, recorder(), { databasePath, rulePacks: "none" });
+    await startRerail(checkout, recorder(), answered(databasePath, "pick-myself"));
     stopRerail(checkout, recorder(), { databasePath });
     expect(workspaceStartState(checkout, databasePath)).toBe("stopped");
     expect(workspaceSetUp(checkout, databasePath)).toBe(true);

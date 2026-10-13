@@ -73,10 +73,13 @@ log: { type: stdout, level: warn }
   $env:USERPROFILE = $sandbox; $env:HOME = $sandbox; $env:RERAIL_HOME = "$sandbox\.rerail"
   $env:NPM_CONFIG_USERCONFIG = "$sandbox\.npmrc"; $env:NPM_CONFIG_CACHE = "$base\npm-cache"
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
+  # Captured stdout is the coding agent's lane: answer "start" for the project in one run. BROWSER=none
+  # keeps the dashboard link from opening a browser on the runner.
+  $env:BROWSER = "none"
   [IO.File]::WriteAllText("$sandbox\.npmrc", "@neralabs:registry=$registry/`n")
   $daemonPort = Get-FreePort
   $start = New-Object Diagnostics.ProcessStartInfo($node)
-  $start.Arguments = "`"$npxCli`" --yes @neralabs/rerail@latest setup --project `"$project`" --port $daemonPort"
+  $start.Arguments = "`"$npxCli`" --yes @neralabs/rerail@latest setup --repo `"$project`" --answer start --port $daemonPort"
   $start.WorkingDirectory = $project
   $start.UseShellExecute = $false; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
   $setup = [Diagnostics.Process]::Start($start)
@@ -96,7 +99,7 @@ log: { type: stdout, level: warn }
   if ($status -notmatch "Native kernel: ok") { throw "the daemon has no working native kernel" }
 
   Step "Starting Rerail in the project"
-  # Setup leaves the project never started, and hooks do nothing where Rerail is off.
+  # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
   Write-Host ((& $launcher start --repo $project) -join "`n")
   if ($LASTEXITCODE -ne 0) { throw "rerail start exited $LASTEXITCODE" }
 

@@ -38,3 +38,4 @@ export {
   SqliteSessionReader,
   SqliteSessionStore,
 } from "./session-store.js";
+export { type RepositorySetupIo, onRuleCount } from "./repository-start.js";

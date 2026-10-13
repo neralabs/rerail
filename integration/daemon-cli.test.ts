@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
+import { ENTRY_POINTS } from "../src/engine/index.js";
 import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
@@ -17,7 +18,7 @@ describe("Rerail daemon CLI", () => {
     let child: ChildProcess | undefined;
     try {
       child = spawn(process.execPath, [
-        join(process.cwd(), "dist", "daemon", "daemon.js"),
+        join(process.cwd(), ENTRY_POINTS.daemon),
         "--dev",
         "--port", "0",
         "--state-file", stateFile,

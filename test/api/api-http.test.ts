@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
@@ -17,9 +17,12 @@ import {
   audits,
   checkouts,
   repositories,
+  PACKAGE_ROOT,
+  defaultRerailHome,
 } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
+import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -59,6 +62,7 @@ describe("Rerail API over HTTP", () => {
     stores = new DatabaseApiStores(databasePath, {
       health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
       origin: () => "http://127.0.0.1:4737",
+      codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
     });
     app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     sessionStore.openSession(SESSION);
@@ -134,11 +138,22 @@ describe("Rerail API over HTTP", () => {
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, rerails: 0 });
+    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, rerails: 0 });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
     expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, rerails: 0 });
+    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 });
+  });
+
+  it("counts logged-only violations by the mode recorded with each, not the rule's mode now", async () => {
+    addLibraryRules();
+    const codeRule = MOCK_CODE_RULES[0]!;
+    seedAudit({ at: 2_000, violations: [{ ...flagged, mode: "steer" }], audited: [codeRule.id] });
+    seedAudit({ at: 3_000, violations: [{ ...flagged, id: "violation-2", path: "web/src/y.ts", mode: "log" }], audited: [codeRule.id] });
+
+    const body = await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000");
+
+    expect(body.rules[codeRule.id]).toMatchObject({ distinctViolations: 2, loggedViolations: 1 });
   });
 
   it("separates violations by path, span, and session, and excludes audits before the range", async () => {
@@ -379,5 +394,29 @@ describe("Rerail API over HTTP", () => {
     const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
     expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
     expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);
+  });
+
+  it("tells a coding agent only found on this computer from one Rerail is connected to, and changes nothing", async () => {
+    const home = join(root, "user");
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await mkdir(join(home, ".cursor"), { recursive: true });
+    await mkdir(join(home, ".codex"), { recursive: true });
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      await registerHarnesses({ root: PACKAGE_ROOT, home, harnesses: ["cursor"] });
+      // One coding agent whose config cannot be read must not hide the others.
+      await writeFile(join(home, ".codex", "hooks.json"), "{ not json");
+      const before = await readdir(join(home, ".claude"));
+      const { agents } = await getJson<{ agents: Array<{ id: string; found: boolean; connected: boolean; problem: string | null }> }>("/api/coding-agents");
+      expect(agents.find(agent => agent.id === "cursor")).toMatchObject({ found: true, connected: true, problem: null });
+      expect(agents.find(agent => agent.id === "claude-code")).toMatchObject({ found: true, connected: false, problem: null });
+      expect(agents.find(agent => agent.id === "codex")).toMatchObject({ found: true, connected: false, problem: expect.stringContaining("hooks.json") });
+      expect(agents.find(agent => agent.id === "omp")).toMatchObject({ found: false, connected: false });
+      expect(await readdir(join(home, ".claude"))).toEqual(before);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 });

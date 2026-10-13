@@ -298,7 +298,7 @@ test("with a launcher, configs are backed up and commands moved before rerail in
     assert.equal(await nuke(["--yes"], { env: envFor(home), log: () => {}, interactive: false, dev: fakeDev() }), 0);
     assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), [
       `${rerailHome} not-backed-up command-present daemon stop`,
-      `${rerailHome} backed-up command-moved install --remove --harness omp,pi,claude-code,codex,cursor`,
+      `${rerailHome} backed-up command-moved install --remove --agents omp,pi,claude-code,codex,cursor`,
     ]);
     assert.equal(readJson(settings).statusLine.command, "printf user-status", "the sweep finishes what the launcher left");
     assert.ok(existsSync(join(backup, "rerail-home", "bin", "rerail")));
