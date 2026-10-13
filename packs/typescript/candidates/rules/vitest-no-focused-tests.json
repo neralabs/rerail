@@ -338,6 +338,105 @@
               }
             ]
           },
+          "vitest-only-modifier": {
+            "kind": "member_expression",
+            "any": [
+              {
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-only-modifier"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "regex": "^only$",
+                  "pattern": "$MODIFIER"
+                }
+              }
+            ]
+          },
+          "vitest-only-option": {
+            "kind": "arguments",
+            "has": {
+              "nthChild": {
+                "position": 2,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "any": [
+                        {
+                          "kind": "property_identifier"
+                        },
+                        {
+                          "kind": "string"
+                        }
+                      ],
+                      "regex": "^[\"']?only[\"']?$"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^only$"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "reverse": true,
+                  "ofRule": {
+                    "any": [
+                      {
+                        "kind": "pair",
+                        "has": {
+                          "field": "key",
+                          "any": [
+                            {
+                              "kind": "property_identifier"
+                            },
+                            {
+                              "kind": "string"
+                            }
+                          ],
+                          "regex": "^[\"']?only[\"']?$"
+                        }
+                      },
+                      {
+                        "kind": "shorthand_property_identifier",
+                        "regex": "^only$"
+                      }
+                    ]
+                  }
+                },
+                "all": [
+                  {
+                    "kind": "pair"
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "kind": "true"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "key",
+                      "pattern": "$MODIFIER"
+                    }
+                  }
+                ]
+              }
+            }
+          },
           "vitest-context-pair": {
             "kind": "pair_pattern",
             "nthChild": {
@@ -778,20 +877,42 @@
           "language": "typescript",
           "rule": {
             "kind": "call_expression",
-            "has": {
-              "field": "function",
-              "kind": "member_expression",
-              "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
-              "has": {
-                "field": "object",
-                "matches": "vitest-focusable-chain"
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
+                  "has": {
+                    "field": "object",
+                    "matches": "vitest-focusable-chain"
+                  },
+                  "matches": "vitest-only-modifier"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^(?:describe|it|test)(?:\\.\\w+)*$",
+                      "matches": "vitest-focusable-chain"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-only-option"
+                    }
+                  }
+                ]
               }
-            }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.MODIFIER",
         "code": "vitest/no-focused-tests",
         "message": "Remove .only: a focused test makes Vitest skip every other test.",
         "suppress": {

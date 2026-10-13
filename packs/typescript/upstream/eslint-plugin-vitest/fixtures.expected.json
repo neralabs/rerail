@@ -110,6 +110,7 @@
    "no-focused-tests/rerail-global-extend.test.ts",
    "no-focused-tests/rerail-local-binding.test.ts",
    "no-focused-tests/rerail-node-test-default.test.ts",
+   "no-focused-tests/rerail-node-test-mode-options.test.ts",
    "no-focused-tests/rerail-node-test.test.ts",
    "no-focused-tests/rerail-parameter.test.ts",
    "no-focused-tests/rerail-suite-only.test.ts",
@@ -123,6 +124,7 @@
    "no-focused-tests/rerail-vitest-extend-not-a-test.test.ts",
    "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
    "no-focused-tests/rerail-vitest-import-escaped.test.ts",
+   "no-focused-tests/rerail-vitest-mode-options.test.ts",
    "no-focused-tests/rerail-vitest-require-comment.test.ts",
    "no-focused-tests/rerail-vitest-require-default-value.test.ts",
    "no-focused-tests/rerail-vitest-require-parenthesized.test.ts",
@@ -518,6 +520,12 @@
   },
   {
    "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
    "path": "no-focused-tests/rerail-vitest-require-comment.test.ts",
    "line": 3,
    "column": 1
@@ -659,6 +667,12 @@
    "path": "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
    "line": 6,
    "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 6,
+   "column": 32
   },
   {
    "rule": "vitest/no-focused-tests",
@@ -803,6 +817,18 @@
    "path": "no-focused-tests/rerail-vitest-import-escaped.test.ts",
    "line": 3,
    "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 3,
+   "column": 19
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 7,
+   "column": 42
   },
   {
    "rule": "vitest/no-focused-tests",

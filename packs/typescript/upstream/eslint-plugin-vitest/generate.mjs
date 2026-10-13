@@ -356,6 +356,31 @@ it.only('focused', () => {});
 `,
     reports: { "expect-expect": 1 },
   },
+  // A mode option (`{ only: true }`, `{ skip: true }`), which upstream reports at its key: Vitest's, and node:test's.
+  {
+    rule: "no-focused-tests",
+    name: "vitest-mode-options",
+    code: `import { describe, test } from 'vitest';
+
+test('focused', { only: true }, () => {
+  expect(1).toBe(1);
+});
+test('skipped', { only: false, skip: true }, () => {});
+describe('focused later', { only: false, only: true }, () => {});
+`,
+    reports: { "expect-expect": 1, "no-disabled-tests": 1, "no-focused-tests": 2 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "node-test-mode-options",
+    code: `import { describe, test } from 'node:test';
+
+test('focused', { only: true }, t => {
+  t.assert.ok(true);
+});
+describe('skipped', { skip: true }, () => {});
+`,
+  },
 ];
 
 function parseArguments(argv) {
