@@ -440,6 +440,75 @@ it.only.only('twice', () => {});
 `,
     reports: { "expect-expect": 2, "no-focused-tests": 1 },
   },
+  // Self-review round 2: chains read by their accessors (line breaks), each function's own grammar whatever its local
+  // name, test contexts and `vi`/`expect` whose chains upstream does not check, and expect-expect's test shapes.
+  {
+    rule: "no-focused-tests",
+    name: "multiline-chain",
+    code: `import { describe, it } from 'vitest';
+
+it.only
+  .concurrent('focused', () => {});
+describe
+  .skip('skipped', () => {});
+`,
+    reports: { "expect-expect": 1, "no-disabled-tests": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-alias-across-grammars",
+    code: `import { test as describe } from 'vitest';
+
+describe.fails.only('focused', () => {});
+describe.fails.skip('skipped', () => {});
+`,
+    reports: { "expect-expect": 1, "no-disabled-tests": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context-unchecked-chain",
+    code: `test('suite', (context, it) => {
+  expect(context).toBeDefined();
+  it.only.only('focused', () => {});
+});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "expect-expect",
+    name: "test-without-callback",
+    code: `import { it, test } from 'vitest';
+
+it('todo');
+test('options only', { timeout: 1 });
+it('named', check);
+it('made', make());
+
+function check() {
+  expect(1).toBe(1);
+}
+`,
+    reports: { "expect-expect": 3, "no-disabled-tests": 1 },
+  },
+  {
+    rule: "expect-expect",
+    name: "vitest-table-calls",
+    code: `import { it } from 'vitest';
+
+it.for([1])('for %s', () => {});
+it.only.each\`a\`('tagged', () => {});
+`,
+    reports: { "expect-expect": 2, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "unchecked-heads",
+    code: `vi.skip('vi');
+expect.not.skip('expect');
+expect.foo.skip('no matcher chain');
+`,
+    reports: { "no-disabled-tests": 2 },
+  },
 ];
 
 function parseArguments(argv) {

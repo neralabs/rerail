@@ -113,6 +113,11 @@ function chainLinks({ modifiers, conditions, terminals, alone }) {
   return chains;
 }
 
+/** A member access between links, line breaks and spaces aside (upstream reads the chain's accessors, not its text). */
+const SEP = "\\s*\\.\\s*";
+/** A head: any identifier, since an import or `.extend` may rename the function (`import { test as check }`). */
+const HEAD = "[\\w$]+";
+
 /** An alternation matching exactly the given link lists as `.a.b` text, factored by common prefixes. */
 function linksPattern(chains) {
   const tree = new Map();
@@ -121,28 +126,36 @@ function linksPattern(chains) {
     if (first === undefined) end = true;
     else tree.set(first, [...(tree.get(first) ?? []), rest]);
   }
-  const branches = [...tree].sort(([a], [b]) => (a < b ? -1 : 1)).map(([link, rests]) => `\\.${link}${linksPattern(rests)}`);
+  const branches = [...tree].sort(([a], [b]) => (a < b ? -1 : 1)).map(([link, rests]) => `${SEP}${link}${linksPattern(rests)}`);
   if (branches.length === 0) return "";
   return `(?:${branches.join("|")})${end ? "?" : ""}`;
 }
 
 /**
- * A regex over a callee's text: one of `heads` followed by a valid chain for it whose links pass `keep` (for instance,
- * those that include `.only`, the way upstream finds `.only` among a valid chain's members).
+ * The links a callee may carry after its head: `keep` over a valid chain's links; `free`, the pattern for a head whose
+ * chain upstream does not check (a test context, `vi`, `vitest`); and `expect`, the pattern after `expect` or
+ * `expectTypeOf`, whose links upstream reads as modifiers then a matcher (none where the spec leaves it out).
  */
-function validChain(heads, keep = () => true) {
-  const alternatives = [];
-  for (const grammar of Object.values(CHAIN_GRAMMAR)) {
-    const names = grammar.heads.filter(head => heads.includes(head));
-    if (names.length === 0) continue;
-    const chains = chainLinks(grammar).filter(keep);
-    if (chains.length > 0) alternatives.push(`(?:${names.join("|")})${linksPattern(chains)}`);
-  }
-  return `^(?:${alternatives.join("|")})$`;
-}
-const including = member => links => links.includes(member);
+const ANY_LINKS = { keep: () => true, free: `(?:${SEP}${HEAD})*` };
+const NO_LINKS = { keep: links => links.length === 0, free: "" };
+const including = member => ({
+  keep: links => links.includes(member),
+  free: `(?:${SEP}${HEAD})*${SEP}${member}(?:${SEP}${HEAD})*`,
+  // `expect.skip()`, `expect.not.skip()`: the member is the matcher, after `not`/`resolves`/`rejects` modifiers.
+  expect: `(?:${SEP}(?:not|resolves|rejects))*${SEP}${member}`,
+});
+const among = allowed => ({ keep: links => links.every(link => allowed.includes(link)), free: `(?:${SEP}(?:${allowed.join("|")}))*` });
+/** A table call (`.each`/`.for`) the test is made by: `it.each([...])('x', fn)`, `it.only.for([...])('x', fn)`. */
+const tableAfter = allowed => ({
+  keep: links => ["each", "for"].includes(links.at(-1)) && links.slice(0, -1).every(link => allowed.includes(link)),
+  free: `(?:${SEP}(?:${allowed.join("|")}))*${SEP}(?:each|for)`,
+});
+/** Functions whose chains upstream does not check against ValidVitestFnCallChains. */
+const UNCHECKED = ["vi", "vitest"];
+const EXPECTS = ["expect", "expectTypeOf"];
 /** The modifiers the expect-expect port reads on a test (upstream skips `.skip`, `.todo`, `.extend` and `.scoped`). */
 const EXPECT_LINKS = ["only", "concurrent", "sequential", "fails"];
+const labelOf = names => [...names].sort().join("-");
 const FUNCTION_KINDS = [{ kind: "arrow_function" }, { kind: "function_expression" }, { kind: "generator_function" }];
 const PARAMETER = { any: [{ kind: "required_parameter" }, { kind: "optional_parameter" }] };
 
@@ -210,6 +223,9 @@ function vitestBinding(names) {
       {
         resolves: {
           binding: {
+            // The declarator first: `occurrence` reads every reference of the name, so it runs only for a name a
+            // `require('vitest')` or `await import('vitest')` declarator binds.
+            site: { kind: "variable_declarator", has: { field: "value", matches: "vitest-module" } },
             occurrence: {
               any: [
                 { kind: "shorthand_property_identifier_pattern", regex: oneOf(names), inside: VITEST_DESTRUCTURING },
@@ -226,22 +242,47 @@ function vitestBinding(names) {
   };
 }
 
-/** The utilities for a set of function names: `vitest-<label>-head` and `vitest-<label>-chain`, and what they use. */
-function functionUtilities(label, names) {
-  const utils = {};
-  const cases = names.filter(name => TEST_CASES.includes(name));
-  const binding = [vitestBinding(names)];
-  if (cases.length > 0) {
-    const extended = cases.length === names.length ? label : `${label}-test`;
-    Object.assign(utils, extendUtilities(extended, cases));
-    binding.push({ matches: `vitest-${extended}-extended` });
+/**
+ * A callee (a call's `function`) that names a Vitest function in `names` by a chain upstream accepts for it, its links
+ * passing `links`. The head's binding decides the function (an import's original name, a `.extend`'s root), so each
+ * grammar's chains are checked against heads bound to that grammar's functions, whatever their local name; a test
+ * context and the unchecked functions take `links.free`. Registers the utilities it names in `utils`.
+ */
+function vitestCallee(utils, names, links) {
+  const any = [];
+  for (const grammar of Object.values(CHAIN_GRAMMAR)) {
+    const heads = grammar.heads.filter(head => names.includes(head));
+    const chains = chainLinks(grammar).filter(links.keep);
+    if (heads.length > 0 && chains.length > 0) any.push({ regex: `^${HEAD}${linksPattern(chains)}$`, matches: namedCallee(utils, heads) });
   }
-  utils[`vitest-${label}-head`] = {
-    kind: "identifier",
-    any: [{ resolves: { global: names } }, ...binding, { regex: oneOf(names), matches: "vitest-test-context" }],
-  };
-  utils[`vitest-${label}-chain`] = chain(`vitest-${label}-chain`, `vitest-${label}-head`);
-  return utils;
+  const unchecked = names.filter(name => UNCHECKED.includes(name));
+  if (unchecked.length > 0) any.push({ regex: `^${HEAD}${links.free}$`, matches: namedCallee(utils, unchecked) });
+  const expects = names.filter(name => EXPECTS.includes(name));
+  if (expects.length > 0 && links.expect !== undefined) any.push({ regex: `^${HEAD}${links.expect}$`, matches: namedCallee(utils, expects) });
+  any.push({ regex: `^${HEAD}${links.free}$`, matches: contextCallee(utils, names) });
+  return { any };
+}
+
+/** `vitest-<label>-callee`: a chain whose head is a global or a `vitest` binding of one of `names`. */
+function namedCallee(utils, names) {
+  const label = labelOf(names);
+  const cases = names.filter(name => TEST_CASES.includes(name));
+  const any = [{ resolves: { global: names } }, vitestBinding(names)];
+  if (cases.length > 0) {
+    Object.assign(utils, extendUtilities(labelOf(cases), cases));
+    any.push({ matches: `vitest-${labelOf(cases)}-extended` });
+  }
+  utils[`vitest-${label}-named`] = { kind: "identifier", any };
+  utils[`vitest-${label}-callee`] = chain(`vitest-${label}-callee`, `vitest-${label}-named`);
+  return `vitest-${label}-callee`;
+}
+
+/** `vitest-<label>-context-callee`: a chain whose head is a test context named one of `names`. */
+function contextCallee(utils, names) {
+  const label = labelOf(names);
+  utils[`vitest-${label}-context`] = { kind: "identifier", regex: oneOf(names), matches: "vitest-test-context" };
+  utils[`vitest-${label}-context-callee`] = chain(`vitest-${label}-context-callee`, `vitest-${label}-context`);
+  return `vitest-${label}-context-callee`;
 }
 
 /** `vitest-<label>-extended`: a name declared `const x = <root>.extend(...)`, its root `vitest` binding one of `cases`. */
@@ -404,13 +445,13 @@ function modifierUtilities(modifier) {
   };
 }
 
-/** The define clause each document opens with: the utilities for the function sets and modifiers it names. */
-function define(labels, modifiers = []) {
+/** A document's clauses: a define clause with every utility its clauses named, then the clauses `build` returns. */
+function withDefine(build, modifiers = []) {
   const utils = {};
-  for (const label of labels) Object.assign(utils, functionUtilities(label, FUNCTIONS[label]));
+  const clauses = build(utils);
   for (const modifier of modifiers) Object.assign(utils, modifierUtilities(modifier));
   Object.assign(utils, TEST_CONTEXT, MODULE_SOURCE);
-  return { id: "vitest-functions", define: { language: "typescript", utils } };
+  return [{ id: "vitest-functions", define: { language: "typescript", utils } }, ...clauses];
 }
 
 const violation = (rule, message, anchor = "witness.span") => ({ anchor, code: `vitest/${rule}`, message, suppress: { eslint: { rules: [`vitest/${rule}`] } } });
@@ -420,8 +461,7 @@ const DOCUMENTS = {
   "vitest-expect-expect": {
     mode: "steer",
     description: "A test whose function never calls `expect` or `assert`.",
-    clauses: [
-      define(["test"]),
+    clauses: withDefine(utils => [
       {
         id: "no-assertion",
         forbid: ast({
@@ -430,23 +470,38 @@ const DOCUMENTS = {
             {
               has: {
                 field: "function",
-                // A valid `it`/`test` chain of the modifiers this port reads, or the call `.each(...)` returns.
+                // A test called with the modifiers this port reads, or the call `.each(...)`/`.for(...)` returns;
+                // upstream passes over a call of an identifier named `bench`.
+                not: { kind: "identifier", regex: "^bench$" },
                 any: [
-                  { regex: validChain(["it", "test"], links => links.every(link => EXPECT_LINKS.includes(link))) },
-                  {
-                    kind: "call_expression",
-                    has: { field: "function", regex: validChain(["it", "test"], links => links.at(-1) === "each" && links.slice(0, -1).every(link => EXPECT_LINKS.includes(link))) },
-                  },
+                  vitestCallee(utils, FUNCTIONS.test, among(EXPECT_LINKS)),
+                  { kind: "call_expression", has: { field: "function", ...vitestCallee(utils, FUNCTIONS.test, tableAfter(EXPECT_LINKS)) } },
                 ],
-                all: [{ any: [{ matches: "vitest-test-head" }, { has: { field: "object", matches: "vitest-test-chain" } }, { has: { field: "function", matches: "vitest-test-chain" } }] }],
               },
             },
+            // Upstream marks a test checked when an assertion call sits anywhere among its arguments, or inside a
+            // function declaration an argument names (`it('x', helper)`); anything else, a test with no callback
+            // included, asserts nothing.
             {
               has: {
                 field: "arguments",
-                has: {
-                  any: [{ kind: "arrow_function" }, { kind: "function_expression" }],
-                  not: { has: { stopBy: "end", kind: "call_expression", has: { field: "function", regex: "^(?:expect|assert)\\b" } } },
+                not: {
+                  any: [
+                    { has: { stopBy: "end", kind: "call_expression", has: { field: "function", regex: "^(?:expect|assert)\\b" } } },
+                    {
+                      has: {
+                        kind: "identifier",
+                        resolves: {
+                          binding: {
+                            site: {
+                              kind: "function_declaration",
+                              has: { stopBy: "end", kind: "call_expression", has: { field: "function", regex: "^(?:expect|assert)\\b" } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ],
                 },
               },
             },
@@ -454,106 +509,98 @@ const DOCUMENTS = {
         }),
         violation: violation("expect-expect", "This test asserts nothing, so it passes whatever the code does. Add an expect."),
       },
-    ],
+    ]),
   },
   "vitest-no-disabled-tests": {
     mode: "log",
     description: "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
-    clauses: [
-      define(["skippable", "xdisabled", "test", "block"], ["skip"]),
-      {
-        id: "skip",
-        // Upstream reports the `.skip` property, a `{ skip: true }` option's key, or the call's head (`xit`, `pending`);
-        // `$MODIFIER` is that node.
-        forbid: ast({
-          kind: "call_expression",
-          any: [
-            {
-              has: {
-                field: "function",
-                any: [
-                  {
-                    kind: "member_expression",
-                    regex: validChain(["describe", "it", "test", "suite", "bench"], including("skip")),
-                    has: { field: "object", matches: "vitest-skippable-chain" },
-                    matches: "vitest-skip-modifier",
-                  },
-                  {
-                    kind: "identifier",
-                    pattern: "$MODIFIER",
-                    any: [
-                      { regex: "^(?:xit|xtest|xdescribe)$", matches: "vitest-xdisabled-head" },
-                      // Upstream reports `pending()` only where nothing binds `pending`.
-                      { regex: "^pending$", resolves: { global: ["pending"] } },
-                    ],
-                  },
-                  // `xit.each([])(...)` and `xit.each\`\`(...)`: the call `each` returns, reported at its head.
-                  {
-                    kind: "call_expression",
-                    has: {
-                      field: "function",
-                      kind: "member_expression",
-                      regex: "^(?:xit|xtest|xdescribe)\\.each$",
-                      has: { field: "object", kind: "identifier", pattern: "$MODIFIER", matches: "vitest-xdisabled-head" },
+    clauses: withDefine(
+      utils => [
+        {
+          id: "skip",
+          // Upstream reports the `.skip` property, a `{ skip: true }` option's key, or the call's head (`xit`,
+          // `pending`); `$MODIFIER` is that node.
+          forbid: ast({
+            kind: "call_expression",
+            any: [
+              {
+                has: {
+                  field: "function",
+                  any: [
+                    { kind: "member_expression", ...vitestCallee(utils, FUNCTIONS.skippable, including("skip")), matches: "vitest-skip-modifier" },
+                    {
+                      kind: "identifier",
+                      pattern: "$MODIFIER",
+                      any: [
+                        vitestCallee(utils, FUNCTIONS.xdisabled, NO_LINKS),
+                        // Upstream reports `pending()` only where nothing binds `pending`.
+                        { regex: "^pending$", resolves: { global: ["pending"] } },
+                      ],
                     },
-                  },
+                    // `xit.each([])(...)` and `xit.each\`\`(...)`: the call `each` returns, reported at its head.
+                    {
+                      kind: "call_expression",
+                      has: {
+                        field: "function",
+                        kind: "member_expression",
+                        ...vitestCallee(utils, FUNCTIONS.xdisabled, { keep: links => links.join(".") === "each", free: `${SEP}each` }),
+                        has: { field: "object", kind: "identifier", pattern: "$MODIFIER" },
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                all: [
+                  { has: { field: "function", ...vitestCallee(utils, FUNCTIONS.block, ANY_LINKS) } },
+                  { has: { field: "arguments", matches: "vitest-skip-option" } },
                 ],
               },
-            },
-            {
-              all: [
-                { has: { field: "function", regex: validChain(FUNCTIONS.block), matches: "vitest-block-chain" } },
-                { has: { field: "arguments", matches: "vitest-skip-option" } },
-              ],
-            },
-          ],
-        }),
-        violation: violation("no-disabled-tests", "This test is disabled. Fix it or delete it.", "capture.MODIFIER"),
-      },
-      {
-        id: "missing-function",
-        forbid: ast({
-          kind: "call_expression",
-          all: [
-            { has: { field: "function", kind: "identifier", regex: "^(?:it|test)$", matches: "vitest-test-head" } },
-            { has: { field: "arguments", kind: "arguments", not: { has: { nthChild: 2 } } } },
-          ],
-        }),
-        violation: violation("no-disabled-tests", "This test has no function, so it never runs."),
-      },
-    ],
+            ],
+          }),
+          violation: violation("no-disabled-tests", "This test is disabled. Fix it or delete it.", "capture.MODIFIER"),
+        },
+        {
+          id: "missing-function",
+          // A test (whose links, if any, are all `.skip`) called with fewer than two arguments.
+          forbid: ast({
+            kind: "call_expression",
+            all: [
+              { has: { field: "function", ...vitestCallee(utils, FUNCTIONS.test, { keep: links => links.every(link => link === "skip"), free: `(?:${SEP}skip)*` }) } },
+              { has: { field: "arguments", kind: "arguments", not: { has: { nthChild: 2 } } } },
+            ],
+          }),
+          violation: violation("no-disabled-tests", "This test has no function, so it never runs."),
+        },
+      ],
+      ["skip"],
+    ),
   },
   "vitest-no-focused-tests": {
     mode: "steer",
     description: "A focused test (`.only`), which makes Vitest skip every other test in the file.",
-    clauses: [
-      define(["focusable"], ["only"]),
-      {
-        id: "only",
-        // Upstream reports the `.only` property, or a `{ only: true }` option's key; `$MODIFIER` is that node.
-        forbid: ast({
-          kind: "call_expression",
-          any: [
-            {
-              has: {
-                field: "function",
-                kind: "member_expression",
-                regex: validChain(["describe", "it", "test", "suite", "bench"], including("only")),
-                has: { field: "object", matches: "vitest-focusable-chain" },
-                matches: "vitest-only-modifier",
+    clauses: withDefine(
+      utils => [
+        {
+          id: "only",
+          // Upstream reports the `.only` property, or a `{ only: true }` option's key; `$MODIFIER` is that node.
+          forbid: ast({
+            kind: "call_expression",
+            any: [
+              { has: { field: "function", kind: "member_expression", ...vitestCallee(utils, FUNCTIONS.focusable, including("only")), matches: "vitest-only-modifier" } },
+              {
+                all: [
+                  { has: { field: "function", ...vitestCallee(utils, FUNCTIONS.focusable, ANY_LINKS) } },
+                  { has: { field: "arguments", matches: "vitest-only-option" } },
+                ],
               },
-            },
-            {
-              all: [
-                { has: { field: "function", regex: validChain(FUNCTIONS.focusable), matches: "vitest-focusable-chain" } },
-                { has: { field: "arguments", matches: "vitest-only-option" } },
-              ],
-            },
-          ],
-        }),
-        violation: violation("no-focused-tests", "Remove .only: a focused test makes Vitest skip every other test.", "capture.MODIFIER"),
-      },
-    ],
+            ],
+          }),
+          violation: violation("no-focused-tests", "Remove .only: a focused test makes Vitest skip every other test.", "capture.MODIFIER"),
+        },
+      ],
+      ["only"],
+    ),
   },
 };
 
