@@ -2,6 +2,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSyn
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import type { UpdateResult, UpdateStatus } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../engine/storage/database.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
@@ -13,16 +14,27 @@ export function preUpdateSnapshotPath(databasePath: string): string {
   return `${databasePath}.pre-update`;
 }
 
+/** The version change a pre-update copy was taken for, recorded beside it as `rerail.sqlite.pre-update.json`. */
+interface SnapshotTransition {
+  from: string;
+  to: string;
+}
+
+/** What `rerail update` and `rerail update rollback` ask of the managed updater. */
+export interface SnapshotUpdater {
+  status(): Promise<UpdateStatus>;
+  update(channel?: string): Promise<UpdateResult>;
+  rollback(): Promise<UpdateResult>;
+}
+
 /**
- * Before an update swaps the active version, copy the whole Rerail database (every project's
- * rules and every repository's history) to `rerail.sqlite.pre-update`, replacing the previous
- * copy. A copy that fails is reported, never fatal; the update must not be blocked by a
- * database the new version may be the fix for.
+ * A consistent copy of the whole database (every project's rules and every repository's history) beside the
+ * current copy, or undefined when there is no database or the copy failed. A copy that fails is reported, never
+ * fatal; the update must not be blocked by a database the new version may be the fix for.
  */
-export function snapshotDatabaseBeforeUpdate(databasePath = defaultRerailDatabasePath()): void {
-  if (!existsSync(databasePath)) return;
-  const target = preUpdateSnapshotPath(databasePath);
-  const staging = `${target}.${process.pid}.tmp`;
+function stageSnapshot(databasePath: string): string | undefined {
+  if (!existsSync(databasePath)) return undefined;
+  const staging = `${preUpdateSnapshotPath(databasePath)}.${process.pid}.tmp`;
   try {
     rmSync(staging, { force: true });
     const source = new Database(databasePath, { readonly: true, fileMustExist: true });
@@ -32,12 +44,41 @@ export function snapshotDatabaseBeforeUpdate(databasePath = defaultRerailDatabas
     } finally {
       source.close();
     }
-    renameSync(staging, target);
-    process.stdout.write(`Copied ${databasePath} to ${target}\n`);
+    return staging;
   } catch (error) {
     rmSync(staging, { force: true });
     process.stderr.write(`rerail: could not copy ${databasePath} before the update: ${(error as Error).message}\n`);
+    return undefined;
   }
+}
+
+/**
+ * `rerail update`: copy the database, then update. Only an update that changes the version replaces
+ * `rerail.sqlite.pre-update`, and the copy records that change; an update that finds nothing newer, or fails,
+ * leaves the copy of the last real change in place, so rolling that change back still finds it.
+ */
+export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath: string, channel: string | undefined): Promise<UpdateResult> {
+  const from = (await updater.status()).current.version;
+  const staged = stageSnapshot(databasePath);
+  let result: UpdateResult;
+  try {
+    result = await updater.update(channel);
+  } catch (error) {
+    if (staged !== undefined) rmSync(staged, { force: true });
+    throw error;
+  }
+  if (staged === undefined) return result;
+  if (!result.changed || result.current.version === from) {
+    rmSync(staged, { force: true });
+    return result;
+  }
+  const target = preUpdateSnapshotPath(databasePath);
+  const transition: SnapshotTransition = { from, to: result.current.version };
+  writeFileSync(`${target}.json.tmp`, `${JSON.stringify(transition)}\n`);
+  renameSync(staged, target);
+  renameSync(`${target}.json.tmp`, `${target}.json`);
+  process.stdout.write(`Copied ${databasePath} to ${target}\n`);
+  return result;
 }
 
 /** `PRAGMA user_version` of the SQLite file at `path`, or undefined when it cannot be read. */
@@ -54,18 +95,34 @@ function schemaFloor(path: string): number | undefined {
   }
 }
 
+/** The transition recorded beside the pre-update copy, or undefined when there is none or it is unreadable. */
+function snapshotTransition(databasePath: string): SnapshotTransition | undefined {
+  try {
+    const value = JSON.parse(readFileSync(`${preUpdateSnapshotPath(databasePath)}.json`, "utf8")) as Partial<SnapshotTransition>;
+    return typeof value.from === "string" && typeof value.to === "string" ? { from: value.from, to: value.to } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * After `rerail update rollback`: when the update's migrations raised the database's schema floor above the copy
- * taken before it, the version rolled back to refuses the database, so the pre-update copy goes back in its place.
- * The replaced database, with what changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor
- * the update left alone (additive steps only) keeps the database as it is. `stopDaemon` runs first: the daemon
- * holds the database open. A restore that fails is reported, never fatal: the version has rolled back already.
+ * `rerail update rollback`: roll the version back, then, when the copy taken before updating from the version rolled
+ * back to (`from`) to the version left (`to`) exists and that update's migrations raised the database's schema floor
+ * above the copy's, put the copy back: the version rolled back to refuses the database otherwise. The replaced
+ * database, with what changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor the update left
+ * alone (additive steps only) keeps the database as it is, and a copy taken for another change is never used.
+ * `stopDaemon` runs first: the daemon holds the database open. A restore that fails is reported, never fatal: the
+ * version has rolled back already.
  */
-export async function restoreDatabaseForRollback(databasePath: string, stopDaemon: () => Promise<unknown>): Promise<void> {
+export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
+  const leaving = (await updater.status()).current.version;
+  const result = await updater.rollback();
+  const transition = snapshotTransition(databasePath);
+  if (transition === undefined || transition.from !== result.current.version || transition.to !== leaving) return result;
   const snapshot = preUpdateSnapshotPath(databasePath);
   const current = schemaFloor(databasePath);
   const before = schemaFloor(snapshot);
-  if (current === undefined || before === undefined || current <= before) return;
+  if (current === undefined || before === undefined || current <= before) return result;
   const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
@@ -85,6 +142,7 @@ export async function restoreDatabaseForRollback(databasePath: string, stopDaemo
       + `Stop Rerail, then copy ${snapshot} to ${databasePath}.\n`,
     );
   }
+  return result;
 }
 
 /** `rerail rules export|import`: the library and every repository's configuration, as a rules dump. */

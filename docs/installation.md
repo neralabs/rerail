@@ -215,9 +215,10 @@ daemon serves every repository; its pages are scoped to one with
 `?repository=<key>&checkout=<path>`. The rules that ship with Rerail are read
 from the package and run only in repositories that add them (see
 [Rule scoping](rule-scoping.md)).
-`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`,
-and `rerail update rollback` puts that copy back when the update changed the
-database in a way the older version cannot read (see
+`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
+(kept only when the update changes the version, and recorded with that change), and
+`rerail update rollback` puts that copy back when rolling that change back and the
+update changed the database in a way the older version cannot read (see
 [Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 your rules and each repository's configuration by hand. `rerail seed` fills the
@@ -298,14 +299,17 @@ whichever daemon is running and never brings its own version back.
 oldest schema version a Rerail must read to open it, 3 in this release. Which
 migration steps the file has run is recorded in its `schema_migrations` table.
 
-When a newer Rerail first opens the file to write to it (the daemon, `rerail
-start`, set-up), it runs the steps the file has not run, in one transaction:
-a step that fails leaves the file as it was. Most steps add a column or a
-table, which older versions read correctly, so they keep the floor and an
-older Rerail still opens the file. A step an older version would misread
-raises the floor; from then on older versions refuse the file, and `rerail
-update rollback` puts back the copy `rerail update` took, keeping the replaced
-database as `rerail.sqlite.before-rollback`.
+When a newer Rerail first opens the file (the daemon, `rerail start`, set-up,
+or a command, hook or status line that only reads), it runs the steps the file
+has not run, in one transaction: a step that fails leaves the file as it was.
+Most steps add a column or a table, which older versions read correctly, so
+they keep the floor and an older Rerail still opens the file. A step an older
+version would misread raises the floor and waits for the new version's daemon
+or a command that writes; from then on older versions refuse the file, and
+`rerail update rollback` puts back the copy `rerail update` took before that
+version change, keeping the replaced database as
+`rerail.sqlite.before-rollback`. An update that finds nothing newer, or fails,
+keeps the copy of the last change.
 
 A database file written by a newer Rerail (a floor above this release's), or
 by other software, is refused with an error and left untouched. So is a file

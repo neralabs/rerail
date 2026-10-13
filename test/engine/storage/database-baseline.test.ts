@@ -368,4 +368,40 @@ describe("the migration path", () => {
       reopened.$client.close();
     }
   });
+
+  // A new version's first command may only read (a hook, the status line, set-up's summary) while its readers already
+  // query the new shape, so a read-only open runs the steps that keep the floor first.
+  it("runs the steps that keep the floor before a read-only open, so its readers see the new shape", async () => {
+    const path = await temporaryDatabase();
+    stampedFile(path, SETTING_ROW);
+    const runs = { count: 0 };
+    const reader = openRerailDatabase(path, { readonly: true, migrations: [noteStep(runs)] });
+    try {
+      expect(reader.$client.prepare("SELECT owner_id, note FROM rule_settings").all()).toEqual([{ owner_id: "repo", note: null }]);
+      expect(() => reader.$client.exec("DELETE FROM rule_settings")).toThrow(/readonly/u);
+    } finally {
+      reader.$client.close();
+    }
+    openRerailDatabase(path, { readonly: true, migrations: [noteStep(runs)] }).$client.close();
+    expect(runs.count).toBe(1);
+    expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
+  });
+
+  it("leaves a step that raises the floor to the writer, and a file it cannot write as it is", async () => {
+    const raising = await temporaryDatabase();
+    stampedFile(raising, SETTING_ROW);
+    openRerailDatabase(raising, { readonly: true, migrations: [noteStep({ count: 0 }, RERAIL_BASELINE_SCHEMA_VERSION + 1)] }).$client.close();
+    expect(migrationState(raising)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+
+    const locked = await temporaryDatabase();
+    stampedFile(locked, SETTING_ROW);
+    settledBytes(locked);
+    chmodSync(locked, 0o400);
+    try {
+      openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }).$client.close();
+    } finally {
+      chmodSync(locked, 0o600);
+    }
+    expect(migrationState(locked)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+  });
 });
