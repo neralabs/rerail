@@ -7,6 +7,7 @@ use super::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
 use napi::Result;
 pub(crate) use noqa::{NoqaIndex, parent_statement};
+pub(crate) use nosec::NosecIndex;
 pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
 pub(crate) use phpstan::PhpstanIndex;
 pub(crate) use psalm::PsalmIndex;
@@ -22,6 +23,9 @@ pub(super) struct Suppress {
     /// suppress the violation.
     pub(super) eslint: Option<Vec<String>>,
     pub(super) noqa: Option<Noqa>,
+    /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress
+    /// the violation.
+    pub(super) nosec: Option<Vec<String>>,
     /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
     pub(super) phpstan: Option<Vec<String>>,
     pub(super) psalm: Option<Psalm>,
@@ -87,6 +91,7 @@ fn singular(what: &str) -> &str {
         "Psalm issue names" => {
             "a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll)"
         }
+        "Bandit test ids" => "a Bandit test id (B, then digits: B101)",
         "PHP_CodeSniffer codes" => {
             "a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code)"
         }
@@ -97,6 +102,11 @@ fn singular(what: &str) -> &str {
 /// A rule name an `eslint-disable` list can name: ESLint splits the list on commas and trims.
 fn rule_name(name: &str) -> bool {
     !name.is_empty() && !name.contains(',') && name.trim() == name
+}
+
+/// A Bandit test id a `# nosec` list can name: `B`, then digits.
+fn bandit_test(id: &str) -> bool {
+    id.len() > 1 && id.starts_with('B') && id[1..].bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// A code a `# noqa` list can name: Ruff's lexer reads uppercase letters, then digits.
@@ -132,7 +142,7 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
     let suppress = object(value, path)?;
     reject_unknown(
         suppress,
-        &["eslint", "noqa", "phpstan", "psalm", "phpcs"],
+        &["eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs"],
         path,
     )?;
     let eslint = suppress
@@ -167,6 +177,19 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
                 }
             };
             Ok(Noqa { codes, parent })
+        })
+        .transpose()?;
+    let nosec = suppress
+        .get("nosec")
+        .map(|nosec| {
+            let at = format!("{path}/nosec");
+            reject_unknown(object(nosec, &at)?, &["codes"], &at)?;
+            names(
+                nosec.get("codes"),
+                &format!("{at}/codes"),
+                bandit_test,
+                "Bandit test ids",
+            )
         })
         .transpose()?;
     let phpstan = suppress
@@ -234,15 +257,21 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
             Ok(Phpcs { codes, version })
         })
         .transpose()?;
-    if eslint.is_none() && noqa.is_none() && phpstan.is_none() && psalm.is_none() && phpcs.is_none()
+    if eslint.is_none()
+        && noqa.is_none()
+        && nosec.is_none()
+        && phpstan.is_none()
+        && psalm.is_none()
+        && phpcs.is_none()
     {
         return Err(invalid(format!(
-            "{path} must hold eslint, noqa, phpstan, psalm, or phpcs"
+            "{path} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"
         )));
     }
     Ok(Suppress {
         eslint,
         noqa,
+        nosec,
         phpstan,
         psalm,
         phpcs,
@@ -345,6 +374,7 @@ impl EslintDirectives {
 #[cfg(test)]
 mod eslint;
 mod noqa;
+mod nosec;
 #[cfg(test)]
 mod php_corpus_tests;
 mod phpcs;
@@ -384,7 +414,7 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, phpstan, psalm, or phpcs"),
+                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"),
             ),
             (
                 "typescript",
@@ -431,6 +461,26 @@ mod tests {
                 "python",
                 json!({ "noqa": { "codes": ["F401"], "parent": "import" } }),
                 format!("{at}/noqa/parent must be \"statement\""),
+            ),
+            (
+                "python",
+                json!({ "nosec": { "codes": ["b101"] } }),
+                format!("{at}/nosec/codes/0 must be a Bandit test id (B, then digits: B101)"),
+            ),
+            (
+                "python",
+                json!({ "nosec": { "codes": ["B101"], "names": ["assert_used"] } }),
+                format!("unknown field `names` at {at}/nosec"),
+            ),
+            (
+                "typescript",
+                json!({ "nosec": { "codes": ["B101"] } }),
+                format!("{at}/nosec: nosec comments are Bandit's; a typescript query has none"),
+            ),
+            (
+                "php",
+                json!({ "nosec": { "codes": ["B101"] } }),
+                format!("{at}/nosec: nosec comments are Bandit's; a php query has none"),
             ),
             (
                 "python",
@@ -533,6 +583,10 @@ mod tests {
             (
                 "python",
                 json!({ "noqa": { "codes": ["F401", "TC002", "TCH002"], "parent": "statement" } }),
+            ),
+            (
+                "python",
+                json!({ "noqa": { "codes": ["S101"] }, "nosec": { "codes": ["B101"] } }),
             ),
             (
                 "php",

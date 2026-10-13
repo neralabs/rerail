@@ -27,5 +27,6 @@ pub(crate) fn suppresses<D: Doc>(
     let at = anchored_span(&violation.anchor, witness).0.start_byte;
     let lines = file_lines(source, Terminators::of(language));
     // Compiling checked that the query's family honours each linter `suppress` names.
-    with_adapter!(Family::of(language), A => A::suppresses(violation, suppress, node, source, &lines, at))
+    let span = (witness.span.start_byte, witness.span.end_byte);
+    with_adapter!(Family::of(language), A => A::suppresses(violation, suppress, node, source, &lines, at, span))
 }

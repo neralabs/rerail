@@ -9,6 +9,7 @@ import type { RerailDatabase } from "../engine/storage/database.js";
 import type { AuditReader } from "../engine/audit/audit-store.js";
 import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { ApiCaller, BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
@@ -39,6 +40,8 @@ export interface RerailApiStores {
   /** `http://host:port` of the dashboard. */
   dashboardOrigin(): string;
   health(): z.infer<typeof presentationDaemonSchema>;
+  /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
+  codingAgents(): Promise<CodingAgentState[]> | undefined;
 }
 
 export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -63,7 +66,7 @@ export interface OperationDefinition<
     stores: RerailApiStores,
     input: z.infer<z.ZodObject<Params>> & z.infer<z.ZodObject<Query>> & z.infer<z.ZodObject<Body>>,
     caller: ApiCaller,
-  ) => z.infer<Output>;
+  ) => z.infer<Output> | Promise<z.infer<Output>>;
 }
 
 export type Operation = OperationDefinition<z.ZodRawShape, z.ZodRawShape, z.ZodRawShape, z.ZodType>;
@@ -91,9 +94,9 @@ export class ApiError extends Error {
 }
 
 /** Run one operation for one caller; a write that returns counts toward the stores' change token. */
-export function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): unknown {
+export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   try {
-    return operation.handler(stores, input as never, caller);
+    return await operation.handler(stores, input as never, caller);
   } finally {
     // A write that failed half way may still have committed; counting it costs one extra miss.
     if (operation.method !== "GET") stores.markChanged();

@@ -50,8 +50,53 @@ declare module "*/ui/sessions-model.js" {
 
 declare module "*/ui/poll.js" {
   export function titleFromPrompts(prompts: readonly string[]): string | null;
+  export function attachedPacksOf(
+    entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
+    unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
+  ): Map<string, string[]>;
+  export interface Scope { target: { repository?: string; checkout?: string }; token: number }
+  export function captureScope(): Scope;
+  export function inScope(scope: Scope): boolean;
+  export function sendInScope(scope: Scope, method: string, path: string, body: object): Promise<boolean>;
+  /** `body` may be a promise of the body; `null` sends nothing. */
+  export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
+  export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
+  export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
+  export function showMoreActivity(): Promise<void>;
+}
+
+declare module "*/ui/derive.js" {
+  export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
 }
 
 declare module "*/ui/state.js" {
   export function sinceFor(range?: number): number;
+  export const data: {
+    rules: Map<string, unknown>;
+    findings: Array<{ ruleId: string; mode?: string; at: number }>;
+    findingsTotal: number;
+    findingsSince: number;
+    activity: Record<string, unknown>;
+    activityAll: Record<string, unknown>;
+    packs: unknown[];
+    attachedPacks: Map<string, string[]>;
+    repository: { setUp: boolean } | null;
+    recommendations: Array<{ packId: string; folder?: string }> | null;
+  };
+  export function setScope(scope: { repository?: string; checkout?: string } | null): void;
+  export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };
+  export function keptPacks(): readonly string[];
+  export function isAudited(id: string): boolean;
+  export function summary(): { logged: number; triggers: number };
+  export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };
+  export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
+  export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
+}
+
+declare module "*/ui/attachments.js" {
+  /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
+  export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
+    setUpRecommended(): Promise<void>;
+    keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+  };
 }

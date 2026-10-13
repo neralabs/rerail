@@ -2,11 +2,11 @@
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable. Data lands in the
  * store; the caller re-renders and reconciles in place. With a repository in scope the page
- * polls its context, its rules and its activity, violations and sessions; without one, only
- * the repository list.
+ * polls its context, its rules (and the packs attached to it), the rule packs, its activity,
+ * violations and sessions; with or without one, the repository list and the daemon's health.
  */
-import { get } from "./api.js";
-import { data, ui, sinceFor, setScope } from "./state.js";
+import { get, send } from "./api.js";
+import { data, ui, sinceFor, setScope, activityView } from "./state.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -44,6 +44,75 @@ export function scopeTarget() {
   if (repository !== undefined) target.repository = repository;
   if (ui.scope?.checkout !== undefined) target.checkout = ui.scope.checkout;
   return target;
+}
+
+/**
+ * The scope a write belongs to, fixed at the click: its `target` and a `token` that goes stale once the page
+ * shows another repository. A write sends to `target` and touches the page's state only while `inScope`.
+ */
+export const captureScope = () => ({ target: scopeTarget(), token: generation });
+
+/** Whether the page still shows the scope `captureScope` fixed. */
+export const inScope = scope => scope.token === generation;
+
+/**
+ * One write to the captured scope's target. Nothing is sent once the page shows another repository. Resolves
+ * `true` when sent and the page still shows the scope, `false` when it does not (so nothing of the answer is the
+ * page's); rejects with the write's error only while the page still shows the scope, so a rollback lands there.
+ */
+export async function sendInScope(scope, method, path, body) {
+  if (!inScope(scope)) return false;
+  try {
+    await send(method, path, { ...scope.target, ...body });
+  } catch (error) {
+    if (inScope(scope)) throw error;
+    return false;
+  }
+  return inScope(scope);
+}
+
+/**
+ * The last attachment write queued on this page: the scope `token` it was clicked in, whether it is still
+ * `pending`, whether it was sent and answered OK (`clear`), and `settled` once those are known.
+ */
+let lastAttachmentWrite = { token: generation, pending: false, clear: true, settled: Promise.resolve() };
+
+/**
+ * `sendInScope` for attachment writes, in click order. The place is taken at the call, while `body` (the body, or a
+ * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
+ * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
+ * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
+ * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load, as
+ * when its send fails, and like a send only while the page still shows the scope: a failure after a switch resolves
+ * `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
+ */
+export function queueInScope(scope, method, path, body) {
+  const before = lastAttachmentWrite;
+  const waits = before.pending && before.token === scope.token;
+  const ready = Promise.resolve(body);
+  // Read only once the writes before it went out OK; a dropped write's failing body is nobody's error.
+  ready.catch(() => {});
+  const sending = (async () => {
+    if (waits) {
+      await before.settled;
+      if (!before.clear) return false;
+    }
+    let loaded;
+    try {
+      loaded = await ready;
+    } catch (error) {
+      if (inScope(scope)) throw error;
+      return false;
+    }
+    return loaded === null ? false : sendInScope(scope, method, path, loaded);
+  })();
+  const write = { token: scope.token, pending: true, clear: false, settled: null };
+  write.settled = sending.then(
+    sent => { write.pending = false; write.clear = sent; },
+    () => { write.pending = false; },
+  );
+  lastAttachmentWrite = write;
+  return sending;
 }
 
 const scopeQuery = () => new URLSearchParams(scopeTarget()).toString();
@@ -105,12 +174,69 @@ function toStoredRules(entries) {
   return rules;
 }
 
+/**
+ * The packs added to the repository: pack id → every folder it is attached at, from the rules present
+ * through a pack and the pack attachments reported unavailable.
+ */
+export function attachedPacksOf(entries, unavailable) {
+  const packs = new Map();
+  const add = (id, folder) => {
+    const folders = packs.get(id) ?? [];
+    if (!folders.includes(folder)) packs.set(id, [...folders, folder]);
+  };
+  for (const entry of entries) if (entry.source.kind === "pack") add(entry.source.id, entry.folder);
+  for (const reference of unavailable) if (reference.sourceKind === "pack") add(reference.sourceId, reference.folder);
+  return packs;
+}
+
 async function loadRules() {
   const body = await fetchFresh(`/api/repository/rules?${scopeQuery()}`, "rules");
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
   data.unavailable = body.unavailable;
+  data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
   return true;
+}
+
+async function loadPacks() {
+  const body = await fetchFresh("/api/rule-packs", "packs");
+  if (body === undefined) return false;
+  data.packs = body.packs;
+  return true;
+}
+
+async function loadHealth() {
+  const { body } = await get("/healthz");
+  const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
+  data.health = body;
+  return changed;
+}
+
+/** Settings: which coding agents are found and connected. A dry run on the daemon, so only on demand. */
+export async function loadAgents() {
+  const { body } = await get("/api/coding-agents");
+  data.agents = body.agents;
+}
+
+/** Settings: the database-wide status line preference; no row means Show. */
+export async function loadPresence() {
+  const { body } = await get("/api/presentation-preferences");
+  data.presence = body.preferences.find(p => p.repository === "" && p.host === "")?.presence ?? "compact";
+}
+
+/**
+ * The packs that fit the scoped repository, each with the folder to add it in: W0, Review, and the folder
+ * Add pack uses. Reads the repository, so only when the page needs them.
+ */
+export async function loadRecommendations() {
+  await recommendationsFor(captureScope());
+}
+
+/** The packs recommended for a captured scope's target; kept for the page only while it still shows that scope. */
+export async function recommendationsFor(scope) {
+  const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(scope.target)}`);
+  if (inScope(scope)) data.recommendations = body.recommendations;
+  return body.recommendations;
 }
 
 async function loadActivity(since, target) {
@@ -142,6 +268,15 @@ export async function loadMoreFindings() {
   data.findings = data.findings.concat(body.violations);
   data.findingsTotal = body.total;
   return body.violations.length > 0;
+}
+
+/**
+ * Activity's "Show more": 50 more rows of what the filters let through, fetching further pages until
+ * that many matches are loaded or the range runs out (a filter's matches may all lie further back).
+ */
+export async function showMoreActivity() {
+  ui.recentShown += 50;
+  while (activityView().list.length < ui.recentShown && await loadMoreFindings()) { /* next page */ }
 }
 
 async function loadSessions() {
@@ -237,7 +372,7 @@ function pumpTitles() {
 /** Everything the scoped repository's views need; its context first when the key is not known yet. */
 async function scopedJobs(since) {
   const context = data.repository === null ? [await loadContext()] : [loadContext()];
-  const jobs = [...context, loadRules(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
+  const jobs = [...context, loadRules(), loadPacks(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
   jobs.push(since === 0 ? Promise.resolve(false) : loadActivity(0, "activityAll"));
   if (ui.selectedSession && ui.view === "sessions") jobs.push(loadSession(ui.selectedSession));
   return jobs;
@@ -247,7 +382,8 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const results = await Promise.all(ui.scope === null ? [loadRepositories()] : await scopedJobs(since));
+    const shared = [loadRepositories(), loadHealth()];
+    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) data.activityAll = data.activity;
     data.updatedAt = Date.now();
@@ -304,11 +440,13 @@ export function changeScope(scope) {
   generation += 1;
   etags.clear();
   setScope(scope);
-  ui.selectedRule = null;
+  ui.panel = null;
+  ui.backToPack = null;
+  ui.removeAsk = null;
   ui.selectedSession = null;
   Object.assign(data, {
-    repository: null, checkout: null, unavailable: [], rules: new Map(), activity: {}, activityAll: {},
-    findings: [], findingsTotal: 0, sessions: [], loaded: false, missing: false,
+    repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
+    findings: [], findingsTotal: 0, sessions: [], recommendations: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();

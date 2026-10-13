@@ -6,6 +6,7 @@ import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from
 import type { AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -208,6 +209,7 @@ const ruleActivitySchema = z.object({
   sessions: z.number().int().nonnegative(),
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
+  loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
 }).strict();
@@ -232,6 +234,14 @@ export const presentationPreferenceSchema = createSelectSchema(presentationPrefe
   repository: repositoryPathSchema,
 }).strict();
 const presentationPreferenceKeySchema = presentationPreferenceSchema.pick({ repository: true, host: true });
+
+const codingAgentSchema = z.object({
+  id: z.enum(RERAIL_HOSTS),
+  name: z.string(),
+  found: z.boolean().describe("The coding agent's config folder exists on this computer."),
+  connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
+  problem: z.string().nullable().describe("Why the connection could not be checked, such as a config file that is not valid JSON."),
+}).strict();
 
 export const operations: readonly Operation[] = [
   defineOperation({
@@ -315,6 +325,7 @@ export const operations: readonly Operation[] = [
           sessions: totals?.sessions ?? 0,
           lastSeenAt: totals?.lastSeenAt ?? null,
           audits: totals?.audits ?? 0,
+          loggedViolations: totals?.loggedViolations ?? 0,
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };
@@ -329,6 +340,20 @@ export const operations: readonly Operation[] = [
     summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
     handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+  }),
+  defineOperation({
+    id: "coding_agents_list",
+    method: "GET",
+    path: "/api/coding-agents",
+    summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
+    output: z.object({ agents: z.array(codingAgentSchema) }),
+    handler: async (stores) => {
+      const agents = stores.codingAgents();
+      if (agents === undefined) {
+        throw new ApiError(503, "coding-agents-unavailable", "this daemon was started without the coding agent check");
+      }
+      return { agents: await agents };
+    },
   }),
   defineOperation({
     id: "audit_settings_get",

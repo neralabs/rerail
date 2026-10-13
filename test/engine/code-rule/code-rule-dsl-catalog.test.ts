@@ -264,7 +264,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a non-boolean comments", ast({ kind: "identifier", layout: { after: { to: "token", comments: 1, breaks: { eq: 0 } } } }), /expected boolean/],
     ["an edge on a capture", ast({ pattern: "f($A)", layout: { after: { to: "capture.A", edge: true, breaks: { eq: 0 } } } }), /a capture names its node/],
     ["a layout inside a parsed tree", py({ kind: "string", parse: { grammar: "percentFormat", has: { kind: "placeholder", layout: { span: { eq: 0 } } } } }), /layout is not supported inside parse \(percentFormat trees\)/],
-    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, phpstan, psalm, or phpcs/],
+    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, phpstan, psalm, or phpcs/],
     ["an unknown suppress key", ast({ kind: "identifier" }, {}, { suppress: { jshint: {} } }), /Unrecognized key: \\"jshint\\"/],
     ["an empty eslint rule list", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: [] } } }), /Too small/],
     ["an eslint rule name with a comma", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["a, b"] } } }), /Must be a rule name/],

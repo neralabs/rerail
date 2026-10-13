@@ -6,3 +6,6 @@
  */
 export { type ClaudeStatusLine } from "./claude-status-store.js";
 export { ManagedUpdater } from "./updater.js";
+export { codingAgentHome, codingAgentStates, registrationRoot } from "./coding-agents.js";
+export { registerHarnesses } from "./harness-registration.js";
+export { type Harness } from "./harness-registration.js";
