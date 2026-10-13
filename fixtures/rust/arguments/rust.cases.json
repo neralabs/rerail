@@ -1,0 +1,410 @@
+[
+ {
+  "name": "free_0",
+  "items": "fn f() -> i32 {  0 }",
+  "call": "f()",
+  "signature": []
+ },
+ {
+  "name": "free_1",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "free_2",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "free_3",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "free_4",
+  "items": "fn f(a: i32, b: i32, c: i32, d: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); println!(\"d={}\", d); 0 }",
+  "call": "f(1, 2, 3, 4)",
+  "signature": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "name": "free_5",
+  "items": "fn f() -> i32 {  0 }",
+  "call": "f()",
+  "signature": []
+ },
+ {
+  "name": "free_6",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "free_7",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "free_8",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "free_9",
+  "items": "fn f(a: i32, b: i32, c: i32, d: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); println!(\"d={}\", d); 0 }",
+  "call": "f(1, 2, 3, 4)",
+  "signature": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "name": "parenthesised",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f((1), { 2 })",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "negative",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(-1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "commented",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, /* c */ 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "trailing",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2,)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "generic",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f::<i32>(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "nested",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }\nfn g(x: i32) -> i32 { println!(\"x={}\", x); 0 }",
+  "call": "f(g(1), 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "extra",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "short",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "closure",
+  "items": "",
+  "call": "{ |a: i32, b: i32| { println!(\"a={}\", a); println!(\"b={}\", b); 0 } }(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "fn_pointer",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "(f as fn(i32) -> i32)(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "tuple_struct",
+  "items": "struct P(i32, i32);",
+  "call": "P(1, 2)",
+  "signature": [
+   "0",
+   "1"
+  ]
+ },
+ {
+  "name": "variant",
+  "items": "enum E { V(i32, i32) }",
+  "call": "E::V(1, 2)",
+  "signature": [
+   "0",
+   "1"
+  ]
+ },
+ {
+  "name": "method",
+  "items": "struct S; impl S { fn m(&self, a: i32, b: i32) -> i32 { println!(\"a={}\",a); println!(\"b={}\",b); 0 } }",
+  "call": "S.m(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "chain",
+  "items": "struct S; impl S { fn m(&self, a: i32) -> S { println!(\"a={}\",a); S } }",
+  "call": "S.m(1).m(2)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "ufcs",
+  "items": "struct S; impl S { fn m(&self, a: i32) -> i32 { println!(\"a={}\",a); 0 } }",
+  "call": "S::m(&S, 1)",
+  "signature": [
+   "self",
+   "a"
+  ]
+ },
+ {
+  "name": "missing",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1,)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_0",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_1",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_2",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_3",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_4",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_5",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_6",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_7",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_8",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_9",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_10",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_11",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_12",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_13",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_14",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_15",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_16",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "variant_17",
+  "items": "fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+  "call": "f(1, 2, 3)",
+  "signature": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "variant_18",
+  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "call": "f(1)",
+  "signature": [
+   "a"
+  ]
+ },
+ {
+  "name": "variant_19",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+  "call": "f(1, 2)",
+  "signature": [
+   "a",
+   "b"
+  ]
+ }
+]

@@ -672,3 +672,6 @@ mod tests {
 
 #[cfg(test)]
 mod php_syntactic_tests;
+mod rust;
+#[cfg(test)]
+mod rust_tests;

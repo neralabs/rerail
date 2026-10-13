@@ -1,0 +1,700 @@
+{
+ "tool": "rustc",
+ "version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "cases": [
+  {
+   "name": "free_0",
+   "call": "f()",
+   "signature": [],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {}
+  },
+  {
+   "name": "free_1",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "free_2",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "free_3",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "free_4",
+   "call": "f(1, 2, 3, 4)",
+   "signature": [
+    "a",
+    "b",
+    "c",
+    "d"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3",
+    "d": "4"
+   }
+  },
+  {
+   "name": "free_5",
+   "call": "f()",
+   "signature": [],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {}
+  },
+  {
+   "name": "free_6",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "free_7",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "free_8",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "free_9",
+   "call": "f(1, 2, 3, 4)",
+   "signature": [
+    "a",
+    "b",
+    "c",
+    "d"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3",
+    "d": "4"
+   }
+  },
+  {
+   "name": "parenthesised",
+   "call": "f((1), { 2 })",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "negative",
+   "call": "f(-1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "-1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "commented",
+   "call": "f(1, /* c */ 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "trailing",
+   "call": "f(1, 2,)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "generic",
+   "call": "f::<i32>(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": false,
+   "diagnostics": [
+    "error[E0107]: function takes 0 generic arguments but 1 generic argument was supplied",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/generic/main.rs:2:21",
+    "  |",
+    "2 | fn main() { let _ = f::<i32>(1); }",
+    "  |                     ^------- help: remove the unnecessary generics",
+    "  |                     |",
+    "  |                     expected 0 generic arguments",
+    "  |",
+    "note: function defined here, with 0 generic parameters",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/generic/main.rs:1:4",
+    "  |",
+    "1 | fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+    "  |    ^",
+    "",
+    "error: aborting due to 1 previous error",
+    "",
+    "For more information about this error, try `rustc --explain E0107`."
+   ],
+   "bound": {}
+  },
+  {
+   "name": "nested",
+   "call": "f(g(1), 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "x": "1",
+    "a": "0",
+    "b": "2"
+   }
+  },
+  {
+   "name": "extra",
+   "call": "f(1, 2)",
+   "signature": [
+    "a"
+   ],
+   "compiled": false,
+   "diagnostics": [
+    "error[E0061]: this function takes 1 argument but 2 arguments were supplied",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/extra/main.rs:2:21",
+    "  |",
+    "2 | fn main() { let _ = f(1, 2); }",
+    "  |                     ^    - unexpected argument #2 of type `{integer}`",
+    "  |",
+    "note: function defined here",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/extra/main.rs:1:4",
+    "  |",
+    "1 | fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+    "  |    ^",
+    "help: remove the extra argument",
+    "  |",
+    "2 - fn main() { let _ = f(1, 2); }",
+    "2 + fn main() { let _ = f(1); }",
+    "  |",
+    "",
+    "error: aborting due to 1 previous error",
+    "",
+    "For more information about this error, try `rustc --explain E0061`."
+   ],
+   "bound": {}
+  },
+  {
+   "name": "short",
+   "call": "f(1)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": false,
+   "diagnostics": [
+    "error[E0061]: this function takes 3 arguments but 1 argument was supplied",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/short/main.rs:2:21",
+    "  |",
+    "2 | fn main() { let _ = f(1); }",
+    "  |                     ^--- two arguments of type `i32` and `i32` are missing",
+    "  |",
+    "note: function defined here",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/short/main.rs:1:4",
+    "  |",
+    "1 | fn f(a: i32, b: i32, c: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); println!(\"c={}\", c); 0 }",
+    "  |    ^         ------  ------",
+    "help: provide the arguments",
+    "  |",
+    "2 | fn main() { let _ = f(1, /* i32 */, /* i32 */); }",
+    "  |                        ++++++++++++++++++++++",
+    "",
+    "error: aborting due to 1 previous error",
+    "",
+    "For more information about this error, try `rustc --explain E0061`."
+   ],
+   "bound": {}
+  },
+  {
+   "name": "closure",
+   "call": "{ |a: i32, b: i32| { println!(\"a={}\", a); println!(\"b={}\", b); 0 } }(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "fn_pointer",
+   "call": "(f as fn(i32) -> i32)(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "tuple_struct",
+   "call": "P(1, 2)",
+   "signature": [
+    "0",
+    "1"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {}
+  },
+  {
+   "name": "variant",
+   "call": "E::V(1, 2)",
+   "signature": [
+    "0",
+    "1"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {}
+  },
+  {
+   "name": "method",
+   "call": "S.m(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "chain",
+   "call": "S.m(1).m(2)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "2"
+   }
+  },
+  {
+   "name": "ufcs",
+   "call": "S::m(&S, 1)",
+   "signature": [
+    "self",
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "missing",
+   "call": "f(1,)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": false,
+   "diagnostics": [
+    "error[E0061]: this function takes 2 arguments but 1 argument was supplied",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/missing/main.rs:2:21",
+    "  |",
+    "2 | fn main() { let _ = f(1,); }",
+    "  |                     ^---- argument #2 of type `i32` is missing",
+    "  |",
+    "note: function defined here",
+    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/missing/main.rs:1:4",
+    "  |",
+    "1 | fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }",
+    "  |    ^         ------",
+    "help: provide the argument",
+    "  |",
+    "2 | fn main() { let _ = f(1, /* i32 */); }",
+    "  |                          +++++++++",
+    "",
+    "error: aborting due to 1 previous error",
+    "",
+    "For more information about this error, try `rustc --explain E0061`."
+   ],
+   "bound": {}
+  },
+  {
+   "name": "variant_0",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_1",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_2",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_3",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_4",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_5",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_6",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_7",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_8",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_9",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_10",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_11",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_12",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_13",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_14",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_15",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_16",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "variant_17",
+   "call": "f(1, 2, 3)",
+   "signature": [
+    "a",
+    "b",
+    "c"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2",
+    "c": "3"
+   }
+  },
+  {
+   "name": "variant_18",
+   "call": "f(1)",
+   "signature": [
+    "a"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
+  },
+  {
+   "name": "variant_19",
+   "call": "f(1, 2)",
+   "signature": [
+    "a",
+    "b"
+   ],
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1",
+    "b": "2"
+   }
+  }
+ ]
+}
