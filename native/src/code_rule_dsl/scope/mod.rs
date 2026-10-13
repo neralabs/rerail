@@ -8,18 +8,19 @@
 //! sensitive: branches do not end a binding. Python's unconditional `del` does, as Ruff's
 //! `Deletion` binding: order-based, not flow.
 
-mod ecma;
+pub(crate) mod ecma;
 mod lookup;
 pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
-mod python;
+pub(crate) mod python;
 pub(crate) mod usage;
 
 pub(crate) use lookup::Lookup;
 
 use crate::code_rule_dsl::identifier::{name_in, nfkc};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::value::{Followed, NodeRef};
 use ast_grep_core::{Doc, Node};
@@ -375,6 +376,8 @@ pub(crate) struct Directives {
 
 pub(crate) struct ScopeTable {
     pub(crate) language: GrammarDialect,
+    /// The family of `language`, whose `ScopeRules` read the table.
+    pub(crate) family: Family,
     pub(crate) scopes: Vec<Scope>,
     /// Sorted by start byte; at most one reference starts at a byte.
     pub(crate) references: Vec<Reference>,
@@ -508,10 +511,12 @@ impl ScopeTable {
         module: Option<&ModulePath>,
         php_names: Option<Arc<php_names::PhpNames>>,
     ) -> Result<Self, BuildError> {
+        let family = Family::of(language);
         let mut builder = Builder {
             module: module.cloned(),
             table: ScopeTable {
                 language,
+                family,
                 scopes: Vec::new(),
                 references: Vec::new(),
                 directives: Directives::default(),
@@ -542,49 +547,10 @@ impl ScopeTable {
             php_names,
         };
         builder.push(ScopeKind::Module, root.range());
-        match crate::code_rule_dsl::language::Family::of(language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                python::visit_module(&mut builder, &root, reading)?;
-                builder.table.sort_references();
-                python::string_type_definitions(&mut builder, &root, reading)?;
-            }
-            crate::code_rule_dsl::language::Family::Ecma => {
-                ecma::visit_program(&mut builder, &root)?
-            }
-            crate::code_rule_dsl::language::Family::Php => php::visit_program(&mut builder, &root)?,
-            // The PHP the template embeds, as the compiled view runs it (`blade::view`).
-            crate::code_rule_dsl::language::Family::Blade => {
-                if let Some(program) = crate::code_rule_dsl::blade::program(&root) {
-                    php::visit_blade_program(&mut builder, &program)?;
-                }
-            }
-        }
+        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?;
         let mut table = builder.table;
         table.sort_references();
-        match crate::code_rule_dsl::language::Family::of(language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                // Each name's bindings in the order Ruff adds them: the body in order, then what
-                // function bodies bind into the scope (`nonlocal`, placeholders).
-                for scope in &mut table.scopes {
-                    for bindings in scope.bindings.values_mut() {
-                        bindings.sort_by_key(|binding| (binding.deferred, binding.offset));
-                    }
-                }
-                if table
-                    .references
-                    .iter()
-                    .any(|reference| reference.access == Access::Nonlocal)
-                {
-                    table.mark_rebound(&root.text(), root.range().start);
-                }
-            }
-            crate::code_rule_dsl::language::Family::Ecma => {
-                table.count_writes(&root.text(), root.range().start);
-            }
-            // The flow resolved every read as it went.
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {}
-        }
+        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::finish(&mut table, &root));
         Ok(table)
     }
 
@@ -732,20 +698,7 @@ impl ScopeTable {
     /// The binding `name` resolves to at `reference`, or `None` for a global or builtin. A Python
     /// `del` resolves in its own scope only; a `Deletion` binding may be the answer.
     pub(crate) fn resolve(&self, reference: &Reference, name: &str) -> Option<&Binding> {
-        match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                if reference.access == Access::Del {
-                    return self.resolve_del(reference, name);
-                }
-                self.resolve_python(reference, name)
-            }
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                let (scope, index) = self.php_index(reference)?;
-                Some(&self.scopes[scope as usize].bindings.get(name)?[index])
-            }
-            crate::code_rule_dsl::language::Family::Ecma => self.resolve_lexical(reference, name),
-        }
+        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::resolve(self, reference, name))
     }
 
     /// PHP: the one binding every path reaches a read with, as its scope and its index among that
@@ -763,9 +716,8 @@ impl ScopeTable {
     /// (Ruff's F821, builtins and star imports aside).
     #[cfg(test)]
     pub(crate) fn unbound(&self, reference: &Reference, name: &str) -> bool {
-        if self.language == GrammarDialect::Python
-            && reference.access != Access::Del
-            && let Some(annotation) = self.walk(reference, name, true).unbound
+        if reference.access != Access::Del
+            && let Some(annotation) = with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::unbound_annotation(self, reference, name))
         {
             return !self.binding_at(annotation, name).rebound;
         }
@@ -781,9 +733,17 @@ impl ScopeTable {
     /// annotation no nested `nonlocal` may initialize.
     #[cfg(test)]
     pub(crate) fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
-        if self.language != GrammarDialect::Python {
-            return false;
-        }
+        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::unbound_locally(self, reference, name, builtin))
+    }
+
+    /// Ruff's lookup of `name` at `reference` (`unbound_locally`).
+    #[cfg(test)]
+    pub(crate) fn ruff_unbound_locally(
+        &self,
+        reference: &Reference,
+        name: &str,
+        builtin: bool,
+    ) -> bool {
         if reference.access != Access::Del {
             let walk = self.walk(reference, name, true);
             if let Some(annotation) = walk.unbound {
@@ -891,7 +851,7 @@ impl ScopeTable {
 
     /// Ruff's `resolve_del`: the binding of the reference's own scope so far. A `nonlocal` name
     /// reads the enclosing function's.
-    fn resolve_del(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub(crate) fn resolve_del(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_python_index(reference, name)
             .map(|found| self.binding_at(found, name))
     }
@@ -900,7 +860,7 @@ impl ScopeTable {
     /// is visible only to its own body (and to the type-parameter scope directly inside it), a
     /// `global` binding continues in the module, `nonlocal` skips its own scope. Before the lookup
     /// crosses a function boundary it sees the bindings made so far; after, every binding.
-    fn resolve_python(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub(crate) fn resolve_python(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_load_index(reference, name)
             .map(|found| self.binding_at(found, name))
     }
@@ -1087,7 +1047,7 @@ impl ScopeTable {
         })
     }
 
-    fn resolve_lexical(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub(crate) fn resolve_lexical(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_lexical_scope(reference, name)
             .map(|(_, binding)| binding)
     }
@@ -1140,32 +1100,7 @@ impl ScopeTable {
         reference: &Reference,
         name: &str,
     ) -> Option<(&Binding, Option<NodeRef>)> {
-        match crate::code_rule_dsl::language::Family::of(self.language) {
-            crate::code_rule_dsl::language::Family::Python => {
-                let binding = self.resolve(reference, name)?;
-                return (binding.shadows() && !binding.is_deletion())
-                    .then_some((binding, binding.site.value));
-            }
-            // PHP binds a value where one binding reaches the read on every path, it assigns a
-            // value, and the variable is no reference whose value another name may change.
-            crate::code_rule_dsl::language::Family::Php
-            | crate::code_rule_dsl::language::Family::Blade => {
-                let binding = self.resolve(reference, name)?;
-                let read = self.php.as_deref()?.read(reference.start)?;
-                return Some((binding, binding.site.value.filter(|_| !read.aliased)));
-            }
-            crate::code_rule_dsl::language::Family::Ecma => {}
-        }
-        let (scope, binding) = self.resolve_lexical_scope(reference, name)?;
-        let definitions = self.scopes[scope as usize]
-            .bindings
-            .get(name)
-            .map_or(0, Vec::len);
-        let value = binding
-            .site
-            .value
-            .filter(|_| definitions == 1 && binding.writes == 0);
-        Some((binding, value))
+        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::binding(self, reference, name))
     }
 }
 

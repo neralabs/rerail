@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "tlint-spaces-around-blade-render-content",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "tlint 9.7.0 SpacesAroundBladeRenderContent: an echo on one line, `{{ }}` (not a `{{-- --}}` comment) or `{!! !!}`, not written with exactly one space inside each delimiter.",
+  "description": "tlint 9.7.0 SpacesAroundBladeRenderContent: an echo on one line, `{{ }}` (not a `{{-- --}}` comment, not an escaped `@{{ }}`) or `{!! !!}`, not written with exactly one space inside each delimiter.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -17,15 +17,17 @@
         "ast": {
           "language": "blade",
           "rule": {
-            "kind": "php_statement",
+            "any": [
+              {
+                "kind": "echo"
+              },
+              {
+                "kind": "raw_echo"
+              }
+            ],
             "all": [
               {
                 "regex": "^(\\{\\{[^\\n]*\\}\\}|\\{!![^\\n]*!!\\})$"
-              },
-              {
-                "not": {
-                  "regex": "^\\{\\{--"
-                }
               },
               {
                 "not": {
@@ -35,6 +37,14 @@
               {
                 "not": {
                   "regex": "^\\{!! [^ \\n]([^\\n]*[^ \\n])? !!\\}$"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "@$"
+                  }
                 }
               }
             ]

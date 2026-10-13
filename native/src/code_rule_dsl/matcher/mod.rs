@@ -30,7 +30,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
-pub(super) use arguments::{Arguments, SlotKind};
+pub(super) use arguments::{Arguments, Passed, SlotKind};
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};
@@ -58,8 +58,8 @@ pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
-    calls_tables, file_eslint_directives, file_lines, file_noqa, file_nosec, file_phpcs,
-    file_phpstan, file_psalm, table_reading,
+    calls_tables, file_eslint_directives, file_lines, file_module, file_noqa, file_nosec,
+    file_phpcs, file_phpstan, file_psalm, table_reading,
 };
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]

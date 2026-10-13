@@ -17,7 +17,7 @@
   },
   "rules": [
     {
-      "id": "vue:no-v-html",
+      "id": "no-v-html",
       "document": "rules/no-v-html.json",
       "title": "No v-html",
       "group": "Vue",

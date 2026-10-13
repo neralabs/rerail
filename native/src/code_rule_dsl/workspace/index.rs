@@ -19,7 +19,8 @@ use super::{
     Candidates, REUSE_DIRECTORY_RESULTS, REUSE_LOCAL_RESULTS, WorkspaceState, check_closed,
 };
 use crate::code_rule_dsl::json::{invalid, json_error};
-use crate::code_rule_dsl::model::{FileInput, python_module_path_on_disk};
+use crate::code_rule_dsl::language::adapter::module_path;
+use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -178,9 +179,7 @@ pub(super) fn repository_module(
     repository_path: &str,
     language: &str,
 ) -> Option<Value> {
-    (language == "python")
-        .then(|| python_module_path_on_disk(&repository.worktree_root.join(repository_path)))
-        .flatten()
+    module_path(language, &repository.worktree_root.join(repository_path))
 }
 
 fn restore_prepared_file(

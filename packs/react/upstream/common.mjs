@@ -5,7 +5,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
@@ -133,6 +133,7 @@ export function execute(path, requireStub, globals = {}) {
 /** Writes one fixture case: `<dir>/<name>.<ext>`, or `<dir>/<name>/<filename>` when the case names its file. */
 export function writeCase(fixtures, directory, name, extension, code, filename) {
   const path = filename === undefined ? join(fixtures, directory, `${name}.${extension}`) : join(fixtures, directory, name, filename);
+  assertPortableCase(posix(fixtures, path), code);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, code);
   return posix(fixtures, path);

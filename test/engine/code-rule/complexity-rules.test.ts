@@ -26,9 +26,9 @@ const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const LIMIT = 6;
 const message = (ccn: number) => `Cyclomatic complexity ${ccn} (limit ${LIMIT}). Split this function into smaller ones or simplify its branching.`;
 const RULES = {
-  python: "complexity:cyclomatic-python",
-  typescript: "complexity:cyclomatic-typescript",
-  javascript: "complexity:cyclomatic-javascript",
+  python: "complexity-cyclomatic-python",
+  typescript: "complexity-cyclomatic-typescript",
+  javascript: "complexity-cyclomatic-javascript",
 } as const;
 type CorpusLanguage = keyof typeof RULES;
 const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
@@ -120,7 +120,7 @@ function findings(compiled: NativeCompiledCodeRuleDsl, files: { path: string; so
   return Object.fromEntries(result.violations.map(violation => [key(violation.path, violation.span.startLine + 1), violation.message]));
 }
 
-const documents = loadBundledRules().filter(document => document.rule.id.startsWith("complexity:"));
+const documents = loadBundledRules().filter(document => document.rule.id.startsWith("complexity-"));
 function ruleJson(language: CorpusLanguage): string {
   const document = documents.find(candidate => candidate.rule.id === RULES[language]);
   if (document === undefined) throw new Error(`${RULES[language]} is not bundled`);

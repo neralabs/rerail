@@ -1,0 +1,1152 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b615-huggingface-unsafe-download",
+  "revision": 5,
+  "mode": "steer",
+  "description": "Require a transformers, datasets, or huggingface_hub-like import; resolve the supported download/load APIs; allow nonliteral revisions, hexadecimal revisions of at least seven characters, or local-path first arguments, and flag all other unpinned downloads.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b615",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "hf-callee"
+                }
+              },
+              {
+                "not": {
+                  "matches": "nonconstant-revision"
+                }
+              },
+              {
+                "not": {
+                  "matches": "pinned-revision"
+                }
+              },
+              {
+                "not": {
+                  "matches": "local-path-first-argument"
+                }
+              },
+              {
+                "matches": "after-hf-import"
+              }
+            ]
+          },
+          "utils": {
+            "ast-constant": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[fFtT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[fFtT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "ast-constant"
+                  }
+                }
+              ]
+            },
+            "hf-import": {
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "import_from_statement"
+                }
+              ],
+              "has": {
+                "stopBy": "end",
+                "kind": "identifier",
+                "regex": "transformers|datasets|huggingface_hub",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "dotted_name"
+                }
+              }
+            },
+            "hf-import-within": {
+              "any": [
+                {
+                  "matches": "hf-import"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "hf-import"
+                  }
+                }
+              ]
+            },
+            "after-hf-import": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "hf-import-within"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "hf-import-within"
+                    }
+                  }
+                }
+              ]
+            },
+            "alias-writer": {
+              "any": [
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "alias",
+                    "pattern": "$HEAD"
+                  }
+                },
+                {
+                  "kind": "dotted_name",
+                  "pattern": "$HEAD",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "import_from_statement"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "dotted_name"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "writer-transformers": {
+              "matches": "alias-writer",
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^transformers$"
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "name",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^transformers$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "regex": "^transformers$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "writer-datasets": {
+              "matches": "alias-writer",
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^datasets$"
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "name",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^datasets$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "regex": "^datasets$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "writer-huggingface-hub": {
+              "matches": "alias-writer",
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^huggingface_hub$"
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "name",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^huggingface_hub$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "regex": "^huggingface_hub$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "segment-transformers": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "segment-transformers"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^transformers$"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "segment-transformers"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^transformers$",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "aliased_import"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "regex": "^transformers$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_from_statement",
+                          "has": {
+                            "field": "module_name",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "identifier",
+                              "regex": "^transformers$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$HEAD",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "form": "import"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "writer-transformers"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "segment-datasets": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "segment-datasets"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^datasets$"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "segment-datasets"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^datasets$",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "aliased_import"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "regex": "^datasets$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_from_statement",
+                          "has": {
+                            "field": "module_name",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "identifier",
+                              "regex": "^datasets$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$HEAD",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "form": "import"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "writer-datasets"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "segment-huggingface-hub": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "segment-huggingface-hub"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^huggingface_hub$"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "segment-huggingface-hub"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^huggingface_hub$",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "aliased_import"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "regex": "^huggingface_hub$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_from_statement",
+                          "has": {
+                            "field": "module_name",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "identifier",
+                              "regex": "^huggingface_hub$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$HEAD",
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "form": "import"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "writer-huggingface-hub"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "named-from-pretrained": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^from_pretrained$",
+                    "pattern": "$API"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "all": [
+                    {
+                      "regex": "^from_pretrained$",
+                      "pattern": "$API"
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "aliased_import"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true,
+                              "ofRule": {
+                                "kind": "identifier"
+                              }
+                            },
+                            "regex": "^from_pretrained$",
+                            "pattern": "$API"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$CALLEE",
+                  "all": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "bindings": {
+                            "min": 2
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "aliased_import",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "alias",
+                              "pattern": "$CALLEE"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "name",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "kind": "identifier"
+                                  }
+                                },
+                                "regex": "^from_pretrained$",
+                                "pattern": "$API"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "named-load-dataset": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^load_dataset$",
+                    "pattern": "$API"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "all": [
+                    {
+                      "regex": "^load_dataset$",
+                      "pattern": "$API"
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "aliased_import"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true,
+                              "ofRule": {
+                                "kind": "identifier"
+                              }
+                            },
+                            "regex": "^load_dataset$",
+                            "pattern": "$API"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$CALLEE",
+                  "all": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "bindings": {
+                            "min": 2
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "aliased_import",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "alias",
+                              "pattern": "$CALLEE"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "name",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "kind": "identifier"
+                                  }
+                                },
+                                "regex": "^load_dataset$",
+                                "pattern": "$API"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "named-hub-download": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(hf_hub_download|snapshot_download|repository_id)$",
+                    "pattern": "$API"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "all": [
+                    {
+                      "regex": "^(hf_hub_download|snapshot_download|repository_id)$",
+                      "pattern": "$API"
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "aliased_import"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "aliased_import",
+                        "has": {
+                          "field": "name",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true,
+                              "ofRule": {
+                                "kind": "identifier"
+                              }
+                            },
+                            "regex": "^(hf_hub_download|snapshot_download|repository_id)$",
+                            "pattern": "$API"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$CALLEE",
+                  "all": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "bindings": {
+                            "min": 2
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "aliased_import",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "alias",
+                              "pattern": "$CALLEE"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "name",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "kind": "identifier"
+                                  }
+                                },
+                                "regex": "^(hf_hub_download|snapshot_download|repository_id)$",
+                                "pattern": "$API"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "hf-callee": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "hf-callee"
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "named-from-pretrained"
+                    },
+                    {
+                      "matches": "segment-transformers"
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "named-load-dataset"
+                    },
+                    {
+                      "matches": "segment-datasets"
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "named-hub-download"
+                    },
+                    {
+                      "matches": "segment-huggingface-hub"
+                    }
+                  ]
+                }
+              ]
+            },
+            "revision-keyword": {
+              "kind": "keyword_argument",
+              "has": {
+                "field": "name",
+                "regex": "^revision$"
+              }
+            },
+            "commit-id-keyword": {
+              "kind": "keyword_argument",
+              "has": {
+                "field": "name",
+                "regex": "^commit_id$"
+              }
+            },
+            "hex-revision": {
+              "matches": "ast-constant",
+              "value": {
+                "regex": "^[\"']*[0-9A-Fa-f]{7,}[\"']*$"
+              }
+            },
+            "bandit-truthy": {
+              "matches": "ast-constant",
+              "any": [
+                {
+                  "value": {
+                    "truthy": true
+                  }
+                },
+                {
+                  "value": {
+                    "type": [
+                      "bool",
+                      "NoneType"
+                    ]
+                  }
+                }
+              ]
+            },
+            "nonconstant-revision": {
+              "has": {
+                "field": "arguments",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "regex": "^(revision|commit_id)$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "not": {
+                          "matches": "ast-constant"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "pinned-revision": {
+              "has": {
+                "field": "arguments",
+                "kind": "argument_list",
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "revision-keyword",
+                      "has": {
+                        "field": "value",
+                        "matches": "hex-revision"
+                      }
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "commit-id-keyword",
+                          "has": {
+                            "field": "value",
+                            "matches": "hex-revision"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "revision-keyword",
+                            "has": {
+                              "field": "value",
+                              "matches": "bandit-truthy"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "local-path-first-argument": {
+              "has": {
+                "field": "arguments",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "kind": "comment"
+                  },
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "ast-constant",
+                  "value": {
+                    "startsWith": [
+                      "./",
+                      "/",
+                      "../"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B615",
+        "anchor": "witness.span",
+        "message": "Unsafe Hugging Face Hub download without revision pinning in ${API}()",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B615"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

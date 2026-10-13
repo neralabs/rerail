@@ -102,7 +102,11 @@ The bounded, deterministic set of matched Semantic Program nodes and Resolved Fa
 
 ## Language Registry
 
-The one list of the languages Rerail knows (`languages/<id>.json`): for each, its family, dialects, file suffixes, per-capability support and status, `supported` or `planned`. The engine and the host both read it; nothing else branches on a language.
+The one list of the languages Rerail knows (`languages/<id>.json`): for each, its family, dialects, file suffixes, per-capability support and status, `supported` or `planned`. The engine and the host both read it; apart from each family's Engine Adapter, nothing branches on a language.
+
+## Engine Adapter
+
+The one place the engine reads a language family: its scope, values, call arguments, call graph, format strings, suppressions, the regions of a file it reads, and the rule features it refuses. One per registry family; the engine dispatches to it and never matches on a family elsewhere.
 
 ## Language Pack
 

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "valid:pass-statement",
+  "id": "pass-statement",
   "revision": 1,
   "mode": "steer",
   "description": "Every pass statement.",

@@ -1,9 +1,8 @@
 # Language packs
 
-Status: the registry and the not-supported-yet behaviour are implemented. The adapter seam is not: each language's
-engine code is still matched on its family across the engine (`Family::` arms in `native/src/code_rule_dsl/`) and in
-the host's schema checks (`src/engine/code-rule/code-rule-schema.ts`). Moving that code behind one adapter per language is the next
-change.
+Status: the registry, the not-supported-yet behaviour and the engine adapter seam are implemented. Each family's
+engine code sits behind one adapter (`native/src/code_rule_dsl/language/adapter.rs`), and the host's schema checks
+shapes only: the engine alone refuses what a rule's language lacks.
 
 ## What a language pack is
 
@@ -12,16 +11,44 @@ A language is three things, each owned by one place:
 | Part | Where | Holds |
 |---|---|---|
 | Registry entry | `languages/<id>.json` | What the language is: id, family, dialects (file suffixes, parser, grammar, tape tag), which capabilities it supports, suppression comments, embedded languages, and its status |
-| Engine adapter | `native/src/code_rule_dsl/` (today: its `GrammarDialect` variant and its family's arms) | How the engine reads it: scope, values, call arguments, call graph, format strings |
+| Engine adapter | `native/src/code_rule_dsl/language/adapter.rs` and its concern files (one adapter per family) | How the engine reads it: scope, values, call arguments, call graph, format strings, suppressions, the regions of a file it reads, and the DSL features it refuses |
 | Rule pack | `packs/<id>/` ([pack structure](pack-format.md)) | Code rules written in it, with the evidence that they behave |
 
 ## The layering rule
 
 Language code lives only in its adapter and its registry entry. Core, the host and packs never branch on a language:
-they ask the registry. The engine generates its language tables from the registry at build time
+they ask the registry or the adapter. The engine generates its language tables from the registry at build time
 (`native/build.rs`, `native/src/build_languages.rs`), and the host reads a module generated from the same files
 (`src/engine/code-rule/code-rule-language-registry.generated.ts`, written by `npm run generate:languages`). A test fails if the
 generated module is stale, and a native test checks that the host module and the engine's tables agree.
+
+Whether a rule uses something its language lacks (a key, an option, a format style, a suppression comment, another
+family's grammar) is the engine's answer alone. The host's schema checks a rule's shape; every write, and
+`validateCodeRule` from `@neralabs/rerail/rules`, then compiles it in the engine, which refuses it as invalid, or as
+`language-not-supported` when the registry plans the language or capability.
+
+## The engine adapter
+
+Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
+`with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family; every other
+call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
+`A: Adapter` from inside the macro.
+
+| Part | Holds |
+|---|---|
+| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`), module paths from package markers (Python), and inline suppression comments |
+| `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, and refusals of binding and resolution features |
+| `ValueRules` (`adapter/value.rs`) | Value decoding, kinds, structures, names, keys and references for comparisons, type names, and refusals of compare modes |
+| `ArgumentRules` (`adapter/arguments.rs`) | Call kinds, the arguments a call passes, and refusals of signature markers and modes |
+| `CallRules` (`adapter/calls.rs`) | Call and function kinds, per-file call summaries, call-graph links and labels |
+| `FormatArgRules` (`adapter/format_args.rs`) | The format styles a family reads |
+| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's text-only patterns |
+
+A concern the registry does not mark `supported` for a family is `Refused` (Ecma's `calls` and `formatArgs`). An
+embedding family reuses the embedded language's concerns (Blade's delegate to PHP's) and overrides only what reads
+the template itself. Refusals go through one gate (`gate`), which reports a refused feature as invalid and a planned
+one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite over every adapter, and
+checks that each family's adapter reads exactly the capabilities its registry entries support.
 
 ## The registry entry
 
@@ -34,7 +61,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
   "status": "supported",
   "family": "blade",
   "dialects": [
-    { "label": "blade", "variant": "Blade", "suffixes": [".blade.php"], "parser": "tree-sitter", "grammar": "vendored:blade", "tapeTag": 8 }
+    { "label": "blade", "variant": "Blade", "suffixes": [".blade.php"], "parser": "forte", "grammar": "native:forte", "tapeTag": 8 }
   ],
   "capabilities": { "scope": "supported", "value": "supported", "arguments": "supported", "calls": "supported", "formatArgs": "supported" },
   "suppressions": [],
@@ -48,15 +75,15 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser`, its `grammar` (`vendored:<name>`, built by `build.rs`, or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)), its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
-`parser` and `embeds` are validated but drive no behaviour yet; the adapter refactor will use them. Changes stay
-additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing a
-field, or changing what a value means, needs `rerail.language/v2`.
+`parser` and `embeds` are validated but drive no behaviour yet: an embedding family's adapter finds the embedded
+code itself (`Adapter::regions`). Changes stay additive within `rerail.language/v1`: a new optional field or a new
+value is a v1 change, and renaming or removing a field, or changing what a value means, needs `rerail.language/v2`.
 
 The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
@@ -73,7 +100,7 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
    - the catalog stores the rule but keeps it inactive: every audit skips it, it is never an audit failure, and the
      rule APIs (`GET /api/rules`, `GET /api/rules/{id}`, `PUT /api/rules/{id}`) and the activity API
      (`GET /api/rules/activity`, `measured: false`) return it with `inactive: { code, reason }`;
-   - audits route no file to it: its suffixes select no dialect;
+   - audits parse no file of it: its suffixes select no dialect, and its files are read as `text` for regex clauses;
    - the pack tests report its rules as `not supported yet` without failing
      ([validation contract](pack-format.md#the-validation-contract)).
 2. **Capabilities, one at a time.** A capability becomes `supported` only when its oracle suite passes for the
@@ -89,8 +116,11 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
    commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs for it can land now.
 2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and give each dialect a
    `variant`, `parser`, `grammar` and the next unused `tapeTag`.
-3. Write its adapter: add the `GrammarDialect` variant and, for a new family, the `Family` variant; the build then
-   names every place the engine must learn the language.
+3. Write its adapter. For a new dialect in an existing family, add the `GrammarDialect` variant; the compiler names
+   each per-dialect table that must learn it (ECMAScript's scope scripts in `scope/ecma.rs`, for one). For a new
+   family, add the `Family` variant and its adapter type in `language/adapter.rs`: implement `Adapter`
+   and each concern trait it supports (`Refused` for the rest), and add its expectations to the adapter kit. The
+   generated `with_adapter!` then dispatches to it; the build fails until every trait item exists.
 4. Flip `status` to `supported`, and each capability to `supported` as its oracle suite passes; mark one the language
    will never have `refused`.
 
@@ -137,8 +167,8 @@ cp LICENSE packs/laravel/LICENSE
   "match": { "any": [{ "files": ["artisan"], "label": "an artisan file" }] },
   "rules": [
     {
-      "id": "laravel:no-dd",
-      "document": "rules/no-dd.json",
+      "id": "laravel-no-dd",
+      "document": "rules/laravel-no-dd.json",
       "title": "No dd() or dump() calls",
       "group": "Laravel",
       "examples": {
@@ -150,13 +180,14 @@ cp LICENSE packs/laravel/LICENSE
 }
 ```
 
-`packs/laravel/rules/no-dd.json`, a code rule (`rerail.policy/v1`, see the
-[code-rule DSL reference](code-rule-dsl-reference.html)) whose `id` is the one `pack.json` lists:
+`packs/laravel/rules/laravel-no-dd.json`, a code rule (`rerail.policy/v1`, see the
+[code-rule DSL reference](code-rule-dsl-reference.html)) whose `id` is the one `pack.json` lists and its file name.
+A rule id is lowercase letters, digits and dashes, in one style for every pack ([rule ids](pack-format.md#packjson)):
 
 ```json
 {
   "format": "rerail.policy/v1",
-  "id": "laravel:no-dd",
+  "id": "laravel-no-dd",
   "revision": 1,
   "mode": "steer",
   "description": "A call to Laravel's dd() or dump() debugging helper.",
@@ -186,7 +217,7 @@ npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the
 ```
 
 Each check and each rule is one test; a failure names the rule and the file, for example
-`laravel:no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
+`laravel-no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
 A rule needs proof: `examples` (one caught, one that passes, each with a `path` inside the rule's scope), or a port
 entry (below).
 
@@ -205,9 +236,9 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
 
 1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
    capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
-   its `policy` (the same `rules/<name>.json` as the rule's `document`), how findings compare (`line` or
-   `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared
-   capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
+   its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
+   compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
+   code. Every declared capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
 2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
    reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
    (`packs/python/upstream/ruff/generate.py` is one). Optionally `corpus-<name>.expected.json` per pinned corpus.

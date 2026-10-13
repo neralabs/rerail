@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "unicorn:no-null",
+  "id": "unicorn-no-null",
   "revision": 1,
   "mode": "log",
   "description": "A `null` literal, except in `Object.create(null)`, `useRef(null)` and `===`/`!==` comparisons.",

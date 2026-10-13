@@ -796,10 +796,10 @@ fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
 }
 
 // A Blade tape's embedded program is the root's last child, spanning the template bytes it
-// stands for, so it overlaps the template's nodes: for `{{ $x }}` the program and the echo's
-// `php_statement` both span the echo. ast-grep's walks are byte-positioned there too (`next`
-// skips the program, `prev_all` from the program starts at the echo), and an exact plan, and
-// its negation, must select what the matcher matches.
+// stands for, so it overlaps the template's nodes: for `{{ $x }}` the program and the template's
+// `echo` both span the echo. ast-grep's walks are byte-positioned there too (`next` skips the
+// program, `prev_all` from the program starts at the echo), and an exact plan, and its negation,
+// must select what the matcher matches.
 #[test]
 fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
     let mut rules = Vec::new();
@@ -816,10 +816,8 @@ fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
         "@if($a)\n{{ $b }}\n@endif\n",
     ];
     for source in sources {
-        let native = StrDoc::new(source, GrammarDialect::Blade);
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-        let image =
-            TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
+        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
         let tape = AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         );

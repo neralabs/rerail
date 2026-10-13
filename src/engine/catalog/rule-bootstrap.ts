@@ -2,7 +2,7 @@ import { dirname, join, resolve } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { parseRuleDocument } from "./bundled-rule-documents.js";
-import { assertCodeRuleStorable, CodeRuleCompileError } from "../code-rule/code-rule-compile.js";
+import { validateCodeRule } from "../rules.js";
 import {
   repositories,
   RULE_KINDS,
@@ -32,12 +32,8 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
     if (document.kind !== "code") continue;
-    try {
-      assertCodeRuleStorable(document.rule);
-    } catch (error) {
-      if (!(error instanceof CodeRuleCompileError)) throw error;
-      problems.push(`  rules[${index}] (${document.rule.id}): ${error.reason}`);
-    }
+    const validation = validateCodeRule(document.rule);
+    if (!validation.ok) problems.push(`  rules[${index}] (${document.rule.id}): ${validation.reason}`);
   }
   if (problems.length > 0) {
     throw new Error(`${path}: nothing imported; ${problems.length} code rule(s) do not compile:\n${problems.join("\n")}`);

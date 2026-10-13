@@ -28,7 +28,7 @@ Each pack lives in `packs/<id>/`:
 | --- | --- | --- |
 | `package.json` | npm package `@neralabs/rerail-pack-<id>`; core version range as a peer dependency; no dependencies | yes |
 | `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
-| `rules/*.json` | Code-rule documents (`rerail.policy/v1`) | yes |
+| `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated) | no |

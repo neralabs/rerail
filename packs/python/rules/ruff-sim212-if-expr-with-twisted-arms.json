@@ -1,0 +1,95 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim212-if-expr-with-twisted-arms",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM212 (if-expr-with-twisted-arms): `B if not A else A` where the negated test operand and the `else` arm are the same plain name (through any parentheses), reported on the whole expression.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "if-expr-with-twisted-arms",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "name-a": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$A"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-a"
+                  }
+                }
+              ]
+            },
+            "negated-name-a": {
+              "any": [
+                {
+                  "kind": "not_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-a"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "negated-name-a"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "conditional_expression",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "negated-name-a",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^if$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-a",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^else$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM212",
+        "message": "Use `$A if $A else ...` instead of `... if not $A else $A`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM212"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

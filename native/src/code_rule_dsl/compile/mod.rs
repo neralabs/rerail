@@ -4,7 +4,7 @@ mod ast_rule;
 mod binding_tests;
 mod binds;
 mod compare;
-mod config;
+pub(crate) mod config;
 mod define;
 mod dialect;
 mod evidence;
@@ -13,7 +13,7 @@ mod examples_tests;
 mod format_args;
 mod layout;
 mod nth_child;
-mod options;
+pub(crate) mod options;
 mod order;
 #[cfg(test)]
 mod params_tests;
@@ -26,7 +26,8 @@ mod value;
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
 };
-use super::language::{CodeRuleLanguage, Semantic, Support, language_not_supported};
+use super::language::adapter::{Refusal, gate};
+use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
     UtilOrigin, UtilTable, collect_variables, reads_values,
@@ -607,56 +608,47 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (grammars, grammar) = language_capability(language_name, capabilities)?;
+            use super::language::adapter::{Adapter, SyntaxFeature, SyntaxRules, with_adapter};
+            let family = code_rule_language.family();
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
-                Some(value) => match code_rule_language.family() {
-                    super::language::Family::Python => (
-                        None,
-                        Some(Arc::new(options::compile_python_options(
-                            value,
-                            &format!("{path}/ast"),
-                        )?)),
-                    ),
-                    super::language::Family::Ecma => (
-                        Some(Arc::new(options::compile_language_options(
-                            value,
-                            &format!("{path}/ast"),
-                        )?)),
-                        None,
-                    ),
-                    super::language::Family::Php => {
-                        return Err(invalid(format!(
-                            "{path}/ast/languageOptions: `languageOptions` is not available for php policies"
-                        )));
-                    }
-                    super::language::Family::Blade => {
-                        return Err(invalid(format!(
-                            "{path}/ast/languageOptions: `languageOptions` is not available for blade policies"
-                        )));
-                    }
-                },
+                Some(value) => {
+                    gate(
+                        &format!("{path}/ast/languageOptions"),
+                        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
+                    )?;
+                    with_adapter!(family, A => <A as SyntaxRules>::compile_language_options(
+                        value,
+                        &format!("{path}/ast"),
+                    ))?
+                }
             };
             let applies = ast
                 .get("when")
                 .map(|when| {
-                    options::compile_when(
+                    with_adapter!(family, A => <A as SyntaxRules>::compile_when(
                         when,
                         &format!("{path}/ast"),
-                        matches!(code_rule_language.family(), super::language::Family::Python),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    )
+                    ))
                 })
                 .transpose()?
                 .unwrap_or(true);
             let file = ast
                 .get("file")
                 .map(|file| {
+                    let (packages, declarations) =
+                        with_adapter!(family, A => (A::PACKAGES, A::DECLARATION_FILES));
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
                         language_name,
+                        options::FileKeys {
+                            packages,
+                            declarations,
+                        },
                         capabilities.limits.max_regex_pattern_bytes,
                     )
                     .map(Arc::new)
@@ -1428,15 +1420,18 @@ pub(super) fn refuse_unavailable_semantics(
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
 fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
-    match support {
-        Support::Supported => Ok(()),
-        Support::Refused => Err(invalid(format!(
-            "{at}: `{predicate}` is not available for {language} policies"
-        ))),
-        Support::NotSupportedYet => Err(language_not_supported(format!(
-            "{at}: `{predicate}` is not supported yet for {language} policies"
-        ))),
-    }
+    gate(
+        at,
+        match support {
+            Support::Supported => Ok(()),
+            Support::Refused => Err(Refusal::Refused(
+                format!("`{predicate}` is not available for {language} policies").into(),
+            )),
+            Support::NotSupportedYet => Err(Refusal::NotSupportedYet(
+                format!("`{predicate}` is not supported yet for {language} policies").into(),
+            )),
+        },
+    )
 }
 
 #[cfg(test)]

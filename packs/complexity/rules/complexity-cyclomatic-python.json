@@ -1,0 +1,97 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "complexity-cyclomatic-python",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Cyclomatic complexity of Python functions, with lizard 1.24.0's decision points. Each def (async, decorated and methods included) is scored; a nested def is scored on its own and adds nothing to its parent, while a lambda is not a function here, so its conditions count toward the enclosing def. Decision points: if, elif, for and async for, while, except, finally, each and/or operator, each case of a match, the if of a conditional expression, and every for and if clause of a comprehension (a case guard is an if clause too). else, with, assert, try and return do not count. Deviation from lizard 1.24.0: a def whose return annotation spans several lines, or whose parameter list breaks after a default holding brackets, is scored whole here, where lizard ends it inside its signature and scores it 1 (a defect fixed in crapkit #72). A function fails when its cyclomatic complexity, 1 + its decision points, exceeds 6 (7 or more); the finding spans the whole function and its message gives the computed number. Test files and vendored, virtual-environment and build directories are out of scope.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/site-packages/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/test_*.py",
+      "**/*_test.py",
+      "**/tests/**",
+      "**/conftest.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "too-complex",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "boundary",
+            "count": {
+              "has": {
+                "matches": "decision",
+                "stopBy": {
+                  "matches": "boundary"
+                }
+              },
+              "min": 6,
+              "as": "CCN",
+              "offset": 1
+            }
+          },
+          "utils": {
+            "boundary": {
+              "kind": "function_definition"
+            },
+            "decision": {
+              "any": [
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "elif_clause"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "except_clause"
+                },
+                {
+                  "kind": "finally_clause"
+                },
+                {
+                  "kind": "boolean_operator"
+                },
+                {
+                  "kind": "conditional_expression"
+                },
+                {
+                  "kind": "for_in_clause"
+                },
+                {
+                  "kind": "if_clause"
+                },
+                {
+                  "kind": "case_clause"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "Cyclomatic complexity $CCN (limit 6). Split this function into smaller ones or simplify its branching."
+      }
+    }
+  ]
+}

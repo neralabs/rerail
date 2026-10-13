@@ -68,18 +68,18 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2018 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
-# EmranMR/tree-sitter-blade 0.12.2, vendored byte-identical. Its LICENSE sits beside it.
+# fortephp/forte 1.1.0, ported to Rust method by method (docs/blade-parser.md); the directive registry's
+# JSON under directives/resources/ is upstream's, byte-identical.
 [[annotations]]
-path = "native/grammars/tree-sitter-blade/**"
+path = "native/src/code_rule_dsl/blade/forte/**"
 precedence = "override"
-SPDX-FileCopyrightText = "2023 Emran Mashhadi Ramezan"
+SPDX-FileCopyrightText = ["Johnathon Koster", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
-# Upstream's scanner and tag table, derived from tree-sitter-html.
 [[annotations]]
-path = ["native/grammars/tree-sitter-blade/src/scanner.c", "native/grammars/tree-sitter-blade/src/tag.h"]
+path = "native/src/code_rule_dsl/blade/forte/directives/resources/*.json"
 precedence = "override"
-SPDX-FileCopyrightText = ["2023 Emran Mashhadi Ramezan", "2014 Max Brunsfeld"]
+SPDX-FileCopyrightText = "Johnathon Koster"
 SPDX-License-Identifier = "MIT"
 
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
@@ -93,6 +93,34 @@ SPDX-License-Identifier = "MIT"
 path = "fixtures/blade/blade/directives.php"
 precedence = "override"
 SPDX-FileCopyrightText = ["2010-2025 Webkul Software", "2015-2026 Dan Brown and the BookStack project contributors", "Filament", "Caleb Porzio", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# fortephp/forte 1.1.0 (blade/licenses/forte/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "fixtures/blade/blade/forte/suite.expected.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Johnathon Koster", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# bagisto 635cab68b3 (blade/licenses/bagisto/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "fixtures/blade/blade/forte/corpus/bagisto.expected.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2010-2025 Webkul Software", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# BookStack f585a7d910 (blade/licenses/bookstack/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "fixtures/blade/blade/forte/corpus/bookstack.expected.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2015-2026 Dan Brown and the BookStack project contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# filament ca4f55bb5e (blade/licenses/filament/UPSTREAM.md): derived or excerpted
+[[annotations]]
+path = "fixtures/blade/blade/forte/corpus/filament.expected.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Filament", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # @eslint-community/eslint-utils 4.10.1 (ecma/licenses/eslint-utils/UPSTREAM.md): derived or excerpted
@@ -122,6 +150,12 @@ SPDX-License-Identifier = "MIT AND Apache-2.0"
 # laravel/framework e5f3d6265f (php/licenses/laravel/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "fixtures/php/literal/laravel/phpdoc.expected.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Taylor Otwell", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+[[annotations]]
+path = "fixtures/blade/blade/forte/corpus/laravel.expected.json"
 precedence = "override"
 SPDX-FileCopyrightText = ["Taylor Otwell", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
@@ -722,7 +756,7 @@ SPDX-License-Identifier = "MIT"
 # the licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json", "packs/typescript/candidates/typescript-eslint-no-explicit-any.json"]
+path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

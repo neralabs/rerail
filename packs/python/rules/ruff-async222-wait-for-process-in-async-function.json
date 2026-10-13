@@ -1,0 +1,144 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-async222-wait-for-process-in-async-function",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's ASYNC222 (wait-for-process-in-async-function): a call to `os.wait`, `os.wait3`, `os.wait4`, `os.waitid` or `os.waitpid` inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "wait-for-process",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-body": {
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "function_definition"
+         },
+         {
+          "kind": "class_definition"
+         }
+        ]
+       }
+      },
+      "lambda-body": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "lambda"
+       },
+       "follows": {
+        "stopBy": "end",
+        "regex": "^:$"
+       }
+      },
+      "callee-position": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "call"
+         },
+         "precedes": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "generator_expression"
+           }
+          ]
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "callee-position"
+         }
+        }
+       ]
+      },
+      "async-context": {
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "matches": "scope-body"
+          },
+          {
+           "matches": "lambda-body"
+          }
+         ]
+        },
+        "kind": "block",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "function_definition",
+         "has": {
+          "stopBy": "neighbor",
+          "regex": "^async$"
+         }
+        }
+       }
+      },
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.wait",
+         "os.wait3",
+         "os.wait4",
+         "os.waitid",
+         "os.waitpid"
+        ]
+       }
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "callee-position"
+       },
+       {
+        "matches": "async-context"
+       },
+       {
+        "matches": "target"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC222",
+    "message": "Async functions should not wait on processes with blocking methods",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC222"
+        ]
+      }
+    }
+   }
+  }
+ ]
+}

@@ -10,6 +10,7 @@ use super::resolve::{compile_resolves, validate_resolves};
 use super::utils::{UtilIds, UtilScope};
 use super::value::{compile_value_with, validate_value};
 use crate::code_rule_dsl::json::{bounded_text, invalid, non_empty_str, object};
+use crate::code_rule_dsl::language::adapter::{SyntaxFeature, SyntaxRules, gate, with_adapter};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
@@ -319,31 +320,13 @@ pub(super) fn compile_parse(
     let grammar = Grammar::named(name)
         .ok_or_else(|| invalid(format!("{path}/grammar: `{name}` is not a grammar")))?;
     let family = Family::of(language);
-    let hosted = matches!(
-        (family, grammar.literal_host()),
-        (Family::Python, LiteralHost::PythonString)
-            | (Family::Ecma, LiteralHost::EcmaComment)
-            | (
-                Family::Php,
-                LiteralHost::PhpString | LiteralHost::PhpComment
-            )
-            // Blade's strings and doc comments are those of the PHP its template embeds
-            // (`blade::view`).
-            | (
-                Family::Blade,
-                LiteralHost::PhpString | LiteralHost::PhpComment
-            )
-    );
-    if !hosted {
-        return Err(invalid(format!(
-            "{path}/grammar: `{name}` parses {}{}",
-            grammar.host(),
-            unhosted_reason(family, grammar)
-        )));
-    }
+    gate(
+        &format!("{path}/grammar"),
+        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::Parse(grammar))),
+    )?;
     let rule = if grammar == Grammar::Annotation {
         // An annotation's nodes are Python's: its rule compiles as the host's does.
-        compile_ast_rule(&sub_rule(parse), GrammarDialect::Python, path, gaps, utils)?
+        compile_ast_rule(&sub_rule(parse), grammar.host_language(), path, gaps, utils)?
     } else {
         let host = Hosting { language, utils };
         compile_sub_rule(
@@ -378,43 +361,14 @@ pub(super) fn compile_parse(
                 language,
                 &["string", "encapsed_string", "heredoc", "nowdoc"],
             ),
-            // Blade's own `{{-- --}}` comments are no PHP doc comments: only the embedded PHP's.
-            LiteralHost::PhpComment => match family {
-                Family::Blade => kind_ids(language, &["comment"])
-                    .into_iter()
-                    .filter(|id| language.is_embedded_kind(*id))
-                    .collect(),
-                Family::Python | Family::Ecma | Family::Php => kind_ids(language, &["comment"]),
-            },
+            // A template's own `{{-- --}}` comments are no PHP doc comments.
+            LiteralHost::PhpComment => with_adapter!(family, A => kind_ids(language, &["comment"])
+                .into_iter()
+                .filter(|id| <A as SyntaxRules>::php_comment(language, *id))
+                .collect()),
         }),
         reading: table_reading(utils.options.as_deref(), utils.python.as_deref()),
     }))))
-}
-
-/// Why a family's literals have no tree of a grammar another family's literals have, where it has
-/// a counterpart or genuinely lacks the concept.
-fn unhosted_reason(family: Family, grammar: Grammar) -> &'static str {
-    match (family, grammar) {
-        (Family::Php, Grammar::Percent) => "; PHP's printf formats are `printfFormat`",
-        (Family::Php, Grammar::Brace) => {
-            "; PHP has no str.format templates (its printf formats are `printfFormat`)"
-        }
-        (Family::Php, Grammar::Annotation) => {
-            "; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`"
-        }
-        (Family::Blade, Grammar::Percent) => {
-            "; blade embeds PHP, whose printf formats are `printfFormat`"
-        }
-        (Family::Blade, Grammar::Brace) => {
-            "; blade embeds PHP, which has no str.format templates (its printf formats are `printfFormat`)"
-        }
-        (Family::Blade, Grammar::Annotation) => {
-            "; blade embeds PHP, which holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`"
-        }
-        (Family::Python, Grammar::Printf) => "; Python's printf formats are `percentFormat`",
-        (Family::Python, Grammar::Scanf) => "; Python has no scanf formats",
-        _ => "",
-    }
 }
 
 /// The host a parsed tree's rule reaches: the language and scope its `host` rules compile with,
@@ -604,7 +558,7 @@ pub(super) fn compile_sub_rule(
         let options = host.and_then(|host| host.utils.options.as_ref());
         let mut compiled = compile_resolves(
             resolves,
-            GrammarDialect::TypeScript,
+            grammar.host_language(),
             &format!("{path}/resolves"),
             options,
             None,

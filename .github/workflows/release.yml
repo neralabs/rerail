@@ -22,7 +22,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Rejects a malformed tag, or one that disagrees with package.json, before any engine is built.
+  # Rejects a malformed tag, one that disagrees with package.json, or a tree Windows cannot check out, before any
+  # engine is built. A tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
     runs-on: ubuntu-24.04
@@ -35,6 +36,9 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Check every tracked path checks out on Windows
+        run: node scripts/check/check-windows-paths.mjs
 
       - id: release-channel
         name: Derive npm dist-tag
@@ -85,6 +89,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths. `npm run check` keeps
+      # tracked paths well under that (scripts/check/check-windows-paths.mjs), so this is the backstop.
+      - name: Allow long paths in Git on Windows
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
@@ -297,6 +307,10 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths; see the native job.
+      - name: Allow long paths in Git on Windows
+        run: git config --system core.longpaths true
+
       - name: Checkout repository
         uses: actions/checkout@v7
         with:

@@ -2,7 +2,9 @@
 //! manager: `var` hoists to the enclosing function (or module or namespace); `let`, `const`, class
 //! and function declarations bind in their block; values and types are separate namespaces.
 
-use super::{Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, Site, TYPE, VALUE};
+use super::{
+    Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
+};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
@@ -210,6 +212,7 @@ fn fields_of(grammar: &Grammar<Tag>) -> Fields {
     }
 }
 
+/// A dialect's grammar, as the visit reads it: each ECMAScript dialect parses with its own.
 fn script(language: GrammarDialect) -> &'static Script {
     static TYPESCRIPT: OnceLock<Script> = OnceLock::new();
     static TSX: OnceLock<Script> = OnceLock::new();
@@ -218,9 +221,10 @@ fn script(language: GrammarDialect) -> &'static Script {
         GrammarDialect::TypeScript => &TYPESCRIPT,
         GrammarDialect::Tsx => &TSX,
         GrammarDialect::JavaScript => &JAVASCRIPT,
-        GrammarDialect::Python | GrammarDialect::Php => {
+        GrammarDialect::Python | GrammarDialect::Php | GrammarDialect::Blade => {
             unreachable!("only ECMAScript dialects build ECMAScript scopes")
         }
+        #[cfg(test)]
         _ => unreachable!("only policy dialects build ECMAScript scopes"),
     };
     slot.get_or_init(|| {
@@ -248,7 +252,7 @@ fn same<D: Doc>(left: &Node<'_, D>, right: Option<&Node<'_, D>>) -> bool {
     right.is_some_and(|right| right.node_id() == left.node_id())
 }
 
-pub(super) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit {
+pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit {
     let script = script(builder.table.language);
     let mut visitor = Visitor {
         builder,
@@ -259,6 +263,11 @@ pub(super) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -
     visitor.children(root)?;
     collect_directives(visitor.builder, root, script);
     Ok(())
+}
+
+/// Charges each write and property mutation to the binding it resolves to.
+pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
+    table.count_writes(&root.text(), root.range().start);
 }
 
 /// ESLint's `/* global a, b: off */` block comments, as its `ConfigCommentParser` reads them

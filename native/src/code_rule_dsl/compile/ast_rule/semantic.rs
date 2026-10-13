@@ -9,8 +9,10 @@ use super::super::resolve::{
 use super::super::value::{compile_value, validate_value};
 use super::*;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::matcher::{Comparison, Semantic, SemanticText};
-use crate::code_rule_dsl::value::structure::Equality;
 
 /// The semantic keys' grammar-independent checks, in `validate_ast_rule`'s order.
 pub(super) fn validate(
@@ -79,46 +81,12 @@ pub(super) fn compare_reading(
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or("source");
-    let refusal = match Family::of(language) {
-        Family::Python => match text {
-            SemanticText::Key | SemanticText::Member => Some(format!(
-                "`{name}` reads JavaScript and PHP property names; Python has none"
-            )),
-            SemanticText::Reference { .. } => Some(format!(
-                "`{name}` reads JavaScript and PHP references (ESLint's isSameReference); use structure for Python"
-            )),
-            SemanticText::Name => Some(
-                "`name` reads the names JavaScript and PHP identifiers and strings write; use unquoted for Python"
-                    .to_owned(),
-            ),
-            SemanticText::Value | SemanticText::Structure(_) => None,
-        },
-        Family::Ecma => match text {
-            SemanticText::Structure(_) => Some(
-                "the structural modes compare Python and PHP syntax; use tokens for TypeScript"
-                    .to_owned(),
-            ),
-            _ => None,
-        },
-        Family::Php => match text {
-            SemanticText::Structure(Equality::Parts) => Some(
-                "`structure-parts` compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation"
-                    .to_owned(),
-            ),
-            _ => None,
-        },
-        // Blade compares the PHP its template embeds (`blade::view`).
-        Family::Blade => match text {
-            SemanticText::Structure(Equality::Parts) => Some(
-                "`structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation"
-                    .to_owned(),
-            ),
-            _ => None,
-        },
-    };
-    if let Some(detail) = refusal {
-        return Err(invalid(format!("{compare_path}/text: {detail}")));
-    }
+    gate(
+        &format!("{compare_path}/text"),
+        with_adapter!(Family::of(language), A => <<A as Adapter>::Value as ValueRules>::feature(
+            ValueFeature::Compare(text, name)
+        )),
+    )?;
     let reading = Reading::new(language, utils.options.clone(), utils.python.clone());
     comparison.reading = Some(match text {
         // getStaticValue in the key's scope (TypeScript), a computed key's value through its
@@ -236,17 +204,14 @@ fn compile_calls(
     path: &str,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
-    let family = Family::of(language);
-    let kinds: &[&str] = match family {
-        Family::Python => &["call"],
-        // Blade's calls are those of the PHP its template embeds (`blade::view`).
-        Family::Php | Family::Blade => &crate::code_rule_dsl::calls::php::CALL_KINDS,
-        Family::Ecma => {
-            return Err(invalid(format!(
-                "{path}: calls follows Python and PHP calls only"
-            )));
-        }
+    use crate::code_rule_dsl::language::adapter::{
+        Adapter, CallFeature, CallRules, gate, with_adapter,
     };
+    let (verdict, kinds) = with_adapter!(Family::of(language), A => (
+        <<A as Adapter>::Calls as CallRules>::feature(CallFeature::Calls),
+        <<A as Adapter>::Calls as CallRules>::CALL_KINDS,
+    ));
+    gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {
         invalid(format!(
             "{path}: calls is only supported in a forbid query's rule and its utils"
@@ -255,6 +220,6 @@ fn compile_calls(
     // Blade numbers PHP's kinds after its own (`GrammarDialect::kind_id`).
     let call_kinds = kinds.iter().map(|kind| language.kind_id(kind)).collect();
     Ok(AstMatcher::Semantic(Semantic::Calls(Box::new(
-        collector.term(calls, path, family, call_kinds)?,
+        collector.term(calls, path, language, call_kinds)?,
     ))))
 }

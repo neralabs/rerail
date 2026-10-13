@@ -1,4 +1,7 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, Bound, Reading, ValueTest};
@@ -27,27 +30,6 @@ const VALUE_KEYS: &[&str] = &[
 
 /// Prefixes one `startsWith` may list.
 const MAX_PREFIXES: usize = 1024;
-
-/// Type names `type` accepts: Python's `type(v).__name__`, TypeScript's `typeof` with `null` and
-/// `array` told apart from `object`, and `regexp` within it.
-pub(crate) const PYTHON_TYPES: &[&str] = &[
-    "int", "float", "complex", "str", "bytes", "bool", "NoneType", "ellipsis", "tuple", "list",
-    "set", "dict",
-];
-pub(crate) const TYPESCRIPT_TYPES: &[&str] = &[
-    "string",
-    "number",
-    "bigint",
-    "boolean",
-    "null",
-    "undefined",
-    "array",
-    "object",
-    "regexp",
-];
-
-/// PHP `get_debug_type` names Rerail can establish for constant expressions.
-pub(crate) const PHP_TYPES: &[&str] = &["int", "float", "string", "bool", "null", "array"];
 
 fn strings<'a>(value: &'a Json, path: &str) -> Result<Vec<&'a str>> {
     let items = match value {
@@ -150,24 +132,13 @@ pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Resul
     Ok(())
 }
 
-/// A JSON scalar as a value of the grammar's language: a JSON integer is a Python `int`, a
-/// JavaScript number, a PHP `int` within 64 bits (a `float` past them); strings are `str`, UTF-16
-/// or PHP's UTF-8 bytes.
-fn literal(value: &Json, language: GrammarDialect) -> Value {
-    let family = Family::of(language);
+/// A JSON scalar as a value of `A`'s language (`ValueRules::string`, `ValueRules::number`).
+fn literal<A: Adapter>(value: &Json) -> Value {
     match value {
-        Json::String(text) => match family {
-            Family::Python => Value::Str(text.clone()),
-            Family::Ecma => Value::Utf16(text.encode_utf16().collect()),
-            Family::Php | Family::Blade => Value::PhpStr(text.as_bytes().to_vec()),
-        },
+        Json::String(text) => <A::Value as ValueRules>::string(text),
         Json::Bool(flag) => Value::Bool(*flag),
         Json::Null => Value::None,
-        Json::Number(number) => match (family, number.as_i64(), number.as_u64()) {
-            (Family::Python | Family::Php | Family::Blade, Some(integer), _) => Value::int(integer),
-            (Family::Python, None, Some(integer)) => Value::int(integer),
-            _ => Value::Float(number.as_f64().unwrap_or(f64::NAN)),
-        },
+        Json::Number(number) => <A::Value as ValueRules>::number(number),
         _ => Value::Unknown,
     }
 }
@@ -194,24 +165,21 @@ pub(super) fn compile_value_with(
     path: &str,
     reading: Reading,
 ) -> Result<AstMatcher> {
-    let (known, language_name) = match Family::of(language) {
-        Family::Python => (PYTHON_TYPES, "Python"),
-        Family::Ecma => (TYPESCRIPT_TYPES, "TypeScript"),
-        // Blade's values are those of the PHP its template embeds.
-        Family::Php | Family::Blade => (PHP_TYPES, "PHP"),
-    };
+    with_adapter!(Family::of(language), A => compile_value_in::<A>(value, path, reading))
+}
+
+/// `compile_value_with` for a grammar whose family's adapter is `A`.
+fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
     let types = value
         .get("type")
         .map(|types| strings(types, &format!("{path}/type")))
         .transpose()?
         .unwrap_or_default();
     for (index, name) in types.iter().enumerate() {
-        if !known.contains(name) {
-            return Err(invalid(format!(
-                "{path}/type/{index}: `{name}` is not a {language_name} type name; expected one of {}",
-                known.join(", ")
-            )));
-        }
+        gate(
+            &format!("{path}/type/{index}"),
+            <A::Value as ValueRules>::feature(ValueFeature::Type(name)),
+        )?;
     }
     let starts_with = value
         .get("startsWith")
@@ -219,7 +187,7 @@ pub(super) fn compile_value_with(
         .transpose()?
         .unwrap_or_default()
         .into_iter()
-        .map(|prefix| literal(&Json::String(prefix.to_owned()), language))
+        .map(|prefix| literal::<A>(&Json::String(prefix.to_owned())))
         .collect();
     let regex = value
         .get("regex")
@@ -236,15 +204,11 @@ pub(super) fn compile_value_with(
         ("le", Bound::Le),
     ]
     .into_iter()
-    .filter_map(|(key, bound)| {
-        value
-            .get(key)
-            .map(|limit| (bound, literal(limit, language)))
-    })
+    .filter_map(|(key, bound)| value.get(key).map(|limit| (bound, literal::<A>(limit))))
     .collect();
     Ok(AstMatcher::Semantic(Semantic::Value(Box::new(ValueTest {
         reading,
-        eq: value.get("eq").map(|eq| literal(eq, language)),
+        eq: value.get("eq").map(literal::<A>),
         types: types.into_iter().map(str::to_owned).collect(),
         constant: value.get("constant").and_then(Json::as_bool),
         starts_with,

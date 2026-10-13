@@ -13,8 +13,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
-/// The parser implementations a dialect may name.
-const PARSERS: &[&str] = &["tree-sitter"];
+/// The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port,
+/// `code_rule_dsl::blade::forte`).
+const PARSERS: &[&str] = &["tree-sitter", "forte"];
+/// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
+const NATIVE_GRAMMARS: &[&str] = &["forte"];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -79,10 +82,11 @@ struct Embed {
     via: String,
 }
 
-/// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, or one
-/// of ast-grep's.
+/// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, one
+/// Rerail implements itself (no tree-sitter grammar), or one of ast-grep's.
 enum Grammar<'a> {
     Vendored(&'a str),
+    Native(&'a str),
     AstGrep(&'a str),
 }
 
@@ -159,6 +163,9 @@ fn parse_grammar(grammar: &str) -> Option<Grammar<'_>> {
     if let Some(name) = grammar.strip_prefix("vendored:") {
         return is_name(name).then_some(Grammar::Vendored(name));
     }
+    if let Some(name) = grammar.strip_prefix("native:") {
+        return is_name(name).then_some(Grammar::Native(name));
+    }
     grammar
         .strip_prefix("ast-grep:")
         .filter(|variant| is_variant(variant))
@@ -171,9 +178,13 @@ fn check_grammar(name: &str, label: &str, grammar: &str, vendored: &[&str]) {
             vendored.contains(&vendored_name),
             "{name}: dialect {label} names vendored grammar `{vendored_name}`, which build.rs does not build (GRAMMARS)"
         ),
+        Some(Grammar::Native(native)) => assert!(
+            NATIVE_GRAMMARS.contains(&native),
+            "{name}: dialect {label} names native grammar `{native}`, which is not one of {NATIVE_GRAMMARS:?}"
+        ),
         Some(Grammar::AstGrep(_)) => {}
         None => panic!(
-            "{name}: dialect {label} grammar `{grammar}` is neither vendored:<name> nor ast-grep:<Language>"
+            "{name}: dialect {label} grammar `{grammar}` is neither vendored:<name>, native:<name> nor ast-grep:<Language>"
         ),
     }
 }
@@ -438,7 +449,7 @@ fn render(entries: &[Entry]) -> String {
     }
     out.push_str("];\n\n");
 
-    out.push_str("/// A supported dialect's grammar, as the registry names it; `None` for a test-only grammar.\n");
+    out.push_str("/// A supported dialect's tree-sitter grammar, as the registry names it; `None` for one Rerail\n/// parses itself and for a test-only grammar.\n");
     out.push_str("fn registry_grammar(lang: GrammarDialect) -> Option<TSLanguage> {\n");
     out.push_str("    unsafe extern \"C\" {\n");
     let mut declared = BTreeSet::new();
@@ -451,15 +462,16 @@ fn render(entries: &[Entry]) -> String {
                 if declared.insert(symbol.clone()) {
                     let _ = writeln!(out, "        fn {symbol}() -> *const ();");
                 }
-                format!("unsafe {{ tree_sitter_language::LanguageFn::from_raw({symbol}) }}.into()")
+                format!(
+                    "Some(unsafe {{ tree_sitter_language::LanguageFn::from_raw({symbol}) }}.into())"
+                )
             }
-            Grammar::AstGrep(language) => format!("SupportLang::{language}.get_ts_language()"),
+            Grammar::Native(_) => "None".to_owned(),
+            Grammar::AstGrep(language) => {
+                format!("Some(SupportLang::{language}.get_ts_language())")
+            }
         };
-        let _ = writeln!(
-            arms,
-            "        {} => Some({language}),",
-            variant(&dialect.label)
-        );
+        let _ = writeln!(arms, "        {} => {language},", variant(&dialect.label));
     }
     out.push_str("    }\n    match lang {\n");
     out.push_str(&arms);
@@ -550,10 +562,6 @@ fn render(entries: &[Entry]) -> String {
         planned.join(", ")
     );
 
-    out.push_str(
-        "impl Family {\n    /// The family a dialect is read with: its registry entry's.\n",
-    );
-    out.push_str("    pub(crate) fn of(lang: GrammarDialect) -> Self {\n        match lang {\n");
     let mut families: Vec<(&str, Vec<String>)> = Vec::new();
     for entry in &supported {
         let dialects = entry.dialects.iter().map(|dialect| variant(&dialect.label));
@@ -565,6 +573,22 @@ fn render(entries: &[Entry]) -> String {
             None => families.push((&entry.family, dialects.collect())),
         }
     }
+    out.push_str("impl Family {\n");
+    out.push_str(
+        "    /// The registry's families, in the order their first languages were added.\n",
+    );
+    let _ = writeln!(
+        out,
+        "    pub(crate) const ALL: [Self; {}] = [{}];\n",
+        families.len(),
+        families
+            .iter()
+            .map(|(family, _)| format!("Self::{}", pascal(family)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    out.push_str("    /// The family a dialect is read with: its registry entry's.\n");
+    out.push_str("    pub(crate) fn of(lang: GrammarDialect) -> Self {\n        match lang {\n");
     for (family, variants) in &families {
         let _ = writeln!(
             out,
@@ -600,7 +624,18 @@ fn render(entries: &[Entry]) -> String {
             honoured.join("\n                | ")
         )
     };
-    let _ = writeln!(out, "        {body}\n    }}\n}}");
+    let _ = writeln!(out, "        {body}\n    }}\n}}\n");
+
+    out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
+    out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
+    for (family, _) in &families {
+        let family = pascal(family);
+        let _ = writeln!(
+            out,
+            "            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}"
+        );
+    }
+    out.push_str("        }\n    };\n}\n\npub(crate) use with_adapter;\n");
     out
 }
 
@@ -669,7 +704,7 @@ mod tests {
         let out = Registry::new("repository", &[]);
         generate(
             &root.join("../languages"),
-            &["blade", "python", "typescript", "tsx"],
+            &["python", "typescript", "tsx"],
             &out.0.join("out"),
         );
         let generated =
@@ -689,6 +724,54 @@ mod tests {
         assert!(generated.contains("label: \"one\""));
         assert!(!generated.contains("label: \"two\""));
         assert!(generated.contains("&[\"two\"]"));
+    }
+
+    #[test]
+    fn each_family_dispatches_to_its_adapter() {
+        let mut three = supported("three", ".three", 3);
+        three["family"] = json!("one");
+        let generated = Registry::new(
+            "adapters",
+            &[
+                supported("one", ".one", 1),
+                supported("two", ".two", 2),
+                three,
+                planned("four", ".four"),
+            ],
+        )
+        .generate();
+        assert!(generated.contains("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n"));
+        for family in ["One", "Two"] {
+            assert_eq!(
+                generated
+                    .matches(&format!("            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}\n"))
+                    .count(),
+                1,
+                "{family}"
+            );
+        }
+        assert!(!generated.contains("adapter::Three"));
+        assert!(!generated.contains("adapter::Four"));
+        assert!(generated.contains("pub(crate) use with_adapter;"));
+    }
+
+    #[test]
+    fn every_family_is_listed_once_in_registry_order() {
+        let mut three = supported("three", ".three", 3);
+        three["family"] = json!("one");
+        let generated = Registry::new(
+            "families",
+            &[
+                supported("two", ".two", 2),
+                three,
+                supported("one", ".one", 1),
+                planned("four", ".four"),
+            ],
+        )
+        .generate();
+        assert!(
+            generated.contains("    pub(crate) const ALL: [Self; 2] = [Self::One, Self::Two];\n")
+        );
     }
 
     #[test]

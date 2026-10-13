@@ -1,0 +1,686 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ret503-implicit-return",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's RET503 (implicit-return): a function that has a `return` with a value other than `None` and whose last statement can fall through (Ruff's has_implicit_return: recursively the last statement of each `if`/`elif`/`else`, `for`/`while` `else`, `match` case and `with` body; an `if` without `else` and a loop without `else` fall through; `while True`, `assert False`, `return`, `raise`, `try` and calls of known no-return functions do not). No-return functions are `exit`/`quit` (builtin, `sys`, `_thread`, `pytest`), `os`/`posix` `_exit`/`abort`, `_winapi.ExitProcess`, `pytest.fail`/`skip`/`xfail`, `assert_never` from `typing`/`_typeshed`/`typing_extensions`, and functions defined before the analysed function with a `NoReturn`/`Never` return annotation; the callee names are resolved through the file's bindings and imports. Reported on the function, from its first decorator.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "implicit-return",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "analysed-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "kind": "yield"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "return_statement"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "return_statement"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "value-return": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "(?s).",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^return$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "matches": "none-literal"
+                    }
+                  ]
+                }
+              }
+            },
+            "own-return": {
+              "kind": "return_statement"
+            },
+            "has-result": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "matches": "value-return"
+              }
+            },
+            "last-statement": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "regex": "(?s).",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "const-true": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "const-true"
+                  }
+                }
+              ]
+            },
+            "const-false": {
+              "any": [
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "const-false"
+                  }
+                }
+              ]
+            },
+            "noreturn-annotation": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.NoReturn",
+                      "typing.Never",
+                      "_typeshed.NoReturn",
+                      "_typeshed.Never",
+                      "typing_extensions.NoReturn",
+                      "typing_extensions.Never"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "noreturn-annotation"
+                  }
+                }
+              ]
+            },
+            "noreturn-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "global": [
+                          "exit",
+                          "quit"
+                        ],
+                        "import": [
+                          "builtins.exit",
+                          "sys.exit",
+                          "_thread.exit",
+                          "pytest.exit",
+                          "builtins.quit",
+                          "os._exit",
+                          "os.abort",
+                          "posix._exit",
+                          "posix.abort",
+                          "_winapi.ExitProcess",
+                          "pytest.fail",
+                          "pytest.skip",
+                          "pytest.xfail",
+                          "typing.assert_never",
+                          "_typeshed.assert_never",
+                          "typing_extensions.assert_never"
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "pattern": "$FN",
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "function_definition",
+                        "any": [
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "function_definition",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "identifier",
+                                        "pattern": "$FN",
+                                        "follows": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^def$"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "type",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "noreturn-annotation"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "end",
+                                    "kind": "function_definition",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "kind": "identifier",
+                                          "pattern": "$FN",
+                                          "follows": {
+                                            "stopBy": "neighbor",
+                                            "regex": "^def$"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "kind": "type",
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "matches": "noreturn-annotation"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "follows": {
+                                "stopBy": "end",
+                                "any": [
+                                  {
+                                    "kind": "function_definition",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "kind": "identifier",
+                                          "pattern": "$FN",
+                                          "follows": {
+                                            "stopBy": "neighbor",
+                                            "regex": "^def$"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "kind": "type",
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "matches": "noreturn-annotation"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "end",
+                                      "kind": "function_definition",
+                                      "all": [
+                                        {
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "kind": "identifier",
+                                            "pattern": "$FN",
+                                            "follows": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^def$"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "kind": "type",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "matches": "noreturn-annotation"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "noreturn-callee"
+                  }
+                }
+              ]
+            },
+            "noreturn-call-statement": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "noreturn-callee"
+                }
+              }
+            },
+            "implicit-return": {
+              "any": [
+                {
+                  "kind": "if_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "matches": "last-statement"
+                            },
+                            {
+                              "matches": "implicit-return"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "elif_clause"
+                          },
+                          {
+                            "kind": "else_clause"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "last-statement"
+                              },
+                              {
+                                "matches": "implicit-return"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "while_statement"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "all": [
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "const-true",
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "^while$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "else_clause"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "else_clause",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "block",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "all": [
+                                  {
+                                    "matches": "last-statement"
+                                  },
+                                  {
+                                    "matches": "implicit-return"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "match_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "case_clause",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "matches": "last-statement"
+                            },
+                            {
+                              "matches": "implicit-return"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "with_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "last-statement"
+                        },
+                        {
+                          "matches": "implicit-return"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "if_statement"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "match_statement"
+                      },
+                      {
+                        "kind": "with_statement"
+                      },
+                      {
+                        "kind": "return_statement"
+                      },
+                      {
+                        "kind": "raise_statement"
+                      },
+                      {
+                        "kind": "try_statement"
+                      },
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "assert_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "const-false",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^assert$"
+                          }
+                        }
+                      },
+                      {
+                        "matches": "noreturn-call-statement"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "flagged-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "matches": "analysed-function"
+                },
+                {
+                  "matches": "has-result"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "last-statement"
+                        },
+                        {
+                          "matches": "implicit-return"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "function_definition",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition"
+                  }
+                },
+                "matches": "flagged-function"
+              },
+              {
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "flagged-function"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RET503",
+        "message": "Missing explicit `return` at the end of function able to return non-`None` value",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET503"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

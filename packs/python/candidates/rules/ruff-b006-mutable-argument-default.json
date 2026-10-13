@@ -1,0 +1,732 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b006-mutable-argument-default",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B006 (mutable-argument-default), stable behaviour: a function parameter default that is a list, dict or set display or comprehension, or a call of `dict`/`list`/`set` or `collections.Counter`/`OrderedDict`/`defaultdict`/`deque` (a subscripted callee judged by its value; parentheses transparent), unless the parameter's annotation is immutable by Ruff's `is_immutable_annotation`: an immutable builtin, `typing` or `collections.abc` type (generic ones also subscripted), `None`, `X | Y`, `Union[...]` of immutables, `Optional[X]`, `Annotated[X, ...]`. Names resolve with `resolves` (imports, their scope and order, and unshadowed builtins, as Ruff's semantic model sees them); `builtins.X` counts only where Ruff's table lists it. Stub files are skipped. Lambdas are not checked (Ruff runs B006 on `def` only). Reported on the default. Ruff's option `flake8-bugbear.extend-immutable-calls` adds immutable annotations.",
+  "scope": {
+    "include": [
+      "**/*.py",
+      "**/*.pyi"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "flake8-bugbear.extend-immutable-calls": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Qualified names of further calls that return immutable values."
+          }
+        }
+      }
+    },
+    {
+      "id": "mutable-argument-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "immutable-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "bool",
+                  "bytes",
+                  "complex",
+                  "float",
+                  "int",
+                  "object",
+                  "range",
+                  "str",
+                  "frozenset",
+                  "tuple",
+                  "frozendict"
+                ],
+                "import": [
+                  "collections.abc.Sized",
+                  "typing.LiteralString",
+                  "typing.Sized",
+                  "builtins.frozenset",
+                  "builtins.tuple",
+                  "builtins.frozendict",
+                  "collections.abc.ByteString",
+                  "collections.abc.Collection",
+                  "collections.abc.Container",
+                  "collections.abc.Iterable",
+                  "collections.abc.Mapping",
+                  "collections.abc.Reversible",
+                  "collections.abc.Sequence",
+                  "collections.abc.Set",
+                  "typing.AbstractSet",
+                  "typing.ByteString",
+                  "typing.Callable",
+                  "typing.Collection",
+                  "typing.Container",
+                  "typing.FrozenSet",
+                  "typing.Iterable",
+                  "typing.Literal",
+                  "typing.Mapping",
+                  "typing.Never",
+                  "typing.NoReturn",
+                  "typing.Reversible",
+                  "typing.Sequence",
+                  "typing.Tuple",
+                  {
+                    "$option": "flake8-bugbear.extend-immutable-calls",
+                    "spread": true
+                  }
+                ]
+              }
+            },
+            "immutable-generic": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "frozenset",
+                  "tuple",
+                  "frozendict"
+                ],
+                "import": [
+                  "builtins.frozenset",
+                  "builtins.tuple",
+                  "builtins.frozendict",
+                  "collections.abc.ByteString",
+                  "collections.abc.Collection",
+                  "collections.abc.Container",
+                  "collections.abc.Iterable",
+                  "collections.abc.Mapping",
+                  "collections.abc.Reversible",
+                  "collections.abc.Sequence",
+                  "collections.abc.Set",
+                  "typing.AbstractSet",
+                  "typing.ByteString",
+                  "typing.Callable",
+                  "typing.Collection",
+                  "typing.Container",
+                  "typing.FrozenSet",
+                  "typing.Iterable",
+                  "typing.Literal",
+                  "typing.Mapping",
+                  "typing.Never",
+                  "typing.NoReturn",
+                  "typing.Reversible",
+                  "typing.Sequence",
+                  "typing.Tuple"
+                ]
+              }
+            },
+            "ref-typing-union": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Union"
+                ]
+              }
+            },
+            "ref-typing-optional": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Optional"
+                ]
+              }
+            },
+            "ref-annotated": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Annotated",
+                  "typing_extensions.Annotated"
+                ]
+              }
+            },
+            "generic-head": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type"
+                  }
+                }
+              ]
+            },
+            "generic-item": {
+              "not": {
+                "any": [
+                  {
+                    "regex": "^[\\[\\],|]$"
+                  },
+                  {
+                    "kind": "comment"
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  }
+                }
+              ]
+            },
+            "immutable-annotation": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[\\[\\],|]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    },
+                    "matches": "immutable-annotation"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "matches": "immutable-name"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "union_type"
+                    },
+                    {
+                      "kind": "binary_operator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\|$"
+                      }
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\],|]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          },
+                          {
+                            "regex": "^\\|$"
+                          },
+                          {
+                            "matches": "immutable-annotation"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "generic-head",
+                            "all": [
+                              {
+                                "matches": "immutable-generic"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "generic-head",
+                                "all": [
+                                  {
+                                    "matches": "ref-typing-union"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "subscript",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "generic-item",
+                                      "not": {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "kind": "generic_type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "type_parameter",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "generic-item",
+                                        "not": {
+                                          "matches": "immutable-annotation"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "generic-head",
+                                "all": [
+                                  {
+                                    "matches": "ref-typing-optional"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "subscript",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "generic_type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "type_parameter",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^,$"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "generic-item",
+                                    "all": [
+                                      {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "generic-item",
+                                      "all": [
+                                        {
+                                          "matches": "immutable-annotation"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "generic-head",
+                                "all": [
+                                  {
+                                    "matches": "ref-annotated"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "generic-item",
+                                    "all": [
+                                      {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    ],
+                                    "not": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "matches": "generic-item"
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "generic-item",
+                                      "all": [
+                                        {
+                                          "matches": "immutable-annotation"
+                                        }
+                                      ],
+                                      "not": {
+                                        "follows": {
+                                          "stopBy": "end",
+                                          "matches": "generic-item"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "checked-default": {
+              "follows": {
+                "stopBy": "neighbor",
+                "regex": "^=$"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "default_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "immutable-annotation"
+                    }
+                  }
+                }
+              }
+            },
+            "mutable-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "dict",
+                  "list",
+                  "set"
+                ],
+                "import": [
+                  "builtins.dict",
+                  "builtins.list",
+                  "builtins.set",
+                  "collections.Counter",
+                  "collections.OrderedDict",
+                  "collections.defaultdict",
+                  "collections.deque"
+                ]
+              }
+            },
+            "mutable-callee": {
+              "any": [
+                {
+                  "matches": "mutable-name"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "generic-head",
+                    "all": [
+                      {
+                        "matches": "mutable-name"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "default-position": {
+              "any": [
+                {
+                  "matches": "checked-default"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "default-position"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "default-position",
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "dictionary"
+              },
+              {
+                "kind": "set"
+              },
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "set_comprehension"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-callee",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list"
+                  }
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-callee",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "generator_expression"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B006",
+        "message": "Do not use mutable data structures for argument defaults",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B006"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

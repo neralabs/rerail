@@ -26,7 +26,7 @@ import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The pack directory, packs/next/. */
@@ -210,6 +210,7 @@ function writeFixtures(cases) {
         const path = test.filename === undefined ? `${rule}/${name}.js` : `${rule}/${name}/${caseFilename(test.filename)}`;
         if (test.options !== undefined || test.settings !== undefined || test.languageOptions !== undefined)
           throw new Error(`${rule} ${name}: case options/settings/languageOptions are not supported by this recorder`);
+        assertPortableCase(path, test.code);
         mkdirSync(dirname(join(fixturesDirectory, path)), { recursive: true });
         writeFileSync(join(fixturesDirectory, path), test.code);
         written.push({ rule, kind, index, path, errors: kind === "valid" ? 0 : Array.isArray(test.errors) ? test.errors.length : test.errors });

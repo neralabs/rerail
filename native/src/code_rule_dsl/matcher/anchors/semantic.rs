@@ -9,26 +9,7 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
         // kinds the decoder reads can have. Following bindings, a name has a value too, and in
         // PHP a named or class constant.
         Semantic::Value(test) if test.constant != Some(false) => {
-            let mut kinds = super::value_kinds(test.reading.language);
-            if test.reading.follow {
-                use crate::code_rule_dsl::language::Family;
-                let names: &[&str] = match Family::of(test.reading.language) {
-                    Family::Python => &["identifier"],
-                    Family::Ecma => &["identifier", "undefined"],
-                    // Blade's values are its embedded PHP's (`blade::view`).
-                    Family::Php | Family::Blade => &[
-                        "variable_name",
-                        "name",
-                        "qualified_name",
-                        "relative_name",
-                        "class_constant_access_expression",
-                    ],
-                };
-                kinds.extend(crate::code_rule_dsl::language::kind_ids(
-                    test.reading.language,
-                    names,
-                ));
-            }
+            let kinds = super::value_kinds(&test.reading);
             AnchorPlan {
                 root_kinds: Some(kinds),
                 condition: Condition::Always,

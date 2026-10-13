@@ -73,6 +73,29 @@ describe("library rules", () => {
     expect(listLibraryRules(db).map(rule => rule.document.rule.id)).toEqual(["good"]);
     expect(quarantinedLibraryRules(db)).toEqual([expect.objectContaining({ ruleId: "broken", owner: "library" })]);
   });
+
+  it("quarantines a row the schema accepts and the engine refuses, and refuses to export it", async () => {
+    const db = await temporaryDatabase();
+    upsertLibraryRule(db, bundle, codeRule("good"), "code");
+    // Python has no `this`: the schema reads resolves.this as a shape, the engine refuses it for the language.
+    const refused = {
+      format: "rerail.policy/v1", id: "python-this", revision: 1, mode: "steer",
+      clauses: [{
+        id: "check",
+        violation: { code: "TEST", anchor: "witness.span", message: "Test" },
+        forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { this: "global" } } } },
+      }],
+    };
+    db.insert(libraryRules).values({
+      ruleId: "python-this", kind: "code", document: { kind: "code", rule: refused } as never,
+      revision: 1, payloadHash: "x", createdAt: 1, updatedAt: 1,
+    }).run();
+
+    expect(listLibraryRules(db).map(rule => rule.document.rule.id)).toEqual(["good"]);
+    expect(getLibraryRule(db, "python-this")).toBeUndefined();
+    expect(quarantinedLibraryRules(db)).toEqual([{ ruleId: "python-this", kind: "code", owner: "library", reason: expect.stringMatching(/this/u) }]);
+    expect(() => exportRulesDump(db)).toThrow(/cannot export 1 quarantined library rule/u);
+  });
 });
 
 describe("copyRerailRuleToLibrary", () => {

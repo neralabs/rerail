@@ -74,15 +74,15 @@ describe("the language registry", () => {
     ]);
   });
 
-  it("routes no file to a planned language", () => {
+  it("routes a planned language's files to no dialect, reading them as text", () => {
     for (const entry of LANGUAGE_REGISTRY.filter(entry => entry.status === "planned")) {
       for (const { label, suffixes } of entry.dialects) {
         expect(Object.keys(CODE_RULE_DIALECTS)).not.toContain(label);
         for (const suffix of suffixes) {
           const path = `src/file${suffix}`;
           expect(codeRuleDialectForPath(path)).toBeUndefined();
-          expect(Object.keys(CODE_RULE_DIALECTS)).not.toContain(languageFor(path));
-          expect(generatedEditPaths("write", { path }).length).toBe(languageFor(path) === undefined ? 0 : 1);
+          expect(languageFor(path)).toBe("text");
+          expect(generatedEditPaths("write", { path })).toEqual([path]);
         }
       }
     }

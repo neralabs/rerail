@@ -1,0 +1,60 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b108-hardcoded-tmp-directory",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Flag Python string constants whose decoded value starts with a default insecure temporary-directory prefix.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B108",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "concatenated_string"
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "expression_statement"
+              }
+            },
+            "value": {
+              "regex": "^(?:/tmp|/var/tmp|/dev/shm)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B108",
+        "anchor": "witness.span",
+        "message": "Probable insecure use of a temporary-file path.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B108"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

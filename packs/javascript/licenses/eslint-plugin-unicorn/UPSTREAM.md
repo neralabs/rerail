@@ -125,7 +125,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/109/src/$userId/page.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/110/src/FooBar/file.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/111/src/meta/BadName.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/112/private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/Src/fooBar.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/112/work/Src/fooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/113/src/foo/foo_bar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/114/test/foo/foo_bar.test_utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/115/test/foo/fooBar.js` | `test/filename-case.js` | derived |
@@ -156,7 +156,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/140/src/FooBar/foo_bar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/141/src/foo-bar/foo_bar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/142/src/FooBar/index.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/143/private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript/src/FooBar/file.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/143/work/project/src/FooBar/file.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/144/src/foo/[foo_bar].js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/145/src/foo/foo$Bar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/146/src/foo/barBaz.js` | `test/filename-case.js` | derived |

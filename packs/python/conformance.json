@@ -51,7 +51,7 @@
         "tool": "ruff",
         "rule": "ASYNC100"
       },
-      "policy": "rules/ASYNC100.json",
+      "policy": "rules/ruff-async100-cancel-scope-no-checkpoint.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -64,7 +64,7 @@
         "tool": "ruff",
         "rule": "ASYNC105"
       },
-      "policy": "rules/ASYNC105.json",
+      "policy": "rules/ruff-async105-trio-sync-call.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -77,7 +77,7 @@
         "tool": "ruff",
         "rule": "ASYNC109"
       },
-      "policy": "rules/ASYNC109.json",
+      "policy": "rules/ruff-async109-async-function-with-timeout.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -90,7 +90,7 @@
         "tool": "ruff",
         "rule": "ASYNC110"
       },
-      "policy": "rules/ASYNC110.json",
+      "policy": "rules/ruff-async110-async-busy-wait.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -103,7 +103,7 @@
         "tool": "ruff",
         "rule": "ASYNC115"
       },
-      "policy": "rules/ASYNC115.json",
+      "policy": "rules/ruff-async115-async-zero-sleep.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -118,7 +118,7 @@
         "tool": "ruff",
         "rule": "ASYNC116"
       },
-      "policy": "rules/ASYNC116.json",
+      "policy": "rules/ruff-async116-long-sleep-not-forever.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -133,7 +133,7 @@
         "tool": "ruff",
         "rule": "ASYNC210"
       },
-      "policy": "rules/ASYNC210.json",
+      "policy": "rules/ruff-async210-blocking-http-call-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -146,7 +146,7 @@
         "tool": "ruff",
         "rule": "ASYNC212"
       },
-      "policy": "rules/ASYNC212.json",
+      "policy": "rules/ruff-async212-blocking-http-call-httpx-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -160,7 +160,7 @@
         "tool": "ruff",
         "rule": "ASYNC220"
       },
-      "policy": "rules/ASYNC220.json",
+      "policy": "rules/ruff-async220-create-subprocess-in-async-function.json",
       "capabilities": [
         "arguments",
         "compare",
@@ -176,7 +176,7 @@
         "tool": "ruff",
         "rule": "ASYNC221"
       },
-      "policy": "rules/ASYNC221.json",
+      "policy": "rules/ruff-async221-run-process-in-async-function.json",
       "capabilities": [
         "arguments",
         "compare",
@@ -192,7 +192,7 @@
         "tool": "ruff",
         "rule": "ASYNC222"
       },
-      "policy": "rules/ASYNC222.json",
+      "policy": "rules/ruff-async222-wait-for-process-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -205,7 +205,7 @@
         "tool": "ruff",
         "rule": "ASYNC230"
       },
-      "policy": "rules/ASYNC230.json",
+      "policy": "rules/ruff-async230-blocking-open-call-in-async-function.json",
       "capabilities": [
         "compare",
         "scope",
@@ -220,7 +220,7 @@
         "tool": "ruff",
         "rule": "ASYNC240"
       },
-      "policy": "rules/ASYNC240.json",
+      "policy": "rules/ruff-async240-blocking-path-method-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -234,7 +234,7 @@
         "tool": "ruff",
         "rule": "ASYNC250"
       },
-      "policy": "rules/ASYNC250.json",
+      "policy": "rules/ruff-async250-blocking-input-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -247,7 +247,7 @@
         "tool": "ruff",
         "rule": "ASYNC251"
       },
-      "policy": "rules/ASYNC251.json",
+      "policy": "rules/ruff-async251-blocking-sleep-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -260,7 +260,7 @@
         "tool": "ruff",
         "rule": "B002"
       },
-      "policy": "rules/B002.json",
+      "policy": "rules/ruff-b002-unary-prefix-increment-decrement.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -273,7 +273,7 @@
         "tool": "ruff",
         "rule": "B003"
       },
-      "policy": "rules/B003.json",
+      "policy": "rules/ruff-b003-assignment-to-os-environ.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -286,7 +286,7 @@
         "tool": "ruff",
         "rule": "B004"
       },
-      "policy": "rules/B004.json",
+      "policy": "rules/ruff-b004-unreliable-callable-check.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -300,7 +300,7 @@
         "tool": "ruff",
         "rule": "B005"
       },
-      "policy": "rules/B005.json",
+      "policy": "rules/ruff-b005-strip-with-multi-characters.json",
       "capabilities": [
         "suppression",
         "value"
@@ -313,7 +313,7 @@
         "tool": "ruff",
         "rule": "B007"
       },
-      "policy": "rules/B007.json",
+      "policy": "rules/ruff-b007-unused-loop-control-variable.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -326,7 +326,7 @@
         "tool": "ruff",
         "rule": "B009"
       },
-      "policy": "rules/B009.json",
+      "policy": "rules/ruff-b009-get-attr-with-constant.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -340,7 +340,7 @@
         "tool": "ruff",
         "rule": "B010"
       },
-      "policy": "rules/B010.json",
+      "policy": "rules/ruff-b010-set-attr-with-constant.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -367,7 +367,7 @@
         "tool": "ruff",
         "rule": "B013"
       },
-      "policy": "rules/B013.json",
+      "policy": "rules/ruff-b013-redundant-tuple-in-exception-handler.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -380,7 +380,7 @@
         "tool": "ruff",
         "rule": "B014"
       },
-      "policy": "rules/B014.json",
+      "policy": "rules/ruff-b014-duplicate-handler-exception.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -393,7 +393,7 @@
         "tool": "ruff",
         "rule": "B016"
       },
-      "policy": "rules/B016.json",
+      "policy": "rules/ruff-b016-raise-literal.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -406,7 +406,7 @@
         "tool": "ruff",
         "rule": "B017"
       },
-      "policy": "rules/B017.json",
+      "policy": "rules/ruff-b017-assert-raises-exception.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -419,7 +419,7 @@
         "tool": "ruff",
         "rule": "B019"
       },
-      "policy": "rules/B019.json",
+      "policy": "rules/ruff-b019-cached-instance-method.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -432,7 +432,7 @@
         "tool": "ruff",
         "rule": "B020"
       },
-      "policy": "rules/B020.json",
+      "policy": "rules/ruff-b020-loop-variable-overrides-iterator.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -445,7 +445,7 @@
         "tool": "ruff",
         "rule": "B021"
       },
-      "policy": "rules/B021.json",
+      "policy": "rules/ruff-b021-f-string-docstring.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -458,7 +458,7 @@
         "tool": "ruff",
         "rule": "B022"
       },
-      "policy": "rules/B022.json",
+      "policy": "rules/ruff-b022-useless-contextlib-suppress.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -471,7 +471,7 @@
         "tool": "ruff",
         "rule": "B023"
       },
-      "policy": "rules/B023.json",
+      "policy": "rules/ruff-b023-function-uses-loop-variable.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -484,7 +484,7 @@
         "tool": "ruff",
         "rule": "B025"
       },
-      "policy": "rules/B025.json",
+      "policy": "rules/ruff-b025-duplicate-try-block-exception.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -497,7 +497,7 @@
         "tool": "ruff",
         "rule": "B026"
       },
-      "policy": "rules/B026.json",
+      "policy": "rules/ruff-b026-star-arg-unpacking-after-keyword-arg.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -524,7 +524,7 @@
         "tool": "ruff",
         "rule": "B029"
       },
-      "policy": "rules/B029.json",
+      "policy": "rules/ruff-b029-except-with-empty-tuple.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -537,7 +537,7 @@
         "tool": "ruff",
         "rule": "B032"
       },
-      "policy": "rules/B032.json",
+      "policy": "rules/ruff-b032-unintentional-type-annotation.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -550,7 +550,7 @@
         "tool": "ruff",
         "rule": "B033"
       },
-      "policy": "rules/B033.json",
+      "policy": "rules/ruff-b033-duplicate-value.json",
       "capabilities": [
         "compare",
         "suppression"
@@ -563,7 +563,7 @@
         "tool": "ruff",
         "rule": "B034"
       },
-      "policy": "rules/B034.json",
+      "policy": "rules/ruff-b034-re-sub-positional-args.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -576,7 +576,7 @@
         "tool": "ruff",
         "rule": "B039"
       },
-      "policy": "rules/B039.json",
+      "policy": "rules/ruff-b039-mutable-contextvar-default.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -589,7 +589,7 @@
         "tool": "ruff",
         "rule": "B904"
       },
-      "policy": "rules/ruff-B904.json",
+      "policy": "rules/ruff-b904-raise-without-from-inside-except.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -629,7 +629,7 @@
         "tool": "ruff",
         "rule": "E712"
       },
-      "policy": "rules/E712.json",
+      "policy": "rules/ruff-e712-true-false-comparison.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -642,7 +642,7 @@
         "tool": "ruff",
         "rule": "E713"
       },
-      "policy": "rules/E713.json",
+      "policy": "rules/ruff-e713-not-in-test.json",
       "capabilities": [
         "annotation",
         "suppression"
@@ -655,7 +655,7 @@
         "tool": "ruff",
         "rule": "E714"
       },
-      "policy": "rules/E714.json",
+      "policy": "rules/ruff-e714-not-is-test.json",
       "capabilities": [
         "annotation",
         "suppression"
@@ -668,7 +668,7 @@
         "tool": "ruff",
         "rule": "E721"
       },
-      "policy": "rules/E721.json",
+      "policy": "rules/ruff-e721-type-comparison.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -694,7 +694,7 @@
         "tool": "ruff",
         "rule": "E742"
       },
-      "policy": "rules/E742.json",
+      "policy": "rules/ruff-e742-ambiguous-class-name.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -707,7 +707,7 @@
         "tool": "ruff",
         "rule": "E743"
       },
-      "policy": "rules/E743.json",
+      "policy": "rules/ruff-e743-ambiguous-function-name.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -720,7 +720,7 @@
         "tool": "ruff",
         "rule": "F403"
       },
-      "policy": "rules/F403.json",
+      "policy": "rules/ruff-f403-undefined-local-with-import-star.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -733,7 +733,7 @@
         "tool": "ruff",
         "rule": "F404"
       },
-      "policy": "rules/F404.json",
+      "policy": "rules/ruff-f404-late-future-import.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -746,7 +746,7 @@
         "tool": "ruff",
         "rule": "F405"
       },
-      "policy": "rules/F405.json",
+      "policy": "rules/ruff-f405-undefined-local-with-import-star-usage.json",
       "capabilities": [
         "annotation",
         "scope",
@@ -760,7 +760,7 @@
         "tool": "ruff",
         "rule": "F406"
       },
-      "policy": "rules/F406.json",
+      "policy": "rules/ruff-f406-undefined-local-with-nested-import-star-usage.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -773,7 +773,7 @@
         "tool": "ruff",
         "rule": "F407"
       },
-      "policy": "rules/F407.json",
+      "policy": "rules/ruff-f407-future-feature-not-defined.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -786,7 +786,7 @@
         "tool": "ruff",
         "rule": "F501"
       },
-      "policy": "rules/F501.json",
+      "policy": "rules/ruff-f501-percent-format-invalid-format.json",
       "capabilities": [
         "formatArgs",
         "suppression",
@@ -800,7 +800,7 @@
         "tool": "ruff",
         "rule": "F502"
       },
-      "policy": "rules/F502.json",
+      "policy": "rules/ruff-f502-percent-format-expected-mapping.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -813,7 +813,7 @@
         "tool": "ruff",
         "rule": "F503"
       },
-      "policy": "rules/F503.json",
+      "policy": "rules/ruff-f503-percent-format-expected-sequence.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -826,7 +826,7 @@
         "tool": "ruff",
         "rule": "F504"
       },
-      "policy": "rules/F504.json",
+      "policy": "rules/ruff-f504-percent-format-extra-named-arguments.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -839,7 +839,7 @@
         "tool": "ruff",
         "rule": "F505"
       },
-      "policy": "rules/F505.json",
+      "policy": "rules/ruff-f505-percent-format-missing-argument.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -852,7 +852,7 @@
         "tool": "ruff",
         "rule": "F506"
       },
-      "policy": "rules/F506.json",
+      "policy": "rules/ruff-f506-percent-format-mixed-positional-and-named.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -878,7 +878,7 @@
         "tool": "ruff",
         "rule": "F508"
       },
-      "policy": "rules/F508.json",
+      "policy": "rules/ruff-f508-percent-format-star-requires-sequence.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -891,7 +891,7 @@
         "tool": "ruff",
         "rule": "F509"
       },
-      "policy": "rules/F509.json",
+      "policy": "rules/ruff-f509-percent-format-unsupported-format-character.json",
       "capabilities": [
         "formatArgs",
         "suppression",
@@ -905,7 +905,7 @@
         "tool": "ruff",
         "rule": "F521"
       },
-      "policy": "rules/F521.json",
+      "policy": "rules/ruff-f521-string-dot-format-invalid-format.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -918,7 +918,7 @@
         "tool": "ruff",
         "rule": "F522"
       },
-      "policy": "rules/F522.json",
+      "policy": "rules/ruff-f522-string-dot-format-extra-named-arguments.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -957,7 +957,7 @@
         "tool": "ruff",
         "rule": "F525"
       },
-      "policy": "rules/F525.json",
+      "policy": "rules/ruff-f525-string-dot-format-mixing-automatic.json",
       "capabilities": [
         "formatArgs",
         "suppression"
@@ -970,7 +970,7 @@
         "tool": "ruff",
         "rule": "F541"
       },
-      "policy": "rules/F541.json",
+      "policy": "rules/ruff-f541-f-string-missing-placeholders.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -996,7 +996,7 @@
         "tool": "ruff",
         "rule": "F602"
       },
-      "policy": "rules/F602.json",
+      "policy": "rules/ruff-f602-multi-value-repeated-key-variable.json",
       "capabilities": [
         "compare",
         "suppression"
@@ -1009,7 +1009,7 @@
         "tool": "ruff",
         "rule": "F622"
       },
-      "policy": "rules/F622.json",
+      "policy": "rules/ruff-f622-multiple-starred-expressions.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1022,7 +1022,7 @@
         "tool": "ruff",
         "rule": "F631"
       },
-      "policy": "rules/F631.json",
+      "policy": "rules/ruff-f631-assert-tuple.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1048,7 +1048,7 @@
         "tool": "ruff",
         "rule": "F633"
       },
-      "policy": "rules/F633.json",
+      "policy": "rules/ruff-f633-invalid-print-syntax.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1061,7 +1061,7 @@
         "tool": "ruff",
         "rule": "F634"
       },
-      "policy": "rules/F634.json",
+      "policy": "rules/ruff-f634-if-tuple.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1074,7 +1074,7 @@
         "tool": "ruff",
         "rule": "F701"
       },
-      "policy": "rules/F701.json",
+      "policy": "rules/ruff-f701-break-outside-loop.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1087,7 +1087,7 @@
         "tool": "ruff",
         "rule": "F702"
       },
-      "policy": "rules/F702.json",
+      "policy": "rules/ruff-f702-continue-outside-loop.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1100,7 +1100,7 @@
         "tool": "ruff",
         "rule": "F706"
       },
-      "policy": "rules/F706.json",
+      "policy": "rules/ruff-f706-return-outside-function.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1113,7 +1113,7 @@
         "tool": "ruff",
         "rule": "F707"
       },
-      "policy": "rules/F707.json",
+      "policy": "rules/ruff-f707-default-except-not-last.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1140,7 +1140,7 @@
         "tool": "ruff",
         "rule": "F822"
       },
-      "policy": "rules/F822.json",
+      "policy": "rules/ruff-f822-undefined-export.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1166,7 +1166,7 @@
         "tool": "ruff",
         "rule": "F842"
       },
-      "policy": "rules/F842.json",
+      "policy": "rules/ruff-f842-unused-annotation.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1179,7 +1179,7 @@
         "tool": "ruff",
         "rule": "F901"
       },
-      "policy": "rules/F901.json",
+      "policy": "rules/ruff-f901-raise-not-implemented.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1192,7 +1192,7 @@
         "tool": "ruff",
         "rule": "PIE790"
       },
-      "policy": "rules/PIE790.json",
+      "policy": "rules/ruff-pie790-unnecessary-placeholder.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1205,7 +1205,7 @@
         "tool": "ruff",
         "rule": "PIE794"
       },
-      "policy": "rules/PIE794.json",
+      "policy": "rules/ruff-pie794-duplicate-class-field-definition.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1232,7 +1232,7 @@
         "tool": "ruff",
         "rule": "PIE800"
       },
-      "policy": "rules/PIE800.json",
+      "policy": "rules/ruff-pie800-unnecessary-spread.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1245,7 +1245,7 @@
         "tool": "ruff",
         "rule": "PIE804"
       },
-      "policy": "rules/PIE804.json",
+      "policy": "rules/ruff-pie804-unnecessary-dict-kwargs.json",
       "capabilities": [
         "suppression",
         "value"
@@ -1258,7 +1258,7 @@
         "tool": "ruff",
         "rule": "PIE807"
       },
-      "policy": "rules/PIE807.json",
+      "policy": "rules/ruff-pie807-reimplemented-container-builtin.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1271,7 +1271,7 @@
         "tool": "ruff",
         "rule": "PIE808"
       },
-      "policy": "rules/PIE808.json",
+      "policy": "rules/ruff-pie808-unnecessary-range-start.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -1285,7 +1285,7 @@
         "tool": "ruff",
         "rule": "PIE810"
       },
-      "policy": "rules/PIE810.json",
+      "policy": "rules/ruff-pie810-multiple-starts-ends-with.json",
       "capabilities": [
         "compare",
         "scope",
@@ -1300,7 +1300,7 @@
         "tool": "ruff",
         "rule": "RET501"
       },
-      "policy": "rules/RET501.json",
+      "policy": "rules/ruff-ret501-unnecessary-return-none.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1313,7 +1313,7 @@
         "tool": "ruff",
         "rule": "RET502"
       },
-      "policy": "rules/RET502.json",
+      "policy": "rules/ruff-ret502-implicit-return-value.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1326,7 +1326,7 @@
         "tool": "ruff",
         "rule": "RET504"
       },
-      "policy": "rules/RET504.json",
+      "policy": "rules/ruff-ret504-unnecessary-assign.json",
       "capabilities": [
         "compare",
         "scope",
@@ -1340,7 +1340,7 @@
         "tool": "ruff",
         "rule": "RET505"
       },
-      "policy": "rules/RET505.json",
+      "policy": "rules/ruff-ret505-superfluous-else-return.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1353,7 +1353,7 @@
         "tool": "ruff",
         "rule": "RET506"
       },
-      "policy": "rules/RET506.json",
+      "policy": "rules/ruff-ret506-superfluous-else-raise.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1366,7 +1366,7 @@
         "tool": "ruff",
         "rule": "RET507"
       },
-      "policy": "rules/RET507.json",
+      "policy": "rules/ruff-ret507-superfluous-else-continue.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1379,7 +1379,7 @@
         "tool": "ruff",
         "rule": "RET508"
       },
-      "policy": "rules/RET508.json",
+      "policy": "rules/ruff-ret508-superfluous-else-break.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1392,7 +1392,7 @@
         "tool": "ruff",
         "rule": "SIM101"
       },
-      "policy": "rules/SIM101.json",
+      "policy": "rules/ruff-sim101-duplicate-isinstance-call.json",
       "capabilities": [
         "compare",
         "scope",
@@ -1406,7 +1406,7 @@
         "tool": "ruff",
         "rule": "SIM107"
       },
-      "policy": "rules/SIM107.json",
+      "policy": "rules/ruff-sim107-return-in-try-except-finally.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1419,7 +1419,7 @@
         "tool": "ruff",
         "rule": "SIM109"
       },
-      "policy": "rules/SIM109.json",
+      "policy": "rules/ruff-sim109-compare-with-tuple.json",
       "capabilities": [
         "compare",
         "suppression"
@@ -1432,7 +1432,7 @@
         "tool": "ruff",
         "rule": "SIM112"
       },
-      "policy": "rules/SIM112.json",
+      "policy": "rules/ruff-sim112-uncapitalized-environment-variables.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -1446,7 +1446,7 @@
         "tool": "ruff",
         "rule": "SIM113"
       },
-      "policy": "rules/SIM113.json",
+      "policy": "rules/ruff-sim113-enumerate-for-loop.json",
       "capabilities": [
         "compare",
         "scope",
@@ -1461,7 +1461,7 @@
         "tool": "ruff",
         "rule": "SIM115"
       },
-      "policy": "rules/SIM115.json",
+      "policy": "rules/ruff-sim115-open-file-with-context-handler.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1474,7 +1474,7 @@
         "tool": "ruff",
         "rule": "SIM201"
       },
-      "policy": "rules/SIM201.json",
+      "policy": "rules/ruff-sim201-negate-equal-op.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1487,7 +1487,7 @@
         "tool": "ruff",
         "rule": "SIM202"
       },
-      "policy": "rules/SIM202.json",
+      "policy": "rules/ruff-sim202-negate-not-equal-op.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1500,7 +1500,7 @@
         "tool": "ruff",
         "rule": "SIM208"
       },
-      "policy": "rules/SIM208.json",
+      "policy": "rules/ruff-sim208-double-negation.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1513,7 +1513,7 @@
         "tool": "ruff",
         "rule": "SIM210"
       },
-      "policy": "rules/SIM210.json",
+      "policy": "rules/ruff-sim210-if-expr-with-true-false.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1526,7 +1526,7 @@
         "tool": "ruff",
         "rule": "SIM211"
       },
-      "policy": "rules/SIM211.json",
+      "policy": "rules/ruff-sim211-if-expr-with-false-true.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1539,7 +1539,7 @@
         "tool": "ruff",
         "rule": "SIM212"
       },
-      "policy": "rules/SIM212.json",
+      "policy": "rules/ruff-sim212-if-expr-with-twisted-arms.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1552,7 +1552,7 @@
         "tool": "ruff",
         "rule": "SIM220"
       },
-      "policy": "rules/SIM220.json",
+      "policy": "rules/ruff-sim220-expr-and-not-expr.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1565,7 +1565,7 @@
         "tool": "ruff",
         "rule": "SIM221"
       },
-      "policy": "rules/SIM221.json",
+      "policy": "rules/ruff-sim221-expr-or-not-expr.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1578,7 +1578,7 @@
         "tool": "ruff",
         "rule": "SIM300"
       },
-      "policy": "rules/SIM300.json",
+      "policy": "rules/ruff-sim300-yoda-conditions.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1591,7 +1591,7 @@
         "tool": "ruff",
         "rule": "SIM905"
       },
-      "policy": "rules/SIM905.json",
+      "policy": "rules/ruff-sim905-split-static-string.json",
       "capabilities": [
         "suppression",
         "value"
@@ -1604,7 +1604,7 @@
         "tool": "ruff",
         "rule": "SIM910"
       },
-      "policy": "rules/SIM910.json",
+      "policy": "rules/ruff-sim910-dict-get-with-none-default.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -1618,7 +1618,7 @@
         "tool": "ruff",
         "rule": "T100"
       },
-      "policy": "rules/T100.json",
+      "policy": "rules/ruff-t100-debugger.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1644,7 +1644,7 @@
         "tool": "bandit",
         "rule": "B102"
       },
-      "policy": "rules/exec.json",
+      "policy": "rules/bandit-b102-exec-used.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1657,7 +1657,7 @@
         "tool": "bandit",
         "rule": "B104"
       },
-      "policy": "rules/b104.json",
+      "policy": "rules/bandit-b104-hardcoded-bind-all-interfaces.json",
       "capabilities": [
         "suppression",
         "value"
@@ -1670,7 +1670,7 @@
         "tool": "bandit",
         "rule": "B108"
       },
-      "policy": "rules/b108.json",
+      "policy": "rules/bandit-b108-hardcoded-tmp-directory.json",
       "capabilities": [
         "suppression",
         "value"
@@ -1683,7 +1683,7 @@
         "tool": "bandit",
         "rule": "B110"
       },
-      "policy": "rules/try-except-pass.json",
+      "policy": "rules/bandit-b110-try-except-pass.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1696,7 +1696,7 @@
         "tool": "bandit",
         "rule": "B112"
       },
-      "policy": "rules/try-except-continue.json",
+      "policy": "rules/bandit-b112-try-except-continue.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1724,7 +1724,7 @@
         "tool": "bandit",
         "rule": "B301"
       },
-      "policy": "rules/b301.json",
+      "policy": "rules/bandit-b301-pickle.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1737,7 +1737,7 @@
         "tool": "bandit",
         "rule": "B302"
       },
-      "policy": "rules/b302.json",
+      "policy": "rules/bandit-b302-marshal.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1750,7 +1750,7 @@
         "tool": "bandit",
         "rule": "B303"
       },
-      "policy": "rules/bandit-B303.json",
+      "policy": "rules/bandit-b303-md5.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1763,7 +1763,7 @@
         "tool": "bandit",
         "rule": "B305"
       },
-      "policy": "rules/b305.json",
+      "policy": "rules/bandit-b305-cipher-modes.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1776,7 +1776,7 @@
         "tool": "bandit",
         "rule": "B306"
       },
-      "policy": "rules/b306.json",
+      "policy": "rules/bandit-b306-mktemp-q.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1789,7 +1789,7 @@
         "tool": "bandit",
         "rule": "B307"
       },
-      "policy": "rules/eval.json",
+      "policy": "rules/bandit-b307-eval.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1802,7 +1802,7 @@
         "tool": "bandit",
         "rule": "B308"
       },
-      "policy": "rules/b308.json",
+      "policy": "rules/bandit-b308-mark-safe.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1815,7 +1815,7 @@
         "tool": "bandit",
         "rule": "B310"
       },
-      "policy": "rules/b310.json",
+      "policy": "rules/bandit-b310-urllib-urlopen.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1828,7 +1828,7 @@
         "tool": "bandit",
         "rule": "B311"
       },
-      "policy": "rules/b311.json",
+      "policy": "rules/bandit-b311-random.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1841,7 +1841,7 @@
         "tool": "bandit",
         "rule": "B312"
       },
-      "policy": "rules/b312.json",
+      "policy": "rules/bandit-b312-telnetlib.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1854,7 +1854,7 @@
         "tool": "bandit",
         "rule": "B313"
       },
-      "policy": "rules/b313.json",
+      "policy": "rules/bandit-b313-xml-bad-celementtree.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1867,7 +1867,7 @@
         "tool": "bandit",
         "rule": "B314"
       },
-      "policy": "rules/b314.json",
+      "policy": "rules/bandit-b314-xml-bad-elementtree.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1880,7 +1880,7 @@
         "tool": "bandit",
         "rule": "B315"
       },
-      "policy": "rules/b315.json",
+      "policy": "rules/bandit-b315-xml-bad-expatreader.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1893,7 +1893,7 @@
         "tool": "bandit",
         "rule": "B316"
       },
-      "policy": "rules/b316.json",
+      "policy": "rules/bandit-b316-xml-bad-expatbuilder.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1906,7 +1906,7 @@
         "tool": "bandit",
         "rule": "B317"
       },
-      "policy": "rules/b317.json",
+      "policy": "rules/bandit-b317-xml-bad-sax.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1919,7 +1919,7 @@
         "tool": "bandit",
         "rule": "B318"
       },
-      "policy": "rules/b318.json",
+      "policy": "rules/bandit-b318-xml-bad-minidom.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1932,7 +1932,7 @@
         "tool": "bandit",
         "rule": "B319"
       },
-      "policy": "rules/b319.json",
+      "policy": "rules/bandit-b319-xml-bad-pulldom.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1945,7 +1945,7 @@
         "tool": "bandit",
         "rule": "B321"
       },
-      "policy": "rules/b321.json",
+      "policy": "rules/bandit-b321-ftplib.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1958,7 +1958,7 @@
         "tool": "bandit",
         "rule": "B323"
       },
-      "policy": "rules/b323.json",
+      "policy": "rules/bandit-b323-unverified-context.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -1971,7 +1971,7 @@
         "tool": "bandit",
         "rule": "B401"
       },
-      "policy": "rules/b401.json",
+      "policy": "rules/bandit-b401-import-telnetlib.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1984,7 +1984,7 @@
         "tool": "bandit",
         "rule": "B402"
       },
-      "policy": "rules/b402.json",
+      "policy": "rules/bandit-b402-import-ftplib.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -1997,7 +1997,7 @@
         "tool": "bandit",
         "rule": "B405"
       },
-      "policy": "rules/b405.json",
+      "policy": "rules/bandit-b405-import-xml-etree.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2010,7 +2010,7 @@
         "tool": "bandit",
         "rule": "B406"
       },
-      "policy": "rules/b406.json",
+      "policy": "rules/bandit-b406-import-xml-sax.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2023,7 +2023,7 @@
         "tool": "bandit",
         "rule": "B407"
       },
-      "policy": "rules/b407.json",
+      "policy": "rules/bandit-b407-import-xml-expat.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2036,7 +2036,7 @@
         "tool": "bandit",
         "rule": "B408"
       },
-      "policy": "rules/b408.json",
+      "policy": "rules/bandit-b408-import-xml-minidom.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2049,7 +2049,7 @@
         "tool": "bandit",
         "rule": "B409"
       },
-      "policy": "rules/b409.json",
+      "policy": "rules/bandit-b409-import-xml-pulldom.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2062,7 +2062,7 @@
         "tool": "bandit",
         "rule": "B411"
       },
-      "policy": "rules/b411.json",
+      "policy": "rules/bandit-b411-import-xmlrpclib.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2075,7 +2075,7 @@
         "tool": "bandit",
         "rule": "B413"
       },
-      "policy": "rules/b413.json",
+      "policy": "rules/bandit-b413-import-pycrypto.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2088,7 +2088,7 @@
         "tool": "bandit",
         "rule": "B415"
       },
-      "policy": "rules/b415.json",
+      "policy": "rules/bandit-b415-import-pyghmi.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2101,7 +2101,7 @@
         "tool": "bandit",
         "rule": "B502"
       },
-      "policy": "rules/b502.json",
+      "policy": "rules/bandit-b502-ssl-with-bad-version.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2130,7 +2130,7 @@
         "tool": "bandit",
         "rule": "B507"
       },
-      "policy": "rules/b507.json",
+      "policy": "rules/bandit-b507-ssh-no-host-key-verification.json",
       "capabilities": [
         "arguments",
         "suppression"
@@ -2143,7 +2143,7 @@
         "tool": "bandit",
         "rule": "B606"
       },
-      "policy": "rules/b606.json",
+      "policy": "rules/bandit-b606-start-process-with-no-shell.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2169,7 +2169,7 @@
         "tool": "bandit",
         "rule": "B615"
       },
-      "policy": "rules/b615.json",
+      "policy": "rules/bandit-b615-huggingface-unsafe-download.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2183,7 +2183,7 @@
         "tool": "bandit",
         "rule": "B701"
       },
-      "policy": "rules/b701.json",
+      "policy": "rules/bandit-b701-jinja2-autoescape-false.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2198,7 +2198,7 @@
         "tool": "ruff",
         "rule": "B006"
       },
-      "policy": "candidates/rules/ruff-B006.json",
+      "policy": "candidates/rules/ruff-b006-mutable-argument-default.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2211,7 +2211,7 @@
         "tool": "ruff",
         "rule": "B008"
       },
-      "policy": "candidates/rules/B008.json",
+      "policy": "candidates/rules/ruff-b008-function-call-in-default-argument.json",
       "capabilities": [
         "arguments",
         "compare",
@@ -2227,7 +2227,7 @@
         "tool": "ruff",
         "rule": "B012"
       },
-      "policy": "candidates/rules/B012.json",
+      "policy": "candidates/rules/ruff-b012-jump-statement-in-finally.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2240,7 +2240,7 @@
         "tool": "ruff",
         "rule": "B015"
       },
-      "policy": "candidates/rules/B015.json",
+      "policy": "candidates/rules/ruff-b015-useless-comparison.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2253,7 +2253,7 @@
         "tool": "ruff",
         "rule": "B018"
       },
-      "policy": "candidates/rules/B018.json",
+      "policy": "candidates/rules/ruff-b018-useless-expression.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2266,7 +2266,7 @@
         "tool": "ruff",
         "rule": "B024"
       },
-      "policy": "candidates/rules/B024.json",
+      "policy": "candidates/rules/ruff-b024-abstract-base-class-without-abstract-method.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2279,7 +2279,7 @@
         "tool": "ruff",
         "rule": "B027"
       },
-      "policy": "candidates/rules/B027.json",
+      "policy": "candidates/rules/ruff-b027-empty-method-without-abstract-decorator.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2292,7 +2292,7 @@
         "tool": "ruff",
         "rule": "B030"
       },
-      "policy": "candidates/rules/B030.json",
+      "policy": "candidates/rules/ruff-b030-except-with-non-exception-classes.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2305,7 +2305,7 @@
         "tool": "ruff",
         "rule": "B031"
       },
-      "policy": "candidates/rules/B031.json",
+      "policy": "candidates/rules/ruff-b031-reuse-of-groupby-generator.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2318,7 +2318,7 @@
         "tool": "ruff",
         "rule": "B035"
       },
-      "policy": "candidates/rules/B035.json",
+      "policy": "candidates/rules/ruff-b035-static-key-dict-comprehension.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2331,7 +2331,7 @@
         "tool": "ruff",
         "rule": "B911"
       },
-      "policy": "candidates/rules/B911.json",
+      "policy": "candidates/rules/ruff-b911-batched-without-explicit-strict.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2345,7 +2345,7 @@
         "tool": "ruff",
         "rule": "B912"
       },
-      "policy": "candidates/rules/B912.json",
+      "policy": "candidates/rules/ruff-b912-map-without-explicit-strict.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2359,7 +2359,7 @@
         "tool": "ruff",
         "rule": "BLE001"
       },
-      "policy": "candidates/rules/BLE001.json",
+      "policy": "candidates/rules/ruff-ble001-blind-except.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2373,7 +2373,7 @@
         "tool": "ruff",
         "rule": "E402"
       },
-      "policy": "candidates/rules/E402.json",
+      "policy": "candidates/rules/ruff-e402-module-import-not-at-top-of-file.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2386,7 +2386,7 @@
         "tool": "ruff",
         "rule": "E731"
       },
-      "policy": "candidates/rules/E731.json",
+      "policy": "candidates/rules/ruff-e731-lambda-assignment.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2399,7 +2399,7 @@
         "tool": "ruff",
         "rule": "E741"
       },
-      "policy": "candidates/rules/E741.json",
+      "policy": "candidates/rules/ruff-e741-ambiguous-variable-name.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2412,7 +2412,7 @@
         "tool": "ruff",
         "rule": "F401"
       },
-      "policy": "candidates/rules/ruff-F401.json",
+      "policy": "candidates/rules/ruff-f401-unused-import.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2425,7 +2425,7 @@
         "tool": "ruff",
         "rule": "F402"
       },
-      "policy": "candidates/rules/F402.json",
+      "policy": "candidates/rules/ruff-f402-import-shadowed-by-loop-var.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2438,7 +2438,7 @@
         "tool": "ruff",
         "rule": "F704"
       },
-      "policy": "candidates/rules/F704.json",
+      "policy": "candidates/rules/ruff-f704-yield-outside-function.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2491,7 +2491,7 @@
         "tool": "ruff",
         "rule": "N999"
       },
-      "policy": "candidates/rules/N999.json",
+      "policy": "candidates/rules/ruff-n999-invalid-module-name.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2504,7 +2504,7 @@
         "tool": "ruff",
         "rule": "RET503"
       },
-      "policy": "candidates/rules/RET503.json",
+      "policy": "candidates/rules/ruff-ret503-implicit-return.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2517,7 +2517,7 @@
         "tool": "ruff",
         "rule": "SIM102"
       },
-      "policy": "candidates/rules/SIM102.json",
+      "policy": "candidates/rules/ruff-sim102-collapsible-if.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2530,7 +2530,7 @@
         "tool": "ruff",
         "rule": "SIM103"
       },
-      "policy": "candidates/rules/SIM103.json",
+      "policy": "candidates/rules/ruff-sim103-needless-bool.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2543,7 +2543,7 @@
         "tool": "ruff",
         "rule": "SIM105"
       },
-      "policy": "candidates/rules/SIM105.json",
+      "policy": "candidates/rules/ruff-sim105-suppressible-exception.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2556,7 +2556,7 @@
         "tool": "ruff",
         "rule": "SIM108"
       },
-      "policy": "candidates/rules/ruff-SIM108.json",
+      "policy": "candidates/rules/ruff-sim108-if-else-block-instead-of-if-exp.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2569,7 +2569,7 @@
         "tool": "ruff",
         "rule": "SIM110"
       },
-      "policy": "candidates/rules/SIM110.json",
+      "policy": "candidates/rules/ruff-sim110-reimplemented-builtin.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2582,7 +2582,7 @@
         "tool": "ruff",
         "rule": "SIM114"
       },
-      "policy": "candidates/rules/SIM114.json",
+      "policy": "candidates/rules/ruff-sim114-if-with-same-arms.json",
       "capabilities": [
         "compare",
         "suppression"
@@ -2595,7 +2595,7 @@
         "tool": "ruff",
         "rule": "SIM116"
       },
-      "policy": "candidates/rules/SIM116.json",
+      "policy": "candidates/rules/ruff-sim116-if-else-block-instead-of-dict-lookup.json",
       "capabilities": [
         "compare",
         "scope",
@@ -2609,7 +2609,7 @@
         "tool": "ruff",
         "rule": "SIM117"
       },
-      "policy": "candidates/rules/SIM117.json",
+      "policy": "candidates/rules/ruff-sim117-multiple-with-statements.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2622,7 +2622,7 @@
         "tool": "ruff",
         "rule": "SIM118"
       },
-      "policy": "candidates/rules/SIM118.json",
+      "policy": "candidates/rules/ruff-sim118-in-dict-keys.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2649,7 +2649,7 @@
         "tool": "ruff",
         "rule": "SIM223"
       },
-      "policy": "candidates/rules/SIM223.json",
+      "policy": "candidates/rules/ruff-sim223-expr-and-false.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2663,7 +2663,7 @@
         "tool": "ruff",
         "rule": "SIM401"
       },
-      "policy": "candidates/rules/SIM401.json",
+      "policy": "candidates/rules/ruff-sim401-if-else-block-instead-of-dict-get.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2677,7 +2677,7 @@
         "tool": "ruff",
         "rule": "SIM911"
       },
-      "policy": "candidates/rules/SIM911.json",
+      "policy": "candidates/rules/ruff-sim911-zip-dict-keys-and-values.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2691,7 +2691,7 @@
         "tool": "ruff",
         "rule": "W605"
       },
-      "policy": "candidates/rules/W605.json",
+      "policy": "candidates/rules/ruff-w605-invalid-escape-sequence.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2704,7 +2704,7 @@
         "tool": "bandit",
         "rule": "B103"
       },
-      "policy": "candidates/rules/b103.json",
+      "policy": "candidates/rules/bandit-b103-set-bad-file-permissions.json",
       "capabilities": [
         "suppression",
         "value"
@@ -2717,7 +2717,7 @@
         "tool": "bandit",
         "rule": "B105"
       },
-      "policy": "candidates/rules/bandit-B105.json",
+      "policy": "candidates/rules/bandit-b105-hardcoded-password-string.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2730,7 +2730,7 @@
         "tool": "bandit",
         "rule": "B106"
       },
-      "policy": "candidates/rules/hardcoded-password-function-argument.json",
+      "policy": "candidates/rules/bandit-b106-hardcoded-password-funcarg.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2743,7 +2743,7 @@
         "tool": "bandit",
         "rule": "B107"
       },
-      "policy": "candidates/rules/hardcoded-password-default.json",
+      "policy": "candidates/rules/bandit-b107-hardcoded-password-default.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2756,7 +2756,7 @@
         "tool": "bandit",
         "rule": "B201"
       },
-      "policy": "candidates/rules/b201.json",
+      "policy": "candidates/rules/bandit-b201-flask-debug-true.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2771,7 +2771,7 @@
         "tool": "bandit",
         "rule": "B202"
       },
-      "policy": "candidates/rules/b202.json",
+      "policy": "candidates/rules/bandit-b202-tarfile-unsafe-members.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2785,7 +2785,7 @@
         "tool": "bandit",
         "rule": "B304"
       },
-      "policy": "candidates/rules/b304.json",
+      "policy": "candidates/rules/bandit-b304-ciphers.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2798,7 +2798,7 @@
         "tool": "bandit",
         "rule": "B324"
       },
-      "policy": "candidates/rules/b324.json",
+      "policy": "candidates/rules/bandit-b324-hashlib-insecure-functions.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2811,7 +2811,7 @@
         "tool": "bandit",
         "rule": "B403"
       },
-      "policy": "candidates/rules/b403.json",
+      "policy": "candidates/rules/bandit-b403-import-pickle.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2824,7 +2824,7 @@
         "tool": "bandit",
         "rule": "B404"
       },
-      "policy": "candidates/rules/b404.json",
+      "policy": "candidates/rules/bandit-b404-import-subprocess.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2837,7 +2837,7 @@
         "tool": "bandit",
         "rule": "B412"
       },
-      "policy": "candidates/rules/b412.json",
+      "policy": "candidates/rules/bandit-b412-import-httpoxy.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2850,7 +2850,7 @@
         "tool": "bandit",
         "rule": "B501"
       },
-      "policy": "candidates/rules/b501.json",
+      "policy": "candidates/rules/bandit-b501-request-with-no-cert-validation.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2864,7 +2864,7 @@
         "tool": "bandit",
         "rule": "B503"
       },
-      "policy": "candidates/rules/b503.json",
+      "policy": "candidates/rules/bandit-b503-ssl-with-bad-defaults.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2877,7 +2877,7 @@
         "tool": "bandit",
         "rule": "B504"
       },
-      "policy": "candidates/rules/b504.json",
+      "policy": "candidates/rules/bandit-b504-ssl-with-no-version.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2905,7 +2905,7 @@
         "tool": "bandit",
         "rule": "B508"
       },
-      "policy": "candidates/rules/b508.json",
+      "policy": "candidates/rules/bandit-b508-snmp-insecure-version.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2920,7 +2920,7 @@
         "tool": "bandit",
         "rule": "B509"
       },
-      "policy": "candidates/rules/b509.json",
+      "policy": "candidates/rules/bandit-b509-snmp-weak-cryptography.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2933,7 +2933,7 @@
         "tool": "bandit",
         "rule": "B601"
       },
-      "policy": "candidates/rules/b601.json",
+      "policy": "candidates/rules/bandit-b601-paramiko-calls.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2947,7 +2947,7 @@
         "tool": "bandit",
         "rule": "B602"
       },
-      "policy": "candidates/rules/bandit-B602.json",
+      "policy": "candidates/rules/bandit-b602-subprocess-popen-with-shell-equals-true.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2960,7 +2960,7 @@
         "tool": "bandit",
         "rule": "B603"
       },
-      "policy": "candidates/rules/b603.json",
+      "policy": "candidates/rules/bandit-b603-subprocess-without-shell-equals-true.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2975,7 +2975,7 @@
         "tool": "bandit",
         "rule": "B604"
       },
-      "policy": "candidates/rules/b604.json",
+      "policy": "candidates/rules/bandit-b604-any-other-function-with-shell-equals-true.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2990,7 +2990,7 @@
         "tool": "bandit",
         "rule": "B605"
       },
-      "policy": "candidates/rules/b605.json",
+      "policy": "candidates/rules/bandit-b605-start-process-with-a-shell.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -3003,7 +3003,7 @@
         "tool": "bandit",
         "rule": "B607"
       },
-      "policy": "candidates/rules/b607.json",
+      "policy": "candidates/rules/bandit-b607-start-process-with-partial-path.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -3017,7 +3017,7 @@
         "tool": "bandit",
         "rule": "B608"
       },
-      "policy": "candidates/rules/bandit-B608.json",
+      "policy": "candidates/rules/bandit-b608-hardcoded-sql-expressions.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -3030,7 +3030,7 @@
         "tool": "bandit",
         "rule": "B609"
       },
-      "policy": "candidates/rules/b609.json",
+      "policy": "candidates/rules/bandit-b609-linux-commands-wildcard-injection.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3045,7 +3045,7 @@
         "tool": "bandit",
         "rule": "B611"
       },
-      "policy": "candidates/rules/b611.json",
+      "policy": "candidates/rules/bandit-b611-django-rawsql-used.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3059,7 +3059,7 @@
         "tool": "bandit",
         "rule": "B612"
       },
-      "policy": "candidates/rules/b612.json",
+      "policy": "candidates/rules/bandit-b612-logging-config-insecure-listen.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3073,7 +3073,7 @@
         "tool": "bandit",
         "rule": "B613"
       },
-      "policy": "candidates/rules/b613.json",
+      "policy": "candidates/rules/bandit-b613-trojansource.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -3086,7 +3086,7 @@
         "tool": "bandit",
         "rule": "B614"
       },
-      "policy": "candidates/rules/b614.json",
+      "policy": "candidates/rules/bandit-b614-pytorch-load.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3101,7 +3101,7 @@
         "tool": "bandit",
         "rule": "B702"
       },
-      "policy": "candidates/rules/b702.json",
+      "policy": "candidates/rules/bandit-b702-use-of-mako-templates.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -3114,7 +3114,7 @@
         "tool": "bandit",
         "rule": "B703"
       },
-      "policy": "candidates/rules/b703.json",
+      "policy": "candidates/rules/bandit-b703-django-mark-safe.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -3127,7 +3127,7 @@
         "tool": "bandit",
         "rule": "B704"
       },
-      "policy": "candidates/rules/b704.json",
+      "policy": "candidates/rules/bandit-b704-markupsafe-markup-xss.json",
       "capabilities": [
         "scope",
         "suppression"

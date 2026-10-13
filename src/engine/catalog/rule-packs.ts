@@ -12,8 +12,8 @@ export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
  * Rule packs: named sets of rules that come with Rerail. A pack's optional match definition says which repositories
- * it fits and why; a pack without one is never recommended and is chosen by hand, and a pack without rules is never
- * recommended. A pack is a `packs/<id>/` directory (`docs/pack-format.md`): `pack.json` lists each rule with the
+ * it fits and why; a pack without one is never recommended and is chosen by hand, and a pack without a rule that starts
+ * on is never recommended. A pack is a `packs/<id>/` directory (`docs/pack-format.md`): `pack.json` lists each rule with the
  * document in the pack's `rules/` that defines it. Core ships the packs in `CORE_RULE_PACKS` inside its own package.
  * A pack's rules run only in repositories that add it (`repository_attachments_set`); this module defines, validates
  * and recommends.
@@ -33,11 +33,18 @@ const exampleSchema = z
   })
   .strict();
 
-/** A rule's code-rule document, relative to the pack directory: `rules/<name>.json`. */
-const documentPathSchema = z.string().regex(/^rules\/[^/]+\.json$/u, "must be rules/<name>.json");
+/**
+ * A pack rule's id: lowercase letters, digits and dashes, one style in every pack (`eslint-no-empty`,
+ * `ruff-b011-assert-false`). It is also the name of the rule's document, `rules/<id>.json`, and its port's id in
+ * `conformance.json`. Users turn rules on and off by it, so it must not change once the pack is published.
+ */
+export const RULE_PACK_RULE_ID = /^[a-z0-9][a-z0-9-]*$/u;
+
+/** A rule's code-rule document, relative to the pack directory: `rules/<id>.json`. */
+const documentPathSchema = z.string().regex(/^rules\/[^/]+\.json$/u, "must be rules/<id>.json");
 
 const packRuleFields = {
-  id: nonEmpty,
+  id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
   title: nonEmpty,
   group: nonEmpty,
   /** The rule mode the pack starts the rule in; default: the mode its document has. */
@@ -134,6 +141,7 @@ export interface RulePack {
 
 export interface RulePackRecommendation {
   readonly pack: RulePack;
+  /** The rules on when the pack is added; the rules it lists off are not counted. */
   readonly ruleCount: number;
   /** What was found in this repository, e.g. "matches the react dependency in web/package.json". */
   readonly reason: string;
@@ -148,7 +156,7 @@ const CATEGORY_ORDER: Record<RulePackCategory, number> = { language: 0, framewor
 
 /**
  * The packs in `packs` (each a `packs/<id>/` directory), validated: `pack.json` parses and names its directory, every
- * rule's document exists and carries its id, and no rule is in two packs.
+ * rule's document is named for its id, exists and carries that id, and no rule is in two packs.
  */
 export function readRulePacks(packs: readonly string[] = corePackDirectories()): readonly RulePack[] {
   const owner = new Map<string, string>();
@@ -169,6 +177,7 @@ export function readRulePacks(packs: readonly string[] = corePackDirectories()):
       const honourSuppressionComments = file.honourSuppressionComments ?? true;
       const rules = file.rules.map((rule): RulePackRule => {
         const documentPath = join(directory, rule.document);
+        if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${file.id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
         if (!existsSync(documentPath)) throw new Error(`Rule pack ${file.id} lists ${rule.id}, whose document ${rule.document} does not exist`);
         const document: RuleDocument = readRuleDocument(documentPath);
         if (document.rule.id !== rule.id) throw new Error(`Rule pack ${file.id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
@@ -205,18 +214,19 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 
 /**
  * The packs that fit the repository at `repositoryRoot`, from its files and `package.json` dependencies alone:
- * no model, no network, and no list of what does not fit. A pack without a match definition or without rules never
- * fits. Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
+ * no model, no network, and no list of what does not fit. A pack without a match definition or without a rule that
+ * starts on never fits. Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
  * `RulePackRecommendation.folder`).
  */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
   const scan = scanRepository(repositoryRoot);
   return packs.flatMap(pack => {
-    if (pack.match === undefined || pack.rules.length === 0) return [];
+    const ruleCount = pack.rules.filter(rule => rule.on).length;
+    if (pack.match === undefined || ruleCount === 0) return [];
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
     const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);
-    return [{ pack, ruleCount: pack.rules.length, reason, folder }];
+    return [{ pack, ruleCount, reason, folder }];
   });
 }
 

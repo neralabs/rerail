@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b601-paramiko-calls",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b601",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$CLIENT.exec_command($$$)"
+          },
+          "constraints": {
+            "CLIENT": {
+              "resolves": {
+                "binding": {
+                  "value": {
+                    "matches": "paramiko-client"
+                  }
+                }
+              }
+            },
+            "CTOR": {
+              "resolves": {
+                "import": [
+                  "paramiko.SSHClient",
+                  "paramiko.client.SSHClient"
+                ]
+              }
+            }
+          },
+          "utils": {
+            "paramiko-client": {
+              "pattern": "$CTOR($$$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B601",
+        "anchor": "witness.span",
+        "message": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B601"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

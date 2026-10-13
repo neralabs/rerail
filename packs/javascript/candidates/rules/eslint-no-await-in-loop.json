@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-await-in-loop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-await-in-loop` rule (https://eslint.org/docs/latest/rules/no-await-in-loop). Flags `await` expressions, `for await` loops and `await using` declarations that sit in a loop's test, update or body without a function or for-await-of loop in between.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "await-in-loop",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "for-await": { "kind": "for_in_statement", "has": { "regex": "^await$" } },
+            "boundary": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "function_expression" },
+                { "kind": "generator_function_declaration" },
+                { "kind": "generator_function" },
+                { "kind": "arrow_function" },
+                { "kind": "method_definition" },
+                { "matches": "for-await" }
+              ]
+            },
+            "looped": {
+              "any": [
+                { "inside": { "any": [ { "kind": "while_statement" }, { "kind": "do_statement" } ] } },
+                { "inside": { "kind": "for_statement" }, "not": { "follows": { "regex": "^\\($", "stopBy": { "not": { "kind": "comment" } } } } },
+                { "inside": { "kind": "for_in_statement", "not": { "matches": "for-await" } }, "follows": { "regex": "^\\)$", "stopBy": { "not": { "kind": "comment" } } } },
+                { "inside": { "not": { "matches": "boundary" }, "matches": "looped" } }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              { "kind": "await_expression" },
+              { "matches": "for-await" }
+            ],
+            "matches": "looped"
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop." }
+    }
+  ]
+}

@@ -1,9 +1,10 @@
+use super::super::Reading;
 use super::super::exported::exported_text;
 use super::{Collation, CompareOp, Comparison};
-use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::value::ecma::ops;
 use crate::code_rule_dsl::value::structure::Equality;
-use crate::code_rule_dsl::value::{Lang, Value, key, php_compare};
+use crate::code_rule_dsl::value::{Lang, Value};
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 
@@ -52,15 +53,26 @@ pub(super) fn unbound<D: Doc>(
     if text != SemanticText::Name {
         return None;
     }
-    let family = Family::of(comparison.reading.as_ref()?.language);
-    // `None` for a node Blade wrote tokens into (`blade_spelled`): its name is not known.
+    let reading = comparison.reading.as_ref()?;
+    Some(with_adapter!(reading.family, A => unbound_names::<A, D>(comparison, env)))
+}
+
+/// `name` where a side is not a bound node, `A` reading the bound ones.
+fn unbound_names<A: Adapter, D: Doc>(
+    comparison: &Comparison,
+    env: &MetaVarEnv<'_, D>,
+) -> Option<bool> {
+    // `None` for a node Blade wrote tokens into (`ValueRules::spelled`): its name is not known.
     let name = |side: &str| -> Option<Option<Option<Vec<u16>>>> {
         match env.get_match(side) {
-            Some(node) => Some(blade_spelled(family, node, node).then(|| node_name(family, node))),
+            Some(node) => Some(
+                <A::Value as ValueRules>::spelled(node)
+                    .then(|| <A::Value as ValueRules>::node_name(node)),
+            ),
             None => exported_text(env, side).map(|text| Some(Some(text.encode_utf16().collect()))),
         }
     };
-    Some(match (name(&comparison.left), name(&comparison.right)) {
+    match (name(&comparison.left), name(&comparison.right)) {
         (Some(None), Some(_)) | (Some(_), Some(None)) => None,
         (Some(Some(Some(left))), Some(Some(Some(right)))) => {
             Some(comparison.op.test(comparison.units_order(&left, &right)))
@@ -72,30 +84,6 @@ pub(super) fn unbound<D: Doc>(
         },
         // An unbound side (or a transform variable, which is refused) compares false.
         _ => Some(false),
-    })
-}
-
-/// What a node names, as its family reads names.
-fn node_name<D: Doc>(family: Family, node: &Node<'_, D>) -> Option<Vec<u16>> {
-    match family {
-        Family::Ecma => key::node_name(node),
-        // Blade names what the PHP its template embeds names (`blade::view`).
-        Family::Php | Family::Blade => php_compare::node_name(node),
-        Family::Python => {
-            unreachable!("`name` is refused for this language when the policy compiles")
-        }
-    }
-}
-
-/// Whether both nodes are PHP their template spells; Blade's `view` writes tokens (`@unless`'s
-/// `!(`) a comparison of tokens must not read as the template's (`blade::rewritten`).
-fn blade_spelled<D: Doc>(family: Family, left: &Node<'_, D>, right: &Node<'_, D>) -> bool {
-    match family {
-        Family::Blade => {
-            !crate::code_rule_dsl::blade::rewritten(left)
-                && !crate::code_rule_dsl::blade::rewritten(right)
-        }
-        Family::Python | Family::Ecma | Family::Php => true,
     }
 }
 
@@ -108,20 +96,24 @@ pub(super) fn name<D: Doc>(
     node: &Node<'_, D>,
 ) -> Option<Option<Vec<u16>>> {
     let reading = comparison.reading.as_ref()?;
-    let family = Family::of(reading.language);
-    if !blade_spelled(family, node, node) {
+    with_adapter!(reading.family, A => name_in::<A, D>(reading, text, node))
+}
+
+/// `name` read with `reading`, whose family's adapter is `A`.
+fn name_in<A: Adapter, D: Doc>(
+    reading: &Reading,
+    text: SemanticText,
+    node: &Node<'_, D>,
+) -> Option<Option<Vec<u16>>> {
+    if !<A::Value as ValueRules>::spelled(node) {
         return None;
     }
-    Some(match (text, family) {
-        (SemanticText::Key, Family::Ecma) => key::static_property_name(node),
-        (SemanticText::Key, Family::Php | Family::Blade) => {
+    Some(match text {
+        SemanticText::Key => {
             let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
-            php_compare::key_name(node, &mut read).flatten()
+            <A::Value as ValueRules>::key_name(node, &mut read)
         }
-        (SemanticText::Name, _) => node_name(family, node),
-        (SemanticText::Key, Family::Python) => {
-            unreachable!("`key` is refused for this language when the policy compiles")
-        }
+        SemanticText::Name => <A::Value as ValueRules>::node_name(node),
         _ => unreachable!("`name` reads `key` and `name` only"),
     })
 }
@@ -134,16 +126,28 @@ pub(super) fn holds<D: Doc>(
     right: &Node<'_, D>,
 ) -> Option<bool> {
     let reading = comparison.reading.as_ref()?;
-    let family = Family::of(reading.language);
+    with_adapter!(reading.family, A => holds_in::<A, D>(comparison, reading, text, left, right))
+}
+
+/// `holds` read with `reading`, whose family's adapter is `A`.
+fn holds_in<A: Adapter, D: Doc>(
+    comparison: &Comparison,
+    reading: &Reading,
+    text: SemanticText,
+    left: &Node<'_, D>,
+    right: &Node<'_, D>,
+) -> Option<bool> {
     // Blade's values are decoded with the view's tokens; every other mode reads tokens.
-    if text != SemanticText::Value && !blade_spelled(family, left, right) {
+    if text != SemanticText::Value
+        && !(<A::Value as ValueRules>::spelled(left) && <A::Value as ValueRules>::spelled(right))
+    {
         return None;
     }
     match text {
         SemanticText::Key | SemanticText::Name => {
             match (
-                name(comparison, text, left)?,
-                name(comparison, text, right)?,
+                name_in::<A, D>(reading, text, left)?,
+                name_in::<A, D>(reading, text, right)?,
             ) {
                 (Some(left), Some(right)) => {
                     Some(comparison.op.test(comparison.units_order(&left, &right)))
@@ -159,33 +163,15 @@ pub(super) fn holds<D: Doc>(
         }
         SemanticText::Value => values(comparison, left, right),
         SemanticText::Reference { static_keys } => {
-            let same = match family {
-                Family::Ecma => key::same_reference(left, right, static_keys)?,
-                Family::Php | Family::Blade => {
-                    php_compare::same_reference(left, right, static_keys)?
-                }
-                Family::Python => unreachable!(
-                    "`reference` is refused for this language when the policy compiles"
-                ),
-            };
+            let same = <A::Value as ValueRules>::same_reference(left, right, static_keys)?;
             Some(same != (comparison.op == CompareOp::Ne))
         }
         SemanticText::Member => {
             let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
-            let (left, right) = match family {
-                Family::Ecma => (
-                    key::member_access_name(left, &mut read)?,
-                    key::member_access_name(right, &mut read)?,
-                ),
-                // A node holding no key has no member name either.
-                Family::Php | Family::Blade => (
-                    php_compare::key_name(left, &mut read)??,
-                    php_compare::key_name(right, &mut read)??,
-                ),
-                Family::Python => {
-                    unreachable!("`member` is refused for this language when the policy compiles")
-                }
-            };
+            let (left, right) = (
+                <A::Value as ValueRules>::member_name(left, &mut read)?,
+                <A::Value as ValueRules>::member_name(right, &mut read)?,
+            );
             Some(comparison.op.test(comparison.units_order(&left, &right)))
         }
         SemanticText::Structure(equality) => {

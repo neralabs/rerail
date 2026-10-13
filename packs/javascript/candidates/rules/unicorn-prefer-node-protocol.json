@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "unicorn:prefer-node-protocol",
+  "id": "unicorn-prefer-node-protocol",
   "revision": 1,
   "mode": "steer",
   "description": "An import of a Node.js built-in module without the `node:` prefix.",

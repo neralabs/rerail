@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "vue:no-v-html",
+  "id": "no-v-html",
   "revision": 1,
   "mode": "steer",
   "description": "A v-html directive, which renders raw HTML.",

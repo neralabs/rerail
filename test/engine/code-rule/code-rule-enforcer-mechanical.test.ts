@@ -16,7 +16,7 @@ import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
-import { NativeCodeRuleEnforcer, pythonModulePath } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -308,12 +308,16 @@ describe("Python module paths", () => {
     await mkdir(join(root, "src/pkg/loose"), { recursive: true });
     await mkdir(join(root, "fn"));
     for (const init of ["src/pkg/__init__.py", "src/pkg/sub/__init__.py"]) await writeFile(join(root, init), "");
-    expect(pythonModulePath(join(root, "src/pkg/sub/mod.py"))).toBe("pkg.sub.mod");
-    expect(pythonModulePath(join(root, "src/pkg/__init__.py"))).toBe("pkg.__init__");
-    expect(pythonModulePath(join(root, "src/pkg/sub/types.pyi"))).toBe("pkg.sub.types");
+    expect(modulePath("python", join(root, "src/pkg/sub/mod.py"))).toBe("pkg.sub.mod");
+    expect(modulePath("python", join(root, "src/pkg/__init__.py"))).toBe("pkg.__init__");
+    expect(modulePath("python", join(root, "src/pkg/sub/types.pyi"))).toBe("pkg.sub.types");
     // A directory without __init__.py ends the package: the file is outside any package.
-    expect(pythonModulePath(join(root, "src/pkg/loose/mod.py"))).toBeUndefined();
-    expect(pythonModulePath(join(root, "fn/contextlib.py"))).toBeUndefined();
+    expect(modulePath("python", join(root, "src/pkg/loose/mod.py"))).toBeUndefined();
+    expect(modulePath("python", join(root, "fn/contextlib.py"))).toBeUndefined();
+    // Only Python's family names modules: other dialects' files carry none, inside a package too.
+    for (const [label, file] of [["typescript", "mod.ts"], ["tsx", "mod.tsx"], ["javascript", "mod.js"], ["php", "mod.php"], ["blade", "mod.blade.php"]] as const) {
+      expect(modulePath(label, join(root, "src/pkg/sub", file)), label).toBeUndefined();
+    }
   });
 
   it("sends names as on disk, as a list when one keeps a dot", async () => {
@@ -324,11 +328,11 @@ describe("Python module paths", () => {
     for (const init of ["json.d/__init__.py", "good/__init__.py"]) await writeFile(join(root, init), "");
     // Ruff's N999 reads the package directory `json.d` and the stem `my.mod`; the engine derives `to_module_path`'s
     // stems (`json`) itself for qualified names.
-    expect(pythonModulePath(join(root, "json.d/__init__.py"))).toEqual(["json.d", "__init__"]);
-    expect(pythonModulePath(join(root, "json.d/m.py"))).toEqual(["json.d", "m"]);
-    expect(pythonModulePath(join(root, "good/my.mod.py"))).toEqual(["good", "my.mod"]);
-    expect(pythonModulePath(join(root, "good/fine.py"))).toBe("good.fine");
-    expect(pythonModulePath(join(root, "my.mod.py"))).toBeUndefined();
+    expect(modulePath("python", join(root, "json.d/__init__.py"))).toEqual(["json.d", "__init__"]);
+    expect(modulePath("python", join(root, "json.d/m.py"))).toEqual(["json.d", "m"]);
+    expect(modulePath("python", join(root, "good/my.mod.py"))).toEqual(["good", "my.mod"]);
+    expect(modulePath("python", join(root, "good/fine.py"))).toBe("good.fine");
+    expect(modulePath("python", join(root, "my.mod.py"))).toBeUndefined();
   });
 
   it("agrees with the module paths of the engine's Ruff rules oracle", async () => {
@@ -344,7 +348,7 @@ describe("Python module paths", () => {
         await writeFile(join(root, file.path), "");
       }
       for (const file of files) {
-        expect(pythonModulePath(join(root, file.path)) ?? null, file.path).toEqual(file.module);
+        expect(modulePath("python", join(root, file.path)) ?? null, file.path).toEqual(file.module);
         checked += 1;
       }
     }
@@ -354,7 +358,7 @@ describe("Python module paths", () => {
   it("agrees with the module paths of the engine's Ruff oracle fixtures", async () => {
     const expected = JSON.parse(await readFile(fixturesPath("python", "scope", "modules.expected.json"), "utf8")) as { files: Array<{ path: string; module: string | null }> };
     for (const file of expected.files) {
-      expect(pythonModulePath(fixturesPath("python", "scope", "modules", file.path)) ?? null, file.path).toBe(file.module);
+      expect(modulePath("python", fixturesPath("python", "scope", "modules", file.path)) ?? null, file.path).toBe(file.module);
     }
   });
 });
@@ -1152,7 +1156,7 @@ function pagingWorkspace(page: (cursor: number) => string, onApply: () => void =
 function nativeWorkspaces(...workspaces: NativeCodeRuleDslWorkspace[]) {
   const binding = native.loadNativeBinding();
   return vi.spyOn(native, "loadNativeBinding").mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, {
-    pythonModulePath: () => null,
+    modulePath: () => null,
     CodeRuleDslWorkspace: class {
       constructor() {
         const next = workspaces.shift();
