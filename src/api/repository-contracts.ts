@@ -98,7 +98,7 @@ const effectiveRuleBase = {
   onSource: deciderSchema.describe("What decided on/off: a checkout's or the repository's setting, the pack's starting value, or the rule's default."),
   modeSource: deciderSchema,
   suppressions: z.enum(RULE_SUPPRESSIONS)
-    .describe("honour: a linter's suppression comment (eslint-disable, noqa, ...) silences the rule where its document reads that linter's comments; ignore: no comment silences it."),
+    .describe("honour: a linter's suppression comment (eslint-disable, noqa, ...) silences the rule where its document reads that linter's comments; ignore: no linter's comment silences it. Rerail's own rerail-ignore comment silences the rule either way."),
   suppressionsSource: deciderSchema.describe("What decided suppressions; a pack starts from its honourSuppressionComments."),
   config: ruleConfigSchema.nullable().describe("Option values the settings give this rule by Rerail, merged per option; null when none is set."),
   configSource: z.record(z.string(), deciderSchema).describe("The setting that decided each option in config."),

@@ -276,6 +276,7 @@ pub(super) fn compile_document(
         return Err(invalid("/format must equal rerail.policy/v1"));
     }
     let id = required_str(document, "id", "/")?.to_owned();
+    let ignored_by: std::sync::Arc<str> = std::sync::Arc::from(id.as_str());
     let rule_mode = document
         .get("mode")
         .and_then(Value::as_str)
@@ -302,7 +303,7 @@ pub(super) fn compile_document(
         let id = if is_define(clause) {
             required_str(clause, "id", &path)?.to_owned()
         } else {
-            let value = compile_clause(
+            let mut value = compile_clause(
                 clause,
                 &path,
                 capabilities,
@@ -311,6 +312,8 @@ pub(super) fn compile_document(
                 &mut requires_llm,
             )?;
             let id = value.id.clone();
+            // Every reported clause answers to a `rerail-ignore` naming its code rule.
+            value.violation.ignored_by = Some(std::sync::Arc::clone(&ignored_by));
             compiled.push(value);
             id
         };
@@ -1272,6 +1275,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
             .get("suppress")
             .map(|suppress| super::suppress::parse(suppress, &format!("{path}/suppress")))
             .transpose()?,
+        ignored_by: None,
     })
 }
 

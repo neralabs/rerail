@@ -12,7 +12,8 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex, PhpstanIndex,
+    PsalmIndex, RerailIgnores,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -892,6 +893,8 @@ struct FileScopes {
     psalm: Option<Rc<PsalmIndex>>,
     /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
     phpcs: Option<Rc<PhpcsIndex>>,
+    /// The file's `rerail-ignore` directives, read on first use.
+    rerail_ignores: Option<Rc<RerailIgnores>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
@@ -938,6 +941,7 @@ impl FileScopeSlot {
             phpstan: None,
             psalm: None,
             phpcs: None,
+            rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
             php_names_charged: Vec::new(),
@@ -1067,6 +1071,25 @@ pub(crate) fn file_oxlint_directives(
         }
     });
     directives
+}
+
+/// The `rerail-ignore` directives of the file being matched: read once per file while a file is
+/// being matched, and fresh outside one.
+pub(crate) fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<RerailIgnores> {
+    if let Some(ignores) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.rerail_ignores.clone())
+    }) {
+        return ignores;
+    }
+    let ignores = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.rerail_ignores = Some(Rc::clone(&ignores));
+        }
+    });
+    ignores
 }
 
 /// The `noqa` index of the file being matched: read once per file while a file is being matched,

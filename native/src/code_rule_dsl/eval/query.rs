@@ -667,7 +667,8 @@ pub(super) fn file_tape(
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
 /// `maxVisitedNodes` in preorder, witnesses in syntax-error regions are dropped, and so are
-/// suppressed ones when `honour_suppressions`; the witness budget ends the file.
+/// suppressed ones when `honour_suppressions`, and those a `rerail-ignore` names the code rule
+/// over always; the witness budget ends the file.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_file_clause(
     grammar: &GrammarMatcher,
@@ -745,10 +746,16 @@ fn evaluate_file_clause(
                         }
                     };
                     for witness in found {
-                        if honour_suppressions
+                        let matched_node = matched.get_node();
+                        if (honour_suppressions
                             && crate::code_rule_dsl::violations::suppresses(
                                 violation,
-                                matched.get_node(),
+                                matched_node,
+                                &witness,
+                            ))
+                            || crate::code_rule_dsl::violations::rerail_ignores(
+                                violation,
+                                matched_node,
                                 &witness,
                             )
                         {

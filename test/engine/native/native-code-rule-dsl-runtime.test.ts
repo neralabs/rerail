@@ -2343,6 +2343,44 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+    it("drops witnesses a rerail-ignore naming the code rule covers, whatever suppress and the suppressions setting", async () => {
+      const plain = {
+        violation: violation("DEBUGGER"),
+        forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+        id: "debugger",
+      };
+      const opted = { ...plain, violation: { ...violation("DEBUGGER"), suppress: { eslint: { rules: ["no-debugger"] } } } };
+      const file = {
+        language: "typescript" as const,
+        path: "a.ts",
+        source: [
+          "debugger; // rerail-ignore runtime-contract -- generated",
+          "debugger; // rerail-ignore other-rule",
+          "debugger; // eslint-disable-line no-debugger",
+          "debugger;",
+          "",
+        ].join("\n"),
+      };
+      // No `suppress`: only the directive naming the code rule silences, statelessly and in a workspace.
+      expect(evaluate(compileJson([plain]), snapshot([file])).violations.map(item => item.span!.startLine)).toEqual([1, 2, 3]);
+      for (const [clause, placement, expected] of [
+        [plain, undefined, [1, 2, 3]],
+        [opted, undefined, [1, 3]],
+        [opted, [{ folder: "", mode: "log", suppressions: "honour" }], [1, 3]],
+        // The setting governs only linters' comments: the eslint directive no longer silences, Rerail's still does.
+        [opted, [{ folder: "", mode: "log", suppressions: "ignore" }], [1, 2, 3]],
+      ] as const) {
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]), placement === undefined ? undefined : JSON.stringify(placement));
+          const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(actual.violations.map(item => item.span!.startLine)).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
 
   });
 

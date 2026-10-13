@@ -1,5 +1,6 @@
 //! `suppress` (a Rerail extension, opt-in per violation): another linter's suppression comments,
-//! honoured as that linter honours them. The engine never reads them otherwise.
+//! honoured as that linter honours them. The engine never reads them otherwise. Rerail's own
+//! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
 use super::json::{invalid, object, reject_unknown};
 use super::lines::LineTable;
@@ -12,6 +13,7 @@ pub(crate) use oxlint::OxlintDirectives;
 pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
 pub(crate) use phpstan::PhpstanIndex;
 pub(crate) use psalm::PsalmIndex;
+pub(crate) use rerail::RerailIgnores;
 use serde_json::Value;
 
 /// Names a `rules` or `codes` list may hold.
@@ -411,6 +413,7 @@ mod php_corpus_tests;
 mod phpcs;
 mod phpstan;
 mod psalm;
+mod rerail;
 #[cfg(test)]
 mod ruff;
 

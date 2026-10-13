@@ -42,7 +42,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
-pub(super) use suppression::suppresses;
+pub(super) use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
 
 #[cfg(test)]
 thread_local! {

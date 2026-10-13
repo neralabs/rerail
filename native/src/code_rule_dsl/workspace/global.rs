@@ -40,6 +40,7 @@ pub(super) fn compile_query_plan(
             clause.violation.each = None;
             clause.violation.node_regexes.clear();
             clause.violation.suppress = None;
+            clause.violation.ignored_by = None;
             clause.violation.group_transform = None;
             clause.violation.message_template = None;
             clause.violation.fix = None;

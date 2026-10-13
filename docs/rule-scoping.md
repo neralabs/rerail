@@ -39,10 +39,12 @@ A **rule setting** changes, for one rule or one whole pack in a folder, any of:
 
 - `on`;
 - `mode` (Log, Steer or Block);
-- `suppressions`: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no comment silences it;
+- `suppressions`: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it;
 - `config`: the option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. `config` is set on a rule (not a pack) for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Your library rules take no `config`: edit the rule instead. Each option must be one the document declares, with a value its declaration allows; anything else is refused with `400 invalid-setting`.
 
 A setting belongs to the repository (the default for every checkout) or to one checkout (this worktree only). A null field leaves it to the next owner.
+
+The `suppressions` setting governs only linters' comments. Rerail's own comment, `rerail-ignore`, is always honoured, whatever the setting: `// rerail-ignore complexity-cyclomatic-typescript -- generated` (or `#`, `/* */`, `{{-- --}}` per language) silences the code rules it names by id at the node it covers: the whole file when it comes before the file's first code, the next node when it stands on its own line, and the code it trails on its line otherwise. Every code rule answers to it, with nothing in its document; `docs/code-rule-dsl-reference.html#rerail-ignore` has the exact rules.
 
 **Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
 

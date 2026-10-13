@@ -114,6 +114,10 @@ pub(super) struct ViolationSpec {
     pub(super) fix_range: Option<String>,
     /// `suppress`: the other linter's suppression comments this violation honours.
     pub(super) suppress: Option<super::suppress::Suppress>,
+    /// The code rule id a `rerail-ignore` comment names to silence this violation's witnesses,
+    /// whatever `suppress` and the `suppressions` setting; `None` where the clause reports
+    /// nothing (an `exists` leaf, a `calls` seed).
+    pub(super) ignored_by: Option<Arc<str>>,
     /// The query's `transform` where one of its sources is a regex group of the witness, computed
     /// again with each witness's groups.
     pub(super) group_transform: Option<Arc<Transform>>,
