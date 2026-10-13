@@ -150,7 +150,7 @@
                             "kind": "import_statement",
                             "stopBy": "end",
                             "not": {
-                              "regex": "^import\\s+type\\b"
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
                             },
                             "has": {
                               "field": "source",
@@ -188,7 +188,51 @@
                                 "field": "value",
                                 "has": {
                                   "field": "key",
-                                  "regex": "^[\"']?(?:fit|it|test|xit|xtest|bench)[\"']?$"
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:fit|it|test|xit|xtest|bench)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:fit|it|test|xit|xtest|bench)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
                                 },
                                 "inside": {
                                   "kind": "object_pattern",
@@ -245,7 +289,7 @@
                             "kind": "import_statement",
                             "stopBy": "end",
                             "not": {
-                              "regex": "^import\\s+type\\b"
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
                             },
                             "has": {
                               "field": "source",
@@ -283,7 +327,51 @@
                                 "field": "value",
                                 "has": {
                                   "field": "key",
-                                  "regex": "^[\"']?(?:fit|it|test|xit|xtest|bench)[\"']?$"
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:fit|it|test|xit|xtest|bench)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:fit|it|test|xit|xtest|bench)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
                                 },
                                 "inside": {
                                   "kind": "object_pattern",
@@ -680,21 +768,32 @@
                     }
                   }
                 }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "scope": "functionName",
+                    "site": {
+                      "matches": "vitest-test-callback"
+                    }
+                  }
+                }
               }
             ]
           },
           "vitest-source": {
             "any": [
               {
-                "kind": "string"
+                "kind": "string",
+                "value": {
+                  "eq": "vitest"
+                }
               },
               {
-                "kind": "template_string"
+                "kind": "template_string",
+                "regex": "^`vitest`$"
               }
-            ],
-            "value": {
-              "eq": "vitest"
-            }
+            ]
           },
           "vitest-module-argument": {
             "kind": "arguments",
@@ -785,22 +884,37 @@
               {
                 "has": {
                   "field": "function",
-                  "regex": "^(?:it|test)(?:\\.(?:only|concurrent|sequential|fails|each\\([^)]*\\)))*$",
                   "any": [
                     {
-                      "matches": "vitest-test-head"
+                      "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.fails(?:\\.only|\\.sequential)?|\\.only(?:\\.fails|\\.sequential)?|\\.sequential(?:\\.fails|\\.only)?)?|\\.fails(?:\\.concurrent(?:\\.only|\\.sequential)?|\\.only(?:\\.concurrent|\\.sequential)?|\\.sequential(?:\\.concurrent|\\.only)?)?|\\.only(?:\\.concurrent(?:\\.fails|\\.sequential)?|\\.fails(?:\\.concurrent|\\.sequential)?|\\.sequential(?:\\.concurrent|\\.fails)?)?|\\.sequential(?:\\.concurrent(?:\\.fails|\\.only)?|\\.fails(?:\\.concurrent|\\.only)?|\\.only(?:\\.concurrent|\\.fails)?)?)?)$"
                     },
                     {
-                      "has": {
-                        "field": "object",
-                        "matches": "vitest-test-chain"
-                      }
-                    },
-                    {
+                      "kind": "call_expression",
                       "has": {
                         "field": "function",
-                        "matches": "vitest-test-chain"
+                        "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.each|\\.fails(?:\\.each)|\\.only(?:\\.each)|\\.sequential(?:\\.each))|\\.each|\\.fails(?:\\.concurrent(?:\\.each)|\\.each|\\.only(?:\\.each)|\\.sequential(?:\\.each))|\\.only(?:\\.concurrent(?:\\.each)|\\.each|\\.fails(?:\\.each)|\\.sequential(?:\\.each))|\\.sequential(?:\\.concurrent(?:\\.each)|\\.each|\\.fails(?:\\.each)|\\.only(?:\\.each))))$"
                       }
+                    }
+                  ],
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "matches": "vitest-test-head"
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "vitest-test-chain"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "function",
+                            "matches": "vitest-test-chain"
+                          }
+                        }
+                      ]
                     }
                   ]
                 }

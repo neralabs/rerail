@@ -60,16 +60,99 @@ const FUNCTIONS = {
 };
 
 const oneOf = names => `^(?:${names.join("|")})$`;
+/**
+ * A property key upstream's `isSupportedAccessor` reads as one of `names` (`getAccessorValue`): an identifier, a string
+ * literal by its value (escapes decoded), a template literal by its raw text (upstream reads `quasis[0].value.raw`), or
+ * the same inside computed brackets (`["it"]`, `[it]`).
+ */
+const accessorKey = names => {
+  const literal = {
+    any: [
+      { kind: "string", value: { regex: oneOf(names) } },
+      { kind: "template_string", regex: `^\`(?:${names.join("|")})\`$` },
+    ],
+  };
+  return {
+    any: [
+      { kind: "property_identifier", regex: oneOf(names) },
+      literal,
+      { kind: "computed_property_name", has: { any: [{ kind: "identifier", regex: oneOf(names) }, literal] } },
+    ],
+  };
+};
+
+/**
+ * Upstream's ValidVitestFnCallChains (valid-vitest-fn-call-chains.ts), as the grammar that spells it exactly: after the
+ * head, an optional `skipIf`/`runIf`, then distinct modifiers, then an optional `each`/`for`, three links at most; `it`
+ * and `test` also take `extend` and `scoped` alone; `x` functions take `each` alone; `fit` and `fdescribe` take
+ * nothing. A call whose chain is not one of these is no Vitest call upstream.
+ */
+const CHAIN_GRAMMAR = {
+  test: { heads: ["it", "test"], modifiers: ["skip", "only", "concurrent", "sequential", "todo", "fails"], conditions: ["skipIf", "runIf"], terminals: ["each", "for"], alone: ["extend", "scoped"] },
+  describe: { heads: ["describe", "suite"], modifiers: ["skip", "only", "concurrent", "sequential", "shuffle", "todo"], conditions: ["skipIf", "runIf"], terminals: ["each", "for"], alone: [] },
+  bench: { heads: ["bench"], modifiers: ["skip", "only", "todo"], conditions: ["skipIf", "runIf"], terminals: [], alone: [] },
+  x: { heads: ["xit", "xtest", "xdescribe"], modifiers: [], conditions: [], terminals: [], alone: ["each"] },
+  f: { heads: ["fit", "fdescribe"], modifiers: [], conditions: [], terminals: [], alone: [] },
+};
+
+/** The member chains (links after the head) one grammar entry allows. */
+function chainLinks({ modifiers, conditions, terminals, alone }) {
+  const chains = [[], ...alone.map(link => [link])];
+  const permutations = (pool, length) =>
+    length === 0 ? [[]] : pool.flatMap(link => permutations(pool.filter(other => other !== link), length - 1).map(rest => [link, ...rest]));
+  for (const condition of [[], ...conditions.map(link => [link])]) {
+    for (let count = 0; count <= modifiers.length; count += 1) {
+      for (const middle of permutations(modifiers, count)) {
+        for (const terminal of [[], ...terminals.map(link => [link])]) {
+          const links = [...condition, ...middle, ...terminal];
+          if (links.length > 0 && links.length <= 3) chains.push(links);
+        }
+      }
+    }
+  }
+  return chains;
+}
+
+/** An alternation matching exactly the given link lists as `.a.b` text, factored by common prefixes. */
+function linksPattern(chains) {
+  const tree = new Map();
+  let end = false;
+  for (const [first, ...rest] of chains) {
+    if (first === undefined) end = true;
+    else tree.set(first, [...(tree.get(first) ?? []), rest]);
+  }
+  const branches = [...tree].sort(([a], [b]) => (a < b ? -1 : 1)).map(([link, rests]) => `\\.${link}${linksPattern(rests)}`);
+  if (branches.length === 0) return "";
+  return `(?:${branches.join("|")})${end ? "?" : ""}`;
+}
+
+/**
+ * A regex over a callee's text: one of `heads` followed by a valid chain for it whose links pass `keep` (for instance,
+ * those that include `.only`, the way upstream finds `.only` among a valid chain's members).
+ */
+function validChain(heads, keep = () => true) {
+  const alternatives = [];
+  for (const grammar of Object.values(CHAIN_GRAMMAR)) {
+    const names = grammar.heads.filter(head => heads.includes(head));
+    if (names.length === 0) continue;
+    const chains = chainLinks(grammar).filter(keep);
+    if (chains.length > 0) alternatives.push(`(?:${names.join("|")})${linksPattern(chains)}`);
+  }
+  return `^(?:${alternatives.join("|")})$`;
+}
+const including = member => links => links.includes(member);
+/** The modifiers the expect-expect port reads on a test (upstream skips `.skip`, `.todo`, `.extend` and `.scoped`). */
+const EXPECT_LINKS = ["only", "concurrent", "sequential", "fails"];
 const FUNCTION_KINDS = [{ kind: "arrow_function" }, { kind: "function_expression" }, { kind: "generator_function" }];
 const PARAMETER = { any: [{ kind: "required_parameter" }, { kind: "optional_parameter" }] };
 
 /**
- * Module-source utilities, read as upstream's ESTree resolver reads them: the argument that names the module is matched
- * by its string value (quotes, template literals without substitutions and escapes as JavaScript reads them), comments
+ * Module-source utilities, read as upstream's ESTree resolver reads them: the argument that names the module is a string
+ * literal whose value is `vitest` (escapes decoded) or a template literal whose raw text is (`getStringValue`), comments
  * and trailing commas aside, and parentheses around an expression are transparent (ESTree keeps none).
  */
 const MODULE_SOURCE = {
-  "vitest-source": { any: [{ kind: "string" }, { kind: "template_string" }], value: { eq: "vitest" } },
+  "vitest-source": { any: [{ kind: "string", value: { eq: "vitest" } }, { kind: "template_string", regex: "^`vitest`$" }] },
   "vitest-module-argument": { kind: "arguments", has: { nthChild: { position: 1, ofRule: { not: { kind: "comment" } } }, matches: "vitest-source" } },
   // `require('vitest')` or `await import('vitest')` (findImportSourceNode); `await require(...)` is neither.
   "vitest-module": {
@@ -115,7 +198,9 @@ function vitestBinding(names) {
               inside: {
                 kind: "import_statement",
                 stopBy: "end",
-                not: { regex: "^import\\s+type\\b" },
+                // A type-only import (`import type { it }`, `import type * as v`, `import type D from`), not a
+                // default import named `type` (`import type, { it } from`), which imports values.
+                not: { regex: "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)" },
                 has: { field: "source", matches: "vitest-source" },
               },
             },
@@ -130,7 +215,7 @@ function vitestBinding(names) {
                 { kind: "shorthand_property_identifier_pattern", regex: oneOf(names), inside: VITEST_DESTRUCTURING },
                 {
                   kind: "identifier",
-                  inside: { kind: "pair_pattern", field: "value", has: { field: "key", regex: `^["']?(?:${names.join("|")})["']?$` }, inside: VITEST_DESTRUCTURING },
+                  inside: { kind: "pair_pattern", field: "value", has: { field: "key", ...accessorKey(names) }, inside: VITEST_DESTRUCTURING },
                 },
               ],
             },
@@ -263,6 +348,8 @@ const TEST_CONTEXT = {
         },
       },
       { resolves: { binding: { form: "parameter", occurrence: CONTEXT_PROPERTY_NAME } } },
+      // A test callback's own name (`test('x', function it(ctx) { ... })`), which upstream also reads as a context.
+      { resolves: { binding: { scope: "functionName", site: { matches: "vitest-test-callback" } } } },
     ],
   },
 };
@@ -275,10 +362,13 @@ const TEST_CONTEXT = {
  */
 function modifierUtilities(modifier) {
   const self = `vitest-${modifier}-modifier`;
+  // Upstream's candidates for `findLast`: every property (methods and accessors too, not spreads) whose key reads as
+  // the modifier; only the last one counts, and only when it is `<modifier>: true`.
   const property = {
     any: [
-      { kind: "pair", has: { field: "key", any: [{ kind: "property_identifier" }, { kind: "string" }], regex: `^["']?${modifier}["']?$` } },
+      { kind: "pair", has: { field: "key", ...accessorKey([modifier]) } },
       { kind: "shorthand_property_identifier", regex: `^${modifier}$` },
+      { kind: "method_definition", has: { field: "name", ...accessorKey([modifier]) } },
     ],
   };
   return {
@@ -294,7 +384,20 @@ function modifierUtilities(modifier) {
         has: {
           ...property,
           nthChild: { position: 1, reverse: true, ofRule: property },
-          all: [{ kind: "pair" }, { has: { field: "value", kind: "true" } }, { has: { field: "key", pattern: "$MODIFIER" } }],
+          all: [
+            { kind: "pair" },
+            { has: { field: "value", kind: "true" } },
+            // ESTree's key: inside computed brackets, the expression.
+            {
+              has: {
+                field: "key",
+                any: [
+                  { kind: "computed_property_name", has: { any: [{ kind: "identifier" }, { kind: "string" }, { kind: "template_string" }], pattern: "$MODIFIER" } },
+                  { not: { kind: "computed_property_name" }, pattern: "$MODIFIER" },
+                ],
+              },
+            },
+          ],
         },
       },
     },
@@ -327,8 +430,15 @@ const DOCUMENTS = {
             {
               has: {
                 field: "function",
-                regex: "^(?:it|test)(?:\\.(?:only|concurrent|sequential|fails|each\\([^)]*\\)))*$",
-                any: [{ matches: "vitest-test-head" }, { has: { field: "object", matches: "vitest-test-chain" } }, { has: { field: "function", matches: "vitest-test-chain" } }],
+                // A valid `it`/`test` chain of the modifiers this port reads, or the call `.each(...)` returns.
+                any: [
+                  { regex: validChain(["it", "test"], links => links.every(link => EXPECT_LINKS.includes(link))) },
+                  {
+                    kind: "call_expression",
+                    has: { field: "function", regex: validChain(["it", "test"], links => links.at(-1) === "each" && links.slice(0, -1).every(link => EXPECT_LINKS.includes(link))) },
+                  },
+                ],
+                all: [{ any: [{ matches: "vitest-test-head" }, { has: { field: "object", matches: "vitest-test-chain" } }, { has: { field: "function", matches: "vitest-test-chain" } }] }],
               },
             },
             {
@@ -364,7 +474,7 @@ const DOCUMENTS = {
                 any: [
                   {
                     kind: "member_expression",
-                    regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b",
+                    regex: validChain(["describe", "it", "test", "suite", "bench"], including("skip")),
                     has: { field: "object", matches: "vitest-skippable-chain" },
                     matches: "vitest-skip-modifier",
                   },
@@ -392,7 +502,7 @@ const DOCUMENTS = {
             },
             {
               all: [
-                { has: { field: "function", regex: "^(?:describe|fdescribe|xdescribe|fit|it|test|xit|xtest|bench)(?:\\.\\w+)*$", matches: "vitest-block-chain" } },
+                { has: { field: "function", regex: validChain(FUNCTIONS.block), matches: "vitest-block-chain" } },
                 { has: { field: "arguments", matches: "vitest-skip-option" } },
               ],
             },
@@ -428,14 +538,14 @@ const DOCUMENTS = {
               has: {
                 field: "function",
                 kind: "member_expression",
-                regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
+                regex: validChain(["describe", "it", "test", "suite", "bench"], including("only")),
                 has: { field: "object", matches: "vitest-focusable-chain" },
                 matches: "vitest-only-modifier",
               },
             },
             {
               all: [
-                { has: { field: "function", regex: "^(?:describe|it|test)(?:\\.\\w+)*$", matches: "vitest-focusable-chain" } },
+                { has: { field: "function", regex: validChain(FUNCTIONS.focusable), matches: "vitest-focusable-chain" } },
                 { has: { field: "arguments", matches: "vitest-only-option" } },
               ],
             },

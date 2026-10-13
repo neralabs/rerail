@@ -83,6 +83,7 @@
    "no-disabled-tests/rerail-vitest-alias.test.ts",
    "no-disabled-tests/rerail-vitest-dynamic-import.test.ts",
    "no-disabled-tests/rerail-vitest-import.test.ts",
+   "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
    "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
    "no-disabled-tests/rerail-vitest-require-template.test.ts",
    "no-disabled-tests/rerail-vitest-require-whole.test.ts",
@@ -108,16 +109,20 @@
    "no-focused-tests/020.test.ts",
    "no-focused-tests/rerail-bun-test.test.ts",
    "no-focused-tests/rerail-global-extend.test.ts",
+   "no-focused-tests/rerail-invalid-chains.test.ts",
    "no-focused-tests/rerail-local-binding.test.ts",
+   "no-focused-tests/rerail-mode-option-overridden.test.ts",
    "no-focused-tests/rerail-node-test-default.test.ts",
    "no-focused-tests/rerail-node-test-mode-options.test.ts",
    "no-focused-tests/rerail-node-test.test.ts",
    "no-focused-tests/rerail-parameter.test.ts",
    "no-focused-tests/rerail-suite-only.test.ts",
    "no-focused-tests/rerail-test-context-explicit-property.test.ts",
+   "no-focused-tests/rerail-test-context-named-callback.test.ts",
    "no-focused-tests/rerail-test-context-property.test.ts",
    "no-focused-tests/rerail-test-context-renamed-property.test.ts",
    "no-focused-tests/rerail-test-context.test.ts",
+   "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
    "no-focused-tests/rerail-vitest-default-import.test.ts",
    "no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts",
    "no-focused-tests/rerail-vitest-extend-chain.test.ts",
@@ -128,6 +133,7 @@
    "no-focused-tests/rerail-vitest-require-comment.test.ts",
    "no-focused-tests/rerail-vitest-require-default-value.test.ts",
    "no-focused-tests/rerail-vitest-require-parenthesized.test.ts",
+   "no-focused-tests/rerail-vitest-require-template-escape.test.ts",
    "no-focused-tests/rerail-vitest-require.test.ts",
    "no-focused-tests/rerail-vitest-submodule.test.ts",
    "no-focused-tests/rerail-vitest-type-import.test.ts"
@@ -358,6 +364,12 @@
   },
   {
    "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
    "path": "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
    "line": 4,
    "column": 1
@@ -460,6 +472,18 @@
   },
   {
    "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
    "path": "no-focused-tests/rerail-test-context-property.test.ts",
    "line": 1,
    "column": 1
@@ -487,6 +511,12 @@
    "path": "no-focused-tests/rerail-test-context.test.ts",
    "line": 2,
    "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
+   "line": 3,
+   "column": 1
   },
   {
    "rule": "vitest/expect-expect",
@@ -646,6 +676,12 @@
   },
   {
    "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 4,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
    "path": "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
    "line": 3,
    "column": 10
@@ -709,6 +745,12 @@
    "path": "no-disabled-tests/rerail-vitest-import.test.ts",
    "line": 3,
    "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 3,
+   "column": 4
   },
   {
    "rule": "vitest/no-focused-tests",
@@ -784,6 +826,12 @@
   },
   {
    "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
    "path": "no-focused-tests/rerail-test-context-property.test.ts",
    "line": 2,
    "column": 6
@@ -793,6 +841,12 @@
    "path": "no-focused-tests/rerail-test-context.test.ts",
    "line": 2,
    "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
+   "line": 3,
+   "column": 4
   },
   {
    "rule": "vitest/no-focused-tests",
