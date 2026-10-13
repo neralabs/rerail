@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:no-v-html",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-v-html` with default options (no ignorePattern): every `v-html` directive attribute, with or without an argument, modifiers or value; reads the directive_name token. Reported at the directive attribute.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "directive_attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_name",
+              "regex": "^v-html$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-v-html",
+        "message": "'v-html' directive can lead to XSS attack.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-v-html"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

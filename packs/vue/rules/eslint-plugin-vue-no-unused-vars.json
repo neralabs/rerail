@@ -1,0 +1,313 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:no-unused-vars",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the view program: the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding references (`binds.referenced`; a component tag `<Comp>` is an identifier read in the view, as upstream's isUsedAsComponentTag). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "view-arrow": {
+              "kind": "arrow_function",
+              "any": [
+                {
+                  "inside": {
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement"
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "statement_block",
+                "regex": "^<template"
+              }
+            },
+            "view-param": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "parameter"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "formal_parameters",
+                    "inside": {
+                      "matches": "view-arrow"
+                    }
+                  }
+                }
+              ]
+            },
+            "param-destructured": {
+              "any": [
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "pair_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "cond-used-q": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "arrow_function",
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement",
+                      "pattern": "$QS",
+                      "inside": {
+                        "kind": "statement_block",
+                        "pattern": "$QB",
+                        "compare": {
+                          "left": "QS",
+                          "op": "eq",
+                          "right": "QB"
+                        },
+                        "inside": {
+                          "kind": "if_statement",
+                          "has": {
+                            "field": "condition",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier"
+                                }
+                              ],
+                              "pattern": "$QR",
+                              "compare": {
+                                "left": "Q",
+                                "op": "eq",
+                                "right": "QR"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cond-used-name": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "arrow_function",
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement",
+                      "pattern": "$NAMES",
+                      "inside": {
+                        "kind": "statement_block",
+                        "pattern": "$NAMEB",
+                        "compare": {
+                          "left": "NAMES",
+                          "op": "eq",
+                          "right": "NAMEB"
+                        },
+                        "inside": {
+                          "kind": "if_statement",
+                          "has": {
+                            "field": "condition",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier"
+                                }
+                              ],
+                              "pattern": "$NAMER",
+                              "compare": {
+                                "left": "NAME",
+                                "op": "eq",
+                                "right": "NAMER"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "param-used": {
+              "pattern": "$Q",
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "parameter"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "binds": {
+                        "referenced": true
+                      }
+                    },
+                    {
+                      "matches": "cond-used-q"
+                    }
+                  ]
+                }
+              ]
+            },
+            "after-used": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "param-used"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "param-used"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "formal_parameters"
+                    },
+                    "not": {
+                      "kind": "formal_parameters"
+                    },
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "param-used"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "param-used"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$NAME",
+            "all": [
+              {
+                "matches": "view-param"
+              },
+              {
+                "binds": {
+                  "form": "parameter",
+                  "referenced": false
+                }
+              },
+              {
+                "not": {
+                  "matches": "cond-used-name"
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "param-destructured"
+                      }
+                    },
+                    {
+                      "matches": "after-used"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-unused-vars",
+        "message": "'$NAME' is defined but never used.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-unused-vars"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,2282 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:no-mutating-props",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-mutating-props` with default options (shallowOnly: false): a mutation of a component prop, reported at the mutating node (assignment, update, delete, call of push/pop/shift/unshift/reverse/splice/sort/copyWithin/fill, or Object.assign with the prop as first argument). Reads the view program: (1) template code inside the `<template` statement block: an identifier not bound by a v-for/slot arrow whose name is a prop (Options API `props` array strings and object keys of `export default {}`/`defineComponent({})`/`Vue.component/mixin/extend`/`new Vue({})`, `<script setup>` `defineProps` runtime array/object keys, `defineProps<{...}>()` type-literal and same-file interface/type-alias members that are neither a JS global from the upstream whitelist nor a binding of the script, plus the names destructured from `defineProps`) or the `defineProps` result variable, and `this.<prop>`; `v-model` and `.sync` expressions are reported as a whole when their member chain starts at such a name; (2) script code: `this.<prop>` (or a `const vm = this` alias) inside a Vue object that declares the prop; (3) references (outside the template) to the `setup(props)` first parameter, to the `const props = defineProps()` / `withDefaults(defineProps())` variable (a mutation needs at least one member access, as upstream), and to names destructured from either (a member mutation, or a mutating call on the bare name).",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "vue",
+        "utils": {
+          "tpl-block": {
+            "kind": "statement_block",
+            "regex": "^<template"
+          },
+          "setup-top": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "program"
+            },
+            "follows": {
+              "stopBy": {
+                "kind": "empty_statement",
+                "regex": "^<script\\b"
+              },
+              "kind": "empty_statement",
+              "regex": "^<script\\b[^>]*\\bsetup\\b"
+            }
+          },
+          "macro-expr": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "variable_declarator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "matches": "setup-top"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "expression_statement",
+                  "matches": "setup-top"
+                }
+              }
+            ]
+          },
+          "define-props": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "identifier",
+              "regex": "^defineProps$"
+            },
+            "any": [
+              {
+                "matches": "macro-expr"
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^\\($"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "regex": "^withDefaults$"
+                        },
+                        "matches": "macro-expr"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "dp-declarator": {
+            "kind": "variable_declarator",
+            "has": {
+              "field": "value",
+              "any": [
+                {
+                  "matches": "define-props"
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "arguments",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "define-props"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vue-object": {
+            "kind": "object",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "export_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^default$"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^[,)]$"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "any": [
+                            {
+                              "kind": "identifier",
+                              "regex": "^(defineComponent|defineNuxtComponent|component|createApp)$"
+                            },
+                            {
+                              "kind": "member_expression",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "object",
+                                    "kind": "identifier",
+                                    "regex": "^Vue$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "property",
+                                    "kind": "property_identifier",
+                                    "regex": "^(component|mixin|extend)$"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "member_expression",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "object",
+                                    "kind": "identifier"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "property",
+                                    "kind": "property_identifier",
+                                    "regex": "^(component|mixin)$"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^\\($"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Vue$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "opt-obj-has-name": {
+            "params": [
+              "NAME"
+            ],
+            "rule": {
+              "all": [
+                {
+                  "matches": "vue-object"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "pair",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "key",
+                          "any": [
+                            {
+                              "kind": "property_identifier",
+                              "regex": "^props$"
+                            },
+                            {
+                              "kind": "string",
+                              "regex": "^['\"]props['\"]$"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "value",
+                          "any": [
+                            {
+                              "kind": "array",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string",
+                                "pattern": "$K",
+                                "compare": {
+                                  "left": "K",
+                                  "op": "eq",
+                                  "right": "NAME",
+                                  "text": "unquoted"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "object",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "pair",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ],
+                                  "pattern": "$K",
+                                  "compare": {
+                                    "left": "K",
+                                    "op": "eq",
+                                    "right": "NAME",
+                                    "text": "unquoted"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "dp-prop-key": {
+            "any": [
+              {
+                "kind": "string",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "array",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "arguments",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "define-props"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "string"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "key",
+                  "kind": "pair",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "define-props"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "string"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "property_signature"
+                    },
+                    {
+                      "kind": "method_signature"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object_type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "define-props"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "string"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "property_signature"
+                    },
+                    {
+                      "kind": "method_signature"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "interface_body"
+                      },
+                      {
+                        "kind": "object_type"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "interface_declaration"
+                        },
+                        {
+                          "kind": "type_alias_declaration"
+                        }
+                      ],
+                      "has": {
+                        "field": "name",
+                        "kind": "type_identifier",
+                        "pattern": "$TN"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "program",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "type_identifier",
+                          "pattern": "$TA",
+                          "compare": {
+                            "left": "TN",
+                            "op": "eq",
+                            "right": "TA"
+                          },
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "type_arguments",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "matches": "define-props"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "def-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ]
+          },
+          "s2-any": {
+            "matches": "def-name",
+            "inside": {
+              "field": "name",
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "object_pattern"
+                    },
+                    {
+                      "kind": "array_pattern"
+                    },
+                    {
+                      "kind": "pair_pattern"
+                    },
+                    {
+                      "kind": "rest_pattern"
+                    },
+                    {
+                      "kind": "assignment_pattern"
+                    },
+                    {
+                      "kind": "object_assignment_pattern"
+                    }
+                  ]
+                }
+              },
+              "matches": "dp-declarator"
+            }
+          },
+          "s2-root": {
+            "kind": "identifier",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "matches": "dp-declarator"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "rest_pattern",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object_pattern",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "matches": "dp-declarator"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "s2-nonroot": {
+            "all": [
+              {
+                "matches": "s2-any"
+              },
+              {
+                "not": {
+                  "matches": "s2-root"
+                }
+              }
+            ]
+          },
+          "setup-fn": {
+            "any": [
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "property_identifier",
+                  "regex": "^setup$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "object",
+                  "matches": "vue-object"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "kind": "property_identifier",
+                    "regex": "^setup$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object",
+                    "matches": "vue-object"
+                  }
+                }
+              }
+            ]
+          },
+          "param0": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "setup-fn"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^[(,]$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "rest_pattern"
+                    },
+                    {
+                      "kind": "array_pattern"
+                    },
+                    {
+                      "kind": "required_parameter",
+                      "has": {
+                        "field": "pattern",
+                        "any": [
+                          {
+                            "kind": "rest_pattern"
+                          },
+                          {
+                            "kind": "array_pattern"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "s1-any": {
+            "all": [
+              {
+                "matches": "def-name"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "param0"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "formal_parameters"
+                        }
+                      },
+                      "matches": "param0"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "s1-root": {
+            "kind": "identifier",
+            "any": [
+              {
+                "matches": "param0"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "pattern",
+                  "kind": "required_parameter",
+                  "matches": "param0"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "kind": "assignment_pattern",
+                  "matches": "param0"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "rest_pattern",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object_pattern",
+                    "any": [
+                      {
+                        "matches": "param0"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "field": "pattern",
+                          "kind": "required_parameter",
+                          "matches": "param0"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "s1-nonroot": {
+            "all": [
+              {
+                "matches": "s1-any"
+              },
+              {
+                "not": {
+                  "matches": "s1-root"
+                }
+              }
+            ]
+          },
+          "d-name-bind": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "pair_pattern",
+                  "has": {
+                    "field": "key",
+                    "pattern": "$NAME"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "kind": "assignment_pattern",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "pair_pattern",
+                    "has": {
+                      "field": "key",
+                      "pattern": "$NAME"
+                    }
+                  }
+                }
+              },
+              {
+                "pattern": "$NAME"
+              }
+            ]
+          },
+          "alias-r-root": {
+            "kind": "identifier",
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "matches": "tpl-block"
+              }
+            },
+            "resolves": {
+              "binding": {
+                "occurrence": {
+                  "any": [
+                    {
+                      "matches": "s1-root"
+                    },
+                    {
+                      "matches": "s2-root"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "alias-n-root": {
+            "kind": "identifier",
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "matches": "tpl-block"
+              }
+            },
+            "resolves": {
+              "binding": {
+                "occurrence": {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "matches": "s1-nonroot"
+                        },
+                        {
+                          "matches": "s2-nonroot"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "d-name-bind"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "this-ref": {
+            "any": [
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "kind": "this"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "opt-root": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "this-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "pattern": "$NAME"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": {
+                        "opt-obj-has-name": {
+                          "NAME": "$NAME"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "this-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_fragment",
+                        "pattern": "$NAME"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": {
+                        "opt-obj-has-name": {
+                          "NAME": "$NAME"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tpl-ident-root": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "end",
+              "matches": "tpl-block"
+            },
+            "pattern": "$I",
+            "not": {
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": "tpl-block"
+                    }
+                  }
+                }
+              }
+            },
+            "any": [
+              {
+                "all": [
+                  {
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "opt-obj-has-name": {
+                            "NAME": "$NAME"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "not": {
+                      "regex": "^(Infinity|undefined|NaN|isFinite|isNaN|parseFloat|parseInt|decodeURI|decodeURIComponent|encodeURI|encodeURIComponent|Math|Number|Date|Array|Object|Boolean|String|RegExp|Map|Set|JSON|Intl|BigInt)$"
+                    }
+                  },
+                  {
+                    "not": {
+                      "resolves": {
+                        "binding": {}
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "dp-prop-key",
+                        "pattern": "$K",
+                        "compare": {
+                          "left": "K",
+                          "op": "eq",
+                          "right": "NAME",
+                          "text": "unquoted"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "s2-nonroot",
+                        "pattern": "$DN",
+                        "compare": {
+                          "left": "DN",
+                          "op": "eq",
+                          "right": "NAME"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "s2-root",
+                        "pattern": "$RN",
+                        "compare": {
+                          "left": "RN",
+                          "op": "eq",
+                          "right": "I"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "pattern": "$NAME"
+                          }
+                        }
+                      },
+                      {
+                        "pattern": "$NAME"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "tpl-this-root": {
+            "kind": "member_expression",
+            "inside": {
+              "stopBy": "end",
+              "matches": "tpl-block"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "object",
+                  "kind": "this"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "kind": "property_identifier",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "opt-obj-has-name": {
+                            "NAME": "$NAME"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "program",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "matches": "dp-prop-key"
+                          },
+                          {
+                            "matches": "s2-nonroot"
+                          }
+                        ],
+                        "pattern": "$K",
+                        "compare": {
+                          "left": "K",
+                          "op": "eq",
+                          "right": "NAME",
+                          "text": "unquoted"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tpl-root": {
+            "any": [
+              {
+                "matches": "tpl-ident-root"
+              },
+              {
+                "matches": "tpl-this-root"
+              }
+            ]
+          },
+          "tpl-r": {
+            "any": [
+              {
+                "matches": "tpl-root"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tpl-r"
+                }
+              }
+            ]
+          },
+          "tpl-c1": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "tpl-r"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "tpl-c1"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tpl-c1"
+                }
+              }
+            ]
+          },
+          "tpl-c0": {
+            "any": [
+              {
+                "matches": "tpl-r"
+              },
+              {
+                "matches": "tpl-c1"
+              }
+            ]
+          },
+          "tpl-method": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "tpl-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_fragment",
+                        "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "tpl-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tpl-method"
+                }
+              }
+            ]
+          },
+          "tpl-arg": {
+            "matches": "tpl-c0",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^\\($"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "tpl-mut": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "has": {
+                  "field": "left",
+                  "matches": "tpl-c0"
+                }
+              },
+              {
+                "kind": "update_expression",
+                "has": {
+                  "field": "argument",
+                  "matches": "tpl-c0"
+                }
+              },
+              {
+                "kind": "unary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^delete$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "argument",
+                      "matches": "tpl-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "tpl-method"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^Object$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^assign$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "tpl-arg"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "opt-r": {
+            "any": [
+              {
+                "matches": "opt-root"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "opt-r"
+                }
+              }
+            ]
+          },
+          "opt-c1": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "opt-r"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "opt-c1"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "opt-c1"
+                }
+              }
+            ]
+          },
+          "opt-c0": {
+            "any": [
+              {
+                "matches": "opt-r"
+              },
+              {
+                "matches": "opt-c1"
+              }
+            ]
+          },
+          "opt-method": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "opt-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_fragment",
+                        "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "opt-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "opt-method"
+                }
+              }
+            ]
+          },
+          "opt-arg": {
+            "matches": "opt-c0",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^\\($"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "opt-mut": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "has": {
+                  "field": "left",
+                  "matches": "opt-c0"
+                }
+              },
+              {
+                "kind": "update_expression",
+                "has": {
+                  "field": "argument",
+                  "matches": "opt-c0"
+                }
+              },
+              {
+                "kind": "unary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^delete$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "argument",
+                      "matches": "opt-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "opt-method"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^Object$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^assign$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "opt-arg"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "ar-r": {
+            "any": [
+              {
+                "matches": "alias-r-root"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ar-r"
+                }
+              }
+            ]
+          },
+          "ar-c1": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "ar-r"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "property",
+                          "kind": "property_identifier",
+                          "pattern": "$NAME"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "index",
+                          "pattern": "$NAME"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "ar-c1"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ar-c1"
+                }
+              }
+            ]
+          },
+          "ar-c0": {
+            "any": [
+              {
+                "matches": "ar-r"
+              },
+              {
+                "matches": "ar-c1"
+              }
+            ]
+          },
+          "ar-method": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "ar-c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_fragment",
+                        "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "ar-c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ar-method"
+                }
+              }
+            ]
+          },
+          "ar-arg": {
+            "matches": "ar-c1",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^\\($"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "ar-mut": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "has": {
+                  "field": "left",
+                  "matches": "ar-c1"
+                }
+              },
+              {
+                "kind": "update_expression",
+                "has": {
+                  "field": "argument",
+                  "matches": "ar-c1"
+                }
+              },
+              {
+                "kind": "unary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^delete$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "argument",
+                      "matches": "ar-c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "ar-method"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^Object$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^assign$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ar-arg"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "an-r": {
+            "any": [
+              {
+                "matches": "alias-n-root"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "an-r"
+                }
+              }
+            ]
+          },
+          "an-c1": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "an-r"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "an-c1"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "an-c1"
+                }
+              }
+            ]
+          },
+          "an-c0": {
+            "any": [
+              {
+                "matches": "an-r"
+              },
+              {
+                "matches": "an-c1"
+              }
+            ]
+          },
+          "an-method": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "an-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_fragment",
+                        "regex": "^(push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "an-c0"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "an-method"
+                }
+              }
+            ]
+          },
+          "an-arg": {
+            "matches": "an-c0",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^\\($"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "an-mut": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ],
+                "has": {
+                  "field": "left",
+                  "matches": "an-c1"
+                }
+              },
+              {
+                "kind": "update_expression",
+                "has": {
+                  "field": "argument",
+                  "matches": "an-c1"
+                }
+              },
+              {
+                "kind": "unary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^delete$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "argument",
+                      "matches": "an-c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "an-method"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^Object$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^assign$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "an-arg"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "template-mutation",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "any": [
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "call_expression"
+              }
+            ],
+            "matches": "tpl-mut"
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-mutating-props",
+        "anchor": "witness.span",
+        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-mutating-props"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "template-model",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ],
+            "matches": "tpl-c0",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parenthesized_expression",
+              "regex": "^(?:v-model(?:[:.=\\s]|$)|v-bind(?::[^=\\s]*)?\\.sync(?:[.=\\s]|$)|:[^=\\s]*\\.sync(?:[.=\\s]|$))",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "expression_statement"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-mutating-props",
+        "anchor": "witness.span",
+        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-mutating-props"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "options-mutation",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "any": [
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "call_expression"
+              }
+            ],
+            "matches": "opt-mut"
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-mutating-props",
+        "anchor": "witness.span",
+        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-mutating-props"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "props-variable-mutation",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "any": [
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "call_expression"
+              }
+            ],
+            "matches": "ar-mut"
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-mutating-props",
+        "anchor": "witness.span",
+        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-mutating-props"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "props-destructured-mutation",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "any": [
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "call_expression"
+              }
+            ],
+            "matches": "an-mut"
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-mutating-props",
+        "anchor": "witness.span",
+        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-mutating-props"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

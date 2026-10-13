@@ -1,0 +1,159 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:no-child-content",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment). Reported where the child content starts: the end of the start tag.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "v-html",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "start_tag",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^v-html$"
+              }
+            },
+            "all": [
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "end_tag"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    },
+                    {
+                      "kind": "script_element"
+                    },
+                    {
+                      "kind": "style_element"
+                    },
+                    {
+                      "kind": "entity"
+                    },
+                    {
+                      "kind": "text",
+                      "regex": "\\S"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "vue/no-child-content",
+        "message": "Child content is disallowed because it will be overwritten by the v-html directive.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-child-content"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "v-text",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "start_tag",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^v-text$"
+              }
+            },
+            "all": [
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "end_tag"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    },
+                    {
+                      "kind": "script_element"
+                    },
+                    {
+                      "kind": "style_element"
+                    },
+                    {
+                      "kind": "entity"
+                    },
+                    {
+                      "kind": "text",
+                      "regex": "\\S"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "vue/no-child-content",
+        "message": "Child content is disallowed because it will be overwritten by the v-text directive.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-child-content"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

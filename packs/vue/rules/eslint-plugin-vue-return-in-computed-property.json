@@ -1,0 +1,1580 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:return-in-computed-property",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/return-in-computed-property` (default options, treatUndefinedAsUnspecified: true). Reports a computed getter that can fall off its end or whose last `return` has no value: an Options API getter (`foo() {}`, `foo: function () {}`, `foo: { get() {} }`, `foo: { get: function () {} }`) of the `computed` object of a Vue object (`export default` outside `<script setup>`, `Vue.component`/`mixin`/`extend`, `app.component`/`mixin`, `defineComponent`, `createApp`, `defineNuxtComponent`, `new Vue`, or an object on the line after a `@vue/component` comment), and a composition getter given to `computed(...)` imported from `vue`, `@vue/composition-api`, `@nuxtjs/composition-api` or `#imports` (a function, or `{ get }`). Reads ESLint's code-path end reachability as the recursive `nc` utility (return, throw, break, continue, blocks, if/else, switch with a default, try/catch/finally, labelled statements, loops with a constant truthy test) and the last `return` statement in source order. Reported at the function (a method at its parameters).",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "vue",
+        "utils": {
+          "fn-like": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "fn-expr": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              }
+            ]
+          },
+          "paren-as": {
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "as_expression"
+              }
+            ]
+          },
+          "breakable": {
+            "any": [
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "kind": "switch_statement"
+              }
+            ]
+          },
+          "loop-or-fn": {
+            "any": [
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "matches": "fn-like"
+              }
+            ]
+          },
+          "brk-stop": {
+            "any": [
+              {
+                "matches": "breakable"
+              },
+              {
+                "matches": "fn-like"
+              }
+            ]
+          },
+          "setup-marker": {
+            "kind": "empty_statement",
+            "regex": "^<script\\b[^>]*\\bsetup\\b"
+          },
+          "any-marker": {
+            "kind": "empty_statement",
+            "regex": "^<script\\b"
+          },
+          "top-in-setup": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "program"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": {
+                    "matches": "any-marker"
+                  },
+                  "matches": "setup-marker"
+                }
+              }
+            ]
+          },
+          "lit-truthy": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
+                "value": {
+                  "truthy": true
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "lit-truthy"
+                }
+              }
+            ]
+          },
+          "throwable": {
+            "any": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              },
+              {
+                "kind": "yield_expression"
+              },
+              {
+                "kind": "throw_statement"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              },
+              {
+                "kind": "identifier",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "variable_declarator",
+                    "field": "name"
+                  }
+                }
+              }
+            ]
+          },
+          "dead": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "statement_block"
+                    },
+                    {
+                      "kind": "switch_case"
+                    },
+                    {
+                      "kind": "switch_default"
+                    }
+                  ]
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "nc"
+                }
+              }
+            ]
+          },
+          "live": {
+            "all": [
+              {
+                "not": {
+                  "matches": "dead"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "breakable"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "live"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "live-in-try": {
+            "all": [
+              {
+                "not": {
+                  "matches": "dead"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "statement_block",
+                    "inside": {
+                      "field": "body",
+                      "stopBy": "neighbor",
+                      "kind": "try_statement"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "live-in-try"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "live-label": {
+            "all": [
+              {
+                "not": {
+                  "matches": "dead"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "labeled_statement"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "live-label"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tbreak": {
+            "all": [
+              {
+                "kind": "break_statement"
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "label",
+                    "regex": "."
+                  }
+                }
+              },
+              {
+                "matches": "live"
+              }
+            ]
+          },
+          "live-loop": {
+            "all": [
+              {
+                "not": {
+                  "matches": "dead"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "do_statement"
+                        },
+                        {
+                          "kind": "for_statement"
+                        },
+                        {
+                          "kind": "for_in_statement"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "live-loop"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tcont": {
+            "all": [
+              {
+                "kind": "continue_statement"
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "label",
+                    "regex": "."
+                  }
+                }
+              },
+              {
+                "matches": "live-loop"
+              }
+            ]
+          },
+          "nc": {
+            "any": [
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "throw_statement"
+              },
+              {
+                "kind": "break_statement"
+              },
+              {
+                "kind": "continue_statement"
+              },
+              {
+                "kind": "statement_block",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "nc"
+                }
+              },
+              {
+                "kind": "if_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "matches": "nc"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "alternative",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "nc"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "labeled_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "matches": "nc"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "has": {
+                            "field": "label",
+                            "pattern": "$LBL"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "fn-like"
+                            },
+                            "kind": "break_statement",
+                            "has": {
+                              "field": "label",
+                              "pattern": "$LBL"
+                            },
+                            "matches": "live-label"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "switch_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "kind": "switch_body",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "switch_default"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "switch_case"
+                              },
+                              {
+                                "kind": "switch_default"
+                              }
+                            ],
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true,
+                              "ofRule": {
+                                "any": [
+                                  {
+                                    "kind": "switch_case"
+                                  },
+                                  {
+                                    "kind": "switch_default"
+                                  }
+                                ]
+                              }
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "nc"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "matches": "brk-stop"
+                        },
+                        "matches": "tbreak"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "try_statement",
+                "any": [
+                  {
+                    "has": {
+                      "field": "finalizer",
+                      "has": {
+                        "field": "body",
+                        "matches": "nc"
+                      }
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "body",
+                          "matches": "nc"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "not": {
+                              "has": {
+                                "field": "handler",
+                                "regex": "."
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "handler",
+                              "has": {
+                                "field": "body",
+                                "matches": "nc"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "field": "body",
+                                "has": {
+                                  "stopBy": {
+                                    "matches": "fn-like"
+                                  },
+                                  "all": [
+                                    {
+                                      "matches": "throwable"
+                                    },
+                                    {
+                                      "matches": "live-in-try"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "while_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "condition",
+                      "matches": "lit-truthy"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "matches": "brk-stop"
+                        },
+                        "matches": "tbreak"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "for_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "condition",
+                      "any": [
+                        {
+                          "kind": "empty_statement"
+                        },
+                        {
+                          "matches": "lit-truthy"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "matches": "brk-stop"
+                        },
+                        "matches": "tbreak"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "do_statement",
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "matches": "brk-stop"
+                        },
+                        "matches": "tbreak"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "condition",
+                          "matches": "lit-truthy"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "field": "body",
+                              "matches": "nc"
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": {
+                                  "matches": "loop-or-fn"
+                                },
+                                "matches": "tcont"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "valued-return": {
+            "kind": "return_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^return$"
+                  },
+                  {
+                    "regex": "^;$"
+                  }
+                ]
+              }
+            }
+          },
+          "later-return": {
+            "all": [
+              {
+                "not": {
+                  "matches": "fn-like"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "return_statement"
+                  },
+                  {
+                    "has": {
+                      "stopBy": {
+                        "matches": "fn-like"
+                      },
+                      "kind": "return_statement"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "final-position": {
+            "all": [
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "later-return"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "statement_block",
+                    "inside": {
+                      "field": "body",
+                      "stopBy": "neighbor",
+                      "matches": "fn-like"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "final-position"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "lacks-return-value": {
+            "all": [
+              {
+                "has": {
+                  "field": "body",
+                  "kind": "statement_block"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "not": {
+                      "has": {
+                        "field": "body",
+                        "matches": "nc"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "matches": "fn-like"
+                        },
+                        "kind": "return_statement",
+                        "all": [
+                          {
+                            "matches": "valued-return"
+                          },
+                          {
+                            "matches": "final-position"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "key-computed": {
+            "any": [
+              {
+                "regex": "^(?:computed|'computed'|\"computed\")$",
+                "not": {
+                  "kind": "computed_property_name"
+                }
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^(?:'computed'|\"computed\")$"
+                }
+              }
+            ]
+          },
+          "key-get": {
+            "any": [
+              {
+                "regex": "^(?:get|'get'|\"get\")$",
+                "not": {
+                  "kind": "computed_property_name"
+                }
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^(?:'get'|\"get\")$"
+                }
+              }
+            ]
+          },
+          "last-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "paren-as"
+                    },
+                    {
+                      "matches": "last-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "first-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "paren-as"
+                    },
+                    {
+                      "matches": "first-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "define-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:component|mixin)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^Vue$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^defineNuxtComponent$"
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:component|createApp|defineComponent)$",
+                "not": {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "import_specifier",
+                            "not": {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "import_statement",
+                                "has": {
+                                  "field": "source",
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "class_declaration"
+                          },
+                          {
+                            "kind": "catch_clause"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vue-object": {
+            "kind": "object",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "export_statement",
+                  "not": {
+                    "matches": "top-in-setup"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "matches": "last-arg"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "define-callee"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "first-arg"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Vue$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "not": {
+                    "all": [
+                      {
+                        "pattern": "$VUEOBJ"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "program",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "comment",
+                            "regex": "@vue/component",
+                            "layout": {
+                              "after": {
+                                "to": "capture.VUEOBJ",
+                                "breaks": {
+                                  "eq": 1
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "computed-object": {
+            "kind": "object",
+            "inside": {
+              "field": "value",
+              "stopBy": "neighbor",
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "field": "key",
+                    "matches": "key-computed"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "vue-object"
+                  }
+                }
+              ]
+            }
+          },
+          "opt-getter": {
+            "any": [
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "pattern": "$K"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "computed-object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-expr"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "pattern": "$K"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "matches": "computed-object"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "matches": "key-get"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "object",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "paren-as"
+                          }
+                        },
+                        "kind": "pair",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "key",
+                              "pattern": "$K"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "matches": "computed-object"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-expr"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "matches": "key-get"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "matches": "paren-as"
+                                }
+                              },
+                              "kind": "pair",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "pattern": "$K"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "matches": "computed-object"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "computed-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "regex": "^computed$"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "kind": "import_statement",
+                            "has": {
+                              "field": "source",
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^computed$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "namespace_import",
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "import_statement",
+                              "has": {
+                                "field": "source",
+                                "kind": "string",
+                                "value": {
+                                  "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "computed-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "computed-callee"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "matches": "computed-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "fn-or-arrow": {
+            "any": [
+              {
+                "matches": "fn-expr"
+              },
+              {
+                "kind": "arrow_function"
+              }
+            ]
+          },
+          "comp-getter": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "fn-or-arrow"
+                  },
+                  {
+                    "matches": "computed-arg"
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "matches": "key-get"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "object",
+                      "matches": "computed-arg"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-or-arrow"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "matches": "key-get"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "matches": "computed-arg"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "type_parameters",
+                          "pattern": "$A"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "pattern": "$A"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "fn-or-arrow"
+                      },
+                      {
+                        "pattern": "$A"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "opt-getter"
+              },
+              {
+                "matches": "lacks-return-value"
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "vue/return-in-computed-property",
+        "message": "Expected to return a value in \"$NAME\" computed property.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/return-in-computed-property"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "type_parameters",
+                          "pattern": "$A"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "pattern": "$A"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "fn-or-arrow"
+                      },
+                      {
+                        "pattern": "$A"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "comp-getter"
+              },
+              {
+                "matches": "lacks-return-value"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "vue/return-in-computed-property",
+        "message": "Expected to return a value in computed function.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/return-in-computed-property"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

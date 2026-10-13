@@ -1,0 +1,654 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue:no-template-shadow",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-template-shadow` with default options (no allow list): a template variable (v-for alias or slot parameter, the parameters of the view's v-for / slot arrows) whose name is already an outer template variable (a parameter of an enclosing view arrow), a top-level binding of `<script setup>`, a `defineProps` prop name (runtime array or object keys, `defineProps<{...}>()` type-literal properties, a local interface or type alias named as the type argument), or a static key of the Options API groups props, computed, data, asyncData, methods and setup (array strings, object members, and the object a data/asyncData/setup function returns) of `export default {}`, `defineComponent({})`, `Vue.extend/component/mixin(...)` or `new Vue({})`. Names compare as text. Reported at the variable identifier.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "view-arrow": {
+              "kind": "arrow_function",
+              "any": [
+                {
+                  "inside": {
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement"
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "statement_block",
+                "regex": "^<template"
+              }
+            },
+            "view-param": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "parameter"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "formal_parameters",
+                    "inside": {
+                      "matches": "view-arrow"
+                    }
+                  }
+                }
+              ]
+            },
+            "setup-statement": {
+              "inside": {
+                "kind": "program"
+              },
+              "follows": {
+                "stopBy": "end",
+                "kind": "empty_statement",
+                "regex": "^<script\\b[^>]*\\bsetup\\b"
+              },
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "empty_statement",
+                  "regex": "^<script\\b",
+                  "not": {
+                    "regex": "^<script\\b[^>]*\\bsetup\\b"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "empty_statement",
+                    "regex": "^<script\\b[^>]*\\bsetup\\b"
+                  }
+                }
+              }
+            },
+            "component-object": {
+              "kind": "object",
+              "any": [
+                {
+                  "inside": {
+                    "kind": "export_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(defineComponent|defineNuxtComponent|component|createApp|Vue\\.(component|mixin|extend)|[A-Za-z_$][\\w$]*\\.(component|mixin))$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "kind": "new_expression",
+                      "has": {
+                        "field": "constructor",
+                        "regex": "^Vue$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "group-pair": {
+              "kind": "pair",
+              "has": {
+                "field": "key",
+                "regex": "^['\"]?(props|computed|data|asyncData|methods|setup)['\"]?$"
+              },
+              "inside": {
+                "matches": "component-object"
+              }
+            },
+            "group-method": {
+              "kind": "method_definition",
+              "has": {
+                "field": "name",
+                "regex": "^['\"]?(props|computed|data|asyncData|methods|setup)['\"]?$"
+              },
+              "inside": {
+                "matches": "component-object"
+              }
+            },
+            "group-function": {
+              "any": [
+                {
+                  "matches": "group-method"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    }
+                  ],
+                  "inside": {
+                    "matches": "group-pair"
+                  }
+                }
+              ]
+            },
+            "group-object": {
+              "kind": "object",
+              "any": [
+                {
+                  "inside": {
+                    "matches": "group-pair"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "return_statement",
+                    "inside": {
+                      "kind": "statement_block",
+                      "inside": {
+                        "matches": "group-function"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "inside": {
+                      "kind": "arrow_function",
+                      "matches": "group-function"
+                    }
+                  }
+                }
+              ]
+            },
+            "member-key": {
+              "any": [
+                {
+                  "kind": "pair",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "key",
+                        "any": [
+                          {
+                            "kind": "property_identifier"
+                          },
+                          {
+                            "kind": "string"
+                          }
+                        ],
+                        "pattern": "$K"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "key",
+                        "kind": "computed_property_name",
+                        "has": {
+                          "kind": "string",
+                          "pattern": "$K"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "method_definition",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "any": [
+                          {
+                            "kind": "property_identifier"
+                          },
+                          {
+                            "kind": "string"
+                          }
+                        ],
+                        "pattern": "$K"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "computed_property_name",
+                        "has": {
+                          "kind": "string",
+                          "pattern": "$K"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "shorthand_property_identifier",
+                  "pattern": "$K"
+                }
+              ]
+            },
+            "define-props-call": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "kind": "identifier",
+                "regex": "^defineProps$"
+              },
+              "inside": {
+                "stopBy": "end",
+                "matches": "setup-statement"
+              }
+            }
+          },
+          "rule": {
+            "pattern": "$NAME",
+            "all": [
+              {
+                "matches": "view-param"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "matches": "view-arrow",
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "view-arrow",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "formal_parameters",
+                            "has": {
+                              "stopBy": "end",
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "binds": {
+                                    "form": "parameter"
+                                  }
+                                },
+                                {
+                                  "pattern": "$Q"
+                                },
+                                {
+                                  "compare": {
+                                    "left": "NAME",
+                                    "op": "eq",
+                                    "right": "Q"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "document",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ]
+                          },
+                          {
+                            "binds": {
+                              "scope": [
+                                "module",
+                                "global"
+                              ]
+                            }
+                          },
+                          {
+                            "pattern": "$K"
+                          },
+                          {
+                            "compare": {
+                              "left": "NAME",
+                              "op": "eq",
+                              "right": "K",
+                              "text": "unquoted"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "matches": "setup-statement"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "document",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "matches": "member-key"
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "object",
+                                  "inside": {
+                                    "kind": "arguments",
+                                    "inside": {
+                                      "matches": "define-props-call"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "string",
+                                "pattern": "$K"
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "array",
+                                  "inside": {
+                                    "kind": "arguments",
+                                    "inside": {
+                                      "matches": "define-props-call"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "property_signature"
+                                  },
+                                  {
+                                    "kind": "method_signature"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ],
+                                  "pattern": "$K"
+                                }
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "object_type",
+                                  "inside": {
+                                    "kind": "type_arguments",
+                                    "inside": {
+                                      "matches": "define-props-call"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "property_signature"
+                                  },
+                                  {
+                                    "kind": "method_signature"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ],
+                                  "pattern": "$K"
+                                }
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "any": [
+                                    {
+                                      "kind": "interface_body"
+                                    },
+                                    {
+                                      "kind": "object_type"
+                                    }
+                                  ],
+                                  "inside": {
+                                    "any": [
+                                      {
+                                        "kind": "interface_declaration"
+                                      },
+                                      {
+                                        "kind": "type_alias_declaration"
+                                      }
+                                    ],
+                                    "has": {
+                                      "field": "name",
+                                      "kind": "type_identifier",
+                                      "pattern": "$TD"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "document",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "kind": "type_identifier",
+                                    "pattern": "$TU",
+                                    "compare": {
+                                      "left": "TD",
+                                      "op": "eq",
+                                      "right": "TU"
+                                    },
+                                    "inside": {
+                                      "kind": "type_arguments",
+                                      "inside": {
+                                        "matches": "define-props-call"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "document",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "matches": "member-key"
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "matches": "group-object"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "string",
+                                "pattern": "$K"
+                              },
+                              {
+                                "compare": {
+                                  "left": "NAME",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "unquoted"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "array",
+                                  "inside": {
+                                    "matches": "group-pair"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-template-shadow",
+        "message": "Variable '$NAME' is already declared in the upper scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-template-shadow"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
