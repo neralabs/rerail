@@ -220,7 +220,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             keys,
-            ["eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs"]
+            [
+                "eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs", "sqlfluff"
+            ]
         );
         for kind in Suppression::ALL {
             let key = kind.key();
@@ -237,7 +239,7 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"),
+                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, phpcs, or sqlfluff"),
             ),
             (
                 "typescript",

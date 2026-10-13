@@ -1066,7 +1066,7 @@ mod tests {
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "typescript", "tsx"];
+        let vendored = ["python", "sql", "typescript", "tsx"];
         let planned = quoted(&planned_ids(&root.join("../languages")));
         let out = Registry::new("repository", &[]);
         generate(
@@ -1109,7 +1109,7 @@ mod tests {
             generate(
                 &root.join("../languages"),
                 test_directory,
-                &["python", "typescript", "tsx"],
+                &["python", "sql", "typescript", "tsx"],
                 &out.0.join("out"),
             )
         };
