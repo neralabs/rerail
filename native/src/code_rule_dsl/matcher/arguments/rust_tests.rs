@@ -6,6 +6,15 @@ use crate::code_rule_dsl::oracle;
 use ast_grep_language::LanguageExt;
 use serde_json::Value as Json;
 
+/// Arguments whose value no constant folding gives, with what the case's run printed for them:
+/// the call `g(1)` returns its argument; `&S(7)` is a receiver whose field the method prints.
+const NOT_CONSTANT: &[(&str, &str, &str)] = &[
+    ("f(g(1), 2)", "g(1)", "1"),
+    ("S::m(&S(7), 1)", "&S(7)", "7"),
+];
+
+/// Every call rustc 1.99.0 compiled in `fixtures/rust/arguments` (`generate.py`): each slot holds
+/// the argument rustc bound to that parameter, by the value the run printed for it.
 #[test]
 fn rust_slots_follow_rustc() {
     let oracle: Json = serde_json::from_str(oracle!("rust/arguments/rust.expected.json"))
@@ -48,18 +57,20 @@ fn rust_slots_follow_rustc() {
                 Passed::Unknown => Some("<unknown>".to_owned()),
                 Passed::Value(value) => {
                     let text = value.text().into_owned().replace(' ', "");
-                    Some(text.trim_matches('{').trim_matches('}').to_owned())
+                    match crate::code_rule_dsl::value::rust::evaluate(&value) {
+                        crate::code_rule_dsl::value::rust::RustValue::Int { value, .. } => {
+                            Some(value.to_string())
+                        }
+                        // An argument with no constant value: the run printed what it evaluated to.
+                        _ => NOT_CONSTANT
+                            .iter()
+                            .find(|(case, argument, _)| *case == call && *argument == text)
+                            .map(|(_, _, printed)| (*printed).to_owned())
+                            .or(Some(text)),
+                    }
                 }
             };
             let wanted = bound.get(expected).and_then(Json::as_str);
-            if wanted.is_none()
-                && (call.starts_with("P(") || call.starts_with("E::V(") || call.contains("S::m"))
-            {
-                continue;
-            }
-            if call.contains("g(1)") {
-                continue;
-            }
             if actual.as_deref() != wanted {
                 failures.push(format!(
                     "{call:?}: slot {index}: expected {wanted:?}, got {actual:?}"

@@ -125,7 +125,7 @@
  },
  {
   "name": "generic",
-  "items": "fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
+  "items": "fn f<T: Copy>(a: i32) -> i32 { println!(\"a={}\",a); 0 }",
   "call": "f::<i32>(1)",
   "signature": [
    "a"
@@ -133,7 +133,7 @@
  },
  {
   "name": "nested",
-  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }\nfn g(x: i32) -> i32 { println!(\"x={}\", x); 0 }",
+  "items": "fn f(a: i32, b: i32) -> i32 { println!(\"a={}\", a); println!(\"b={}\", b); 0 }\nfn g(x: i32) -> i32 { println!(\"x={}\", x); x }",
   "call": "f(g(1), 2)",
   "signature": [
    "a",
@@ -212,8 +212,8 @@
  },
  {
   "name": "ufcs",
-  "items": "struct S; impl S { fn m(&self, a: i32) -> i32 { println!(\"a={}\",a); 0 } }",
-  "call": "S::m(&S, 1)",
+  "items": "struct S(i32); impl S { fn m(&self, a: i32) -> i32 { println!(\"self={}\", self.0); println!(\"a={}\",a); 0 } }",
+  "call": "S::m(&S(7), 1)",
   "signature": [
    "self",
    "a"

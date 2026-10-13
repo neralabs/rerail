@@ -200,27 +200,11 @@
    "signature": [
     "a"
    ],
-   "compiled": false,
-   "diagnostics": [
-    "error[E0107]: function takes 0 generic arguments but 1 generic argument was supplied",
-    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/generic/main.rs:2:21",
-    "  |",
-    "2 | fn main() { let _ = f::<i32>(1); }",
-    "  |                     ^------- help: remove the unnecessary generics",
-    "  |                     |",
-    "  |                     expected 0 generic arguments",
-    "  |",
-    "note: function defined here, with 0 generic parameters",
-    " --> /Users/tim/orca/workspaces/rerail/language-support-rust/.rerail/tools/rust/arguments/generic/main.rs:1:4",
-    "  |",
-    "1 | fn f(a: i32) -> i32 { println!(\"a={}\", a); 0 }",
-    "  |    ^",
-    "",
-    "error: aborting due to 1 previous error",
-    "",
-    "For more information about this error, try `rustc --explain E0107`."
-   ],
-   "bound": {}
+   "compiled": true,
+   "diagnostics": [],
+   "bound": {
+    "a": "1"
+   }
   },
   {
    "name": "nested",
@@ -233,7 +217,7 @@
    "diagnostics": [],
    "bound": {
     "x": "1",
-    "a": "0",
+    "a": "1",
     "b": "2"
    }
   },
@@ -335,7 +319,10 @@
    ],
    "compiled": true,
    "diagnostics": [],
-   "bound": {}
+   "bound": {
+    "0": "1",
+    "1": "2"
+   }
   },
   {
    "name": "variant",
@@ -346,7 +333,10 @@
    ],
    "compiled": true,
    "diagnostics": [],
-   "bound": {}
+   "bound": {
+    "0": "1",
+    "1": "2"
+   }
   },
   {
    "name": "method",
@@ -376,7 +366,7 @@
   },
   {
    "name": "ufcs",
-   "call": "S::m(&S, 1)",
+   "call": "S::m(&S(7), 1)",
    "signature": [
     "self",
     "a"
@@ -384,6 +374,7 @@
    "compiled": true,
    "diagnostics": [],
    "bound": {
+    "self": "7",
     "a": "1"
    }
   },

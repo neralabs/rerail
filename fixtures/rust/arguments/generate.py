@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Record Rust call argument binding from rustc 1.99.0.
+"""Writes rust.expected.json: how rustc 1.99.0 binds each call's arguments to the callee's parameters
+(offline, run by a maintainer; never in CI).
 
-Pins the compiler, uses `rustc +1.99.0`, and writes JSON cases plus stdout-derived
-bindings. Build products stay under .rerail/tools/rust/arguments.
+Each case is `items` (the callee: a fn whose body prints `<parameter>=<value>` for each parameter in order,
+a method, a closure, a tuple struct or variant) and one `call`. The program `<items> fn main() { let _ =
+<call>; }` (for a tuple struct or variant: `let v = <call>;` then the fields printed back) is compiled with
+`rustc +1.99.0 --edition 2024` and run. Recorded per case: `name`, `call`, `signature` (the parameter names
+in order; for method-call syntax without the receiver, which is no argument), `compiled` (rustc accepted
+the program and it ran), `diagnostics` (rustc's stderr lines when it did not), and `bound`: parameter name
+-> the value the run printed for it. Every argument is a distinct integer, so `bound` says which argument
+rustc passed to which parameter.
+
+Pins (refuses anything else): rustc 1.99.0 (b940084d7 2026-09-28), edition 2024.
+Build products go to <checkout>/.rerail/tools/rust/arguments/.
+Usage: python3 generate.py
 """
+
 import json, pathlib, re, shutil, subprocess
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -36,6 +48,9 @@ def fn(name, sig):
 
 
 def main():
+    version = subprocess.check_output(["rustc", "+" + TC, "-V"], text=True).strip()
+    if version != "rustc 1.99.0 (b940084d7 2026-09-28)":
+        raise SystemExit(f"unexpected rustc: {version}")
     cases = []
     for n in range(10):
         sig = ["a", "b", "c", "d"][:n % 5]
@@ -46,8 +61,8 @@ def main():
         {"name":"negative", "items":fn("f",["a","b"]), "call":"f(-1, 2)", "signature":["a","b"]},
         {"name":"commented", "items":fn("f",["a","b"]), "call":"f(1, /* c */ 2)", "signature":["a","b"]},
         {"name":"trailing", "items":fn("f",["a","b"]), "call":"f(1, 2,)", "signature":["a","b"]},
-        {"name":"generic", "items":fn("f",["a"]), "call":"f::<i32>(1)", "signature":["a"]},
-        {"name":"nested", "items":fn("f",["a","b"])+"\n"+fn("g",["x"]), "call":"f(g(1), 2)", "signature":["a","b"]},
+        {"name":"generic", "items":"fn f<T: Copy>(a: i32) -> i32 { println!(\"a={}\",a); 0 }", "call":"f::<i32>(1)", "signature":["a"]},
+        {"name":"nested", "items":fn("f",["a","b"])+"\nfn g(x: i32) -> i32 { println!(\"x={}\", x); x }", "call":"f(g(1), 2)", "signature":["a","b"]},
         {"name":"extra", "items":fn("f",["a"]), "call":"f(1, 2)", "signature":["a"]},
         {"name":"short", "items":fn("f",["a","b","c"]), "call":"f(1)", "signature":["a","b","c"]},
         {"name":"closure", "items":"", "call":"{ |a: i32, b: i32| { println!(\"a={}\", a); println!(\"b={}\", b); 0 } }(1, 2)", "signature":["a","b"]},
@@ -56,7 +71,7 @@ def main():
         {"name":"variant", "items":"enum E { V(i32, i32) }", "call":"E::V(1, 2)", "signature":["0","1"]},
         {"name":"method", "items":"struct S; impl S { fn m(&self, a: i32, b: i32) -> i32 { println!(\"a={}\",a); println!(\"b={}\",b); 0 } }", "call":"S.m(1, 2)", "signature":["a","b"]},
         {"name":"chain", "items":"struct S; impl S { fn m(&self, a: i32) -> S { println!(\"a={}\",a); S } }", "call":"S.m(1).m(2)", "signature":["a"]},
-        {"name":"ufcs", "items":"struct S; impl S { fn m(&self, a: i32) -> i32 { println!(\"a={}\",a); 0 } }", "call":"S::m(&S, 1)", "signature":["self","a"]},
+        {"name":"ufcs", "items":"struct S(i32); impl S { fn m(&self, a: i32) -> i32 { println!(\"self={}\", self.0); println!(\"a={}\",a); 0 } }", "call":"S::m(&S(7), 1)", "signature":["self","a"]},
         {"name":"missing", "items":fn("f",["a","b"]), "call":"f(1,)", "signature":["a","b"]},
     ]
     # Add repeated valid shapes to keep the oracle broad and stable.
@@ -66,7 +81,14 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     rows=[]
     for c in cases:
-        source = c["items"] + "\nfn main() { let _ = " + c["call"] + "; }\n"
+        # A constructor prints nothing itself: the program reads back the fields rustc filled.
+        if c["name"] == "tuple_struct":
+            body = "let v = " + c["call"] + "; println!(\"0={}\", v.0); println!(\"1={}\", v.1);"
+        elif c["name"] == "variant":
+            body = "let E::V(a, b) = " + c["call"] + "; println!(\"0={}\", a); println!(\"1={}\", b);"
+        else:
+            body = "let _ = " + c["call"] + ";"
+        source = c["items"] + "\nfn main() { " + body + " }\n"
         compiled, diagnostics, bound = run(source, c["name"])
         rows.append({"name":c["name"],"call":c["call"],"signature":c["signature"],"compiled":compiled,"diagnostics":diagnostics,"bound":bound})
     (HERE/"rust.cases.json").write_text(json.dumps(cases, indent=1)+"\n")
