@@ -21,7 +21,7 @@ import {
   CODE_RULE_PLANNED_LANGUAGES,
   codeRuleDialectForPath,
 } from "../../../src/engine/code-rule/code-rule-languages.js";
-import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../../support/exemplar-registry.js";
+import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../support/exemplar-registry.js";
 
 const capabilities = (support: "supported" | "refused" | "not-supported-yet") => ({ scope: support, value: support, arguments: support, calls: support, formatArgs: support });
 

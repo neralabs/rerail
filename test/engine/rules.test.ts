@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { validateCodeRule } from "../../src/engine/rules.js";
-import { EXEMPLAR } from "../support/exemplar-registry.js";
+import { EXEMPLAR } from "./support/exemplar-registry.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
-// planned language (test/support/exemplar-registry.ts, exemplar-engine.ts).
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
 vi.mock("../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
-  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
+  (await import("./support/exemplar-registry.js")).exemplarRegistryModule());
 vi.mock("../../src/engine/native/native.js", async importOriginal =>
-  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
+  (await import("./support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 /** One forbid clause over an ast query of `language`, reporting every identifier. */
 const astRule = (language: string, message = "an identifier") => ({

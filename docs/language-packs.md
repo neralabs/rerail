@@ -127,7 +127,7 @@ package and never in the product:
   (`TEST_PLANNED_LANGUAGES` names the languages only tests plan) and not otherwise. It is no part of the engine's
   identity.
 - A host test mocks the generated module with `exemplarRegistryModule()` and the native module with
-  `nativeRefusingExemplar` (`test/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
+  `nativeRefusingExemplar` (`test/engine/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
   loads is a product build and does not know it. The engine's own refusal, `language-not-supported`, is a native test.
 
 ## Adding a language
