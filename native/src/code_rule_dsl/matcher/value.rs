@@ -10,7 +10,7 @@ use crate::code_rule_dsl::literal;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::text_regex::TextRegex;
-use crate::code_rule_dsl::value::{BigInt, Context, Lang, Value};
+use crate::code_rule_dsl::value::{BigInt, Context, Value};
 use ast_grep_core::{Doc, Node};
 use num_traits::Zero;
 use std::cmp::Ordering;
@@ -92,7 +92,7 @@ impl Reading {
     }
 
     /// The language whose semantics the reading's values follow.
-    pub(crate) fn lang(&self) -> Lang {
+    pub(crate) fn lang(&self) -> Family {
         with_adapter!(self.family, A => <<A as Adapter>::Value as ValueRules>::LANG)
     }
 
@@ -305,17 +305,7 @@ impl ValueTest {
             }
         }
         if let Some(bits) = self.bits_any {
-            let integer = match (value.as_ref(), lang) {
-                (Value::Int(value), _) => Some(value.clone()),
-                (Value::BigInt(value), _) => Some(BigInt::from(*value)),
-                (Value::Bool(value), Lang::Python) => Some(BigInt::from(u8::from(*value))),
-                (Value::Float(value), Lang::Js)
-                    if value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_992.0 =>
-                {
-                    Some(BigInt::from(*value as i64))
-                }
-                _ => None,
-            };
+            let integer = with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::integer(value.as_ref()));
             if !all(Some(integer.is_some_and(|integer| {
                 !(integer & BigInt::from(bits)).is_zero()
             }))) {
@@ -323,10 +313,7 @@ impl ValueTest {
             }
         }
         for (bound, limit) in &self.bounds {
-            let numeric = matches!(
-                value.as_ref(),
-                Value::Int(_) | Value::Float(_) | Value::BigInt(_)
-            ) || (lang == Lang::Python && matches!(value.as_ref(), Value::Bool(_)));
+            let numeric = with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::numeric(value.as_ref()));
             let holds = numeric
                 && value
                     .order(limit, lang)

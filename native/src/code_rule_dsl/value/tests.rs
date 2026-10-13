@@ -1,4 +1,5 @@
 use super::*;
+use crate::code_rule_dsl::language::Family;
 use serde_json::Value as Json;
 
 /// Whether a decoded value agrees with an oracle's encoding of the same value: exact for scalars
@@ -86,7 +87,7 @@ pub(crate) fn agrees(value: &Value, expected: &Json) -> bool {
 
 #[test]
 fn python_equality_crosses_numeric_types_and_hash_consistency() {
-    let py = |left: Value, right: Value| left.equals(&right, Lang::Python);
+    let py = |left: Value, right: Value| left.equals(&right, Family::Python);
     assert_eq!(py(Value::int(1), Value::Float(1.0)), Some(true));
     assert_eq!(py(Value::int(1), Value::Bool(true)), Some(true));
     assert_eq!(py(Value::Complex(1.0, 0.0), Value::int(1)), Some(true));
@@ -122,7 +123,7 @@ fn python_equality_crosses_numeric_types_and_hash_consistency() {
 
 #[test]
 fn javascript_equality_is_same_value() {
-    let js = |left: Value, right: Value| left.equals(&right, Lang::Js);
+    let js = |left: Value, right: Value| left.equals(&right, Family::Ecma);
     assert_eq!(
         js(Value::Float(f64::NAN), Value::Float(f64::NAN)),
         Some(true)
@@ -137,23 +138,23 @@ fn javascript_equality_is_same_value() {
 fn order_is_numeric_across_types_and_by_code_unit_for_strings() {
     let order = |left: Value, right: Value, lang| left.order(&right, lang);
     assert_eq!(
-        order(Value::int(2), Value::Float(2.5), Lang::Python),
+        order(Value::int(2), Value::Float(2.5), Family::Python),
         Some(Some(Ordering::Less))
     );
     assert_eq!(
         order(
             Value::int(i128::MAX),
             Value::Float(f64::INFINITY),
-            Lang::Python
+            Family::Python
         ),
         Some(Some(Ordering::Less))
     );
     assert_eq!(
-        order(Value::Float(f64::NAN), Value::int(0), Lang::Python),
+        order(Value::Float(f64::NAN), Value::int(0), Family::Python),
         Some(None)
     );
     assert_eq!(
-        order(Value::Str("a".into()), Value::int(1), Lang::Python),
+        order(Value::Str("a".into()), Value::int(1), Family::Python),
         Some(None)
     );
     // U+FF61 sorts after U+1F600 by code point, before it by UTF-16 code unit.
@@ -161,26 +162,26 @@ fn order_is_numeric_across_types_and_by_code_unit_for_strings() {
         order(
             Value::Str("\u{FF61}".into()),
             Value::Str("\u{1F600}".into()),
-            Lang::Python
+            Family::Python
         ),
         Some(Some(Ordering::Less))
     );
     let utf16 = |text: &str| Value::Utf16(text.encode_utf16().collect());
     assert_eq!(
-        order(utf16("\u{FF61}"), utf16("\u{1F600}"), Lang::Js),
+        order(utf16("\u{FF61}"), utf16("\u{1F600}"), Family::Ecma),
         Some(Some(Ordering::Greater))
     );
     assert_eq!(
         order(
             Value::Tuple(vec![Value::int(1), Value::int(2)]),
             Value::Tuple(vec![Value::Float(1.0)]),
-            Lang::Python
+            Family::Python
         ),
         Some(Some(Ordering::Greater))
     );
-    assert_eq!(order(Value::Unknown, Value::int(1), Lang::Python), None);
+    assert_eq!(order(Value::Unknown, Value::int(1), Family::Python), None);
     assert_eq!(
-        order(Value::Float(1.0), Value::BigInt(2), Lang::Js),
+        order(Value::Float(1.0), Value::BigInt(2), Family::Ecma),
         Some(Some(Ordering::Less))
     );
 }
@@ -221,13 +222,13 @@ fn types_are_named_as_each_language_names_them() {
         len: None,
         nonempty: Some(true),
     };
-    assert_eq!(list.type_name(Lang::Python), Some("list"));
+    assert_eq!(list.type_name(Family::Python), Some("list"));
     assert!(list.is_known() && !list.is_constant());
-    assert_eq!(Value::None.type_name(Lang::Python), Some("NoneType"));
-    assert_eq!(Value::None.type_name(Lang::Js), Some("null"));
-    assert_eq!(Value::Float(1.0).type_name(Lang::Js), Some("number"));
-    assert_eq!(Value::Bool(true).type_name(Lang::Python), Some("bool"));
-    assert_eq!(Value::Unknown.type_name(Lang::Python), None);
+    assert_eq!(Value::None.type_name(Family::Python), Some("NoneType"));
+    assert_eq!(Value::None.type_name(Family::Ecma), Some("null"));
+    assert_eq!(Value::Float(1.0).type_name(Family::Ecma), Some("number"));
+    assert_eq!(Value::Bool(true).type_name(Family::Python), Some("bool"));
+    assert_eq!(Value::Unknown.type_name(Family::Python), None);
     assert!(Value::Tuple(vec![]).is_constant());
 }
 

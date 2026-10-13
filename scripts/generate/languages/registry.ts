@@ -13,10 +13,12 @@ import { z } from "zod";
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const LANGUAGES_DIRECTORY = resolve(ROOT, "languages");
 export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "code-rule", "code-rule-language-registry.generated.ts");
+/** The languages only tests see: planned, in no product registry, host module or build (docs/language-packs.md). */
+export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name. */
-export const LANGUAGE_PARSERS = ["tree-sitter"] as const;
+/** The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/). */
+export const LANGUAGE_PARSERS = ["tree-sitter", "forte"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
 const support = z.enum(["supported", "refused", "not-supported-yet"]);
@@ -26,7 +28,7 @@ const dialectSchema = z
     variant: z.string().regex(/^[A-Z][A-Za-z0-9]*$/u, "Must be the engine's GrammarDialect variant (a Rust type name).").optional(),
     suffixes: z.array(z.string().regex(/^\.[^/A-Z]+$/u, "Must be a lowercase `.suffix`.")).min(1),
     parser: z.enum(LANGUAGE_PARSERS).optional(),
-    grammar: z.string().regex(/^(?:vendored:[a-z][a-z0-9-]*|ast-grep:[A-Z][A-Za-z0-9]*)$/u, "Must be vendored:<name> or ast-grep:<Language>.").optional(),
+    grammar: z.string().regex(/^(?:vendored:[a-z][a-z0-9-]*|native:[a-z][a-z0-9-]*|ast-grep:[A-Z][A-Za-z0-9]*)$/u, "Must be vendored:<name>, native:<name> or ast-grep:<Language>.").optional(),
     tapeTag: z.number().int().min(1).max(255).optional(),
   })
   .strict();
@@ -84,6 +86,16 @@ export function languageRegistryProblems(entries: readonly { file: string; entry
       if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
     }
     for (const embed of entry.embeds ?? []) if (!ids.has(embed.language)) problems.push(`${file}: embeds unknown language ${embed.language}`);
+    if (entry.status === "supported") {
+      for (const embed of entry.embeds ?? []) {
+        const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
+        if (embedded && embedded.status !== "supported") {
+          problems.push(
+            `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,
+          );
+        }
+      }
+    }
     if (entry.status !== "supported") continue;
     const own = entry.dialects.map(dialect => dialect.label);
     const runsOn = entry.runsOn ?? own;
@@ -109,45 +121,76 @@ function compareEntries(left: LanguageEntry, right: LanguageEntry): number {
   return rank(left) - rank(right) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
 }
 
-/** Every registry file in `directory`, parsed, validated, and in registry order; throws naming each problem. */
-export function readLanguageRegistry(directory = LANGUAGES_DIRECTORY): LanguageEntry[] {
-  const problems: string[] = [];
+/** Every `.json` file of `directory` parsed against the schema, reported as `label/<file>`; schema problems go to `problems`. */
+function readEntries(directory: string, label: string, problems: string[]): { file: string; entry: LanguageEntry }[] {
   const entries: { file: string; entry: LanguageEntry }[] = [];
   for (const file of readdirSync(directory).filter(file => file.endsWith(".json")).toSorted()) {
     const parsed = languageEntrySchema.safeParse(JSON.parse(readFileSync(resolve(directory, file), "utf8")));
-    if (parsed.success) entries.push({ file: `languages/${file}`, entry: parsed.data });
-    else problems.push(...parsed.error.issues.map(issue => `languages/${file}: ${issue.path.join("/") || "(root)"}: ${issue.message}`));
+    if (parsed.success) entries.push({ file: `${label}/${file}`, entry: parsed.data });
+    else problems.push(...parsed.error.issues.map(issue => `${label}/${file}: ${issue.path.join("/") || "(root)"}: ${issue.message}`));
   }
+  return entries;
+}
+
+/**
+ * Every registry file in `directory`, parsed, validated, and in registry order; throws naming each problem. The product
+ * registry is `languages/`; `testDirectory` (`native/test-languages/`) adds the planned languages only tests see, checked by
+ * the same rules and against the registry for repeated ids, labels, suffixes and tape tags. The generated host module
+ * never takes it: tests that need it (`exemplarLanguageRegistry` in test/support) read both.
+ */
+export function readLanguageRegistry(directory = LANGUAGES_DIRECTORY, testDirectory?: string): LanguageEntry[] {
+  const problems: string[] = [];
+  const entries = readEntries(directory, "languages", problems);
   if (entries.length === 0 && problems.length === 0) problems.push("languages/ holds no language");
+  if (testDirectory !== undefined) {
+    for (const test of readEntries(testDirectory, "native/test-languages", problems)) {
+      if (test.entry.status !== "planned") problems.push(`${test.file}: a test-only language is planned: it must not need an engine variant`);
+      entries.push(test);
+    }
+  }
   if (problems.length === 0) problems.push(...languageRegistryProblems(entries));
   if (problems.length > 0) throw new Error(`Invalid language registry:\n${problems.join("\n")}`);
   return entries.map(({ entry }) => entry).toSorted(compareEntries);
+}
+
+/** The values of the generated host module, from `entries`: the registry and the named lists the host's types and schemas read. */
+export function languageRegistryExports(entries: readonly LanguageEntry[]) {
+  const supported = entries.filter(entry => entry.status === "supported");
+  const unique = (values: readonly string[]) => [...new Set(values)];
+  return {
+    LANGUAGE_REGISTRY: entries,
+    CODE_RULE_LANGUAGE_IDS: entries.map(entry => entry.id),
+    CODE_RULE_AST_LANGUAGES: supported.map(entry => entry.id),
+    CODE_RULE_PLANNED_LANGUAGES: entries.filter(entry => entry.status === "planned").map(entry => entry.id),
+    CODE_RULE_LANGUAGE_FAMILIES: unique(supported.map(entry => entry.family)),
+    CODE_RULE_SEMANTIC_CAPABILITIES: Object.keys(entries[0]?.capabilities ?? {}),
+    CODE_RULE_SUPPRESSIONS: unique(supported.flatMap(entry => entry.suppressions)),
+  };
 }
 
 const literalList = (values: readonly string[]) => `[${values.map(value => JSON.stringify(value)).join(", ")}]`;
 
 /** `src/engine/code-rule/code-rule-language-registry.generated.ts`: the registry, and the named lists the host's types and schemas read. */
 export function renderLanguageRegistryModule(entries: readonly LanguageEntry[] = readLanguageRegistry()): string {
-  const supported = entries.filter(entry => entry.status === "supported");
-  const unique = (values: readonly string[]) => [...new Set(values)];
+  const exported = languageRegistryExports(entries);
   return [
     "// Generated by scripts/generate/languages/registry.ts; do not edit. Source: languages/*.json (`npm run generate:languages`).",
     "",
     "/** The language registry (rerail.language/v1): supported languages in the order they were added, then planned ones. */",
-    `export const LANGUAGE_REGISTRY = /* registry */ ${JSON.stringify(entries, null, 2)} /* end registry */ as const;`,
+    `export const LANGUAGE_REGISTRY = /* registry */ ${JSON.stringify(exported.LANGUAGE_REGISTRY, null, 2)} /* end registry */ as const;`,
     "",
     "/** Every language a rule may name: supported, then planned. */",
-    `export const CODE_RULE_LANGUAGE_IDS = ${literalList(entries.map(entry => entry.id))} as const;`,
+    `export const CODE_RULE_LANGUAGE_IDS = ${literalList(exported.CODE_RULE_LANGUAGE_IDS)} as const;`,
     "/** The languages the engine reads. */",
-    `export const CODE_RULE_AST_LANGUAGES = ${literalList(supported.map(entry => entry.id))} as const;`,
+    `export const CODE_RULE_AST_LANGUAGES = ${literalList(exported.CODE_RULE_AST_LANGUAGES)} as const;`,
     "/** The languages a rule may name that the engine does not read yet. */",
-    `export const CODE_RULE_PLANNED_LANGUAGES = ${literalList(entries.filter(entry => entry.status === "planned").map(entry => entry.id))} as const;`,
+    `export const CODE_RULE_PLANNED_LANGUAGES = ${literalList(exported.CODE_RULE_PLANNED_LANGUAGES)} as const;`,
     "/** The semantic families of the supported languages. */",
-    `export const CODE_RULE_LANGUAGE_FAMILIES = ${literalList(unique(supported.map(entry => entry.family)))} as const;`,
+    `export const CODE_RULE_LANGUAGE_FAMILIES = ${literalList(exported.CODE_RULE_LANGUAGE_FAMILIES)} as const;`,
     "/** The capabilities every entry declares support for. */",
-    `export const CODE_RULE_SEMANTIC_CAPABILITIES = ${literalList(Object.keys(entries[0]?.capabilities ?? {}))} as const;`,
+    `export const CODE_RULE_SEMANTIC_CAPABILITIES = ${literalList(exported.CODE_RULE_SEMANTIC_CAPABILITIES)} as const;`,
     "/** The suppression comments the supported languages honour. */",
-    `export const CODE_RULE_SUPPRESSIONS = ${literalList(unique(supported.flatMap(entry => entry.suppressions)))} as const;`,
+    `export const CODE_RULE_SUPPRESSIONS = ${literalList(exported.CODE_RULE_SUPPRESSIONS)} as const;`,
     "",
   ].join("\n");
 }

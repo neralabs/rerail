@@ -1,6 +1,7 @@
 //! Opt-in comparison of this worktree's tape executor with native trees.
 //! Reports unsupported corpus forms explicitly; never substitutes the spike executor.
 use super::*;
+use crate::code_rule_dsl::blade::forte::tree::{BladeDoc, BladeLang};
 use ast_grep_core::{
     AstGrep, Doc,
     matcher::{KindMatcher, Pattern},
@@ -16,6 +17,12 @@ use std::{
     time::Instant,
 };
 use tree_sitter::StreamingIterator;
+
+/// A file's native tree: tree-sitter's, or a Blade template's Forte tree.
+enum Native {
+    TreeSitter(StrDoc<GrammarDialect>),
+    Blade(BladeDoc),
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct NodeRecord {
@@ -311,15 +318,16 @@ fn point(source: &str, byte: usize) -> (usize, usize, usize) {
 }
 
 /// The records of the embedded program `view` makes from the native template, as a Blade tape
-/// appends them under its root (`parent`, spanning `parent_range`): PHP's kind ids after Blade's,
-/// each node at its template span kept inside its parent's, placeholders left out.
+/// appends them under its root (`parent`, spanning `parent_range`): PHP's kinds and fields as the
+/// tape numbers them (`numbering`), each node at its template span kept inside its parent's,
+/// placeholders left out.
 fn view_records(
     view: &crate::code_rule_dsl::blade::view::View,
     node: tree_sitter::Node<'_>,
     source: &str,
     field: u16,
     parent: (usize, Range<usize>),
-    offset: u16,
+    numbering: &crate::code_rule_dsl::language::Embedded,
     records: &mut Vec<NodeRecord>,
 ) -> Option<usize> {
     if view.omitted(node) {
@@ -332,11 +340,7 @@ fn view_records(
     let index = records.len();
     records.push(NodeRecord {
         kind: node.kind().to_owned(),
-        kind_id: if node.is_error() {
-            node.kind_id()
-        } else {
-            node.kind_id() + offset
-        },
+        kind_id: numbering.kind_code(node.kind_id()),
         named: node.is_named(),
         extra: node.is_extra(),
         error: node.is_error(),
@@ -354,14 +358,16 @@ fn view_records(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            let field = cursor.field_id().map_or(0, |id| id.get());
+            let field = cursor
+                .field_id()
+                .map_or(0, |id| numbering.field_code(id.get()));
             if let Some(child) = view_records(
                 view,
                 cursor.node(),
                 source,
                 field,
                 (index, range.clone()),
-                offset,
+                numbering,
                 records,
             ) {
                 records[index].children.push(child);
@@ -379,53 +385,87 @@ fn view_records(
     Some(index)
 }
 
-/// A Blade tape, encoded, serialized and restored, against the native template tree and the view
-/// built natively from it (`blade_tree_parity`).
+/// A Blade tape, encoded, serialized and restored, against the template's Forte tree and the view
+/// built from it (`blade_tree_parity`).
 fn blade_tape_parity(source: &str) -> Result<(usize, usize), String> {
     let grammar = Grammar::new(GrammarDialect::Blade).map_err(|error| error.to_string())?;
-    let native = StrDoc::new(source, GrammarDialect::Blade);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)?;
+    let image = TapeImage::encode_template(&grammar, source, &|| false)?;
     let bytes = image.to_bytes()?;
     let decoded = TapeImage::from_bytes(&bytes, &grammar)?;
     if decoded.to_bytes()? != bytes {
         return Err("serialized tape did not round-trip canonically".into());
     }
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false)?;
-    blade_tree_parity(&native, source, &tape)
+    blade_tree_parity(&parse_tree(source.as_bytes()), source, &tape)
 }
 
-/// A restored Blade tape against the native template tree and the view built natively from it:
-/// the tape's first nodes are exactly the template's, and the rest, under the root's last child,
-/// exactly the view's. Returns the template's node count and the view's.
+/// The records of a template's Forte tree, as a Blade tape numbers its kinds and fields.
+fn forte_records(
+    node: crate::code_rule_dsl::blade::forte::tree::BladeNode<'_>,
+    source: &str,
+    parent: Option<usize>,
+    records: &mut Vec<NodeRecord>,
+) -> usize {
+    let range = node.range();
+    let index = records.len();
+    records.push(NodeRecord {
+        kind: node.kind().into_owned(),
+        kind_id: node.kind_id(),
+        named: node.is_named(),
+        extra: false,
+        error: false,
+        missing: false,
+        field: node.field_name().map_or(0, |name| {
+            GrammarDialect::Blade
+                .field_id(name)
+                .expect("a catalog field")
+        }),
+        range: range.clone(),
+        start: point(source, range.start),
+        end: point(source, range.end),
+        parent,
+        children: Vec::new(),
+        next: None,
+        prev: None,
+        text: source[range].to_owned(),
+    });
+    for child in node.children() {
+        let child = forte_records(child, source, Some(index), records);
+        records[index].children.push(child);
+    }
+    let children = records[index].children.clone();
+    for pair in children.windows(2) {
+        records[pair[0]].next = Some(pair[1]);
+        records[pair[1]].prev = Some(pair[0]);
+    }
+    index
+}
+
+/// A restored Blade tape against the template's Forte tree and the view built from it: the tape's
+/// first nodes are exactly the template's, and the rest, under the root's last child, exactly the
+/// view's. Returns the template's node count and the view's.
 fn blade_tree_parity(
-    native: &StrDoc<GrammarDialect>,
+    tree: &BladeTree,
     source: &str,
     tape: &TapeDoc,
 ) -> Result<(usize, usize), String> {
     let mut expected = Vec::new();
-    native_records(
-        native.tree.root_node(),
-        source.as_bytes(),
-        0,
-        None,
-        &mut expected,
-    );
+    forte_records(tree.root(), source, None, &mut expected);
     let template = expected.len();
-    let view = crate::code_rule_dsl::blade::view::View::build(native.tree.root_node(), source);
-    let mut errors = native_syntax_error_ranges(native.tree.root_node());
-    if let Some(view) = &view {
-        let offset = GrammarDialect::Blade
+    let reading = View::build(tree, source, &|| false)?;
+    let mut errors = Vec::new();
+    if let Some(view) = &reading.view {
+        let numbering = GrammarDialect::Blade
             .kinds()
-            .embedded()
-            .expect("Blade embeds PHP")
-            .offset;
+            .embedding(GrammarDialect::Php)
+            .expect("Blade embeds PHP");
         let program = view_records(
             view,
             view.root(),
             source,
             0,
             (0, 0..source.len()),
-            offset,
+            numbering,
             &mut expected,
         )
         .ok_or("the view's program is a placeholder")?;
@@ -446,6 +486,9 @@ fn blade_tree_parity(
             }
         }
     }
+    // Then the template's own as Blade reads it: Forte's lexer errors, or the template it did
+    // not parse (`view::Reading::syntax_errors`).
+    errors.extend(reading.syntax_errors);
     let actual = tape_records(tape);
     if expected != actual {
         let difference = expected
@@ -718,9 +761,8 @@ fn persisted_blade_structural_captures_match_native() {
         .collect();
     let mut matched = 0;
     for &source in BLADE_RISKY_FIXTURES {
-        let native = StrDoc::new(source, GrammarDialect::Blade);
-        let image =
-            TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
+        let native = BladeLang.doc(source.as_bytes());
+        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
         let decoded = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar.clone(), &decoded, &|| {
             false
@@ -853,23 +895,28 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
     let inventory_count = paths.len();
     let language = corpus.language;
     let grammar = Grammar::new(language).unwrap();
-    let ts = grammar.kinds.grammar().clone();
     // These are real .scm queries executed by the native QueryCursor. Their explicit bridge
-    // uses the existing KindMatcher on TapeDoc, not another SQL implementation.
-    let mut names = BTreeSet::new();
-    for id in 0..ts.node_kind_count() as u16 {
-        if ts.node_kind_is_named(id) && ts.node_kind_is_visible(id) {
-            names.insert(ts.node_kind_for_id(id).unwrap().to_owned());
+    // uses the existing KindMatcher on TapeDoc, not another SQL implementation. Blade has no
+    // tree-sitter grammar: its tree is compared node by node and by pattern.
+    let queries: Vec<_> = match grammar.kinds.grammar() {
+        Some(ts) => {
+            let mut names = BTreeSet::new();
+            for id in 0..ts.node_kind_count() as u16 {
+                if ts.node_kind_is_named(id) && ts.node_kind_is_visible(id) {
+                    names.insert(ts.node_kind_for_id(id).unwrap().to_owned());
+                }
+            }
+            names
+                .into_iter()
+                .filter_map(|kind| {
+                    let text = format!("({kind}) @root");
+                    let query = tree_sitter::Query::new(ts, &text).ok()?;
+                    Some((kind.clone(), query, KindMatcher::new(&kind, language)))
+                })
+                .collect()
         }
-    }
-    let queries: Vec<_> = names
-        .into_iter()
-        .filter_map(|kind| {
-            let text = format!("({kind}) @root");
-            let query = tree_sitter::Query::new(&ts, &text).ok()?;
-            Some((kind.clone(), query, KindMatcher::new(&kind, language)))
-        })
-        .collect();
+        None => Vec::new(),
+    };
     let patterns: Vec<_> = corpus
         .patterns
         .iter()
@@ -938,14 +985,28 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         eligible += 1;
         source_bytes += source.len();
         let t = Instant::now();
-        let native = StrDoc::new(&source, language);
+        let native = match language {
+            GrammarDialect::Blade => Native::Blade(BladeLang.doc(source.as_bytes())),
+            _ => Native::TreeSitter(StrDoc::new(&source, language)),
+        };
         let file_parse_ms = t.elapsed().as_secs_f64() * 1000.0;
         parse_ms += file_parse_ms;
-        if native.tree.root_node().has_error() {
+        let has_error = match &native {
+            Native::TreeSitter(doc) => doc.tree.root_node().has_error(),
+            Native::Blade(doc) => !doc.tree.error_ranges().is_empty(),
+        };
+        if has_error {
             syntax_error_files.push(path_name.clone());
         }
         let t = Instant::now();
-        let image = match TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false) {
+        // A Blade template's tape is encoded from its own parse: Forte's tree is not kept.
+        let encoded = match &native {
+            Native::TreeSitter(doc) => {
+                TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false)
+            }
+            Native::Blade(_) => TapeImage::encode_template(&grammar, &source, &|| false),
+        };
+        let image = match encoded {
             Ok(image) => image,
             Err(error) => {
                 failures.push(json!({"path":path_name,"error":error}));
@@ -976,18 +1037,21 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         // Compare the entire node stream (kind, flags, field, span, position, links, text) and
         // the syntax error regions, not only the nodes selected by queries; a Blade tape's
         // template part against the native tree and its embedded view against the native view.
-        let parity = match corpus.language {
-            GrammarDialect::Blade => blade_tree_parity(&native, &source, &tape).map(|_| ()),
-            _ => tree_parity(&native, &source, &tape).map(|_| ()),
+        let parity = match &native {
+            Native::Blade(doc) => blade_tree_parity(&doc.tree, &source, &tape).map(|_| ()),
+            Native::TreeSitter(doc) => tree_parity(doc, &source, &tape).map(|_| ()),
         };
         if let Err(error) = parity {
             failures.push(json!({"path":path_name,"error":error}));
         }
         let ast = AstGrep::doc(tape.clone());
         for (i, (kind, query, matcher)) in queries.iter().enumerate() {
+            let Native::TreeSitter(doc) = &native else {
+                unreachable!("Blade has no tree-sitter queries");
+            };
             let t = Instant::now();
             let mut qc = tree_sitter::QueryCursor::new();
-            let mut matches = qc.matches(query, native.tree.root_node(), source.as_bytes());
+            let mut matches = qc.matches(query, doc.tree.root_node(), source.as_bytes());
             let mut expected = Vec::new();
             while let Some(m) = matches.next() {
                 expected.push(m.captures()[0].node.byte_range());
@@ -1013,10 +1077,19 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
                 );
             }
         }
-        let native_ast = AstGrep::doc(native);
+        let native_matches: Box<dyn Fn(&Pattern) -> Matches> = match native {
+            Native::TreeSitter(doc) => {
+                let root = AstGrep::doc(doc);
+                Box::new(move |pattern| pattern_matches(&root, pattern))
+            }
+            Native::Blade(doc) => {
+                let root = AstGrep::doc(doc);
+                Box::new(move |pattern| pattern_matches(&root, pattern))
+            }
+        };
         for (i, pattern) in patterns.iter().enumerate() {
             let t = Instant::now();
-            let expected = pattern_matches(&native_ast, pattern);
+            let expected = native_matches(pattern);
             pattern_native_ms[i] += t.elapsed().as_secs_f64() * 1000.0;
             let t = Instant::now();
             let actual = pattern_matches(&ast, pattern);

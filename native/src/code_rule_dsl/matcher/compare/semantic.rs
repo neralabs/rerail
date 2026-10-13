@@ -2,9 +2,8 @@ use super::super::Reading;
 use super::super::exported::exported_text;
 use super::{Collation, CompareOp, Comparison};
 use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
-use crate::code_rule_dsl::value::ecma::ops;
+use crate::code_rule_dsl::value::Value;
 use crate::code_rule_dsl::value::structure::Equality;
-use crate::code_rule_dsl::value::{Lang, Value};
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 
@@ -231,8 +230,7 @@ fn values<D: Doc>(
     match comparison.op {
         CompareOp::Eq => left.equals(&right, lang),
         CompareOp::Ne => left.equals(&right, lang).map(|equal| !equal),
-        // JavaScript orders as its relational operators do, converting primitives.
-        op if lang == Lang::Js => ops::relation(
+        op => with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::relation(
             match op {
                 CompareOp::Lt => "<",
                 CompareOp::Le => "<=",
@@ -241,22 +239,6 @@ fn values<D: Doc>(
             },
             &left,
             &right,
-        ),
-        // PHP orders as its relational operators do: `a > b` is `b < a`, which PHP's comparison of
-        // arrays does not make the same question.
-        op if lang == Lang::Php => crate::code_rule_dsl::value::php::relation(
-            match op {
-                CompareOp::Lt => "<",
-                CompareOp::Le => "<=",
-                CompareOp::Gt => ">",
-                _ => ">=",
-            },
-            &left,
-            &right,
-        ),
-        // Python values that do not order (NaN, different types) fail an ordering.
-        op => left
-            .order(&right, lang)
-            .map(|order| order.is_some_and(|order| op.test(order))),
+        )),
     }
 }

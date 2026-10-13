@@ -18,6 +18,7 @@
 
 use super::names::Name;
 use crate::code_rule_dsl::identifier::{python_identifier, python_name};
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, PythonOptions};
 use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeKind, ScopeTable};
@@ -153,7 +154,7 @@ impl Summary {
             extractor.members(root, table);
         }
         extractor.stars(root);
-        let mut summary = extractor.finish();
+        let mut summary = extractor.finish(Family::Python);
         summary.open |= has_errors || table.is_none();
         summary
     }
@@ -212,7 +213,7 @@ impl Summary {
     }
 
     /// The inverse of `encode`; `None` for another extractor version or corrupt bytes.
-    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn decode(bytes: &[u8], family: Family) -> Option<Self> {
         let mut reader = Reader { bytes, at: 0 };
         if reader.u32()? != EXTRACTOR_VERSION {
             return None;
@@ -225,7 +226,7 @@ impl Summary {
             .map(|_| {
                 let len = reader.u32()? as usize;
                 let text = std::str::from_utf8(reader.take(len)?).ok()?;
-                Some(Name::new(text))
+                Some(Name::new(family, text))
             })
             .collect::<Option<Vec<_>>>()?;
         let known = |id: u32| (id as usize) < names.len();
@@ -457,7 +458,7 @@ impl<'t> Extractor<'t> {
         qualify(&self.names[self.defs[def].name as usize], tail)
     }
 
-    fn finish(mut self) -> Summary {
+    fn finish(mut self, family: Family) -> Summary {
         debug_assert!(self.defs.is_sorted_by_key(|def| def.start));
         let module = self.module.clone().map(|module| self.intern(&module));
         for list in [&mut self.edges, &mut self.aliases] {
@@ -470,7 +471,11 @@ impl<'t> Extractor<'t> {
         }
         Summary {
             module,
-            names: self.names.iter().map(|name| Name::new(name)).collect(),
+            names: self
+                .names
+                .iter()
+                .map(|name| Name::new(family, name))
+                .collect(),
             defs: self.defs,
             edges: self.edges,
             targets: self.targets,

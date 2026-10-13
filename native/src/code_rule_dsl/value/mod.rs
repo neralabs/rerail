@@ -12,7 +12,8 @@ pub(crate) mod python;
 pub(crate) mod structure;
 pub(crate) mod text_regex;
 
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{Doc, Node};
@@ -120,7 +121,7 @@ impl NodeRef {
                 Some(doc) => Some(*doc.get_lang()),
                 None => doc.downcast_ref::<TapeDoc>().map(|doc| *doc.get_lang()),
             };
-            dialect.is_some_and(|dialect| dialect.kinds().embedded().is_none())
+            dialect.is_some_and(|dialect| !dialect.kinds().has_embedded())
         };
         if start >= end || root.parent().is_some() || !disjoint() {
             return self.find(root);
@@ -275,12 +276,22 @@ impl<'a> Context<'a> {
     }
 }
 
-/// The language whose semantics a value follows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Lang {
-    Python,
-    Js,
-    Php,
+/// The names of the types `Value::type_name_as` names differently per family: Python's
+/// `type(v).__name__` (`NoneType`, `bool`, `float`), JavaScript's `typeof` (`null`, `boolean`,
+/// `number`).
+pub(crate) struct TypeNames {
+    pub(crate) none: &'static str,
+    pub(crate) bool: &'static str,
+    pub(crate) float: &'static str,
+}
+
+/// How a family orders values (`Value::ordered`) where families differ.
+#[derive(Clone, Copy)]
+pub(crate) struct Ordered {
+    /// Its booleans are integers (Python's `True == 1`).
+    pub(crate) bools_are_ints: bool,
+    /// Its tuples order element by element, then by length (Python's).
+    pub(crate) tuples: bool,
 }
 
 /// A container whose elements are not all known: its kind, its length when known, and whether it
@@ -364,12 +375,16 @@ impl Value {
         !matches!(self, Self::Unknown | Self::Container { .. })
     }
 
-    /// Truthiness: Python's `bool(v)`, JavaScript's ToBoolean (objects and arrays are truthy even
-    /// when empty), PHP's `(bool)`. `None` when it is not known.
-    pub(crate) fn truthy(&self, lang: Lang) -> Option<bool> {
-        if lang == Lang::Php {
-            return php::truthy(self);
-        }
+    /// Truthiness in the value family `lang`'s sense (its `ValueRules::truthy`): Python's
+    /// `bool(v)`, JavaScript's ToBoolean, PHP's `(bool)`. `None` when it is not known.
+    pub(crate) fn truthy(&self, lang: Family) -> Option<bool> {
+        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::truthy(self))
+    }
+
+    /// Truthiness as Python's `bool(v)` and JavaScript's ToBoolean agree (objects and arrays are
+    /// truthy even when empty), NaN being truthy where `nan` (Python's) and falsy elsewhere
+    /// (JavaScript's). `None` when it is not known.
+    pub(crate) fn truthy_where(&self, nan: bool) -> Option<bool> {
         Some(match self {
             Self::Unknown => return None,
             Self::None | Self::Undefined => false,
@@ -377,8 +392,7 @@ impl Value {
             Self::Bool(value) => *value,
             Self::Int(value) => !value.is_zero(),
             Self::BigInt(value) => *value != 0,
-            // NaN is truthy in Python, falsy in JavaScript.
-            Self::Float(value) => *value != 0.0 && (lang == Lang::Python || !value.is_nan()),
+            Self::Float(value) => *value != 0.0 && (nan || !value.is_nan()),
             Self::Complex(real, imag) => *real != 0.0 || *imag != 0.0,
             Self::Str(value) => !value.is_empty(),
             Self::Utf16(value) => !value.is_empty(),
@@ -395,33 +409,33 @@ impl Value {
         })
     }
 
-    /// The type's name: Python's `type(v).__name__`, for JavaScript `typeof` refined with `null`,
-    /// `array` and `regexp`, PHP's `get_debug_type`.
-    pub(crate) fn type_name(&self, lang: Lang) -> Option<&'static str> {
-        if lang == Lang::Php {
-            return php::type_name(self);
-        }
-        Some(match (self, lang) {
-            (Self::Unknown, _) => return None,
-            (Self::None, Lang::Python) => "NoneType",
-            (Self::None, _) => "null",
-            (Self::Undefined, _) => "undefined",
-            (Self::Ellipsis, _) => "ellipsis",
-            (Self::Bool(_), Lang::Python) => "bool",
-            (Self::Bool(_), _) => "boolean",
-            (Self::Int(_), _) => "int",
-            (Self::Float(_), Lang::Python) => "float",
-            (Self::Float(_), _) => "number",
-            (Self::Complex(..), _) => "complex",
-            (Self::BigInt(_), _) => "bigint",
-            (Self::Str(_), _) => "str",
-            (Self::Utf16(_), _) => "string",
-            (Self::Bytes(_), _) => "bytes",
-            (Self::Tuple(_), _) => "tuple",
-            (Self::Array(_), _) => "array",
-            (Self::RegExp(_), _) => "regexp",
-            (Self::PhpStr(_) | Self::PhpArray(_), _) => return None,
-            (Self::Container { kind, .. }, _) => match kind {
+    /// The type's name in the value family `lang`'s sense (its `ValueRules::type_name`):
+    /// Python's `type(v).__name__`, for JavaScript `typeof` refined with `null`, `array` and
+    /// `regexp`, PHP's `get_debug_type`.
+    pub(crate) fn type_name(&self, lang: Family) -> Option<&'static str> {
+        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::type_name(self))
+    }
+
+    /// The type's name, Python's and JavaScript's alike but for the names in `names`.
+    pub(crate) fn type_name_as(&self, names: &TypeNames) -> Option<&'static str> {
+        Some(match self {
+            Self::Unknown => return None,
+            Self::None => names.none,
+            Self::Undefined => "undefined",
+            Self::Ellipsis => "ellipsis",
+            Self::Bool(_) => names.bool,
+            Self::Int(_) => "int",
+            Self::Float(_) => names.float,
+            Self::Complex(..) => "complex",
+            Self::BigInt(_) => "bigint",
+            Self::Str(_) => "str",
+            Self::Utf16(_) => "string",
+            Self::Bytes(_) => "bytes",
+            Self::Tuple(_) => "tuple",
+            Self::Array(_) => "array",
+            Self::RegExp(_) => "regexp",
+            Self::PhpStr(_) | Self::PhpArray(_) => return None,
+            Self::Container { kind, .. } => match kind {
                 ContainerKind::Tuple => "tuple",
                 ContainerKind::List => "list",
                 ContainerKind::Set => "set",
@@ -434,46 +448,48 @@ impl Value {
 
     /// Whether the value is of the named type (`type_name`). A RegExp is also an `object`: its
     /// `typeof`, which `regexp` refines without replacing (unlike `null` and `array`).
-    pub(crate) fn is_type(&self, lang: Lang, name: &str) -> bool {
+    pub(crate) fn is_type(&self, lang: Family, name: &str) -> bool {
         self.type_name(lang)
             .is_some_and(|own| own == name || (own == "regexp" && name == "object"))
     }
 
-    /// Equality in the language's own sense: Python `==`, JavaScript `Object.is`, PHP `===`.
-    /// `None` when it depends on elements that are not known.
-    pub(crate) fn equals(&self, other: &Self, lang: Lang) -> Option<bool> {
-        match lang {
-            Lang::Python => python_equals(self, other),
-            Lang::Js => js_same_value(self, other),
-            Lang::Php => php::identical(self, other),
-        }
+    /// Equality in the value family `lang`'s sense (its `ValueRules::equals`): Python `==`,
+    /// JavaScript `Object.is`, PHP `===`. `None` when it depends on elements that are not known.
+    pub(crate) fn equals(&self, other: &Self, lang: Family) -> Option<bool> {
+        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::equals(self, other))
     }
 
-    /// Order in the language's own sense: numbers numerically, Python strings by code point and
-    /// JavaScript strings by UTF-16 code unit, bytes and tuples lexicographically, PHP values as
-    /// PHP 8's `<=>` compares them. `Some(None)` when the two do not order (different types, NaN,
-    /// PHP arrays neither of which PHP finds smaller); `None` when it is not known.
-    pub(crate) fn order(&self, other: &Self, lang: Lang) -> Option<Option<Ordering>> {
-        if lang == Lang::Php {
-            return php::order(self, other);
-        }
+    /// Order in the value family `lang`'s sense (its `ValueRules::order`). `Some(None)` when the
+    /// two do not order (different types, NaN, PHP arrays neither of which PHP finds smaller);
+    /// `None` when it is not known.
+    pub(crate) fn order(&self, other: &Self, lang: Family) -> Option<Option<Ordering>> {
+        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::order(self, other))
+    }
+
+    /// Order as Python and JavaScript agree, under `rules`: numbers numerically, Python strings
+    /// by code point and JavaScript strings by UTF-16 code unit, bytes lexicographically, tuples
+    /// where `rules.tuples`. `Some(None)` when the two do not order; `None` when it is not known.
+    pub(crate) fn ordered(&self, other: &Self, rules: Ordered) -> Option<Option<Ordering>> {
         if !self.is_known() || !other.is_known() {
             return None;
         }
-        if let (Some(left), Some(right)) = (Number::of(self, lang), Number::of(other, lang)) {
+        if let (Some(left), Some(right)) = (
+            Number::of(self, rules.bools_are_ints),
+            Number::of(other, rules.bools_are_ints),
+        ) {
             return Some(left.order(&right));
         }
         Some(match (self, other) {
             (Self::Str(left), Self::Str(right)) => Some(left.cmp(right)),
             (Self::Utf16(left), Self::Utf16(right)) => Some(left.cmp(right)),
             (Self::Bytes(left), Self::Bytes(right)) => Some(left.cmp(right)),
-            (Self::Tuple(left), Self::Tuple(right)) if lang == Lang::Python => {
+            (Self::Tuple(left), Self::Tuple(right)) if rules.tuples => {
                 // Python compares the first unequal pair, then the lengths.
                 for (left, right) in left.iter().zip(right) {
                     if python_equals(left, right)? {
                         continue;
                     }
-                    return left.order(right, lang);
+                    return left.ordered(right, rules);
                 }
                 Some(left.len().cmp(&right.len()))
             }
@@ -491,13 +507,13 @@ enum Number {
 }
 
 impl Number {
-    fn of(value: &Value, lang: Lang) -> Option<Self> {
-        match (value, lang) {
-            (Value::Bool(value), Lang::Python) => Some(Self::Int(BigInt::from(u8::from(*value)))),
-            (Value::Int(value), _) => Some(Self::Int(value.clone())),
-            (Value::BigInt(value), _) => Some(Self::Int(BigInt::from(*value))),
-            (Value::Float(value), _) => Some(Self::Float(*value)),
-            (Value::Complex(real, imag), _) => Some(Self::Complex(*real, *imag)),
+    fn of(value: &Value, bools_are_ints: bool) -> Option<Self> {
+        match value {
+            Value::Bool(value) if bools_are_ints => Some(Self::Int(BigInt::from(u8::from(*value)))),
+            Value::Int(value) => Some(Self::Int(value.clone())),
+            Value::BigInt(value) => Some(Self::Int(BigInt::from(*value))),
+            Value::Float(value) => Some(Self::Float(*value)),
+            Value::Complex(real, imag) => Some(Self::Complex(*real, *imag)),
             _ => None,
         }
     }
@@ -570,11 +586,9 @@ pub(crate) fn int_to_float(int: &BigInt) -> Option<f64> {
     })
 }
 
-fn python_equals(left: &Value, right: &Value) -> Option<bool> {
-    if let (Some(left), Some(right)) = (
-        Number::of(left, Lang::Python),
-        Number::of(right, Lang::Python),
-    ) {
+/// Python's `==`.
+pub(crate) fn python_equals(left: &Value, right: &Value) -> Option<bool> {
+    if let (Some(left), Some(right)) = (Number::of(left, true), Number::of(right, true)) {
         return Some(left.equals(&right));
     }
     Some(match (left, right) {
@@ -646,7 +660,7 @@ fn python_equals(left: &Value, right: &Value) -> Option<bool> {
 
 /// `Object.is`: numbers by value except that NaN is NaN and `0` is not `-0`; strings by code
 /// units; two literals of an object or array are two objects.
-fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
+pub(crate) fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
     Some(match (left, right) {
         (Value::Unknown, _) | (_, Value::Unknown) => return None,
         (Value::None, Value::None) | (Value::Undefined, Value::Undefined) => true,

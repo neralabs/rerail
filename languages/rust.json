@@ -6,7 +6,8 @@
   "dialects": [
     {
       "label": "rust",
-      "suffixes": [".rs"]
+      "suffixes": [".rs"],
+      "tapeTag": 9
     }
   ],
   "capabilities": {

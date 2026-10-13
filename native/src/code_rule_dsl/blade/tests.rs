@@ -504,3 +504,39 @@ fn blade_calls_reach_workspace_definitions() {
         "{output}"
     );
 }
+
+/// Blade reads a `(` as a directive's arguments only after spaces or tabs (`[ \t]*` in
+/// `compileStatements`); Forte's lexer also skips line breaks. A `(` on the next line is the
+/// template's: the echo in it is PHP, the call in its text is not, and Forte's errors in the
+/// arguments it read there (`(it's required)`: an unclosed string) are not the template's, so
+/// `resolves`, which decides only in a template without syntax errors, decides.
+#[test]
+fn a_paren_on_the_next_line_is_not_arguments() {
+    let rule = json!({
+        "kind": "function_call_expression",
+        "has": { "field": "function", "resolves": { "import": ["sprintf"] } }
+    });
+    for (source, expected) in [
+        (
+            "@foreach($items as $item)\n{{ $item }}\n@endforeach\n({{ sprintf('%d %d', 1) }} total)",
+            &["sprintf('%d %d', 1)"][..],
+        ),
+        (
+            "@if($a)\nx\n@else\n({{ sprintf('%d %d', 1) }})\n@endif",
+            &["sprintf('%d %d', 1)"],
+        ),
+        (
+            "@csrf\n(it's required)\n<p>{{ sprintf('%d %d', 1) }}</p>",
+            &["sprintf('%d %d', 1)"],
+        ),
+        (
+            "@csrf\n(it's required)\n<p>{{ sprintf('%d %d', 1) }}</p>\n",
+            &["sprintf('%d %d', 1)"],
+        ),
+        ("@auth\n  (sprintf('%d %d', 1))\n@endauth", &[]),
+        ("@csrf\n(sprintf('%d %d', 1))", &[]),
+        ("@if \t(sprintf('%d', 1))\n@endif", &["sprintf('%d', 1)"]),
+    ] {
+        assert_eq!(run(rule.clone(), source), expected, "{source:?}");
+    }
+}

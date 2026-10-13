@@ -1,0 +1,38 @@
+[
+  {
+    "name": "forelse",
+    "args": true,
+    "structure": {
+      "role": "open",
+      "terminators": "endforelse",
+      "branches": "empty"
+    }
+  },
+  {
+    "name": "empty",
+    "args": {
+      "allowed": true,
+      "required": false
+    },
+    "structure": {
+      "role": "open",
+      "condition": true,
+      "terminators": "elseif,endempty"
+    }
+  },
+  {
+    "name": "endempty",
+    "args": false,
+    "structure": {
+      "role": "close",
+      "condition": true
+    }
+  },
+  {
+    "name": "endforelse",
+    "args": false,
+    "structure": {
+      "role": "close"
+    }
+  }
+]
