@@ -316,13 +316,12 @@ describe("proposeLintConfigSettings", () => {
     });
   });
 
-  it("turns off the python pack's Ruff ports [tool.ruff.lint] ignore = [\"E7\"] selects, E711 among them", async () => {
+  it("turns off every shipped Ruff port [tool.ruff.lint] ignore = [\"E7\"] selects, and no candidate", async () => {
     const root = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E7\"]\n", "eslint.config.ts": "export default [];\n" });
+    const off = (ruleId: string) => ({ ruleId, on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" });
     expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({
-      settings: [
-        { ruleId: "ruff-e711-none-comparison", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
-        { ruleId: "ruff-e722-bare-except", on: false, config: null, because: "pyproject.toml: \"E7\" in tool.ruff.lint.ignore" },
-      ],
+      // The python pack's rules/ ports of E7xx; its candidates (E712, E713, E714, E731, E741) do not ship.
+      settings: ["ruff-e711-none-comparison", "ruff-e721-type-comparison", "ruff-e722-bare-except", "ruff-e742-ambiguous-class-name", "ruff-e743-ambiguous-function-name"].map(off),
       // No pack being set up ports an ESLint rule, so the flat config is not worth a note.
       notes: [],
     });
