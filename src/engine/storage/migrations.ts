@@ -25,9 +25,10 @@ export interface Migration {
   readonly floor?: number;
   /**
    * Brings the file from the shape before this step to the shape after it, inside the open's write
-   * transaction, where foreign keys are enforced (a table rebuild sets `PRAGMA defer_foreign_keys`). It must
-   * tolerate a table this step changes not existing yet: the generated DDL that runs after the steps creates
-   * it in its current shape. `addColumn` does both.
+   * transaction, where foreign keys are enforced and `PRAGMA foreign_keys` cannot change: a step that rebuilds a
+   * table others reference keeps them valid (or sets `PRAGMA defer_foreign_keys`). It must tolerate a table this
+   * step changes not existing yet: the generated DDL that runs after the steps creates it in its current shape.
+   * `addColumn` does both.
    */
   up(database: RerailDatabase): void;
 }
