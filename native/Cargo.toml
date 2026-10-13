@@ -14,7 +14,8 @@ bench-backends = ["dep:metal"]
 ast-grep-core = "=0.45.3"
 # Python, TypeScript and TSX are not ast-grep's: Rerail builds them from its patched vendored
 # grammars (grammars/tree-sitter-{python,typescript}/PATCHES.md), and no second parser is linked.
-ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-javascript", "tree-sitter-php"] }
+# Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
+ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-javascript", "tree-sitter-php", "tree-sitter-rust"] }
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
 gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
