@@ -6,8 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, rollbackWithSnapshot, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, openRerailDatabase, type RerailDatabase } from "../../src/engine/index.js";
-import type { Migration } from "../../src/engine/storage/migrations.js";
+import { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, openRerailDatabase, type Migration, type RerailDatabase } from "../../src/engine/index.js";
 
 const directories: string[] = [];
 
