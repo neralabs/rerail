@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-int-plus-one",
+  "id": "clippy-int-plus-one",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's int_plus_one lint: reports inequalities equivalent to a strict comparison through addition or subtraction by one; constant evaluation and type semantics are not modelled.",

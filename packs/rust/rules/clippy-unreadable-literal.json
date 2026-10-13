@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-unreadable-literal",
+  "id": "clippy-unreadable-literal",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's unreadable_literal: reports an integer or float literal whose digits, as Clippy's NumericLiteral splits them (radix prefix, suffix and the `_` before it, integer, fraction and exponent), hold an ungrouped part longer than five digits (a decimal integer part, a fraction, or a binary, octal or hexadecimal literal whose first group is). Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.",

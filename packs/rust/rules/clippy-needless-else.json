@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-needless-else",
+  "id": "clippy-needless-else",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's needless_else lint: reports an empty else block after an if statement when it has no meaningful comment or code; macro and cfg expansion are not modelled.",

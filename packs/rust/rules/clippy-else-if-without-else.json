@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-else-if-without-else",
+  "id": "clippy-else-if-without-else",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's else_if_without_else lint: reports an else-if branch whose final if has no else; macro expansion and cfg evaluation are not modelled.",

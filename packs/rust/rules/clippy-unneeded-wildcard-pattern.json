@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-unneeded-wildcard-pattern",
+  "id": "clippy-unneeded-wildcard-pattern",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's unneeded_wildcard_pattern: reports a wildcard binding made redundant by a rest pattern; macro-expanded code is not modelled.",

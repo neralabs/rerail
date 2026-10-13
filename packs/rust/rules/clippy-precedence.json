@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-precedence",
+  "id": "clippy-precedence",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's precedence lint: reports arithmetic expressions mixing shifts or bitwise operators without parentheses; macro expansion and type/value semantics are not modelled.",

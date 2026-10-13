@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-redundant-static-lifetimes",
+  "id": "clippy-redundant-static-lifetimes",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's redundant_static_lifetimes: reports redundant 'static lifetimes in free const and static declarations; associated items are not modelled. The lint needs Rust 1.17 (`suppress.clippy.msrv`).",

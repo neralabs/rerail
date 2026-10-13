@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-single-component-path-imports",
+  "id": "clippy-single-component-path-imports",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's single_component_path_imports (Rust 2018 and later): reports a module's (the file's or a `mod`'s) non-`pub` `use name;` without a rename, and each `name` of a `use {a, b};` without a prefix, unless a `macro_rules!` of that name comes before it in the module, a non-`pub` `use self::name..` of the module (or `use self::{name..}`) names it, or a path `self::name::..` outside `use` declarations does anywhere in the module. Clippy reads the module after macro expansion; macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.",

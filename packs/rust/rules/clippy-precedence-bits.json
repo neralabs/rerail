@@ -1,6 +1,6 @@
 {
   "format":"rerail.policy/v1",
-  "id":"rust-conformance:clippy-precedence-bits",
+  "id":"clippy-precedence-bits",
   "revision":1,
   "mode":"steer",
   "description":"Port of Clippy 0.1.99's precedence_bits lint: reports the outermost mixed bitwise operation combining shifts with bit masking/combining; macro expansion and semantic type checks are not modelled.",

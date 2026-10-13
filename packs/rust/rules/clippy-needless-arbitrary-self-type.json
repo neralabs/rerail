@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-needless-arbitrary-self-type",
+  "id": "clippy-needless-arbitrary-self-type",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's needless_arbitrary_self_type: reports self parameters written with an explicit Self type; semantic receiver analysis is not modelled.",

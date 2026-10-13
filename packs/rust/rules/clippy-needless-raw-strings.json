@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-needless-raw-strings",
+  "id": "clippy-needless-raw-strings",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's needless_raw_strings: reports raw literals whose contents do not require raw-string syntax or hashes; macro expansion and format-string preprocessing are not modelled.",

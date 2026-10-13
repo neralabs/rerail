@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-octal-escapes",
+  "id": "clippy-octal-escapes",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's octal_escapes: reports each \\0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.",

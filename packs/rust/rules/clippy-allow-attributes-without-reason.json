@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-allow-attributes-without-reason",
+  "id": "clippy-allow-attributes-without-reason",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's allow_attributes_without_reason: reports every #[allow(..)] and #[expect(..)] attribute, inner or outer, one a #[cfg_attr(..)] expands to included (at the expanded attribute), whose last item is not `reason = \"..\"`. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] or #[cfg_attr] predicate holds in a build, are not read: a #[cfg_attr] is read as active.",

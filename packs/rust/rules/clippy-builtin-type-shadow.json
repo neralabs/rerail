@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-builtin-type-shadow",
+  "id": "clippy-builtin-type-shadow",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's builtin_type_shadow: reports generic type parameters that shadow primitive type names; semantic name resolution is not modelled.",

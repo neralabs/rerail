@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-single-char-lifetime-names",
+  "id": "clippy-single-char-lifetime-names",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's single_char_lifetime_names: reports each single-character lifetime parameter where it is declared, a generic parameter list's or a `for<..>` binder's, not where a bound or a type names it. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.",

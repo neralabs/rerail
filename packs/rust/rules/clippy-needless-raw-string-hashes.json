@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-needless-raw-string-hashes",
+  "id": "clippy-needless-raw-string-hashes",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\\\` or a `\"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.",

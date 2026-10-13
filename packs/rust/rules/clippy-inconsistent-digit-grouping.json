@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-inconsistent-digit-grouping",
+  "id": "clippy-inconsistent-digit-grouping",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's inconsistent_digit_grouping: reports a decimal literal whose integer part or fraction has groups of different sizes after the first (or a first group longer than the rest), or whose integer and fraction are grouped differently. Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.",

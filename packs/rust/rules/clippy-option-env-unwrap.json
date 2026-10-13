@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-option-env-unwrap",
+  "id": "clippy-option-env-unwrap",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's option_env_unwrap: reports unwrap or expect applied to option_env!; macro expansion boundaries are not modelled.",

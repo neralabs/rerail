@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-many-single-char-names",
+  "id": "clippy-many-single-char-names",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's many_single_char_names (threshold 4): in a function with a body (not a trait's default method, not #[test]), Clippy stacks the single-character, non-uppercase, non-underscore names its parameters, `let` patterns and match arm patterns bind (`binds`), a block or arm opening a scope, a name already stacked not again; the lint fires where a scope ends holding one of them and the stack holds more than four, at the stack's first name. This port reports at the function's first such name at its own level, where the function's level holds five, or a block or arm after that name holds one and, with the names before it, five; a function whose own level binds none is not reported. Shorthand struct fields, `if let`, `while let`, `for` and closure parameters bind nothing Clippy counts; macro arguments are token trees.",

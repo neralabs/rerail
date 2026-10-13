@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "rust-conformance:clippy-redundant-at-rest-pattern",
+  "id": "clippy-redundant-at-rest-pattern",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's redundant_at_rest_pattern: reports a binding of a slice rest pattern when the binding is unnecessary.",
