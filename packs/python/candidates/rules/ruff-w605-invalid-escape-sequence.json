@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-w605-invalid-escape-sequence",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's W605 (invalid-escape-sequence): a backslash in a non-raw string, bytes, f-string or t-string literal part that does not start a valid escape (newline, backslash, quotes, `a b f n r t v`, octal digits `0`-`7`, `x`, `N`, `u`, `U`), one finding per backslash. tree-sitter-python leaves such a backslash as a bare `\\` token inside `string_content` (valid escapes are `escape_sequence` nodes); f-string format specifiers keep their text unsplit, so a regex over the specifier walks its escapes and `each` reports every invalid backslash (a specifier with none binds no group and reports nothing).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "invalid-escape-sequence",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "regex": "^\\\\$",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "string_content",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[rR]"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "escape_sequence",
+                "regex": "^\\\\[^\\n\\r\\\\'\"abfnrtv0-7xNuU]",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "string_content",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[rR]"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "W605",
+        "message": "Invalid escape sequence",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-escape-sequence-format-spec",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "format_specifier",
+            "regex": "\\\\[\\n\\r\\\\'\"abfnrtv0-7xNuU]|(?<BS>\\\\(?:[^\\n\\r\\\\'\"abfnrtv0-7xNuU]|$))",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "interpolation",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[rR]"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "W605",
+        "message": "Invalid escape sequence",
+        "each": "BS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

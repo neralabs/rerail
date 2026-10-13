@@ -1,0 +1,350 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f704-yield-outside-function",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F704 (yield-outside-function, a semantic syntax error) with default settings: `yield`, `yield from` or `await` whose scope does not allow it. Scopes are found by climbing: a function or lambda body allows both; a class body or the module allows neither; a list, set or dict comprehension rejects `yield` and is transparent for `await`; a generator expression rejects `yield` and allows `await`. The first iterable of a comprehension, parameter defaults, decorators and class bases belong to the enclosing scope. Reported on the expression.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "yield-outside-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "yield-ok": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition"
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^:$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^in$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "for_in_clause"
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_comprehension"
+                        },
+                        {
+                          "kind": "set_comprehension"
+                        },
+                        {
+                          "kind": "dictionary_comprehension"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ],
+                      "matches": "yield-ok"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda",
+                    "matches": "yield-ok"
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^in$"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "for_in_clause",
+                          "not": {
+                            "follows": {
+                              "stopBy": "end",
+                              "kind": "for_in_clause"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "class_definition"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "kind": "lambda"
+                        },
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "kind": "list_comprehension"
+                        },
+                        {
+                          "kind": "set_comprehension"
+                        },
+                        {
+                          "kind": "dictionary_comprehension"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    },
+                    "matches": "yield-ok"
+                  }
+                }
+              ]
+            },
+            "await-ok": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition"
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^:$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^in$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "for_in_clause"
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_comprehension"
+                        },
+                        {
+                          "kind": "set_comprehension"
+                        },
+                        {
+                          "kind": "dictionary_comprehension"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ],
+                      "matches": "await-ok"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generator_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      }
+                    ],
+                    "matches": "await-ok"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda",
+                    "matches": "await-ok"
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^in$"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "for_in_clause",
+                          "not": {
+                            "follows": {
+                              "stopBy": "end",
+                              "kind": "for_in_clause"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "class_definition"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "kind": "lambda"
+                        },
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "kind": "list_comprehension"
+                        },
+                        {
+                          "kind": "set_comprehension"
+                        },
+                        {
+                          "kind": "dictionary_comprehension"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    },
+                    "matches": "await-ok"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "yield",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^yield$"
+                },
+                "not": {
+                  "matches": "yield-ok"
+                }
+              },
+              {
+                "kind": "await",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^await$"
+                },
+                "not": {
+                  "matches": "await-ok"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F704",
+        "message": "`yield` or `await` outside of a function",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F704"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

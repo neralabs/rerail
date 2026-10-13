@@ -1,0 +1,199 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-async105-trio-sync-call",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's ASYNC105 (trio-sync-call): a call to one of trio's async functions (Ruff's MethodName::is_async list) that is not the operand of an `await` (parentheses ignored), in any context. Reported on the call. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "trio-sync-call",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-body": {
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "function_definition"
+         },
+         {
+          "kind": "class_definition"
+         }
+        ]
+       }
+      },
+      "lambda-body": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "lambda"
+       },
+       "follows": {
+        "stopBy": "end",
+        "regex": "^:$"
+       }
+      },
+      "callee-position": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "call"
+         },
+         "precedes": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "generator_expression"
+           }
+          ]
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "callee-position"
+         }
+        }
+       ]
+      },
+      "async-context": {
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "matches": "scope-body"
+          },
+          {
+           "matches": "lambda-body"
+          }
+         ]
+        },
+        "kind": "block",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "function_definition",
+         "has": {
+          "stopBy": "neighbor",
+          "regex": "^async$"
+         }
+        }
+       }
+      },
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "trio.aclose_forcefully",
+         "trio.open_file",
+         "trio.open_ssl_over_tcp_listeners",
+         "trio.open_ssl_over_tcp_stream",
+         "trio.open_tcp_listeners",
+         "trio.open_tcp_stream",
+         "trio.open_unix_socket",
+         "trio.run_process",
+         "trio.serve_listeners",
+         "trio.serve_ssl_over_tcp",
+         "trio.serve_tcp",
+         "trio.sleep",
+         "trio.sleep_forever",
+         "trio.lowlevel.cancel_shielded_checkpoint",
+         "trio.lowlevel.checkpoint",
+         "trio.lowlevel.checkpoint_if_cancelled",
+         "trio.lowlevel.open_process",
+         "trio.lowlevel.permanently_detach_coroutine_object",
+         "trio.lowlevel.reattach_detached_coroutine_object",
+         "trio.lowlevel.temporarily_detach_coroutine_object",
+         "trio.lowlevel.wait_readable",
+         "trio.lowlevel.wait_task_rescheduled",
+         "trio.lowlevel.wait_writable"
+        ]
+       }
+      },
+      "callee-of-target": {
+       "any": [
+        {
+         "matches": "target"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee-of-target"
+         }
+        }
+       ]
+      },
+      "awaited": {
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "await"
+         },
+         {
+          "kind": "parenthesized_expression",
+          "matches": "awaited"
+         }
+        ]
+       }
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "pattern": "$CALLEE",
+       "matches": "callee-of-target",
+       "precedes": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "argument_list"
+         },
+         {
+          "kind": "generator_expression"
+         }
+        ]
+       }
+      },
+      "not": {
+       "matches": "awaited"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC105",
+    "message": "Call to `$CALLEE` is not immediately awaited",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC105"
+        ]
+      }
+    }
+   }
+  }
+ ]
+}

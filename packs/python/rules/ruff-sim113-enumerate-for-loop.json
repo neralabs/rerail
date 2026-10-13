@@ -1,0 +1,562 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim113-enumerate-for-loop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's SIM113 (enumerate-for-loop): `N += 1` as a top-level statement of a non-async `for` body without `continue`, where the binding `N` reads (`resolves.binding`) is a name assignment of `0` (plain, annotated, or an unpacked element of a display, paired by index as Ruff's match_value where the engine gives no value) whose parent statement is the loop's, `N` is bound only once inside the loop (`binds` with `bindings` within the loop: deletions and comprehension walruses count, comprehension targets, nested functions' locals and keyword arguments do not), and no load of `N` outside the loop in its scope, at or after the initial assignment, reads the initial binding (whose references Ruff's rebinding inherits) or a binding inside the loop. The loop and the initial assignment are found again by node identity (`compare` with `text: \"node\"`), so identical loops in one scope stay apart.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "enumerate-for-loop",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "one": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 1
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "one"
+                  }
+                }
+              ]
+            },
+            "zero": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 0
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "zero"
+                  }
+                }
+              ]
+            },
+            "statement": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "return_statement"
+                    },
+                    {
+                      "kind": "with_statement"
+                    },
+                    {
+                      "kind": "if_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "try_statement"
+                    },
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "decorated_definition"
+                    },
+                    {
+                      "kind": "assert_statement"
+                    },
+                    {
+                      "kind": "raise_statement"
+                    },
+                    {
+                      "kind": "delete_statement"
+                    },
+                    {
+                      "kind": "pass_statement"
+                    },
+                    {
+                      "kind": "break_statement"
+                    },
+                    {
+                      "kind": "continue_statement"
+                    },
+                    {
+                      "kind": "global_statement"
+                    },
+                    {
+                      "kind": "nonlocal_statement"
+                    },
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "import_from_statement"
+                    },
+                    {
+                      "kind": "future_import_statement"
+                    },
+                    {
+                      "kind": "print_statement"
+                    },
+                    {
+                      "kind": "exec_statement"
+                    },
+                    {
+                      "kind": "type_alias_statement"
+                    },
+                    {
+                      "kind": "match_statement"
+                    }
+                  ]
+                },
+                {
+                  "kind": "module"
+                }
+              ]
+            },
+            "initial-site": {
+              "kind": "assignment",
+              "inside": {
+                "stopBy": {
+                  "kind": "expression_statement"
+                },
+                "kind": "expression_statement",
+                "inside": {
+                  "stopBy": {
+                    "matches": "statement"
+                  },
+                  "matches": "statement",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "block"
+                          },
+                          {
+                            "kind": "elif_clause"
+                          },
+                          {
+                            "kind": "else_clause"
+                          },
+                          {
+                            "kind": "except_clause"
+                          },
+                          {
+                            "kind": "finally_clause"
+                          },
+                          {
+                            "kind": "case_clause"
+                          }
+                        ]
+                      }
+                    },
+                    "kind": "for_statement",
+                    "pattern": "$L1",
+                    "compare": {
+                      "left": "L1",
+                      "op": "eq",
+                      "right": "LOOP",
+                      "text": "node"
+                    }
+                  }
+                }
+              },
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "matches": "scope-root"
+                  },
+                  "matches": "scope-root",
+                  "has": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    },
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "kind": "global_statement"
+                          },
+                          {
+                            "kind": "nonlocal_statement"
+                          }
+                        ]
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$N"
+                    }
+                  }
+                }
+              }
+            },
+            "scope-root": {
+              "any": [
+                {
+                  "kind": "module"
+                },
+                {
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "later-load": {
+              "inside": {
+                "stopBy": {
+                  "matches": "scope-root"
+                },
+                "matches": "scope-root",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "for_statement",
+                      "pattern": "$L2",
+                      "compare": {
+                        "left": "L2",
+                        "op": "eq",
+                        "right": "LOOP",
+                        "text": "node"
+                      }
+                    }
+                  },
+                  "any": [
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "expression_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "pattern": "$S4",
+                          "compare": {
+                            "left": "S4",
+                            "op": "eq",
+                            "right": "INIT",
+                            "text": "node"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "expression_statement",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "pattern": "$S4",
+                            "compare": {
+                              "left": "S4",
+                              "op": "eq",
+                              "right": "INIT",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "pattern": "$S",
+                            "compare": {
+                              "left": "S",
+                              "op": "eq",
+                              "right": "INIT",
+                              "text": "node"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": {
+                                "matches": "scope-root"
+                              },
+                              "kind": "for_statement",
+                              "pattern": "$L3",
+                              "compare": {
+                                "left": "L3",
+                                "op": "eq",
+                                "right": "LOOP",
+                                "text": "node"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "augmented_assignment",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^\\+=$"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+=$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+=$"
+                  },
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "pattern": "$INIT"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "one",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+=$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "expression_statement",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "for_statement",
+                      "pattern": "$LOOP",
+                      "not": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^async$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "block",
+                              "has": {
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "class_definition"
+                                    }
+                                  ]
+                                },
+                                "kind": "continue_statement"
+                              }
+                            }
+                          },
+                          {
+                            "matches": "later-load"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+=$"
+                  },
+                  "binds": {
+                    "form": "augmented",
+                    "bindings": {
+                      "within": "LOOP",
+                      "max": 1
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+=$"
+                  },
+                  "any": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "zero"
+                          },
+                          "site": {
+                            "matches": "initial-site"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "matches": "initial-site",
+                            "all": [
+                              {
+                                "kind": "assignment",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "left",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "identifier",
+                                        "pattern": "$UT",
+                                        "compare": {
+                                          "left": "UT",
+                                          "op": "eq",
+                                          "right": "N",
+                                          "text": "tokens"
+                                        },
+                                        "not": {
+                                          "precedes": {
+                                            "stopBy": "end",
+                                            "kind": "identifier",
+                                            "pattern": "$UU",
+                                            "compare": {
+                                              "left": "UU",
+                                              "op": "eq",
+                                              "right": "N",
+                                              "text": "tokens"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "right",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "zero",
+                                        "pattern": "$UV"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "compare": {
+                                      "left": "UV",
+                                      "op": "eq",
+                                      "right": "UT",
+                                      "text": "index"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM113",
+        "message": "Use `enumerate()` for index variable `$N` in `for` loop",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM113"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

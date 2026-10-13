@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b302-marshal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect dangerous marshal deserialization calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B302",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "marshal.load",
+                  "marshal.loads"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B302",
+        "anchor": "witness.span",
+        "message": "Deserialization with the marshal module is possibly dangerous.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B302"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

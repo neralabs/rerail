@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint:no-empty",
+  "id": "eslint-no-empty",
   "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-empty` rule (https://eslint.org/docs/latest/rules/no-empty). Flags a block (not a function body, class static block or TS module body) or switch with no statements and no comment. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",

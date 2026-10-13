@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b304-ciphers",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect insecure cipher algorithm calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B304",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "Crypto.Cipher.ARC2.new",
+                  "Crypto.Cipher.ARC4.new",
+                  "Crypto.Cipher.Blowfish.new",
+                  "Crypto.Cipher.DES.new",
+                  "Crypto.Cipher.XOR.new",
+                  "Cryptodome.Cipher.ARC2.new",
+                  "Cryptodome.Cipher.ARC4.new",
+                  "Cryptodome.Cipher.Blowfish.new",
+                  "Cryptodome.Cipher.DES.new",
+                  "Cryptodome.Cipher.XOR.new",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.ARC4",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.Blowfish",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.CAST5",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.IDEA",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.SEED",
+                  "cryptography.hazmat.primitives.ciphers.algorithms.TripleDES"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B304",
+        "anchor": "witness.span",
+        "message": "Use of an insecure cipher. Replace it with a known secure cipher such as AES.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B304"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

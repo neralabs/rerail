@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint:no-var",
+  "id": "eslint-no-var",
   "revision": 1,
   "mode": "steer",
   "description": "A `var` declaration; `let` and `const` are block-scoped.",

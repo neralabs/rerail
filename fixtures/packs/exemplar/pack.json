@@ -17,7 +17,7 @@
   },
   "rules": [
     {
-      "id": "exemplar:no-identifier",
+      "id": "no-identifier",
       "document": "rules/no-identifier.json",
       "title": "No identifier",
       "group": "Exemplar",

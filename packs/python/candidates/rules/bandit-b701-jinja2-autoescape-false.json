@@ -1,0 +1,306 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b701-jinja2-autoescape-false",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect Jinja environments without safe autoescaping",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B701-missing-autoescape",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "block_start_string",
+                    "block_end_string",
+                    "variable_start_string",
+                    "variable_end_string",
+                    "comment_start_string",
+                    "comment_end_string",
+                    "line_statement_prefix",
+                    "line_comment_prefix",
+                    "trim_blocks",
+                    "lstrip_blocks",
+                    "newline_sequence",
+                    "keep_trailing_newline",
+                    "extensions",
+                    "optimized",
+                    "undefined",
+                    "finalize",
+                    "autoescape",
+                    "loader",
+                    "cache_size",
+                    "auto_reload",
+                    "bytecode_cache",
+                    "enable_async"
+                  ],
+                  "absent": [
+                    "autoescape"
+                  ]
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "jinja2.Environment"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B701",
+        "anchor": "witness.span",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bandit-B701-unsafe-noncall-autoescape",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "block_start_string",
+                    "block_end_string",
+                    "variable_start_string",
+                    "variable_end_string",
+                    "comment_start_string",
+                    "comment_end_string",
+                    "line_statement_prefix",
+                    "line_comment_prefix",
+                    "trim_blocks",
+                    "lstrip_blocks",
+                    "newline_sequence",
+                    "keep_trailing_newline",
+                    "extensions",
+                    "optimized",
+                    "undefined",
+                    "finalize",
+                    "autoescape",
+                    "loader",
+                    "cache_size",
+                    "auto_reload",
+                    "bytecode_cache",
+                    "enable_async"
+                  ],
+                  "bind": {
+                    "AUTOESCAPE": "autoescape"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "jinja2.Environment"
+                ]
+              }
+            },
+            "AUTOESCAPE": {
+              "not": {
+                "any": [
+                  {
+                    "value": {
+                      "eq": true
+                    }
+                  },
+                  {
+                    "pattern": "$CALLEE($$$CALL_ARGS)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B701",
+        "anchor": "witness.span",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bandit-B701-unsafe-call-autoescape",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$F($$$ARGS)"
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "block_start_string",
+                    "block_end_string",
+                    "variable_start_string",
+                    "variable_end_string",
+                    "comment_start_string",
+                    "comment_end_string",
+                    "line_statement_prefix",
+                    "line_comment_prefix",
+                    "trim_blocks",
+                    "lstrip_blocks",
+                    "newline_sequence",
+                    "keep_trailing_newline",
+                    "extensions",
+                    "optimized",
+                    "undefined",
+                    "finalize",
+                    "autoescape",
+                    "loader",
+                    "cache_size",
+                    "auto_reload",
+                    "bytecode_cache",
+                    "enable_async"
+                  ],
+                  "bind": {
+                    "AUTOESCAPE": "autoescape"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "jinja2.Environment"
+                ]
+              }
+            },
+            "AUTOESCAPE": {
+              "pattern": "$CALLEE($$$CALL_ARGS)"
+            },
+            "CALLEE": {
+              "not": {
+                "resolves": {
+                  "import": [
+                    "jinja2.select_autoescape"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B701",
+        "anchor": "witness.span",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bandit-B701-dynamic-autoescape",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "block_start_string",
+                "block_end_string",
+                "variable_start_string",
+                "variable_end_string",
+                "comment_start_string",
+                "comment_end_string",
+                "line_statement_prefix",
+                "line_comment_prefix",
+                "trim_blocks",
+                "lstrip_blocks",
+                "newline_sequence",
+                "keep_trailing_newline",
+                "extensions",
+                "optimized",
+                "undefined",
+                "finalize",
+                "autoescape",
+                "loader",
+                "cache_size",
+                "auto_reload",
+                "bytecode_cache",
+                "enable_async"
+              ],
+              "bind": {
+                "AUTOESCAPE": "autoescape"
+              }
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "jinja2.Environment"
+                ]
+              }
+            },
+            "AUTOESCAPE": {
+              "kind": "identifier"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B701",
+        "anchor": "witness.span",
+        "message": "Jinja autoescaping is not statically safe.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B701"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

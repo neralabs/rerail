@@ -121,7 +121,7 @@ describe("repository start state", () => {
     try {
       const { repositoryKey } = lookupCheckout(database, main)!;
       addAttachment(database, { repositoryKey, folder: "src", sourceKind: "pack", sourceId: "complexity" });
-      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "src", targetKind: "rule", targetId: "complexity:cyclomatic-typescript", on: false, mode: null });
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "src", targetKind: "rule", targetId: "complexity-cyclomatic-typescript", on: false, mode: null });
     } finally {
       database.$client.close();
     }

@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "rule": "ruff-async221-run-process-in-async-function",
+    "source": "fixtures",
+    "path": "rerail/probes/ASYNC220-ASYNC221-with-item-mode.py",
+    "line": 4,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports ASYNC221 on `os.spawnl(m, \"x\")` where `m` is bound by `with os.P_WAIT as m:`: is_p_wait (crates/ruff_linter/src/rules/flake8_async/rules/blocking_process_invocation.rs:176) reads a name's value through find_assigned_value, and find_binding_value (crates/ruff_python_semantic/src/analyze/typing.rs:1273) takes a with-item binding's value. The ports' shared `p-wait-arg` utility has no with-item case, so ASYNC221 misses the call and the ASYNC220 candidate reports it instead. Fix both together (NER-1770), then drop this entry."
+  }
+]

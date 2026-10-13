@@ -1,0 +1,69 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b405-import-xml-etree",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of xml.etree.cElementTree and xml.etree.ElementTree.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B405",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import xml.etree.cElementTree"
+              },
+              {
+                "pattern": "import xml.etree.cElementTree as $ALIAS"
+              },
+              {
+                "pattern": "from xml.etree.cElementTree import $$$NAMES"
+              },
+              {
+                "pattern": "from xml.etree import cElementTree"
+              },
+              {
+                "pattern": "from xml.etree import cElementTree as $ALIAS"
+              },
+              {
+                "pattern": "import xml.etree.ElementTree"
+              },
+              {
+                "pattern": "import xml.etree.ElementTree as $ALIAS"
+              },
+              {
+                "pattern": "from xml.etree.ElementTree import $$$NAMES"
+              },
+              {
+                "pattern": "from xml.etree import ElementTree"
+              },
+              {
+                "pattern": "from xml.etree import ElementTree as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B405",
+        "anchor": "witness.span",
+        "message": "ElementTree XML parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B405"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,1 +1,0 @@
-/* Filename: /private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript/src/FooBar/file.js */
