@@ -9,11 +9,59 @@
   },
   {
     "rule": "sqlfluff-pg01-postgres-excessive-locks",
+    "source": "anki",
+    "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
+    "line": 28,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`CREATE INDEX invalid_ids_id_idx ON invalid_ids (id);`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
+  },
+  {
+    "rule": "sqlfluff-pg01-postgres-excessive-locks",
+    "source": "anki",
+    "path": "rslib/src/storage/upgrades/schema11_downgrade.sql",
+    "line": 8,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`DROP INDEX idx_cards_odid;`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
+  },
+  {
+    "rule": "sqlfluff-pg01-postgres-excessive-locks",
+    "source": "anki",
+    "path": "rslib/src/storage/upgrades/schema11_downgrade.sql",
+    "line": 9,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`DROP INDEX idx_notes_mid;`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
+  },
+  {
+    "rule": "sqlfluff-pg01-postgres-excessive-locks",
     "source": "fixtures",
     "path": "ansi/PG01/test_pass_non_postgres_dialect_ignored.sql",
     "line": 1,
     "kind": "not-comparable",
     "evidence": "SQLFluff's PG01 returns early unless the file's dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py), and this case is recorded under dialect ansi to test exactly that. The engine reads every .sql file with one grammar and no dialect setting, as PostgreSQL would. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false; checked: `sqlfluff lint --dialect postgres --rules PG01` (4.4.0, force_enable = True) reports PG01 at 1:1, as the port does."
+  },
+  {
+    "rule": "sqlfluff-rf04-references-keywords",
+    "source": "anki",
+    "path": "rslib/src/storage/upgrades/schema18_downgrade.sql",
+    "line": 6,
+    "kind": "not-comparable",
+    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, in which `type` is no keyword, so RF04 does not report the column definition `type integer NOT NULL`. `type` is an unreserved keyword in SQLFluff 4.4.0's ansi, postgres and mysql dialects (dialect_selector(d).sets('unreserved_keywords')), which the port reads without a dialect setting."
+  },
+  {
+    "rule": "sqlfluff-rf04-references-keywords",
+    "source": "fixtures",
+    "path": "ansi/RF04/test_fail_keyword_as_identifier_column_alias.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi and mysql dialects and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine has no dialect setting, so the port reports only ANSI unreserved keywords that the postgres and mysql dialects also list as unreserved or reserved; `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
+  },
+  {
+    "rule": "sqlfluff-rf04-references-keywords",
+    "source": "fixtures",
+    "path": "ansi/RF04/test_fail_keyword_as_identifier_table_alias.sql",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "`parameter` is an unreserved keyword in SQLFluff 4.4.0's ansi and mysql dialects and no keyword in its postgres dialect, so RF04 reports it under ansi only. The engine has no dialect setting, so the port reports only ANSI unreserved keywords that the postgres and mysql dialects also list as unreserved or reserved; `parameter` is not one. fixtures.cases.json: libpg_query (PostgreSQL 18.6) accepts the file and postgresDialect.sameFindings is false (SQLFluff's postgres dialect reports nothing here, as the port does)."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",

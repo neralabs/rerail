@@ -3,7 +3,7 @@
   "id": "sqlfluff-st10-structure-constant-expression",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): report =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0, anchored at the operator. An operand that is itself an arithmetic, bitwise or other binary expression is not one of SQLFluff's adjacent operands, so such comparisons are skipped.",
+  "description": "Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): report =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0, anchored at the operator. A typed literal (timestamp '...') is no literal there. An operand that is itself an arithmetic, bitwise or other binary expression is not one of SQLFluff's adjacent operands, so such comparisons are skipped.",
   "scope": {
     "include": [
       "**/*.sql"
@@ -106,13 +106,23 @@
               {
                 "has": {
                   "field": "left",
-                  "kind": "literal"
+                  "kind": "literal",
+                  "not": {
+                    "has": {
+                      "kind": "identifier"
+                    }
+                  }
                 }
               },
               {
                 "has": {
                   "field": "right",
-                  "kind": "literal"
+                  "kind": "literal",
+                  "not": {
+                    "has": {
+                      "kind": "identifier"
+                    }
+                  }
                 }
               },
               {

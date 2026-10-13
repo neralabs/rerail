@@ -3,8 +3,13 @@
   "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's PG02 (postgres.not_valid_foreign_key), force_enable=true: in PostgreSQL, an ALTER TABLE ADD CONSTRAINT FOREIGN KEY must include NOT VALID; anchor the ALTER TABLE statement start.",
-  "scope": {"include": ["**/*.sql"], "exclude": []},
+  "description": "Port of SQLFluff 4.4.0's PG02 (postgres.not_valid_foreign_key), force_enable=true: an ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY must include NOT VALID; anchored at the ALTER TABLE statement's start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
   "clauses": [
     {
       "id": "foreign-key-without-not-valid",
@@ -17,17 +22,53 @@
               "kind": "add_constraint",
               "has": {
                 "kind": "constraint",
-                "has": {"kind": "keyword_foreign"},
-                "not": {"has": {"kind": "keyword_not", "has": {"kind": "keyword_valid"}}}
+                "has": {
+                  "kind": "keyword_foreign"
+                }
+              },
+              "not": {
+                "has": {
+                  "kind": "keyword_valid"
+                }
               }
-            }
+            },
+            "all": [
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "PG02",
-        "message": "ADD CONSTRAINT ... FOREIGN KEY should use NOT VALID, then VALIDATE CONSTRAINT separately, to avoid locking the table while validating existing rows.", "suppress": { "sqlfluff": { "rules": ["PG02", "all", "postgres", "postgres.not_valid_foreign_key"] } }
+        "message": "ADD CONSTRAINT ... FOREIGN KEY should use NOT VALID, then VALIDATE CONSTRAINT separately, to avoid locking the table while validating existing rows.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG02",
+              "all",
+              "postgres",
+              "postgres.not_valid_foreign_key"
+            ]
+          }
+        }
       }
     }
   ]

@@ -3,7 +3,7 @@
   "id": "sqlfluff-pg01-postgres-excessive-locks",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's PG01 (postgres.excessive_locks), force_enable=true: in PostgreSQL, CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX, and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each statement is anchored at its start.",
+  "description": "Port of SQLFluff 4.4.0's PG01 (postgres.excessive_locks), force_enable=true: CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each statement is anchored at its start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
   "scope": {
     "include": [
       "**/*.sql"
@@ -30,6 +30,24 @@
                 "not": {
                   "has": {
                     "kind": "keyword_unique"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
                   }
                 }
               }
@@ -60,11 +78,33 @@
           "language": "sql",
           "rule": {
             "kind": "drop_index",
-            "not": {
-              "has": {
-                "kind": "keyword_concurrently"
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
               }
-            }
+            ]
           }
         }
       },
@@ -91,11 +131,33 @@
           "language": "sql",
           "rule": {
             "kind": "reindex_statement",
-            "not": {
-              "has": {
-                "kind": "keyword_concurrently"
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
               }
-            }
+            ]
           }
         }
       },
@@ -122,11 +184,33 @@
           "language": "sql",
           "rule": {
             "kind": "refresh_statement",
-            "not": {
-              "has": {
-                "kind": "keyword_concurrently"
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
               }
-            }
+            ]
           }
         }
       },
