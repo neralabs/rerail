@@ -318,15 +318,16 @@ fn point(source: &str, byte: usize) -> (usize, usize, usize) {
 }
 
 /// The records of the embedded program `view` makes from the native template, as a Blade tape
-/// appends them under its root (`parent`, spanning `parent_range`): PHP's kind ids after Blade's,
-/// each node at its template span kept inside its parent's, placeholders left out.
+/// appends them under its root (`parent`, spanning `parent_range`): PHP's kinds and fields as the
+/// tape numbers them (`numbering`), each node at its template span kept inside its parent's,
+/// placeholders left out.
 fn view_records(
     view: &crate::code_rule_dsl::blade::view::View,
     node: tree_sitter::Node<'_>,
     source: &str,
     field: u16,
     parent: (usize, Range<usize>),
-    offset: u16,
+    numbering: &crate::code_rule_dsl::language::Embedded,
     records: &mut Vec<NodeRecord>,
 ) -> Option<usize> {
     if view.omitted(node) {
@@ -339,11 +340,7 @@ fn view_records(
     let index = records.len();
     records.push(NodeRecord {
         kind: node.kind().to_owned(),
-        kind_id: if node.is_error() {
-            node.kind_id()
-        } else {
-            node.kind_id() + offset
-        },
+        kind_id: numbering.kind_code(node.kind_id()),
         named: node.is_named(),
         extra: node.is_extra(),
         error: node.is_error(),
@@ -361,14 +358,16 @@ fn view_records(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            let field = cursor.field_id().map_or(0, |id| id.get());
+            let field = cursor
+                .field_id()
+                .map_or(0, |id| numbering.field_code(id.get()));
             if let Some(child) = view_records(
                 view,
                 cursor.node(),
                 source,
                 field,
                 (index, range.clone()),
-                offset,
+                numbering,
                 records,
             ) {
                 records[index].children.push(child);
@@ -456,18 +455,17 @@ fn blade_tree_parity(
     let reading = View::build(tree, source, &|| false)?;
     let mut errors = Vec::new();
     if let Some(view) = &reading.view {
-        let offset = GrammarDialect::Blade
+        let numbering = GrammarDialect::Blade
             .kinds()
             .embedding(GrammarDialect::Php)
-            .expect("Blade embeds PHP")
-            .kind_offset;
+            .expect("Blade embeds PHP");
         let program = view_records(
             view,
             view.root(),
             source,
             0,
             (0, 0..source.len()),
-            offset,
+            numbering,
             &mut expected,
         )
         .ok_or("the view's program is a placeholder")?;

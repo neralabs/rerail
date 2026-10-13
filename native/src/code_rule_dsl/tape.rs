@@ -5,7 +5,7 @@
 use crate::code_rule_dsl::blade::forte::tree::{BladeTree, parse_tree};
 use crate::code_rule_dsl::blade::view::View;
 use crate::code_rule_dsl::embed::Program;
-use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
+use crate::code_rule_dsl::language::{Embedded, GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::lines::LineTable;
 #[cfg(test)]
 use crate::code_rule_dsl::lines::Terminators;
@@ -322,17 +322,16 @@ fn overflow_value(entries: &[(u32, u32)], index: u32, sentinel: u16) -> Result<u
 }
 
 /// Appends `root`'s tree to `nodes` in preorder under `parent`. `language` is the tree's grammar
-/// and `offset` what its kind codes are shifted by in the tape's grammar. A Blade view's nodes take
-/// the template span they stand for (`View::span`), kept inside their parent's, and its
+/// and `numbering` how the tape's grammar codes its kinds and fields: as they are, for the file's
+/// own tree (`None`), or as an embedded grammar's (`language::Embedded`). An embedded program's
+/// nodes take the host span they stand for (`Program::span`), kept inside their parent's, and its
 /// placeholders are left out.
-#[allow(clippy::too_many_arguments)]
 fn encode_tree<P: Program>(
     nodes: &mut Vec<Pending>,
     root: TsNode<'_>,
     parent: Option<u32>,
     language: &Language,
-    offset: u16,
-    field_offset: u16,
+    numbering: Option<&Embedded>,
     program: Option<&P>,
     budget: &impl Fn() -> bool,
 ) -> Result<(), String> {
@@ -356,16 +355,16 @@ fn encode_tree<P: Program>(
             None
         } else {
             // The cursor's root is `root` itself, which has no field.
-            let field = cursor
-                .field_id()
-                .map_or(0, |id| id.get().saturating_add(field_offset));
+            let field = cursor.field_id().map_or(0, |id| {
+                numbering.map_or(id.get(), |numbering| numbering.field_code(id.get()))
+            });
             Some(encode_node(
                 nodes,
                 node,
                 parent,
                 field,
                 language,
-                offset,
+                numbering,
                 program,
                 &mut catalog,
             )?)
@@ -400,7 +399,7 @@ fn encode_node<'l, P: Program>(
     parent: Option<u32>,
     field: u16,
     language: &'l Language,
-    offset: u16,
+    numbering: Option<&Embedded>,
     program: Option<&P>,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
 ) -> Result<u32, String> {
@@ -412,7 +411,9 @@ fn encode_node<'l, P: Program>(
             "grammar field id {field} exceeds tape limit {FIELD_LIMIT}"
         ));
     }
-    let code = node.kind_id().wrapping_add(offset);
+    let code = numbering.map_or(node.kind_id(), |numbering| {
+        numbering.kind_code(node.kind_id())
+    });
     if error {
         if node.kind_id() != ERROR_SYMBOL || node.is_missing() {
             return Err("unsupported error or missing grammar symbol".into());
@@ -808,8 +809,7 @@ impl TapeImage {
             root,
             None,
             language,
-            0,
-            0,
+            None,
             None::<&View>,
             budget,
         )?;
@@ -834,8 +834,7 @@ impl TapeImage {
                         Program::root(&program),
                         Some(0),
                         embedded.grammar,
-                        embedded.kind_offset,
-                        embedded.field_offset,
+                        Some(embedded),
                         Some(&program),
                         budget,
                     )?;
@@ -880,8 +879,7 @@ impl TapeImage {
                 view.root(),
                 Some(0),
                 embedded.grammar,
-                embedded.kind_offset,
-                embedded.field_offset,
+                Some(embedded),
                 Some(view),
                 budget,
             )?;
