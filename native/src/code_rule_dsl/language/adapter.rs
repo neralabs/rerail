@@ -29,12 +29,12 @@ use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    file_eslint_directives, file_noqa, file_phpcs, file_phpstan, file_psalm,
+    file_eslint_directives, file_noqa, file_nosec, file_phpcs, file_phpstan, file_psalm,
 };
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, Suppress, parent_statement,
-    root,
+    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, Suppress,
+    parent_statement, root,
 };
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -91,7 +91,8 @@ pub(crate) trait Adapter: 'static {
     /// (Python only).
     fn module_path(file: &Path) -> Option<serde_json::Value>;
     /// Whether the family's inline suppression comments suppress `violation` (whose `suppress`
-    /// is `suppress`) at byte `at` of `source`, `node` placing the file.
+    /// is `suppress`) at byte `at` of `source`, `node` placing the file and `witness` its byte
+    /// span.
     fn suppresses<D: Doc>(
         violation: &ViolationSpec,
         suppress: &Suppress,
@@ -99,6 +100,7 @@ pub(crate) trait Adapter: 'static {
         source: &str,
         lines: &LineTable,
         at: usize,
+        witness: (usize, usize),
     ) -> bool;
 }
 
@@ -133,11 +135,18 @@ impl Adapter for Python {
         source: &str,
         lines: &LineTable,
         at: usize,
+        witness: (usize, usize),
     ) -> bool {
+        // A project may run Ruff and Bandit together: either linter the violation names may
+        // suppress it. Bandit reads `# nosec` on the reported line and on the lines of the node it
+        // visited, here the witness.
         suppress.noqa.as_ref().is_some_and(|noqa| {
             let index = file_noqa(|| NoqaIndex::read(&root(node), source, lines));
             let parent = noqa.parent.then(|| parent_statement(node, at)).flatten();
             index.suppresses(&noqa.codes, at, parent)
+        }) || suppress.nosec.as_ref().is_some_and(|codes| {
+            let index = file_nosec(|| NosecIndex::read(&root(node), source, lines));
+            index.suppresses(codes, at, witness, lines)
         })
     }
 }
@@ -173,6 +182,7 @@ impl Adapter for Ecma {
         source: &str,
         lines: &LineTable,
         at: usize,
+        _: (usize, usize),
     ) -> bool {
         suppress.eslint.as_ref().is_some_and(|rules| {
             let directives = file_eslint_directives(|| EslintDirectives::read(node, source, lines));
@@ -215,6 +225,7 @@ impl Adapter for Php {
         source: &str,
         lines: &LineTable,
         at: usize,
+        _: (usize, usize),
     ) -> bool {
         suppress.phpstan.as_ref().is_some_and(|identifiers| {
             let index = file_phpstan(|| PhpstanIndex::read(&root(node), source, lines));
@@ -263,6 +274,7 @@ impl Adapter for Blade {
         _: &str,
         _: &LineTable,
         _: usize,
+        _: (usize, usize),
     ) -> bool {
         false
     }

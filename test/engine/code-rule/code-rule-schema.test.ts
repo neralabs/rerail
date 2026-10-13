@@ -120,6 +120,15 @@ describe("code rule schema language families", () => {
     expect(codeRuleSchema.safeParse(withCategory).error?.message).toContain("Must be a PHP_CodeSniffer sniff or message code");
   });
 
+  it("reads Bandit's nosec on Python queries only", () => {
+    const withBoth = astRule("python", { kind: "assert_statement" }, { suppress: { noqa: { codes: ["S101"] }, nosec: { codes: ["B101"] } } });
+    expect(codeRuleSchema.safeParse(withBoth).success).toBe(true);
+    const lowercase = astRule("python", { kind: "assert_statement" }, { suppress: { nosec: { codes: ["b101"] } } });
+    expect(codeRuleSchema.safeParse(lowercase).error?.message).toContain("Must be a Bandit test id");
+    const onPhp = astRule("php", { kind: "function_call_expression" }, { suppress: { nosec: { codes: ["B101"] } } });
+    expect(validateCodeRule(onPhp)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("nosec comments are Bandit's; a php query has none") });
+  });
+
   it("reads PHP doc comments with phpDoc", () => {
     const mixedParam = { kind: "comment", parse: { grammar: "phpDoc", kind: "param_tag_value", has: { kind: "identifier_type", value: { eq: "mixed" }, capture: "T" } } };
     expect(codeRuleSchema.safeParse(astRule("php", mixedParam)).error?.issues ?? []).toEqual([]);

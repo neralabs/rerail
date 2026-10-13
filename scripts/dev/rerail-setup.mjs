@@ -30,7 +30,7 @@ export const USAGE = [
   "  -h, --help             show this help",
   "",
   "rerail setup options, passed through:",
-  "  [--project <dir>] [--harness omp,pi,claude-code,codex,cursor] [--port <n>] [--skip-start] [--skip-register] [--dry-run]",
+  "  [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json]",
   "",
   "Rerail is not public yet: npm must be logged in (`npm login`) with an account that can read the @neralabs scope.",
 ].join("\n");

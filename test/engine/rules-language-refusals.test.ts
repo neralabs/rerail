@@ -193,8 +193,8 @@ for (const language of [...ECMA, ...PHP]) {
 refuses("python file.declaration", document("python", ident({}), { file: { declaration: true } }));
 
 // Suppression comments of a linter the language has none of.
-const SUPPRESSIONS: Record<string, Json> = { eslint: { rules: ["strict"] }, noqa: { codes: ["F401"] }, phpstan: { identifiers: ["variable.undefined"] }, psalm: { issues: ["UndefinedVariable"] }, phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } };
-const OWN_SUPPRESSIONS: Record<string, readonly string[]> = { python: ["noqa"], typescript: ["eslint"], javascript: ["eslint"], php: ["phpstan", "psalm", "phpcs"], blade: [] };
+const SUPPRESSIONS: Record<string, Json> = { eslint: { rules: ["strict"] }, noqa: { codes: ["F401"] }, nosec: { codes: ["B101"] }, phpstan: { identifiers: ["variable.undefined"] }, psalm: { issues: ["UndefinedVariable"] }, phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } };
+const OWN_SUPPRESSIONS: Record<string, readonly string[]> = { python: ["noqa", "nosec"], typescript: ["eslint"], javascript: ["eslint"], php: ["phpstan", "psalm", "phpcs"], blade: [] };
 for (const [language, own] of Object.entries(OWN_SUPPRESSIONS)) {
   for (const [linter, suppress] of Object.entries(SUPPRESSIONS)) {
     if (!own.includes(linter)) refuses(`${language} suppress.${linter}`, document(language, { kind: nameKind(language) }, {}, { suppress: { [linter]: suppress } }));
@@ -422,6 +422,10 @@ const REFUSED_AT: Record<string, string> = {
   "blade suppress.phpstan": "/clauses/0/violation/suppress/phpstan",
   "blade suppress.psalm": "/clauses/0/violation/suppress/psalm",
   "blade suppress.phpcs": "/clauses/0/violation/suppress/phpcs",
+  "typescript suppress.nosec": "/clauses/0/violation/suppress/nosec",
+  "javascript suppress.nosec": "/clauses/0/violation/suppress/nosec",
+  "php suppress.nosec": "/clauses/0/violation/suppress/nosec",
+  "blade suppress.nosec": "/clauses/0/violation/suppress/nosec",
   "typescript define utility formatArgs": "/clauses/0/define/utils/u/formatArgs",
   "python define utility binds.builtin": "/clauses/0/define/utils/u/binds/builtin",
   "php query utility value.type str": "/clauses/0/forbid/ast/utils/u/value/type/0",

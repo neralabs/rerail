@@ -246,7 +246,7 @@ export function createRerailApi(
         503: jsonContent(errorSchema, "A dependency the operation needs, such as the native kernel, is unavailable"),
       },
     });
-    app.openapi(route, (context: Context) => {
+    app.openapi(route, async (context: Context) => {
       const validated = context.req as unknown as { valid(target: "param" | "query" | "json"): Record<string, unknown> | undefined };
       const input = { ...validated.valid("param"), ...validated.valid("query"), ...validated.valid("json") };
       const conditional = (etag: string): Response | undefined => {
@@ -261,7 +261,7 @@ export function createRerailApi(
           if (unchanged !== undefined) return unchanged;
         }
         // `/api` callers are people (the dashboard, the CLI); coding agents come through `/mcp`.
-        const result = invokeOperation(operation, stores, input, { kind: "person" });
+        const result = await invokeOperation(operation, stores, input, { kind: "person" });
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
           const unchanged = conditional(entityTag(operation.id, JSON.stringify(result) ?? ""));
           if (unchanged !== undefined) return unchanged;

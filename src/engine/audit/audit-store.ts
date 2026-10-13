@@ -96,6 +96,8 @@ export interface RuleActivityTotals {
   lastSeenAt: number | null;
   /** Distinct audits in range whose compiled rule set included this rule; 0 means never evaluated. */
   audits: number;
+  /** Of `distinctViolations`, those recorded in Log mode: the mode at the time, not the rule's mode now. */
+  loggedViolations: number;
 }
 
 export interface ViolationHistoryQuery {
@@ -376,6 +378,7 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
     sessions: number;
     lastSeenAt: number | null;
     audits: number;
+    loggedViolations: number;
   }>(sql`
     WITH in_range AS (
       SELECT audit_id, session_id, started_at, violations_json, rule_revisions_json
@@ -386,6 +389,7 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
       SELECT
         json_extract(violation.value, '$.ruleId') AS ruleId,
         count(DISTINCT ${violationKey("violation.value")}) AS distinctViolations,
+        count(DISTINCT CASE WHEN json_extract(violation.value, '$.mode') = 'log' THEN ${violationKey("violation.value")} END) AS loggedViolations,
         count(DISTINCT audit.session_id) AS sessions,
         max(audit.started_at) AS lastSeenAt
       FROM in_range audit, json_each(audit.violations_json) violation
@@ -406,7 +410,8 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
       coalesce(violations.distinctViolations, 0) AS distinctViolations,
       coalesce(violations.sessions, 0) AS sessions,
       violations.lastSeenAt AS lastSeenAt,
-      coalesce(audited.audits, 0) AS audits
+      coalesce(audited.audits, 0) AS audits,
+      coalesce(violations.loggedViolations, 0) AS loggedViolations
     FROM measured
     LEFT JOIN violations ON violations.ruleId = measured.ruleId
     LEFT JOIN audited ON audited.ruleId = measured.ruleId
@@ -417,6 +422,7 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
     sessions: row.sessions,
     lastSeenAt: row.lastSeenAt,
     audits: row.audits,
+    loggedViolations: row.loggedViolations,
   }]));
 }
 

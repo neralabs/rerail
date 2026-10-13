@@ -141,7 +141,7 @@ jobs:
 
       - name: Smoke Windows rerail CLI install planning
         if: matrix.windows_runtime_smoke
-        run: node dist/cli/cli.js install --root . --project . --harness omp,pi,claude-code,codex,cursor --dry-run
+        run: node dist/cli/cli.js install --root . --agents omp,pi,claude-code,codex,cursor --dry-run
 
       - name: Provision Linux Secret Service
         if: startsWith(matrix.runner, 'ubuntu')

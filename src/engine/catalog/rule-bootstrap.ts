@@ -14,6 +14,7 @@ import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, type Bun
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
 import type { RuleDocument } from "./rule-store.js";
+import { clearSetupReview } from "./setup-review.js";
 
 export const RULES_DUMP_FILE = "rules.json";
 
@@ -167,6 +168,8 @@ export function importRulesDump(db: RerailDatabase, bundle: BundledCatalog, valu
         set: { displayName, aliases, configuredAt: repository.configuredAt, updatedAt: now },
       }).run();
       tx.delete(ruleAttachments).where(eq(ruleAttachments.repositoryKey, key)).run();
+      // The dump's configuration is not the review's, so set-up no longer waits on one it offered.
+      clearSetupReview(tx, key);
       tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();
       for (const attachment of repository.attachments) {
         tx.insert(ruleAttachments).values({ repositoryKey: key, ...attachment, folder: normalizeFolder(attachment.folder), createdAt: now })

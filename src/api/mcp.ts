@@ -33,9 +33,9 @@ export function createRerailMcpServer(
           idempotentHint: operation.method !== "POST",
         },
       },
-      input => {
+      async input => {
         try {
-          const result = invokeOperation(operation, stores, input as Record<string, unknown>, caller) as Record<string, unknown>;
+          const result = await invokeOperation(operation, stores, input as Record<string, unknown>, caller) as Record<string, unknown>;
           return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
         } catch (error) {
           const message = error instanceof ApiError ? `${error.code}: ${error.message}` : (error as Error).message;

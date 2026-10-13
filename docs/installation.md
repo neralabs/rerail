@@ -11,8 +11,10 @@ To run Rerail from a source checkout instead, see "Developing from a checkout".
 npx @neralabs/rerail setup
 ```
 
-Run it again at any time: setup is idempotent, so it doubles as "upgrade and
-re-register".
+Run it again at any time: setup is idempotent, so it doubles as "upgrade". In a
+repository that is set up already it changes nothing there and connects no
+coding agent installed since; name one to connect it, for example
+`npx @neralabs/rerail setup --agents codex`.
 
 ## What setup does
 
@@ -29,15 +31,44 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 └── versions/<older>/…                                 kept for `rerail update rollback`
 ```
 
+Set-up follows the same steps in a terminal and from a coding agent. Nothing
+in a repository, its Git metadata, or the database is written before the
+person says yes.
+
+0. **Node check** — on a Node major below 24 set-up stops before changing
+   anything and says how to upgrade.
 1. **Install** — `ManagedUpdater.install()` runs `npm install @neralabs/rerail@<this version>`
    into `versions/<version>` (a staging directory until validation passes),
    checks the package identity, loads the native kernel and runs a real
    event-stream round-trip, then activates it. `current` is re-pointed
    atomically and `bin/rerail` is (re)written. The npx copy is never referenced
-   again.
-2. **Register** — `rerail install` writes persistent registrations for every
-   harness found on the machine, all pointing at `~/.rerail/current` so future
-   updates never touch harness config:
+   again. Installing turns nothing on, connects no coding agent and starts no
+   daemon. A run from the version `current` already points at skips this step.
+   So does an answer (`--answer`, `--repo`) or a `/rerail-start` step once any
+   version is installed: OMP and Pi run those from the session's own package,
+   which may be older than `current`, and installing it would undo
+   `/rerail-update`.
+2. **Ask before reading** — set-up names the Git repository it ran in and asks
+   whether it may read it. Outside a repository (or in your home folder) it
+   asks which folder to start with instead; `--repo <folder>` names one, which
+   is the go-ahead to read it.
+3. **Recommend** — the repository's files and `package.json` dependencies are
+   matched against the rule packs; each pack that fits is shown with its rule
+   count, why it matched and the folder it would be added in, with the coding
+   agents found and not found. A repository that matches no rule pack is
+   offered none; it can still start, and add rule packs in the dashboard later.
+4. **Confirm** — start, review the packs in the dashboard first (the review
+   link opens `#rule-packs?review=1` scoped to the repository and checkout,
+   and set-up asks again rather than waiting on the browser), name the coding
+   agents to connect, or pick rule packs yourself (the repository is set up
+   with no packs and no code is read). See [Rule scoping](rule-scoping.md#set-up)
+   for how each answer attaches packs.
+5. **Start, in this repository** — the chosen coding agents (all found,
+   unless named) are connected, the recommended packs (or the ones kept on in
+   the review) are attached to the repository, and the repository is started:
+   every checkout of it, the one set-up ran in included, that has not been
+   stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
+   `~/.rerail/current` so future updates never touch coding agent config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
    - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-ui`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-rage-quit`) under `~/.claude/commands/` (`/rerail-ui` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
@@ -62,20 +93,57 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    another install of this package or one that is gone; anyone else's stay, and
    removing Rerail removes only this install's. A backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
-   a no-op. `--harness <list>` limits it.
+   a no-op.
+6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
+   one folder), the rules on, the other repositories Rerail is on in, the
+   coding agents connected, and the dashboard link (`#rules`, scoped to the
+   repository and checkout). The daemon used is the active install's, which
+   serves every repository; one from another version or on another port is
+   replaced (`--port` picks the port). The browser opens unless
+   `BROWSER=none`, the session is over SSH, or Linux has no display. Add
+   `~/.rerail/bin` to `PATH` (the Windows launcher is `rerail.cmd`).
 
-3. **Start** — the daemon comes up (`rerail daemon start`) unless `--skip-start`.
-   Adapters also autostart it on the first session, so this is a convenience.
-4. **Report** — prints what changed and reminds you to add `~/.rerail/bin` to
-   `PATH` (the Windows launcher is `rerail.cmd`) and restart the harnesses.
+"Skip for now" (no repository) connects the coding agents found and starts
+Rerail nowhere. Set-up run again in a repository that is set up never asks
+again: it shows the summary, or says Rerail is stopped there. Rerail stays off
+in every other repository until you start it there (see "Starting and stopping
+Rerail" below); starting a repository that is not set up runs steps 2 to 6
+for it.
 
-Rerail stays off in every repository until you start it there (see "Starting
-and stopping Rerail" below).
+**Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
+runs it), or with `--relay`, each run prints the next question for the coding
+agent to relay, as written, with one command per answer, and exits 0. The
+coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|other|skip>`,
+`--repo <folder>` and `--agents <ids>` (`omp,pi,claude-code,codex,cursor`).
+Each answer run starts from what it is told, so running one twice repeats no
+earlier step's side effect. Claude Code's, Cursor's and Codex's `/rerail-start`
+runs `rerail start --relay`, and every answer command carries `--relay`, so a
+coding agent that runs commands in a terminal still gets these questions
+instead of a prompt waiting on input.
 
-`--dry-run` prints all of the above without writing anything. Without
-`--harness`, registration touches every harness it detects, so make the first
-run a dry run and read what it would change; the real run writes a timestamped
-`<file>.<timestamp>.bak` beside every file it edits.
+**In a coding agent's own UI**, `--json` on `rerail setup` and on `rerail
+start` prints one JSON object per run and nothing else on stdout:
+`{ step, screen, question }` (`SetupStep` in `src/setup-step.ts`). `step` is
+`read-repo`, `confirm-packs` or `no-repo` at a question, else `done`,
+`stopped`, or `error` (exit 1); `screen` is plain text for the person; each of
+the question's options carries its answer key, label, `detail`, the arguments
+that give it (`next.args`, starting with `setup` and carrying `--json`), and,
+where the answer needs a folder or coding agent ids, the value to ask for first
+(`input`: append `[flag, value]`). `rerail start --json` in the home folder
+asks which project to start with. The
+side effects are the agent lane's. `--database <file>` names the database an
+extension was configured with.
+
+In OMP and Pi, `/rerail-start` always runs this picker through the launcher's
+`rerail start --json`: each question's text shows as a notice, then the
+question as a select (a text box for a folder or coding agent ids), and the
+summary shows when set-up ends. In a repository that is set up the first step
+just starts Rerail and says so. Closing a picker stops set-up and turns
+nothing on. Without a UI (print mode) it shows `rerail start`'s text. Claude
+Code, Codex and Cursor relay the questions as text.
+
+`rerail install` (below) still connects coding agents on its own, with
+`--agents <list>`, `--root` and `--dry-run`.
 
 ## Prerequisites
 
@@ -108,7 +176,7 @@ The following commands describe the managed installation, once `~/.rerail/bin`
 is on `PATH`:
 
 ```sh
-rerail start             # start Rerail in this checkout (first time: sets the repository up with its recommended rule packs)
+rerail start             # start Rerail in this checkout (first time: runs set-up's questions for the repository)
 rerail stop              # stop Rerail in this checkout; the daemon keeps serving others
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
@@ -176,11 +244,11 @@ the repository. Two clones of one remote are one repository.
 - `/rerail-start` (OMP, Pi, Claude Code, Cursor) or `rerail start` (terminal,
   and the only spelling in Codex, which cannot expose an exact third-party
   slash-command name) starts Rerail in the current checkout and the checkouts
-  inside it. In a repository that is not set up, it also sets it up with the
-  rule packs recommended for it: a language pack in the folder it matched, a
-  repository pack for the whole repository (`rerail start --no-packs` adds
-  none, and you pick them on the rules page). Until a repository is set up,
-  its sessions are recorded but no rules run.
+  inside it. In a repository that is not set up, it runs set-up's steps 2 to 6
+  there first: it asks, recommends rule packs, and starts once you confirm
+  ("I'll pick rule packs myself" sets it up with none, and you pick them on
+  the Rule packs page). Until a repository is set up, its sessions are
+  recorded but no rules run.
 - `/rerail-stop` or `rerail stop` stops Rerail in the current checkout and the
   checkouts inside it: no recording, evaluation, steering, or daemon autostart
   from their sessions. Recorded history, rules, and the shared daemon stay,

@@ -10,3 +10,5 @@ export { auditControlsResponseSchema, operations } from "./operations.js";
 export { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
 export { presentationResponseSchema, type sessionResponseSchema } from "./session-contracts.js";
 export { DatabaseApiStores } from "./stores.js";
+export { invokeOperation } from "./operation.js";
+export { type RulesDashboardScope } from "./session-contracts.js";

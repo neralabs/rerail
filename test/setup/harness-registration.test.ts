@@ -21,8 +21,8 @@ import {
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
 } from "../../src/setup/claude-status-store.js";
-import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS } from "../../src/harness/index.js";
-import { runInstallCommand } from "../../src/cli/index.js";
+import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion, shellQuote } from "../../src/harness/index.js";
+import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
 
 const temporaryDirectories: string[] = [];
@@ -663,7 +663,7 @@ describe("Claude Code status-line ownership", () => {
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const home = join(options.home, ".rerail");
     const updater = new ManagedUpdater({ home, packageRoot: options.root, packageVersion: "1.0.0" });
-    await runInstallCommand(["--root", options.root, "--harness", "claude-code"], { home, packageRoot: options.root, updater });
+    await runInstallCommand(["--root", options.root, "--agents", "claude-code"], { home, packageRoot: options.root, updater });
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
   });
 
@@ -715,11 +715,14 @@ describe("Claude Code commands", () => {
     const overview = await read("rerail");
     expect(overview).toContain(`allowed-tools: Bash(${command} session claude-code *)\n`);
     expect(overview).toContain(`\n${command} session claude-code '\${CLAUDE_SESSION_ID}'\n`);
-    for (const action of ["start", "stop", "update"]) {
+    for (const action of ["stop", "update"]) {
       const body = await read(`rerail-${action}`);
       expect(body).toContain(`allowed-tools: Bash(${command} ${action})\n`);
       expect(body).toContain(`\n${command} ${action}\n`);
     }
+    const start = await read("rerail-start");
+    expect(start).toContain(`\n${command} start --relay\n`);
+    expect(start).not.toContain("recommended rule packs");
     const ui = await read("rerail-ui");
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
@@ -740,6 +743,69 @@ describe("Claude Code commands", () => {
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: options });
     expect(change(again.changes, "claude-code", "rerail.md").action).toBe("unchanged");
+  });
+
+  it("lets /rerail-start relay each set-up question and run the printed answer command without a prompt", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    await registerHarnesses({ root, home, nodePath, harnesses: options });
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    // Claude Code's `Bash(<prefix> *)` grants every command that starts with the prefix and a space.
+    const granted = (line: string): boolean => allowed.some(pattern =>
+      pattern.endsWith(" *") ? line.startsWith(pattern.slice(0, -1)) : line === pattern);
+    // What set-up prints in the agent lane: the question, then one numbered command per answer, each run as set-up prints it.
+    const context = { home: rerailHome, packageRoot: root, updater: new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0" }) };
+    const answers = (): string[] => renderQuestion(readRepoQuestion({
+      repoName: "acme-web",
+      repoPath: "/code/acme-web",
+      setupCommand: setupAnswerCommand(context, { relay: true })!,
+    }), "agent").split("\n").filter(line => /^\d+\. .* setup /u.test(line)).map(line => line.replace(/^\d+\. /u, ""));
+
+    const bareAnswers = answers();
+    await mkdir(dirname(context.updater.launcherPath), { recursive: true });
+    await writeFile(context.updater.launcherPath, "");
+    const launcherAnswers = answers();
+    expect(launcherAnswers).toHaveLength(3);
+    expect(bareAnswers).toHaveLength(3);
+    for (const line of [...launcherAnswers, ...bareAnswers]) expect(granted(line), line).toBe(true);
+    expect(granted(`${nodePath} ${join(root, "dist", "cli", "cli.js")} start --relay`)).toBe(true);
+    expect(granted(`${shellQuote(join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
+
+    expect(start).toContain("relay it to the person as written and wait for their reply");
+    expect(start).toContain("run only the one command the output gives for that answer");
+  });
+
+  it("grants the answer commands set-up prints on Windows, the launcher double-quoted as cmd.exe runs it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: options });
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
+    await mkdir(dirname(updater.launcherPath), { recursive: true });
+    await writeFile(updater.launcherPath, "");
+
+    const command = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true }, "win32")!;
+    expect(command).toBe(`"${join(rerailHome, "bin", "rerail.cmd")}" setup --relay`);
+    expect(allowed).toContain(`${command} *`);
+  });
+
+  it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async () => {
+    const { home, root, nodePath } = await fixture();
+    await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code", "cursor", "codex"] });
+    const files = [
+      join(home, ".claude", "commands", "rerail-start.md"),
+      join(home, ".cursor", "commands", "rerail-start.md"),
+      join(home, ".codex", "skills", "rerail-start", "SKILL.md"),
+    ];
+    for (const file of files) {
+      const body = await readFile(file, "utf8");
+      const run = body.match(/```sh\n(.*)\n```/u)?.[1];
+      expect(run, file).toBe(`${nodePath} ${join(root, "dist", "cli", "cli.js")} start --relay`);
+    }
   });
 
   it("removes this package's retired commands and leaves anyone else's", async () => {

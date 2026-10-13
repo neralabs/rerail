@@ -23,7 +23,7 @@ function build() {
   el.search = h("input", { id: "sq", type: "search", placeholder: "Search title or id", "aria-label": "Search sessions" });
   el.chips = h("div.chips", { style: "margin-bottom:8px" },
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
-    h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "Rule triggered"),
+    h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
   el.list = h("div.list.slist");
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
@@ -46,7 +46,7 @@ function build() {
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No agent sessions yet"), h("p", null, "Your first Claude Code, Cursor or Codex session in this repository shows up here.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No coding agent sessions yet"), h("p", null, "Your next Claude Code, Cursor, Codex, OMP or Pi session in this repo shows up here.")));
   el.sess = h("div.sess", null,
     h("aside", null,
       h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
@@ -79,7 +79,7 @@ function updateListItem(node, item) {
   if (item.group) {
     setAttr(node, "aria-expanded", String(item.open));
     setText(node.querySelector(".name"), item.name);
-    const withC = item.withC ? ` · ${fmt(item.withC)} with rule triggers` : "";
+    const withC = item.withC ? ` · ${fmt(item.withC)} with violations` : "";
     setText(node.querySelector(".cnt"), `${fmt(item.count)} ${plural(item.count, "session")}${withC}`);
     return;
   }
@@ -100,7 +100,7 @@ function updateListItem(node, item) {
   setAttr(c, "hidden", item.n === null);
   setClass(c, "zero", item.n === 0);
   setText(c.firstChild, fmt(item.n ?? 0));
-  setText(c.lastChild, item.n === 1 ? "rule trigger" : "rule triggers");
+  setText(c.lastChild, plural(item.n ?? 0, "violation"));
 }
 
 function rowState(st, s) {
@@ -116,7 +116,7 @@ export function currentSession() {
 
 export function renderSessions(root) {
   if (v === null) build();
-  if (v.root.parentNode !== root) root.append(v.root);
+  if (v.root.parentNode !== root) root.replaceChildren(v.root);
   const all = data.sessions;
   setAttr(v.empty, "hidden", all.length > 0);
   setAttr(v.sess, "hidden", all.length === 0);
@@ -237,7 +237,7 @@ function renderTranscript(sess) {
   const tools = turns.flatMap(t => t.tools);
   const n = lvl => tools.filter(e => e.level === lvl).length;
   setText(v.tsum, "");
-  v.tsum.replaceChildren(h("b", null, fmt(ui.showAll ? sess.eventCount : cs.length)), ui.showAll ? " events" : ` rule ${plural(cs.length, "trigger")}`);
+  v.tsum.replaceChildren(h("b", null, fmt(ui.showAll ? sess.eventCount : cs.length)), ui.showAll ? " events" : ` ${plural(cs.length, "violation")} logged`);
   setAttr(v.tchips, "hidden", !ui.showAll);
   const chipCounts = { changes: n("change"), commands: n("execute"), outside: n("outside") + n("ask") + n("delegate"), failures: tools.filter(e => e.failed).length };
   for (const c of v.tchips.children) updateEventChip(c, chipCounts[c.dataset.i]);
