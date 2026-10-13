@@ -335,13 +335,18 @@ fn the_data_after_halt_compiler_is_no_php() {
         "<?php __HALT_COMPILER() ?>data eval('x');\n",
         &format!("<?php __HALT_COMPILER() ; {}", blanked("data eval('x');\n")),
     );
-    // Not the call: a longer name, or a method.
+    // Not the directive, which PHP reads only as a statement: a longer name, a variable call, a
+    // method or static method, a call inside an expression. Each file is pure PHP: its own view.
     for source in [
-        "<?php __halt_compilers(); ?>\n<p>",
-        "<?php $o->x__halt_compiler(); ?>\n<p>",
+        "<?php __halt_compilers(); eval('1');\n",
+        "<?php $o->x__halt_compiler(); eval('1');\n",
+        "<?php $__halt_compiler = static fn() => 0; $__halt_compiler(); eval('1');\n",
+        "<?php $o->__halt_compiler(); eval('1');\n",
+        "<?php $o?->__halt_compiler(); eval('1');\n",
+        "<?php Foo::__halt_compiler(); eval('1');\n",
+        "<?php f(__halt_compiler()); eval('1');\n",
     ] {
-        assert!(!view(source).contains("<p>"), "{source:?}");
-        assert!(view(source).contains("compiler"), "{source:?}");
+        assert!(matches!(view(source), Cow::Borrowed(_)), "{source:?}");
     }
 }
 
@@ -454,4 +459,15 @@ fn inline_text_is_no_php_code_to_a_rule() {
         violation_lines(&evaluate_file(&compiled, "php", "halt.php", source), source),
         Vec::<usize>::new()
     );
+    // A variable or method named `__halt_compiler` stops nothing: the `eval` after it is found.
+    for source in [
+        "<?php $__halt_compiler = static fn() => 0; $__halt_compiler(); eval('1');\n",
+        "<?php $o->__halt_compiler(); eval('1');\n",
+    ] {
+        assert_eq!(
+            violation_lines(&evaluate_file(&compiled, "php", "call.php", source), source),
+            [1],
+            "{source:?}"
+        );
+    }
 }
