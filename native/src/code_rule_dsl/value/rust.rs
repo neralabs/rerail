@@ -779,6 +779,9 @@ fn binary(op: &str, left: RustValue, right: RustValue) -> RustValue {
             ">=" => return RustValue::Bool(a >= b),
             _ => return RustValue::Unknown,
         };
+        // An invalid operation's NaN is rustc's positive quiet NaN, as its oracle records, not the
+        // host's: x86's `0.0 / 0.0` yields the negative one.
+        let value = if value.is_nan() { f64::NAN } else { value };
         return RustValue::Float {
             value: if ty == Some(FloatTy::F32) {
                 f64::from(value as f32)
