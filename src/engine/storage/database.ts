@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -26,9 +26,17 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
   return join(defaultRerailHome(environment), RERAIL_DATABASE_FILE);
 }
 
-/** A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. */
+/**
+ * A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. A
+ * writable open of a file this process cannot write throws before anything else touches it: SQLite would quietly open
+ * it read-only, and the writer would then change its mode before failing.
+ */
 function connectSqlite(path: string, readonly: boolean): RerailDatabase {
-  if (!readonly) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (!readonly) {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    // The folder too: SQLite writes its journal and WAL beside the file.
+    for (const target of existsSync(path) ? [path, dirname(path)] : []) accessSync(target, constants.W_OK);
+  }
   const client = new Database(path, { readonly });
   try {
     const database = drizzle(client, { schema });

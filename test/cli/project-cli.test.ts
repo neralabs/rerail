@@ -122,6 +122,20 @@ describe("rerail update and rerail update rollback", () => {
     expect(existsSync(`${path}.before-rollback`)).toBe(false);
   });
 
+  // Self-review: a version that already opens the raised floor, whose own writer had not run when it was updated
+  // from, reads the database as it is; putting the copy back would drop what changed since.
+  it("keeps the database when the version rolled back to already opens its raised floor", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    const stopped: string[] = [];
+    await updateWithSnapshot(updater, path, "2.0.0", RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    expect(stopped).toEqual([]);
+    expect(repositoryKeys(path)).toEqual(["after", "before"]);
+    expect(existsSync(`${path}.before-rollback`)).toBe(false);
+  });
+
   // After 1.0.0 → 2.0.0 and a rollback to 1.0.0, rolling back again returns to 2.0.0: no copy is put back for that.
   it("never puts back a copy taken for another version change", async () => {
     const path = await database();

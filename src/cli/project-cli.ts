@@ -5,6 +5,7 @@ import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import type { UpdateResult, UpdateStatus } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../engine/storage/database.js";
+import { RERAIL_SCHEMA_VERSION } from "../engine/storage/migrations.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
@@ -18,6 +19,8 @@ export function preUpdateSnapshotPath(databasePath: string): string {
 interface SnapshotTransition {
   from: string;
   to: string;
+  /** The highest schema floor `from` opens: the floor of the version that ran the update. Absent in older records. */
+  fromReads?: number;
 }
 
 /** What `rerail update` and `rerail update rollback` ask of the managed updater. */
@@ -54,10 +57,16 @@ function stageSnapshot(databasePath: string): string | undefined {
 
 /**
  * `rerail update`: copy the database, then update. Only an update that changes the version replaces
- * `rerail.sqlite.pre-update`, and the copy records that change; an update that finds nothing newer, or fails,
- * leaves the copy of the last real change in place, so rolling that change back still finds it.
+ * `rerail.sqlite.pre-update`, and the copy records that change and the schema floor this version opens (`fromReads`,
+ * this build's own); an update that finds nothing newer, or fails, leaves the copy of the last real change in place, so
+ * rolling that change back still finds it.
  */
-export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath: string, channel: string | undefined): Promise<UpdateResult> {
+export async function updateWithSnapshot(
+  updater: SnapshotUpdater,
+  databasePath: string,
+  channel: string | undefined,
+  fromReads: number = RERAIL_SCHEMA_VERSION,
+): Promise<UpdateResult> {
   const from = (await updater.status()).current.version;
   const staged = stageSnapshot(databasePath);
   let result: UpdateResult;
@@ -73,7 +82,7 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
     return result;
   }
   const target = preUpdateSnapshotPath(databasePath);
-  const transition: SnapshotTransition = { from, to: result.current.version };
+  const transition: SnapshotTransition = { from, to: result.current.version, fromReads };
   writeFileSync(`${target}.json.tmp`, `${JSON.stringify(transition)}\n`);
   renameSync(staged, target);
   renameSync(`${target}.json.tmp`, `${target}.json`);
@@ -99,7 +108,8 @@ function schemaFloor(path: string): number | undefined {
 function snapshotTransition(databasePath: string): SnapshotTransition | undefined {
   try {
     const value = JSON.parse(readFileSync(`${preUpdateSnapshotPath(databasePath)}.json`, "utf8")) as Partial<SnapshotTransition>;
-    return typeof value.from === "string" && typeof value.to === "string" ? { from: value.from, to: value.to } : undefined;
+    if (typeof value.from !== "string" || typeof value.to !== "string") return undefined;
+    return { from: value.from, to: value.to, ...(Number.isInteger(value.fromReads) ? { fromReads: value.fromReads } : {}) };
   } catch {
     return undefined;
   }
@@ -107,12 +117,12 @@ function snapshotTransition(databasePath: string): SnapshotTransition | undefine
 
 /**
  * `rerail update rollback`: roll the version back, then, when the copy taken before updating from the version rolled
- * back to (`from`) to the version left (`to`) exists and that update's migrations raised the database's schema floor
- * above the copy's, put the copy back: the version rolled back to refuses the database otherwise. The replaced
- * database, with what changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor the update left
- * alone (additive steps only) keeps the database as it is, and a copy taken for another change is never used.
- * `stopDaemon` runs first: the daemon holds the database open. A restore that fails is reported, never fatal: the
- * version has rolled back already.
+ * back to (`from`) to the version left (`to`) exists and the database's schema floor is now above what `from` opens,
+ * put the copy back: the version rolled back to refuses the database otherwise. The replaced database, with what
+ * changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor `from` still opens (additive steps, or
+ * a floor it already supported) keeps the database as it is, and a copy taken for another change is never used. A
+ * record from before `fromReads` was kept is judged by the copy's own floor. `stopDaemon` runs first: the daemon holds
+ * the database open. A restore that fails is reported, never fatal: the version has rolled back already.
  */
 export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
   const leaving = (await updater.status()).current.version;
@@ -122,7 +132,7 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   const snapshot = preUpdateSnapshotPath(databasePath);
   const current = schemaFloor(databasePath);
   const before = schemaFloor(snapshot);
-  if (current === undefined || before === undefined || current <= before) return result;
+  if (current === undefined || before === undefined || current <= (transition.fromReads ?? before)) return result;
   const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
