@@ -290,7 +290,10 @@ fn parse_cfg_attr(body: &str, source: &str) -> Vec<Setting> {
 /// A lint level (`allow(..)`) or `clippy::msrv = ".."`; Clippy ignores an msrv it cannot parse.
 fn parse_setting(body: &str) -> Option<Setting> {
     if let Some((path, value)) = body.split_once('=')
-        && path.chars().filter(|c| !c.is_whitespace()).eq("clippy::msrv".chars())
+        && path
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .eq("clippy::msrv".chars())
     {
         return value
             .trim()
