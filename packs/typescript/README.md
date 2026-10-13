@@ -19,6 +19,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`) and its recordings (`fixtures.expected.json`, `corpus-vscode.expected.json`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
 | `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
 | `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a V1 validation gate or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only |
+| `candidates/build-vitest-policies.mjs` | Writes the three @vitest/eslint-plugin candidates (`candidates/rules/vitest-*.json`) from one source, which spells once the check that a call's head is Vitest's (a global or a binding of `vitest`, as upstream's `resolveVitestFn` reads it); edit it, not the JSON, then run `node candidates/build-vitest-policies.mjs` |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 Re-recording runs offline against the pinned tool versions (the recorder's header lists them):
