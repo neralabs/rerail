@@ -16,17 +16,22 @@ export async function runCursorHook(
 ): Promise<CursorHookOutput> {
   const workspace = cursorWorkspace(input);
   if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return runHostHook("cursor", workspace, cursorSession(input).sessionId, options, (runtime, storageRoot) =>
+  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", options, (runtime, storageRoot) =>
     handleCursorEvent(input, runtime, storageRoot));
 }
 
+/**
+ * Always exits 0, answering `{}` as Rerail does where it is not started, so Cursor carries on: a failed hook would put
+ * an error on every tool call (design N11). The reason goes to stderr, which Cursor keeps out of the chat.
+ */
 export async function serveCursorHook(input: string): Promise<void> {
+  let output: CursorHookOutput = {};
   try {
-    await emitHookOutput(await runCursorHook(JSON.parse(input) as CursorHookInput));
+    output = await runCursorHook(JSON.parse(input) as CursorHookInput);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
   }
+  await emitHookOutput(output);
 }
 
 if (launchedDirectly(import.meta.url)) await serveCursorHook(await readStdin());

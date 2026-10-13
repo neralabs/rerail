@@ -1,0 +1,1 @@
+◆ Rerail · typescript-eslint:no-explicit-any  steered  ·  why → http://127.0.0.1:4737/#rule/typescript-eslint%3Ano-explicit-any

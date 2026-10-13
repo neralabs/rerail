@@ -29,8 +29,12 @@ if (recordedNode === undefined || hookScript === undefined) {
 if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // Inherited stdio hands the event JSON on stdin straight to the hook and its decision straight back to Claude Code.
   const result = spawnSync(recordedNode, [hookScript], { stdio: "inherit", windowsHide: true });
-  if (result.error !== undefined) process.stderr.write(`${result.error.message}\n`);
-  process.exitCode = result.status ?? 1;
+  // A hook that could not run answers nothing rather than failing: an agent shows a failed hook under every tool call.
+  if (result.error !== undefined || result.status === null) {
+    process.stderr.write(`rerail hook: ${result.error?.message ?? `killed by ${result.signal ?? "a signal"}`}\n`);
+    process.stdout.write("{}\n");
+  }
+  process.exitCode = result.status ?? 0;
 } else {
   // Run in this process exactly as `node <hook>` would: a hook serves only when it is the launched script, argv[1].
   // The hook is chosen by the registration's argument, so it cannot be a static import.

@@ -93,7 +93,7 @@ describe("Rerail event stream", () => {
       version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     cleanups.push(async () => { vi.unstubAllEnvs(); });
-    const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: steerBlock("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"] };
+    const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: steerBlock("acme:no-print", "Remove print.", { mode: "steer" }), ruleIds: ["acme:no-print"] };
     const ingest = vi.fn<(event: AdapterEvent) => Promise<readonly AdapterDelivery[]>>()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([steer]);
@@ -105,7 +105,7 @@ describe("Rerail event stream", () => {
     ], { ingest }, "/elsewhere");
     expect(frames[1]).toEqual({ eventId: "result", deliveries: [{
       ...steer,
-      content: "▲ Rerail · acme:no-print  Steered.\nRemove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print",
+      content: steer.content.replace("Why? → #rule/", "Why? → http://127.0.0.1:4791/#rule/"),
     }] });
   });
 });

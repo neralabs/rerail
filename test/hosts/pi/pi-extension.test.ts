@@ -26,6 +26,7 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   steerBlock,
+  steerOrigin,
   type ConversationRule,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
@@ -166,7 +167,7 @@ describe("Pi conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock("checkout", "Check checkout requirements."),
+          content: steerBlock("checkout", "Check checkout requirements.", { mode, origin: steerOrigin("checkout") }),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
         },
@@ -189,7 +190,7 @@ describe("Pi conversation-rules extension", () => {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
       createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["Rerail ○ not on here"]);
+      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["R E R A I L ○ not on here"]);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();

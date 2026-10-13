@@ -21,7 +21,7 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState,
+  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
@@ -113,7 +113,7 @@ function usage(): string {
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
     "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
-    "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
+    "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
@@ -362,14 +362,34 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
 }
 
 /**
+ * The coding agent `rerail stop [<host> [<session-id>]]` was typed in, named as `rerail session` names it. The host
+ * decides the reply's command sigil; `codex` without an id reads its thread from `CODEX_THREAD_ID`. An id the coding
+ * agent left empty names no session, and a bare `stop` (a terminal, or Cursor) names no agent: the stop never depends
+ * on knowing either.
+ */
+function stopSession(positionals: readonly string[]): RepositoryStopOptions["session"] {
+  if (positionals.length === 0) return undefined;
+  const [host, given] = positionals;
+  if (positionals.length > 2 || host === undefined || !Object.hasOwn(ADAPTER_CAPABILITIES, host)) {
+    throw new Error(`Usage: rerail stop [<host> [<session-id>]] [options]; rerail stop codex uses CODEX_THREAD_ID\n\n${usage()}`);
+  }
+  const sessionId = (given ?? (host === "codex" ? process.env.CODEX_THREAD_ID : undefined))?.trim();
+  return sessionId ? { host: host as RerailHost, sessionId } : { host: host as RerailHost };
+}
+
+/**
  * `rerail start` / `rerail stop` act on the checkout of `--repo` or the current directory and the worktrees inside
  * it, or with `--repository` on every checkout of its repository. Starting a repository that is not set up runs
  * set-up there: its questions are answered with `--answer`, then `rerail setup`. Without a terminal, or with `--relay`,
  * the caller is a coding agent relaying the output, so the text names its slash commands and every answer carries
- * `--relay`. `--json` prints one set-up step.
+ * `--relay`. `--json` prints one set-up step. `stop` takes the coding agent's session first, as `rerail session` does,
+ * so its reply names the rules that steered that session.
  * `--database` names the database an extension was configured with, as `rerail state` takes it.
  */
-async function runRepositoryCommand(command: "start" | "stop", args: readonly string[], context: SetupContext): Promise<number> {
+async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly string[], context: SetupContext): Promise<number> {
+  const firstOption = rawArgs.findIndex(argument => argument.startsWith("--"));
+  const positionals = command === "stop" ? rawArgs.slice(0, firstOption === -1 ? rawArgs.length : firstOption) : [];
+  const args = rawArgs.slice(positionals.length);
   const io = setupIo(args);
   try {
     if (command === "start" && args.includes(JSON_FLAG)) {
@@ -390,7 +410,12 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
     const databasePath = database === undefined ? undefined : resolve(database);
     const repository = flags.has("--repository");
     if (command === "stop") {
-      stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+      const session = stopSession(positionals);
+      stopRerail(workspace, io, {
+        ...(databasePath === undefined ? {} : { databasePath }),
+        repository,
+        ...(session === undefined ? {} : { session }),
+      });
       return 0;
     }
     // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.

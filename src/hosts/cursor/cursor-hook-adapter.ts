@@ -11,7 +11,7 @@ import {
   type HookInput,
   type HookOutput,
 } from "../../harness/hook-adapter.js";
-import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
@@ -119,11 +119,14 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
   throw new Error(`Unsupported Cursor hook event: ${hook}`);
 }
 
-/** Cursor has no message line for the person, so the model is asked to relay each steer's one line itself. */
+/**
+ * Cursor shows the person nothing from a hook, so the model is asked to relay each steer's one line itself. Cursor's
+ * chat renders markdown, so the `why` link sits on the word.
+ */
 function relayedSteer(content: string): string {
-  const headlines = steerHeadlines(content);
-  if (headlines.length === 0) return content;
-  return `${content}\n\nCursor shows the person none of this. Start your next reply to them with:\n${headlines.join("\n")}`;
+  const lines = steerHeadlines(content).map(headline => headlineText(headline, "markdown"));
+  if (lines.length === 0) return content;
+  return `${content}\n\nCursor shows the person none of this. Begin your next reply with these lines, exactly as written:\n${lines.join("\n")}`;
 }
 
 /** `note` is the session-start note, which only the model sees. */

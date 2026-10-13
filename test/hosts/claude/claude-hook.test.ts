@@ -16,6 +16,24 @@ function delivery(requested: AdapterDelivery["requested"], content: string, rule
   return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds };
 }
 
+describe("Claude Code hook without a daemon", () => {
+  it("answers {} at once after the session's start, without starting a daemon, so no tool call shows a hook error", async () => {
+    const root = await temporaryDirectory();
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    try {
+      // The test runtime's embedder is left out, so the hook takes the daemon path a coding agent's hook takes.
+      const { embedder: _, ...daemonPath } = hookOptions(root);
+      const output = await runClaudeHook({
+        session_id: "s", cwd: root, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "t", tool_input: {}, tool_response: "ok",
+      }, daemonPath);
+      expect(output).toEqual({});
+      await expect(readFile(join(process.env.RERAIL_HOME!, "daemon.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("Claude Code one-shot hook", () => {
   it("persists the documented hook lifecycle into the SQLite session store across separate hook processes", async () => {
     const root = await temporaryDirectory();
@@ -116,12 +134,12 @@ describe("Claude Code one-shot hook", () => {
       const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, scriptedLoop({}), join(root, "sessions"));
       expect(JSON.stringify(start)).toContain("http://127.0.0.1:4791/?sessionId=claude-session&host=claude-code#sessions");
 
-      const steer = scriptedLoop({ result: [delivery("steer", steerBlock("acme:no-print", "Remove print."), ["acme:no-print"])] });
+      const steer = scriptedLoop({ result: [delivery("steer", steerBlock("acme:no-print", "Remove print.", { mode: "steer" }), ["acme:no-print"])] });
       const output = await handleClaudeEvent({
         ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "tool-1", tool_input: {}, tool_response: "ok",
-      }, steer, join(root, "sessions"));
+      }, steer, join(root, "sessions"), { TERM_PROGRAM: "iTerm.app" });
       expect(output).toMatchObject({
-        systemMessage: "▲ Rerail · acme:no-print  Steered. Why? → http://127.0.0.1:4791/#rule/acme%3Ano-print",
+        systemMessage: "◆ Rerail · acme:no-print  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/acme%3Ano-print\u0007why\u001b]8;;\u0007",
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
           additionalContext: expect.stringContaining("Remove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print"),
@@ -130,6 +148,33 @@ describe("Claude Code one-shot hook", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("shows a late steer's line at Stop and gives the coding agent its block with the next message, without the line again", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const blocks = [
+      delivery("steer", steerBlock("a", "Fix a.", { mode: "steer" }), ["a"]),
+      delivery("steer", steerBlock("b", "Fix b.", { mode: "steer" }), ["b"]),
+    ];
+    // Without a daemon the links stay relative, so each line is the header alone.
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, {}))
+      .toEqual({ systemMessage: "\n◆ Rerail · a  steered\n◆ Rerail · b  steered" });
+
+    const next = scriptedLoop({ "user-prompt": [delivery("steer", steerBlock("c", "Fix c.", { mode: "steer" }), ["c"])] });
+    const output = await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, next, storageRoot, {});
+    expect(output).toEqual({
+      systemMessage: "◆ Rerail · c  steered",
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringMatching(/Fix a\.[\s\S]*Fix b\.[\s\S]*Fix c\./u) },
+    });
+  });
+
+  it("prints the why link after the word when the terminal cannot draw links", () => {
+    const block = steerBlock("a", "Fix a.", { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
+    expect(claudeHookOutput("PostToolUse", [delivery("steer", block, ["a"])], { links: "plain" })).toMatchObject({
+      systemMessage: "◆ Rerail · a  steered  ·  why → http://127.0.0.1:4791/#rule/a",
+    });
   });
 
   it("routes steer and block deliveries through additionalContext or the pending file", async () => {

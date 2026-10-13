@@ -317,8 +317,12 @@ export class SqliteSessionReader {
         && coverage.ruleSignature === ruleConfigurationSignature(
           database, loadBundledCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
         );
+      // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
+      // rules. A receipt naming no rules still delivered one steer.
       const steeringCount = baseline?.complete === 1
-        ? database.select({ total: count() }).from(events)
+        ? database.select({
+          total: sql<number>`coalesce(sum(max(1, coalesce(json_array_length(${events.payloadJson}, '$.ruleIds'), 0))), 0)`,
+        }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
       return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount };

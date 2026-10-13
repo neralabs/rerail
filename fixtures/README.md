@@ -49,6 +49,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
+| `host/session-enforcement/` | — | golden output of each coding agent in the session enforcement design's scenes: hook JSON, session notes, the OMP steer renderer and the footer (`test/hosts/*/session-enforcement.golden.test.ts`, `test/hosts/omp/steer-renderer.test.ts`, `test/presentation/footer-golden.test.ts`); review a change with design |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
 | `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |
 

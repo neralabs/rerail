@@ -35,7 +35,7 @@ A skill is an on-demand procedure, not a heartbeat or security boundary. Do not 
 
 ### Session-start note
 
-In a repository where Rerail is started, each session begins with a short note to the agent: Rerail is on, what a steer looks like, the session's dashboard link, and that `/rerail` (Codex: `$rerail`) lists the commands. Claude Code and Codex receive it as `SessionStart` `additionalContext`, Cursor as `sessionStart` `additional_context`, and OMP and Pi as a hidden `before_agent_start` message (`customType: "rerail.session-note"`). Rerail never writes instruction files.
+In a repository where Rerail is started, each session begins with a short note to the agent: Rerail is on and stays silent until a rule is broken, what a steer looks like, that a steer is advice it may decline by saying why in one line (design N5), to answer "why?" from the steer (N6), to ask the person before turning a rule off or changing its mode and never to turn a rule off or stop Rerail to get past one (N7, N9), the session's dashboard link, and that `/rerail` (Codex: `$rerail`) lists the commands. In Cursor it also asks the agent to relay each steer's line, since Cursor shows the person nothing from a hook. Claude Code and Codex receive it as `SessionStart` `additionalContext`, Cursor as `sessionStart` `additional_context`, and OMP and Pi as a hidden `before_agent_start` message (`customType: "rerail.session-note"`). Rerail never writes instruction files. The agent's replies are its own: the note and the steer block guide them, nothing enforces them.
 
 ### `/rerail`
 
@@ -54,15 +54,27 @@ Or just ask me, in plain words.
 
 ### Steer
 
-Each steered rule is one block:
+Each steered rule is one block, which only the coding agent reads:
 
 ```text
-▲ Rerail · <rule id>  Steered.
+◆ Rerail · <rule id>  steered
+From the <pack name> rule pack. Set to Steer: fix it, or tell the person in one line why you won't.
 <guidance; for code rules: message (path:line:col), then any Suggested fix line>
 Why? → <dashboard>/#rule/<id>
 ```
 
-Claude Code and Codex also show the person one line per rule (`systemMessage`): `▲ Rerail · <id>  Steered. Why? → <link>`. Codex delivers at `PostToolUse`, with `Stop` as the catch-up. Cursor shows the person nothing, so the guidance asks the agent to relay the line. OMP and Pi show the block in the session.
+The second line names where the rule comes from (`From the <pack> rule pack.`, `From your rule library.`, or nothing when unknown) so the agent can answer "why?" without guessing, and the rule's mode, because an agent that cannot see the mode makes one up. A Block-mode rule steers until blocking ships and says so (`Set to Block, which steers until blocking ships: …`). The glyphs are the converged set: `○ logged`, `◆ steered`, `■ blocked`; a Log never reaches a session and Block is not built, so sessions show `◆` only.
+
+The person sees one line per rule, `◆ Rerail · <rule id>  steered  ·  why`, with the link on `why` wherever the coding agent can draw one:
+
+| Coding agent | Line | When a steer is found as the turn ends |
+| --- | --- | --- |
+| Claude Code | `systemMessage`, under the tool call after Claude's `PostToolUse:<Tool> says:`; `why` is an OSC 8 link in a terminal known to draw them (OMP's list — kitty, Ghostty, WezTerm, iTerm2, VS Code, Alacritty — plus Orca and Windows Terminal, through tmux from 3.4), else `why → <url>`. `RERAIL_NO_HYPERLINKS=1` / `RERAIL_FORCE_HYPERLINKS=1` (or OMP's `PI_*` pair) decide instead. Two or more lines start on their own line. | `Stop` shows the line only; the block reaches the agent with the next message or tool call, without the line again. A `Stop` hold would show the person the whole block as `Stop hook error:` (verified on 2.1.296). |
+| Codex | `systemMessage` (`↳ Hook · …`), plain text: `… steered  ·  why → <url>`. | `Stop` holds the turn open with the block as its reason, which Codex shows under its own `Blocked by hook`; no separate line. |
+| Cursor | None of Rerail's own. The agent is asked to begin its reply with `… steered  ·  [why](<url>)`. | Waits for the next `postToolUse` or session start. |
+| OMP | The `rerail.rule` message renderer draws the same line in OMP's theme colours, `why` an OSC 8 link where the terminal draws links; Ctrl+O shows the block. Pi keeps its default card: its extension API gives Rerail no components to draw with. | The end of the run (`session_stop`) waits for the turn's own check, so its steer continues the run before you read "done". A steer that only arrives after the session is idle waits for the next message. |
+
+A hook never fails a tool call. Only the hook that starts a session may start the daemon; any other hook that finds none running answers `{}` at once (one that finds another package's daemon, after an update, replaces it as before), and every hook exits 0, so a daemon that is down is invisible in the chat instead of a `hook error` under every tool call. In OMP and Pi the tool hooks catch their own failures and let a tool go after 25 seconds, before the host's 30-second deadline would block it. The footer says `not running`; Codex, which has none, gets `Rerail ✕ not running · start it with: rerail daemon start` once, when a session starts and no daemon can be reached.
 
 The runtime records the link relative (`#rule/<id>`). Each coding agent's adapter makes it absolute as it hands the steer over, using the same dashboard the footer links to: the Rerail daemon's recorded URL when it is loopback, scoped to the session's repository and checkout. The `rerail events` stream does the same for its harness, using the session's cwd (else the stream's working directory). A daemon bound to `0.0.0.0`, or no daemon at all, leaves the link relative rather than pointing a browser at an address it cannot open. The session-start note and `rerail rules add` resolve their links the same way.
 
@@ -71,18 +83,18 @@ Primary references: [Claude status lines](https://code.claude.com/docs/en/status
 ## What the footer means
 
 ```text
-Rerail ● 26 rules  ·  steered 3×
+R E R A I L ● 26 rules · steered 3×
 ```
 
-`  ·  steered N×` appears only above zero. Other states: `Rerail ○ not on here` where Rerail is not started or was stopped, `Rerail ✕ not running` when no daemon answers, and `Rerail ● session unavailable` before the session is recorded. `engine unavailable` and `audit failed` are appended when relevant. Claude Code (status line), OMP and Pi (below-editor widget) show it; Codex and Cursor have no footer, and `/rerail` (`$rerail`) is the way in.
+` · steered N×` appears only above zero. Other states: `R E R A I L ○ not on here` where Rerail is not started or was stopped, `R E R A I L ○ not set up · rerail start` in a started repository that is not set up, `R E R A I L ✕ not running` when no daemon answers, and `R E R A I L ● session unavailable` before the session is recorded. `engine unavailable` and `audit failed` are appended when relevant. The footer is static: it refreshes every five seconds and never animates. Claude Code (status line), OMP and Pi (below-editor widget) show it; Codex and Cursor have no footer, and `/rerail` (`$rerail`) is the way in.
 
 - **Rules** is configured session coverage: the effective conversation-rule registry and enabled compiled code-rule catalog, including host options/files, database overrides and session mutations. It is not all enabled database rows, rules matching the current file, or successful checks.
-- **Steered** counts successful native `sendMessage` steers or successfully emitted hook responses with nonblank guidance. Bundled guidance is one steer. Observations, matches, queued/deferred guidance and failed sends do not count. Receipt retries deduplicate; a new actual steer counts again, against its originating session.
+- **Steered** counts the rules named in successful native `sendMessage` steers or successfully emitted hook responses with nonblank guidance: one per line the person saw, so two rules in one edit count 2 (a delivery that names no rule counts 1). Logs, matches, queued/deferred guidance and failed sends do not count. Receipt retries deduplicate; a new actual steer counts again, against its originating session.
 - **Unknown is not zero.** Older sessions and histories lost in a reset cannot establish complete totals and show `steering unavailable`. Invalidated coverage shows `rules unavailable` until the host synchronizes. Routine streaming deltas do not recompute coverage.
 - A steer proves neither model consumption nor correction/recheck success. A crash or unrecoverable receipt-write failure after delivery can undercount: host delivery and the SQLite write are not atomic.
-- The footer may append `checking…`; Engine/session unavailability and audit failures stay explicit. Violations are not an outstanding-work queue or evidence that changes are ready for human review. Explicit detail retains health, scope/status, violation/failure totals and `not evaluated` when no run exists.
+- Engine/session unavailability and audit failures stay explicit. Violations are not an outstanding-work queue or evidence that changes are ready for human review. Explicit detail retains health, scope/status, violation/failure totals and `not evaluated` when no run exists.
 
-`Rerail` and the steering count link to the exact current session; the rule count links to `/#rules` on the same daemon. Only `Rerail` uses the brand colour. The terminal token is generated from the same CSS tokens as the UI (`src/presentation/terminal-brand.generated.ts`), so installed packages need no second palette.
+`R E R A I L` and the steering count link to the exact current session; the rule count links to `/#rules` on the same daemon. The six letters are Rerail's mark without its ray (`RERAIL_MARK_RAMP` in `src/presentation/rerail-mark.ts`, from the session enforcement design): each letter its own colour from `#A5ADFB` to `#ECDAE4`, in 24-bit where `COLORTERM` is `truecolor` or `24bit`, else the nearest of 256 colours, and uncoloured under `NO_COLOR`. The state mark takes the state's colour (`●` green, `○` dim, `✕` red); nothing else is coloured.
 
 Presentation reads are bounded and passive: one HTTP request validates daemon identity, resolves presence and returns exact-session HUD counts with a bounded latest-evaluation summary. They never start/retarget a daemon, trigger evaluation or open a writable database. Full audit bodies and rule lists belong to explicit dashboard reads. The installed passive reader is tree-shaken at build time while retaining schema-derived validation.
 

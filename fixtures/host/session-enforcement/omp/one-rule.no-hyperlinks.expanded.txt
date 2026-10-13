@@ -1,0 +1,3 @@
+ <accent>◆</accent> Rerail<dim> · </dim>typescript-eslint:no-explicit-any  <accent>steered</accent><dim>  ·  </dim><mdLink>why</mdLink><dim> → </dim><mdLinkUrl>http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint%3Ano-explicit-any</mdLinkUrl>
+    <dim>From the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.</dim>
+    <dim>Use unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)</dim>
