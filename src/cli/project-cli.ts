@@ -116,13 +116,33 @@ function snapshotTransition(databasePath: string): SnapshotTransition | undefine
 }
 
 /**
+ * Whether this process is alone in having the database open. SQLite leaves WAL mode only for its last connection, so
+ * the switch succeeds only then; it also writes the WAL's pages into the file, so the file holds the whole database.
+ */
+function aloneWithDatabase(path: string): boolean {
+  try {
+    const database = new Database(path, { fileMustExist: true });
+    try {
+      database.pragma("busy_timeout = 0");
+      return database.pragma("journal_mode = DELETE", { simple: true }) === "delete";
+    } finally {
+      database.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
  * `rerail update rollback`: roll the version back, then, when the copy taken before updating from the version rolled
  * back to (`from`) to the version left (`to`) exists and the database's schema floor is now above what `from` opens,
  * put the copy back: the version rolled back to refuses the database otherwise. The replaced database, with what
  * changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor `from` still opens (additive steps, or
  * a floor it already supported) keeps the database as it is, and a copy taken for another change is never used. A
  * record from before `fromReads` was kept is judged by the copy's own floor. `stopDaemon` runs first: the daemon holds
- * the database open. A restore that fails is reported, never fatal: the version has rolled back already.
+ * the database open. A coding agent session can hold it open too, and would keep writing to the replaced file, so the
+ * copy is put back only when nothing else has it open; otherwise the person is told how to finish. A restore that
+ * fails is reported, never fatal: the version has rolled back already.
  */
 export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
   const leaving = (await updater.status()).current.version;
@@ -136,6 +156,14 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
+    if (!aloneWithDatabase(databasePath)) {
+      process.stderr.write(
+        `rerail: ${databasePath} is at schema v${current}, which the version rolled back to cannot read, and coding agent `
+        + `sessions still have it open. Close them, then copy ${snapshot} to ${databasePath} (keep the current file if you need what `
+        + "changed since the update).\n",
+      );
+      return result;
+    }
     for (const suffix of ["", "-wal", "-shm"]) {
       rmSync(`${kept}${suffix}`, { force: true });
       if (existsSync(`${databasePath}${suffix}`)) renameSync(`${databasePath}${suffix}`, `${kept}${suffix}`);
