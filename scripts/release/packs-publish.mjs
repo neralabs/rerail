@@ -29,13 +29,16 @@ async function assertRestricted(name) {
   if (response.status !== 404) throw new Error(`${name} answers an anonymous request with ${response.status}: it is not restricted. Run npm access set status=private ${name}`);
 }
 
-/** Runs npm publish for one tarball, showing its output; whether it succeeded, and that output. */
+/**
+ * Runs npm publish for one tarball; whether it succeeded, and its error output. stdin and stdout stay the terminal:
+ * npm asks for a 2FA code or browser approval only when both are one. Its `npm error` lines, the publish conflict
+ * included, go to stderr, which is captured and shown when npm exits.
+ */
 function publish(path) {
-  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "restricted", "--tag", PUBLISH_TAG], { encoding: "utf8" });
-  process.stdout.write(run.stdout ?? "");
+  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "restricted", "--tag", PUBLISH_TAG], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
   process.stderr.write(run.stderr ?? "");
   if (run.error !== undefined) throw run.error;
-  return { ok: run.status === 0, output: `${run.stdout}\n${run.stderr}` };
+  return { ok: run.status === 0, output: run.stderr };
 }
 
 const [directory] = process.argv.slice(2);
