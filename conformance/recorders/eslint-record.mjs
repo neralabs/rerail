@@ -1,10 +1,11 @@
 // Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the corpus file set the
-// conformance runner scores, and
+// conformance runner scores, the guard that keeps the recording machine out of fixtures, and
 // ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 // Run offline by a maintainer, never in CI.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, matchesGlob, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +19,66 @@ export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".
 /** The conformance pack manifest, `packs/<name>/conformance.json`. */
 export function pack(name) {
   return JSON.parse(readFileSync(join(REPOSITORY, "packs", name, "conformance.json"), "utf8"));
+}
+
+/** The working directory upstream tests see while they declare their cases (`withRecordingCwd`): the same everywhere. */
+export const RECORDING_CWD = "/work/project";
+
+/**
+ * Runs `declare` (importing an upstream test file) with process.cwd() answering RECORDING_CWD, so a test that builds a
+ * case's `filename` from the working directory (unicorn's filename-case: `path.join(cwd, …)`) names the same file on
+ * every machine.
+ */
+export async function withRecordingCwd(declare) {
+  const realCwd = process.cwd;
+  process.cwd = () => RECORDING_CWD;
+  try {
+    return await declare();
+  } finally {
+    process.cwd = realCwd;
+  }
+}
+
+/** `directory`'s segments below its root: `/` separators, no drive letter, no leading or trailing `/`. */
+function segmentsOf(directory) {
+  return directory.replaceAll("\\", "/").replace(/^[A-Za-z]:/u, "").replace(/^\/+/u, "").replace(/\/+$/u, "");
+}
+
+/**
+ * This machine's own directories, which no fixture may name: the working directory, home and temp, and their real
+ * paths. A directory one segment deep (`/tmp`, `/root`) is too common in upstream test code to tell apart, and is left out.
+ */
+export function machineDirectories() {
+  const directories = new Set();
+  for (const directory of [process.cwd(), homedir(), tmpdir()]) {
+    directories.add(directory);
+    try {
+      directories.add(realpathSync(directory));
+    } catch {
+      // A directory that cannot be resolved still counts as given.
+    }
+  }
+  return [...new Set([...directories].map(segmentsOf))].filter(directory => directory.split("/").length >= 2);
+}
+
+const escape = text => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/**
+ * Throws when a case about to be written would carry this machine's directories, in its fixture path or its code: an
+ * upstream test that named its file from the recorder's working directory, home or temp folder (#31's filename-case
+ * fixtures held `/private/tmp/claude-501/…`), which breaks Windows checkouts and leaks the maintainer's machine.
+ * Pin the working directory with `withRecordingCwd`, or keep only the name below the test's own fixture directory.
+ * `directories` are `machineDirectories()`' form; a match is whole segments, so `/Users/jeff` never matches `/Users/jeffrey`.
+ */
+export function assertPortableCase(path, code = "", directories = machineDirectories()) {
+  const fixturePath = `/${path.replaceAll("\\", "/")}/`;
+  const text = code.replaceAll("\\", "/");
+  for (const directory of directories) {
+    if (fixturePath.includes(`/${directory}/`)) throw new Error(`fixture path ${path} carries this machine's directory /${directory}`);
+    if (new RegExp(`/${escape(directory)}(?![^/\\s"'\`)\\]}*,;:])`, "u").test(text)) {
+      throw new Error(`fixture ${path}'s code carries this machine's directory /${directory}`);
+    }
+  }
 }
 
 /** `require` resolving from a tools directory (`.rerail/tools/<pack>`), after checking every pinned package's version. */

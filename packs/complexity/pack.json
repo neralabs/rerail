@@ -7,8 +7,8 @@
   "reason": "chosen by hand; a limit of 6 is strict for most existing code, so it is never recommended",
   "rules": [
     {
-      "id": "complexity:cyclomatic-python",
-      "document": "rules/cyclomatic-python.json",
+      "id": "complexity-cyclomatic-python",
+      "document": "rules/complexity-cyclomatic-python.json",
       "title": "Keep Python functions at cyclomatic complexity 6 or lower",
       "group": "Complexity",
       "examples": {
@@ -23,8 +23,8 @@
       }
     },
     {
-      "id": "complexity:cyclomatic-typescript",
-      "document": "rules/cyclomatic-typescript.json",
+      "id": "complexity-cyclomatic-typescript",
+      "document": "rules/complexity-cyclomatic-typescript.json",
       "title": "Keep TypeScript functions at cyclomatic complexity 6 or lower",
       "group": "Complexity",
       "examples": {
@@ -39,8 +39,8 @@
       }
     },
     {
-      "id": "complexity:cyclomatic-javascript",
-      "document": "rules/cyclomatic-javascript.json",
+      "id": "complexity-cyclomatic-javascript",
+      "document": "rules/complexity-cyclomatic-javascript.json",
       "title": "Keep JavaScript functions at cyclomatic complexity 6 or lower",
       "group": "Complexity",
       "examples": {

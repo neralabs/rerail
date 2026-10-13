@@ -237,8 +237,8 @@ cp LICENSE packs/laravel/LICENSE
   "match": { "any": [{ "files": ["artisan"], "label": "an artisan file" }] },
   "rules": [
     {
-      "id": "laravel:no-dd",
-      "document": "rules/no-dd.json",
+      "id": "laravel-no-dd",
+      "document": "rules/laravel-no-dd.json",
       "title": "No dd() or dump() calls",
       "group": "Laravel",
       "examples": {
@@ -250,13 +250,14 @@ cp LICENSE packs/laravel/LICENSE
 }
 ```
 
-`packs/laravel/rules/no-dd.json`, a code rule (`rerail.policy/v1`, see the
-[code-rule DSL reference](code-rule-dsl-reference.html)) whose `id` is the one `pack.json` lists:
+`packs/laravel/rules/laravel-no-dd.json`, a code rule (`rerail.policy/v1`, see the
+[code-rule DSL reference](code-rule-dsl-reference.html)) whose `id` is the one `pack.json` lists and its file name.
+A rule id is lowercase letters, digits and dashes, in one style for every pack ([rule ids](pack-format.md#packjson)):
 
 ```json
 {
   "format": "rerail.policy/v1",
-  "id": "laravel:no-dd",
+  "id": "laravel-no-dd",
   "revision": 1,
   "mode": "steer",
   "description": "A call to Laravel's dd() or dump() debugging helper.",
@@ -286,7 +287,7 @@ npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the
 ```
 
 Each check and each rule is one test; a failure names the rule and the file, for example
-`laravel:no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
+`laravel-no-dd: the caught example (app/Http/Controllers/UserController.php) produces no LARAVEL-NO-DD violation`.
 A rule needs proof: `examples` (one caught, one that passes, each with a `path` inside the rule's scope), or a port
 entry (below).
 
@@ -305,9 +306,9 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
 
 1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
    capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
-   its `policy` (the same `rules/<name>.json` as the rule's `document`), how findings compare (`line` or
-   `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared
-   capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
+   its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
+   compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
+   code. Every declared capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
 2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
    reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
    (`packs/python/upstream/ruff/generate.py` is one). Optionally `corpus-<name>.expected.json` per pinned corpus.

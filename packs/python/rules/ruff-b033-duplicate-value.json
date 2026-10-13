@@ -1,0 +1,129 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b033-duplicate-value",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B033 (duplicate-value): a literal element of a set display (string, bytes, number, boolean, `None`, `...`, not an f- or t-string; parentheses are transparent) equal to an earlier literal element. Equality is Ruff's HashableExpr (`compare` `text: \"structure-hash\"`): numbers fold by value (`True == 1 == 1.0 == 0x1`), strings by decoded value (`'a' == \"\\x61\"`, implicit concatenation joined), and an int of 2**64 or more by its token.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuUbB]{0,2}['\"]"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuUbB]{0,2}['\"]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                }
+              ]
+            },
+            "literal-p": {
+              "any": [
+                {
+                  "matches": "literal"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-p"
+                  }
+                }
+              ]
+            },
+            "dup-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "set"
+                  },
+                  "count": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "literal-p",
+                      "pattern": "$F",
+                      "compare": {
+                        "left": "F",
+                        "op": "eq",
+                        "right": "V",
+                        "text": "structure-hash"
+                      }
+                    },
+                    "min": 1
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "dup-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "literal",
+            "pattern": "$V",
+            "all": [
+              {
+                "matches": "dup-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B033",
+        "message": "Sets should not contain duplicate item `$V`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B033"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react:no-array-index-key",
+  "id": "react-no-array-index-key",
   "revision": 1,
   "mode": "steer",
   "description": "A `key` built from the index parameter of an array method's callback.",

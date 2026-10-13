@@ -27,7 +27,7 @@
         "tool": "eslint",
         "rule": "arrow-body-style"
       },
-      "policy": "rules/arrow-body-style.json",
+      "policy": "rules/eslint-arrow-body-style.json",
       "capabilities": [
         "syntax"
       ],
@@ -39,7 +39,7 @@
         "tool": "eslint",
         "rule": "capitalized-comments"
       },
-      "policy": "rules/capitalized-comments.json",
+      "policy": "rules/eslint-capitalized-comments.json",
       "capabilities": [
         "syntax",
         "value"
@@ -52,7 +52,7 @@
         "tool": "eslint",
         "rule": "default-case"
       },
-      "policy": "rules/default-case.json",
+      "policy": "rules/eslint-default-case.json",
       "capabilities": [
         "syntax"
       ],
@@ -64,7 +64,7 @@
         "tool": "eslint",
         "rule": "default-case-last"
       },
-      "policy": "rules/default-case-last.json",
+      "policy": "rules/eslint-default-case-last.json",
       "capabilities": [
         "syntax"
       ],
@@ -89,7 +89,7 @@
         "tool": "eslint",
         "rule": "func-style"
       },
-      "policy": "rules/func-style.json",
+      "policy": "rules/eslint-func-style.json",
       "capabilities": [
         "syntax"
       ],
@@ -101,7 +101,7 @@
         "tool": "eslint",
         "rule": "guard-for-in"
       },
-      "policy": "rules/guard-for-in.json",
+      "policy": "rules/eslint-guard-for-in.json",
       "capabilities": [
         "syntax"
       ],
@@ -113,7 +113,7 @@
         "tool": "eslint",
         "rule": "no-bitwise"
       },
-      "policy": "rules/no-bitwise.json",
+      "policy": "rules/eslint-no-bitwise.json",
       "capabilities": [
         "syntax"
       ],
@@ -125,7 +125,7 @@
         "tool": "eslint",
         "rule": "no-caller"
       },
-      "policy": "rules/no-caller.json",
+      "policy": "rules/eslint-no-caller.json",
       "capabilities": [
         "syntax"
       ],
@@ -137,7 +137,7 @@
         "tool": "eslint",
         "rule": "no-case-declarations"
       },
-      "policy": "rules/no-case-declarations.json",
+      "policy": "rules/eslint-no-case-declarations.json",
       "capabilities": [
         "syntax"
       ],
@@ -162,7 +162,7 @@
         "tool": "eslint",
         "rule": "no-cond-assign"
       },
-      "policy": "rules/no-cond-assign.json",
+      "policy": "rules/eslint-no-cond-assign.json",
       "capabilities": [
         "syntax"
       ],
@@ -174,7 +174,7 @@
         "tool": "eslint",
         "rule": "no-continue"
       },
-      "policy": "rules/no-continue.json",
+      "policy": "rules/eslint-no-continue.json",
       "capabilities": [
         "syntax"
       ],
@@ -199,7 +199,7 @@
         "tool": "eslint",
         "rule": "no-delete-var"
       },
-      "policy": "rules/no-delete-var.json",
+      "policy": "rules/eslint-no-delete-var.json",
       "capabilities": [
         "syntax"
       ],
@@ -211,7 +211,7 @@
         "tool": "eslint",
         "rule": "no-div-regex"
       },
-      "policy": "rules/no-div-regex.json",
+      "policy": "rules/eslint-no-div-regex.json",
       "capabilities": [
         "syntax"
       ],
@@ -252,7 +252,7 @@
         "tool": "eslint",
         "rule": "no-empty-pattern"
       },
-      "policy": "rules/no-empty-pattern.json",
+      "policy": "rules/eslint-no-empty-pattern.json",
       "capabilities": [
         "syntax"
       ],
@@ -264,7 +264,7 @@
         "tool": "eslint",
         "rule": "no-empty-static-block"
       },
-      "policy": "rules/no-empty-static-block.json",
+      "policy": "rules/eslint-no-empty-static-block.json",
       "capabilities": [
         "syntax"
       ],
@@ -276,7 +276,7 @@
         "tool": "eslint",
         "rule": "no-eq-null"
       },
-      "policy": "rules/no-eq-null.json",
+      "policy": "rules/eslint-no-eq-null.json",
       "capabilities": [
         "syntax"
       ],
@@ -288,7 +288,7 @@
         "tool": "eslint",
         "rule": "no-extend-native"
       },
-      "policy": "rules/no-extend-native.json",
+      "policy": "rules/eslint-no-extend-native.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -301,7 +301,7 @@
         "tool": "eslint",
         "rule": "no-iterator"
       },
-      "policy": "rules/no-iterator.json",
+      "policy": "rules/eslint-no-iterator.json",
       "capabilities": [
         "syntax",
         "value"
@@ -314,7 +314,7 @@
         "tool": "eslint",
         "rule": "no-loss-of-precision"
       },
-      "policy": "rules/no-loss-of-precision.json",
+      "policy": "rules/eslint-no-loss-of-precision.json",
       "capabilities": [
         "syntax",
         "value",
@@ -328,7 +328,7 @@
         "tool": "eslint",
         "rule": "no-multi-str"
       },
-      "policy": "rules/no-multi-str.json",
+      "policy": "rules/eslint-no-multi-str.json",
       "capabilities": [
         "syntax"
       ],
@@ -340,7 +340,7 @@
         "tool": "eslint",
         "rule": "no-negated-condition"
       },
-      "policy": "rules/no-negated-condition.json",
+      "policy": "rules/eslint-no-negated-condition.json",
       "capabilities": [
         "syntax"
       ],
@@ -352,7 +352,7 @@
         "tool": "eslint",
         "rule": "no-nested-ternary"
       },
-      "policy": "rules/no-nested-ternary.json",
+      "policy": "rules/eslint-no-nested-ternary.json",
       "capabilities": [
         "syntax"
       ],
@@ -364,7 +364,7 @@
         "tool": "eslint",
         "rule": "no-new"
       },
-      "policy": "rules/no-new.json",
+      "policy": "rules/eslint-no-new.json",
       "capabilities": [
         "syntax"
       ],
@@ -390,7 +390,7 @@
         "tool": "eslint",
         "rule": "no-nonoctal-decimal-escape"
       },
-      "policy": "rules/no-nonoctal-decimal-escape.json",
+      "policy": "rules/eslint-no-nonoctal-decimal-escape.json",
       "capabilities": [
         "syntax"
       ],
@@ -402,7 +402,7 @@
         "tool": "eslint",
         "rule": "no-octal"
       },
-      "policy": "rules/no-octal.json",
+      "policy": "rules/eslint-no-octal.json",
       "capabilities": [
         "syntax"
       ],
@@ -414,7 +414,7 @@
         "tool": "eslint",
         "rule": "no-octal-escape"
       },
-      "policy": "rules/no-octal-escape.json",
+      "policy": "rules/eslint-no-octal-escape.json",
       "capabilities": [
         "syntax"
       ],
@@ -426,7 +426,7 @@
         "tool": "eslint",
         "rule": "no-plusplus"
       },
-      "policy": "rules/no-plusplus.json",
+      "policy": "rules/eslint-no-plusplus.json",
       "capabilities": [
         "syntax"
       ],
@@ -438,7 +438,7 @@
         "tool": "eslint",
         "rule": "no-proto"
       },
-      "policy": "rules/no-proto.json",
+      "policy": "rules/eslint-no-proto.json",
       "capabilities": [
         "syntax",
         "value"
@@ -451,7 +451,7 @@
         "tool": "eslint",
         "rule": "no-prototype-builtins"
       },
-      "policy": "rules/no-prototype-builtins.json",
+      "policy": "rules/eslint-no-prototype-builtins.json",
       "capabilities": [
         "syntax"
       ],
@@ -463,7 +463,7 @@
         "tool": "eslint",
         "rule": "no-return-assign"
       },
-      "policy": "rules/no-return-assign.json",
+      "policy": "rules/eslint-no-return-assign.json",
       "capabilities": [
         "syntax"
       ],
@@ -503,7 +503,7 @@
         "tool": "eslint",
         "rule": "no-setter-return"
       },
-      "policy": "rules/no-setter-return.json",
+      "policy": "rules/eslint-no-setter-return.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -516,7 +516,7 @@
         "tool": "eslint",
         "rule": "no-sparse-arrays"
       },
-      "policy": "rules/no-sparse-arrays.json",
+      "policy": "rules/eslint-no-sparse-arrays.json",
       "capabilities": [
         "syntax"
       ],
@@ -541,7 +541,7 @@
         "tool": "eslint",
         "rule": "no-ternary"
       },
-      "policy": "rules/no-ternary.json",
+      "policy": "rules/eslint-no-ternary.json",
       "capabilities": [
         "syntax"
       ],
@@ -553,7 +553,7 @@
         "tool": "eslint",
         "rule": "no-unneeded-ternary"
       },
-      "policy": "rules/no-unneeded-ternary.json",
+      "policy": "rules/eslint-no-unneeded-ternary.json",
       "capabilities": [
         "syntax"
       ],
@@ -565,7 +565,7 @@
         "tool": "eslint",
         "rule": "no-unsafe-finally"
       },
-      "policy": "rules/no-unsafe-finally.json",
+      "policy": "rules/eslint-no-unsafe-finally.json",
       "capabilities": [
         "syntax"
       ],
@@ -577,7 +577,7 @@
         "tool": "eslint",
         "rule": "no-unsafe-negation"
       },
-      "policy": "rules/no-unsafe-negation.json",
+      "policy": "rules/eslint-no-unsafe-negation.json",
       "capabilities": [
         "syntax"
       ],
@@ -589,7 +589,7 @@
         "tool": "eslint",
         "rule": "no-useless-call"
       },
-      "policy": "rules/no-useless-call.json",
+      "policy": "rules/eslint-no-useless-call.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -602,7 +602,7 @@
         "tool": "eslint",
         "rule": "no-useless-catch"
       },
-      "policy": "rules/no-useless-catch.json",
+      "policy": "rules/eslint-no-useless-catch.json",
       "capabilities": [
         "syntax"
       ],
@@ -614,7 +614,7 @@
         "tool": "eslint",
         "rule": "no-useless-concat"
       },
-      "policy": "rules/no-useless-concat.json",
+      "policy": "rules/eslint-no-useless-concat.json",
       "capabilities": [
         "syntax"
       ],
@@ -626,7 +626,7 @@
         "tool": "eslint",
         "rule": "no-void"
       },
-      "policy": "rules/no-void.json",
+      "policy": "rules/eslint-no-void.json",
       "capabilities": [
         "syntax"
       ],
@@ -638,7 +638,7 @@
         "tool": "eslint",
         "rule": "no-warning-comments"
       },
-      "policy": "rules/no-warning-comments.json",
+      "policy": "rules/eslint-no-warning-comments.json",
       "capabilities": [
         "syntax",
         "value"
@@ -651,7 +651,7 @@
         "tool": "eslint",
         "rule": "no-with"
       },
-      "policy": "rules/no-with.json",
+      "policy": "rules/eslint-no-with.json",
       "capabilities": [
         "syntax"
       ],
@@ -663,7 +663,7 @@
         "tool": "eslint",
         "rule": "operator-assignment"
       },
-      "policy": "rules/operator-assignment.json",
+      "policy": "rules/eslint-operator-assignment.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -676,7 +676,7 @@
         "tool": "eslint",
         "rule": "prefer-numeric-literals"
       },
-      "policy": "rules/prefer-numeric-literals.json",
+      "policy": "rules/eslint-prefer-numeric-literals.json",
       "capabilities": [
         "syntax",
         "value",
@@ -690,7 +690,7 @@
         "tool": "eslint",
         "rule": "prefer-spread"
       },
-      "policy": "rules/prefer-spread.json",
+      "policy": "rules/eslint-prefer-spread.json",
       "capabilities": [
         "syntax",
         "value",
@@ -704,7 +704,7 @@
         "tool": "eslint",
         "rule": "prefer-template"
       },
-      "policy": "rules/prefer-template.json",
+      "policy": "rules/eslint-prefer-template.json",
       "capabilities": [
         "syntax"
       ],
@@ -732,7 +732,7 @@
         "tool": "eslint",
         "rule": "sort-imports"
       },
-      "policy": "rules/sort-imports.json",
+      "policy": "rules/eslint-sort-imports.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -745,7 +745,7 @@
         "tool": "eslint",
         "rule": "sort-keys"
       },
-      "policy": "rules/sort-keys.json",
+      "policy": "rules/eslint-sort-keys.json",
       "capabilities": [
         "syntax",
         "value",
@@ -759,7 +759,7 @@
         "tool": "eslint",
         "rule": "sort-vars"
       },
-      "policy": "rules/sort-vars.json",
+      "policy": "rules/eslint-sort-vars.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -786,7 +786,7 @@
         "tool": "eslint",
         "rule": "valid-typeof"
       },
-      "policy": "rules/valid-typeof.json",
+      "policy": "rules/eslint-valid-typeof.json",
       "capabilities": [
         "syntax",
         "value",
@@ -800,7 +800,7 @@
         "tool": "eslint",
         "rule": "yoda"
       },
-      "policy": "rules/yoda.json",
+      "policy": "rules/eslint-yoda.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -813,7 +813,7 @@
         "tool": "eslint",
         "rule": "accessor-pairs"
       },
-      "policy": "candidates/rules/accessor-pairs.json",
+      "policy": "candidates/rules/eslint-accessor-pairs.json",
       "capabilities": [
         "syntax",
         "value",
@@ -828,7 +828,7 @@
         "tool": "eslint",
         "rule": "class-methods-use-this"
       },
-      "policy": "candidates/rules/class-methods-use-this.json",
+      "policy": "candidates/rules/eslint-class-methods-use-this.json",
       "capabilities": [
         "syntax",
         "value"
@@ -841,7 +841,7 @@
         "tool": "eslint",
         "rule": "curly"
       },
-      "policy": "candidates/rules/curly.json",
+      "policy": "candidates/rules/eslint-curly.json",
       "capabilities": [
         "syntax",
         "value"
@@ -854,7 +854,7 @@
         "tool": "eslint",
         "rule": "default-param-last"
       },
-      "policy": "candidates/rules/default-param-last.json",
+      "policy": "candidates/rules/eslint-default-param-last.json",
       "capabilities": [
         "syntax"
       ],
@@ -866,7 +866,7 @@
         "tool": "eslint",
         "rule": "dot-notation"
       },
-      "policy": "candidates/rules/dot-notation.json",
+      "policy": "candidates/rules/eslint-dot-notation.json",
       "capabilities": [
         "syntax"
       ],
@@ -975,7 +975,7 @@
         "tool": "eslint",
         "rule": "func-name-matching"
       },
-      "policy": "candidates/rules/func-name-matching.json",
+      "policy": "candidates/rules/eslint-func-name-matching.json",
       "capabilities": [
         "syntax",
         "value",
@@ -989,7 +989,7 @@
         "tool": "eslint",
         "rule": "grouped-accessor-pairs"
       },
-      "policy": "candidates/rules/grouped-accessor-pairs.json",
+      "policy": "candidates/rules/eslint-grouped-accessor-pairs.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1003,7 +1003,7 @@
         "tool": "eslint",
         "rule": "id-length"
       },
-      "policy": "candidates/rules/id-length.json",
+      "policy": "candidates/rules/eslint-id-length.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -1016,7 +1016,7 @@
         "tool": "eslint",
         "rule": "max-classes-per-file"
       },
-      "policy": "candidates/rules/max-classes-per-file.json",
+      "policy": "candidates/rules/eslint-max-classes-per-file.json",
       "capabilities": [
         "syntax"
       ],
@@ -1028,7 +1028,7 @@
         "tool": "eslint",
         "rule": "max-depth"
       },
-      "policy": "candidates/rules/max-depth.json",
+      "policy": "candidates/rules/eslint-max-depth.json",
       "capabilities": [
         "syntax"
       ],
@@ -1040,7 +1040,7 @@
         "tool": "eslint",
         "rule": "max-nested-callbacks"
       },
-      "policy": "candidates/rules/max-nested-callbacks.json",
+      "policy": "candidates/rules/eslint-max-nested-callbacks.json",
       "capabilities": [
         "syntax"
       ],
@@ -1052,7 +1052,7 @@
         "tool": "eslint",
         "rule": "max-params"
       },
-      "policy": "candidates/rules/max-params.json",
+      "policy": "candidates/rules/eslint-max-params.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1065,7 +1065,7 @@
         "tool": "eslint",
         "rule": "max-statements"
       },
-      "policy": "candidates/rules/max-statements.json",
+      "policy": "candidates/rules/eslint-max-statements.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1078,7 +1078,7 @@
         "tool": "eslint",
         "rule": "no-alert"
       },
-      "policy": "candidates/rules/no-alert.json",
+      "policy": "candidates/rules/eslint-no-alert.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1091,7 +1091,7 @@
         "tool": "eslint",
         "rule": "no-array-constructor"
       },
-      "policy": "candidates/rules/no-array-constructor.json",
+      "policy": "candidates/rules/eslint-no-array-constructor.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1104,7 +1104,7 @@
         "tool": "eslint",
         "rule": "no-await-in-loop"
       },
-      "policy": "candidates/rules/no-await-in-loop.json",
+      "policy": "candidates/rules/eslint-no-await-in-loop.json",
       "capabilities": [
         "syntax"
       ],
@@ -1116,7 +1116,7 @@
         "tool": "eslint",
         "rule": "no-console"
       },
-      "policy": "rules/no-console.json",
+      "policy": "rules/eslint-no-console.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1129,7 +1129,7 @@
         "tool": "eslint",
         "rule": "no-dupe-class-members"
       },
-      "policy": "candidates/rules/no-dupe-class-members.json",
+      "policy": "candidates/rules/eslint-no-dupe-class-members.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1143,7 +1143,7 @@
         "tool": "eslint",
         "rule": "no-dupe-else-if"
       },
-      "policy": "candidates/rules/no-dupe-else-if.json",
+      "policy": "candidates/rules/eslint-no-dupe-else-if.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -1156,7 +1156,7 @@
         "tool": "eslint",
         "rule": "no-duplicate-imports"
       },
-      "policy": "candidates/rules/no-duplicate-imports.json",
+      "policy": "candidates/rules/eslint-no-duplicate-imports.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1170,7 +1170,7 @@
         "tool": "eslint",
         "rule": "no-empty-function"
       },
-      "policy": "candidates/rules/no-empty-function.json",
+      "policy": "candidates/rules/eslint-no-empty-function.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1183,7 +1183,7 @@
         "tool": "eslint",
         "rule": "no-extra-bind"
       },
-      "policy": "candidates/rules/no-extra-bind.json",
+      "policy": "candidates/rules/eslint-no-extra-bind.json",
       "capabilities": [
         "syntax"
       ],
@@ -1195,7 +1195,7 @@
         "tool": "eslint",
         "rule": "no-extra-label"
       },
-      "policy": "candidates/rules/no-extra-label.json",
+      "policy": "candidates/rules/eslint-no-extra-label.json",
       "capabilities": [
         "syntax",
         "compare"
@@ -1208,7 +1208,7 @@
         "tool": "eslint",
         "rule": "no-inline-comments"
       },
-      "policy": "rules/no-inline-comments.json",
+      "policy": "rules/eslint-no-inline-comments.json",
       "capabilities": [
         "syntax"
       ],
@@ -1220,7 +1220,7 @@
         "tool": "eslint",
         "rule": "no-irregular-whitespace"
       },
-      "policy": "candidates/rules/no-irregular-whitespace.json",
+      "policy": "candidates/rules/eslint-no-irregular-whitespace.json",
       "capabilities": [
         "syntax"
       ],
@@ -1232,7 +1232,7 @@
         "tool": "eslint",
         "rule": "no-labels"
       },
-      "policy": "candidates/rules/no-labels.json",
+      "policy": "candidates/rules/eslint-no-labels.json",
       "capabilities": [
         "syntax"
       ],
@@ -1244,7 +1244,7 @@
         "tool": "eslint",
         "rule": "no-lonely-if"
       },
-      "policy": "candidates/rules/no-lonely-if.json",
+      "policy": "candidates/rules/eslint-no-lonely-if.json",
       "capabilities": [
         "syntax"
       ],
@@ -1256,7 +1256,7 @@
         "tool": "eslint",
         "rule": "no-magic-numbers"
       },
-      "policy": "candidates/rules/no-magic-numbers.json",
+      "policy": "candidates/rules/eslint-no-magic-numbers.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1269,7 +1269,7 @@
         "tool": "eslint",
         "rule": "no-multi-assign"
       },
-      "policy": "candidates/rules/no-multi-assign.json",
+      "policy": "candidates/rules/eslint-no-multi-assign.json",
       "capabilities": [
         "syntax"
       ],
@@ -1281,7 +1281,7 @@
         "tool": "eslint",
         "rule": "no-new-func"
       },
-      "policy": "candidates/rules/no-new-func.json",
+      "policy": "candidates/rules/eslint-no-new-func.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1294,7 +1294,7 @@
         "tool": "eslint",
         "rule": "no-obj-calls"
       },
-      "policy": "candidates/rules/no-obj-calls.json",
+      "policy": "candidates/rules/eslint-no-obj-calls.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1308,7 +1308,7 @@
         "tool": "eslint",
         "rule": "no-object-constructor"
       },
-      "policy": "candidates/rules/no-object-constructor.json",
+      "policy": "candidates/rules/eslint-no-object-constructor.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1321,7 +1321,7 @@
         "tool": "eslint",
         "rule": "no-redeclare"
       },
-      "policy": "candidates/rules/no-redeclare.json",
+      "policy": "candidates/rules/eslint-no-redeclare.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1336,7 +1336,7 @@
         "tool": "eslint",
         "rule": "no-self-assign"
       },
-      "policy": "candidates/rules/no-self-assign.json",
+      "policy": "candidates/rules/eslint-no-self-assign.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1350,7 +1350,7 @@
         "tool": "eslint",
         "rule": "no-sequences"
       },
-      "policy": "candidates/rules/no-sequences.json",
+      "policy": "candidates/rules/eslint-no-sequences.json",
       "capabilities": [
         "syntax"
       ],
@@ -1362,7 +1362,7 @@
         "tool": "eslint",
         "rule": "no-undef"
       },
-      "policy": "candidates/rules/no-undef.json",
+      "policy": "candidates/rules/eslint-no-undef.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1375,7 +1375,7 @@
         "tool": "eslint",
         "rule": "no-unexpected-multiline"
       },
-      "policy": "candidates/rules/no-unexpected-multiline.json",
+      "policy": "candidates/rules/eslint-no-unexpected-multiline.json",
       "capabilities": [
         "syntax"
       ],
@@ -1387,7 +1387,7 @@
         "tool": "eslint",
         "rule": "no-unsafe-optional-chaining"
       },
-      "policy": "candidates/rules/no-unsafe-optional-chaining.json",
+      "policy": "candidates/rules/eslint-no-unsafe-optional-chaining.json",
       "capabilities": [
         "syntax"
       ],
@@ -1399,7 +1399,7 @@
         "tool": "eslint",
         "rule": "no-unused-expressions"
       },
-      "policy": "candidates/rules/no-unused-expressions.json",
+      "policy": "candidates/rules/eslint-no-unused-expressions.json",
       "capabilities": [
         "syntax"
       ],
@@ -1411,7 +1411,7 @@
         "tool": "eslint",
         "rule": "no-unused-labels"
       },
-      "policy": "candidates/rules/no-unused-labels.json",
+      "policy": "candidates/rules/eslint-no-unused-labels.json",
       "capabilities": [
         "syntax"
       ],
@@ -1423,7 +1423,7 @@
         "tool": "eslint",
         "rule": "no-unused-vars"
       },
-      "policy": "candidates/rules/no-unused-vars.json",
+      "policy": "candidates/rules/eslint-no-unused-vars.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1438,7 +1438,7 @@
         "tool": "eslint",
         "rule": "no-useless-computed-key"
       },
-      "policy": "candidates/rules/no-useless-computed-key.json",
+      "policy": "candidates/rules/eslint-no-useless-computed-key.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1451,7 +1451,7 @@
         "tool": "eslint",
         "rule": "no-useless-constructor"
       },
-      "policy": "candidates/rules/no-useless-constructor.json",
+      "policy": "candidates/rules/eslint-no-useless-constructor.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1465,7 +1465,7 @@
         "tool": "eslint",
         "rule": "one-var"
       },
-      "policy": "candidates/rules/one-var.json",
+      "policy": "candidates/rules/eslint-one-var.json",
       "capabilities": [
         "syntax"
       ],
@@ -1477,7 +1477,7 @@
         "tool": "eslint",
         "rule": "prefer-destructuring"
       },
-      "policy": "candidates/rules/prefer-destructuring.json",
+      "policy": "candidates/rules/eslint-prefer-destructuring.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1491,7 +1491,7 @@
         "tool": "eslint",
         "rule": "prefer-exponentiation-operator"
       },
-      "policy": "candidates/rules/prefer-exponentiation-operator.json",
+      "policy": "candidates/rules/eslint-prefer-exponentiation-operator.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1505,7 +1505,7 @@
         "tool": "eslint",
         "rule": "prefer-object-has-own"
       },
-      "policy": "candidates/rules/prefer-object-has-own.json",
+      "policy": "candidates/rules/eslint-prefer-object-has-own.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1518,7 +1518,7 @@
         "tool": "eslint",
         "rule": "require-await"
       },
-      "policy": "candidates/rules/require-await.json",
+      "policy": "candidates/rules/eslint-require-await.json",
       "capabilities": [
         "syntax",
         "value"
@@ -1531,7 +1531,7 @@
         "tool": "eslint",
         "rule": "require-yield"
       },
-      "policy": "candidates/rules/require-yield.json",
+      "policy": "candidates/rules/eslint-require-yield.json",
       "capabilities": [
         "syntax"
       ],
@@ -1543,7 +1543,7 @@
         "tool": "eslint",
         "rule": "strict"
       },
-      "policy": "candidates/rules/strict.json",
+      "policy": "candidates/rules/eslint-strict.json",
       "capabilities": [
         "syntax"
       ],
@@ -1555,7 +1555,7 @@
         "tool": "eslint",
         "rule": "symbol-description"
       },
-      "policy": "candidates/rules/symbol-description.json",
+      "policy": "candidates/rules/eslint-symbol-description.json",
       "capabilities": [
         "syntax",
         "scope"
@@ -1606,7 +1606,7 @@
         "tool": "eslint",
         "rule": "vars-on-top"
       },
-      "policy": "candidates/rules/vars-on-top.json",
+      "policy": "candidates/rules/eslint-vars-on-top.json",
       "capabilities": [
         "syntax"
       ],

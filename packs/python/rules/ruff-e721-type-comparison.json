@@ -1,0 +1,293 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e721-type-comparison",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's E721 (type-comparison): a comparison with an `==` or `!=` operator whose operand on either side is a type (a call whose callee resolves to the builtin `type` or `builtins.type`, or a name from Ruff's builtin type and exception list that resolves to the builtin) while neither side is a dtype (`x.dtype`, or a call of a callee resolving to `numpy.dtype`), reported on the whole comparison once per offending operator (a chained comparison can report twice, as in Ruff).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "type-comparison",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "type-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "type"
+                    ],
+                    "import": [
+                      "builtins.type"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-callee"
+                  }
+                }
+              ]
+            },
+            "is-type": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "type-callee"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "bool",
+                      "bytearray",
+                      "bytes",
+                      "classmethod",
+                      "complex",
+                      "dict",
+                      "enumerate",
+                      "filter",
+                      "float",
+                      "frozenset",
+                      "int",
+                      "list",
+                      "map",
+                      "memoryview",
+                      "object",
+                      "property",
+                      "range",
+                      "reversed",
+                      "set",
+                      "slice",
+                      "staticmethod",
+                      "str",
+                      "super",
+                      "tuple",
+                      "type",
+                      "zip",
+                      "ArithmeticError",
+                      "AssertionError",
+                      "AttributeError",
+                      "BaseException",
+                      "BlockingIOError",
+                      "BrokenPipeError",
+                      "BufferError",
+                      "BytesWarning",
+                      "ChildProcessError",
+                      "ConnectionAbortedError",
+                      "ConnectionError",
+                      "ConnectionRefusedError",
+                      "ConnectionResetError",
+                      "DeprecationWarning",
+                      "EnvironmentError",
+                      "EOFError",
+                      "Exception",
+                      "FileExistsError",
+                      "FileNotFoundError",
+                      "FloatingPointError",
+                      "FutureWarning",
+                      "GeneratorExit",
+                      "ImportError",
+                      "ImportWarning",
+                      "IndentationError",
+                      "IndexError",
+                      "InterruptedError",
+                      "IOError",
+                      "IsADirectoryError",
+                      "KeyboardInterrupt",
+                      "KeyError",
+                      "LookupError",
+                      "MemoryError",
+                      "ModuleNotFoundError",
+                      "NameError",
+                      "NotADirectoryError",
+                      "NotImplementedError",
+                      "OSError",
+                      "OverflowError",
+                      "PendingDeprecationWarning",
+                      "PermissionError",
+                      "ProcessLookupError",
+                      "RecursionError",
+                      "ReferenceError",
+                      "ResourceWarning",
+                      "RuntimeError",
+                      "RuntimeWarning",
+                      "StopAsyncIteration",
+                      "StopIteration",
+                      "SyntaxError",
+                      "SyntaxWarning",
+                      "SystemError",
+                      "SystemExit",
+                      "TabError",
+                      "TimeoutError",
+                      "TypeError",
+                      "UnboundLocalError",
+                      "UnicodeDecodeError",
+                      "UnicodeEncodeError",
+                      "UnicodeError",
+                      "UnicodeTranslateError",
+                      "UnicodeWarning",
+                      "UserWarning",
+                      "ValueError",
+                      "Warning",
+                      "ZeroDivisionError"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "is-type"
+                  }
+                }
+              ]
+            },
+            "dtype-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "numpy.dtype"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dtype-callee"
+                  }
+                }
+              ]
+            },
+            "is-dtype": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "pattern": "$OBJ.dtype"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dtype-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "is-dtype"
+                  }
+                }
+              ]
+            },
+            "eq-op": {
+              "regex": "^(?:==|!=)$"
+            },
+            "offending-op": {
+              "all": [
+                {
+                  "matches": "eq-op"
+                },
+                {
+                  "any": [
+                    {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "matches": "is-type"
+                      }
+                    },
+                    {
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "matches": "is-type"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "matches": "is-dtype"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "matches": "is-dtype"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "offending-op",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "comparison_operator",
+              "pattern": "$CMP"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CMP",
+        "code": "E721",
+        "message": "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E721"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

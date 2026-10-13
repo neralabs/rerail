@@ -1,0 +1,131 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b005-strip-with-multi-characters",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B005 (strip-with-multi-characters): `.strip`/`.lstrip`/`.rstrip` called with exactly one positional argument that is a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value repeats a character, tested with a backreference (`(.).*\\1`). Reported on the call.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "strip-with-multi-characters",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "literal": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string",
+                      "regex": "^[rRuU]{0,2}['\"]"
+                    },
+                    {
+                      "kind": "concatenated_string",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "string",
+                          "not": {
+                            "regex": "^[rRuU]{0,2}['\"]"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "value": {
+                    "regex": "(?s)(.).*\\1"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "regex": "^[lr]?strip$",
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\.$"
+                }
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "positional"
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "literal"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B005",
+        "message": "Using `.strip()` with multi-character strings is misleading",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
-  "id": "python-conformance:bandit-b610-django-extra-used",
+  "id": "bandit-b610-django-extra-used",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Bandit 1.8.6's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. Bandit's `# nosec` is not modelled; its recordings run with --ignore-nosec.",
+  "description": "Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
   "scope": {
     "include": [
       "**/*"
@@ -184,7 +184,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B610",
-        "message": "Bandit B610 (django-extra-used)"
+        "message": "Bandit B610 (django-extra-used)",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B610"
+            ]
+          }
+        }
       }
     }
   ]

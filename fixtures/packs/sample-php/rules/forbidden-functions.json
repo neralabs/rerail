@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "sample-php:forbidden-functions",
+  "id": "forbidden-functions",
   "revision": 1,
   "mode": "steer",
   "description": "Sample port of PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions with its default list (sizeof, delete).",

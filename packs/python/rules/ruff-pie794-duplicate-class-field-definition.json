@@ -1,0 +1,157 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pie794-duplicate-class-field-definition",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PIE794 (duplicate-class-field-definition): in a class body, an assignment or annotated assignment to a name `N` whose value does not mention `N`, after an earlier such definition of `N` in the same body.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-class-field-definition",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target-n": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$N"
+                },
+                {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "tuple_pattern"
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target-n"
+                  }
+                }
+              ]
+            },
+            "field-def": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "matches": "target-n"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "assignment"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        },
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "identifier",
+                              "pattern": "$N",
+                              "not": {
+                                "any": [
+                                  {
+                                    "follows": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^\\.$"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "stopBy": "neighbor",
+                                      "kind": "keyword_argument"
+                                    },
+                                    "precedes": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^=$"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "matches": "field-def",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "class_definition"
+              }
+            },
+            "follows": {
+              "stopBy": "end",
+              "matches": "field-def"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PIE794",
+        "message": "Class field `$N` is defined multiple times",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PIE794"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

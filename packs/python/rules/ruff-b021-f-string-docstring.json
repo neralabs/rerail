@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b021-f-string-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B021 (f-string-docstring): the first statement of a module, function or class body is an expression statement whose value is an f-string (an `f`-prefixed literal, or an implicit concatenation containing one; parentheses transparent). Comments before it are not statements. Reported on the statement.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "f-string-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "f-string": {
+              "any": [
+                { "kind": "string", "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[fF]" } },
+                { "kind": "concatenated_string", "has": { "stopBy": "neighbor", "matches": "f-string" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "f-string" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "expression_statement",
+            "all": [
+              { "has": { "stopBy": "neighbor", "matches": "f-string" } },
+              { "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } },
+              { "not": { "follows": { "stopBy": "end", "not": { "kind": "comment" } } } },
+              {
+                "any": [
+                  { "inside": { "stopBy": "neighbor", "kind": "module" } },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "inside": { "stopBy": "neighbor", "any": [ { "kind": "function_definition" }, { "kind": "class_definition" } ] }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B021", "message": "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring.", "suppress": { "noqa": { "codes": ["B021"] } } }
+    }
+  ]
+}
