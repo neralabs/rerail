@@ -36,10 +36,11 @@
 //! `v-for` on one element (compiler-core's `transformIf` runs before `transformFor`; Vue 2 did the
 //! opposite), so the condition cannot read the alias. The `v-for` statement's shape, an
 //! `expression_statement` holding a `sequence_expression` of a parenthesized expression and an
-//! arrow, never comes from template code, which is always parenthesized. The alias is copied
-//! with its parentheses where it has them (`(item, index)`), so the arrow then starts at the
-//! alias; otherwise (`item`, `{ a, b }`, `item, index`) synthetic parentheses anchored at the
-//! element wrap it, as compiler-core's `parseFor` reads it.
+//! arrow, never comes from template code, which is always parenthesized. The alias is written in
+//! synthetic parentheses anchored at the element, as compiler-core's `parseFor` reads it (its
+//! own parentheses, `(item, index)`, stripped): the arrow, and so its parameters, then start at
+//! the element, holding the element's tag and the directives before the `v-for` too, which a
+//! tape keeps inside the arrow's span.
 //!
 //! An inline handler's arrow declares nothing: Vue compiles it to `$event => (S)`, but no byte of
 //! the file declares `$event`, so the view leaves Vue's implicit variable an unresolved read rather
@@ -514,22 +515,23 @@ impl<'t> Emitter<'t> {
         self.copy(from..range.end);
     }
 
-    /// A parenthesized `v-for` alias, copied, with a placeholder the tape leaves out in each
-    /// empty slot before the last (`(,a,b)`, `(a,,b)`, `(a,b,,)`): compiler-core's `parseFor`
-    /// leaves them unset and its codegen pads them (`createForLoopParams`), so the program
-    /// parses and its parameters are the file's aliases alone.
-    fn parameters(&mut self, alias: Range<usize>) {
+    /// The inside of a parenthesized `v-for` alias (`item, index` of `(item, index)`), copied,
+    /// with a placeholder the tape leaves out in each empty slot before the last (`(,a,b)`,
+    /// `(a,,b)`, `(a,b,,)`): compiler-core's `parseFor` leaves them unset and its codegen pads
+    /// them (`createForLoopParams`), so the program parses and its parameters are the file's
+    /// aliases alone.
+    fn parameters(&mut self, inner: Range<usize>) {
         let source = self.source;
-        let text = &source[alias.clone()];
+        let text = &source[inner.clone()];
         let mut depth = 0usize;
-        let mut slot = alias.start + 1;
-        let mut from = alias.start;
+        let mut slot = inner.start;
+        let mut from = inner.start;
         for (offset, byte) in text.bytes().enumerate() {
-            let at = alias.start + offset;
+            let at = inner.start + offset;
             match byte {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-                b',' if depth == 1 => {
+                b',' if depth == 0 => {
                     if source[slot..at].trim().is_empty() {
                         self.code(from..at);
                         self.placeholder(at);
@@ -540,7 +542,7 @@ impl<'t> Emitter<'t> {
                 _ => {}
             }
         }
-        self.code(from..alias.end);
+        self.code(from..inner.end);
     }
 
     /// A parameter the program needs and the file does not write, at file byte `at`: the tape
@@ -673,17 +675,13 @@ impl<'t> Emitter<'t> {
         }
         self.emit("), ", anchor.clone());
         let alias = trimmed(source, parsed.alias.clone());
-        if parsed.parenthesized
-            && let Some(alias) = alias
-        {
-            self.parameters(alias);
-        } else {
-            self.emit("(", anchor.clone());
-            if let Some(alias) = alias {
-                self.code(alias);
-            }
-            self.emit(")", anchor.clone());
+        self.emit("(", anchor.clone());
+        match alias {
+            Some(alias) if parsed.parenthesized => self.parameters(alias.start + 1..alias.end - 1),
+            Some(alias) => self.code(alias),
+            None => {}
         }
+        self.emit(")", anchor.clone());
         self.emit(" => {", anchor.clone());
         self.contents(element, chained);
         self.emit(" };", anchor);
@@ -1082,9 +1080,17 @@ mod tests {
             "{ (items), (item) => { (item); }; (items), (item, index) => { (index); (item); }; \
              (rows), ({ id, name }) => { (id); (name); }; (object), (value, key) => { }; }"
         );
-        assert_eq!(
-            spans(&view, "formal_parameters")[1],
-            find(source, "(item, index)")
+        // The parentheses are the element's, so the arrow holds the element whole; the aliases
+        // are copied.
+        let element = find(
+            source,
+            r#"<li v-for="(item, index) of items" :key="index">{{ item }}</li>"#,
+        );
+        assert_eq!(spans(&view, "arrow_function")[1], element);
+        assert_eq!(spans(&view, "formal_parameters")[1], element);
+        assert!(
+            view.copied()
+                .any(|copy| copy == find(source, "item, index"))
         );
     }
 

@@ -158,6 +158,9 @@ struct Walk<'t, 'r, 'a, 'd, D: Doc> {
     table: &'t ScopeTable,
     text: &'a str,
     base: usize,
+    /// The start of the node the walk visited last (comments aside), where the cursors below
+    /// stand.
+    at: usize,
     next_reference: usize,
     names: Vec<NameEntry<'t>>,
     next_name: usize,
@@ -186,6 +189,17 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             self.comment(&node);
             return Ok(());
         }
+        // A tree's nodes start in walk order, but an embedded program's spans need not: Vue's
+        // view writes `if (C) { E }` where `C` is a directive that may follow `E`'s others. The
+        // cursors then seek back to the node's start.
+        if range.start < self.at {
+            self.next_reference = self
+                .table
+                .references
+                .partition_point(|reference| reference.start < range.start);
+            self.next_name = self.names.partition_point(|name| name.start < range.start);
+        }
+        self.at = range.start;
         while self
             .table
             .references
@@ -1161,6 +1175,7 @@ pub(super) fn build<'r, D: Doc>(
         table,
         text: text.as_ref(),
         base: root.range().start,
+        at: root.range().start,
         next_reference: 0,
         names,
         next_name: 0,

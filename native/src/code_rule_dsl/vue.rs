@@ -27,8 +27,85 @@ pub(crate) fn program<'r, D: Doc>(root: &Node<'r, D>) -> Option<Node<'r, D>> {
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::scope::ScopeTable;
+    use crate::code_rule_dsl::scope::usage::{BindingId, Usage};
+    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+    use ast_grep_core::AstGrep;
+    use ast_grep_core::tree_sitter::StrDoc;
     use ast_grep_language::LanguageExt;
     use std::collections::HashSet;
+    use std::sync::Arc;
+
+    /// A Vue tape of `source`: the component's tree and its embedded program.
+    fn tape(source: &str) -> AstGrep<TapeDoc> {
+        let grammar = Grammar::new(GrammarDialect::Vue).expect("grammar");
+        let native = StrDoc::new(source, GrammarDialect::Vue);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
+            .expect("encodes");
+        AstGrep::doc(
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+                .expect("restores"),
+        )
+    }
+
+    /// The view writes `<p :c="k" v-if="a" />` as `if (a) { (k); }`, the condition first though
+    /// its directive follows `:c`, and `<C v-for="i in l" />` as `(l), (i) => { C; }`, the tag
+    /// last though it comes first: a template's bindings are read and used whatever the order of
+    /// the program's spans (eslint-plugin-vue's no-unused-vars valid cases 015 and 017). Each
+    /// case: the file and the binding its last occurrence of the name reads.
+    #[test]
+    fn usage_reads_a_program_whose_spans_run_out_of_order() {
+        for (source, name) in [
+            (
+                r#"<template><R v-slot="{ k }"><p :c="k" v-if="a" /></R></template>"#,
+                "k",
+            ),
+            (
+                r#"<template><R v-slot="{ k }"><p v-if="a" :c="k" /></R></template>"#,
+                "k",
+            ),
+            (
+                r#"<template><R v-slot="{ k }"><p :c="b" v-if="a" :d="k" /></R></template>"#,
+                "k",
+            ),
+            (
+                r#"<template><R v-slot="{ C }"><div><C v-for="i in l" :key="i" /></div></R></template>"#,
+                "C",
+            ),
+            (
+                r#"<template><R #w="{ l, C }"><C v-for="(k, i) in l" :key="k" :i="i" /></R></template>"#,
+                "C",
+            ),
+        ] {
+            let doc = tape(source);
+            let table = ScopeTable::build(doc.root(), GrammarDialect::Vue, usize::MAX, &|| false)
+                .expect("table builds");
+            let read = source.rfind(name).expect("a read");
+            let reference = table
+                .reference(&(read..read + name.len()))
+                .unwrap_or_else(|| panic!("{name} is a reference in {source}"));
+            assert!(
+                table.resolve(reference, name).is_some(),
+                "{name} resolves in {source}"
+            );
+            let scope = table
+                .scopes
+                .iter()
+                .position(|scope| scope.bindings.contains_key(name))
+                .expect("the name is bound") as u32;
+            let usage = Usage::build(&table, &doc.root(), usize::MAX, &|| false).expect("usage");
+            let facts = usage.facts(BindingId {
+                scope,
+                name,
+                index: 0,
+            });
+            assert_eq!(
+                (facts.referenced, facts.used, facts.references),
+                (Some(true), Some(true), 1),
+                "{name} in {source}"
+            );
+        }
+    }
 
     #[test]
     fn parses_two_scripts_fixture() {
