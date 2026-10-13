@@ -5,7 +5,7 @@ use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, SHADOWED, Summary};
 use crate::code_rule_dsl::calls::{FileTables, php};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::ScopeTable;
 use crate::code_rule_dsl::scope::php_names::PhpNames;
@@ -27,6 +27,8 @@ pub(crate) trait CallRules {
     /// Whether the family's calls join the call graph: its languages' registry capability,
     /// which the adapter kit checks.
     const SUPPORTED: bool;
+    /// The namespace used by names held in this family's summaries.
+    const NAMES: Option<Family>;
     /// The node kinds of a call: the only nodes a `calls` term holds at.
     const CALL_KINDS: &'static [&'static str];
     /// The node kinds of what a call may reach: the definitions a seed query runs on.
@@ -92,6 +94,7 @@ pub(crate) trait CallRules {
 
 impl CallRules for Python {
     const SUPPORTED: bool = true;
+    const NAMES: Option<Family> = Some(Family::Python);
     const CALL_KINDS: &'static [&'static str] = &["call"];
     const FUNCTION_KINDS: &'static [&'static str] = &["function_definition"];
     const SEED_LANGUAGE: Option<&'static str> = None;
@@ -169,6 +172,7 @@ impl CallRules for Python {
 
 impl CallRules for Php {
     const SUPPORTED: bool = true;
+    const NAMES: Option<Family> = Some(Family::Php);
     const CALL_KINDS: &'static [&'static str] = &php::CALL_KINDS;
     const FUNCTION_KINDS: &'static [&'static str] = &php::FUNCTION_KINDS;
     const SEED_LANGUAGE: Option<&'static str> = None;
@@ -229,7 +233,7 @@ impl CallRules for Php {
     ) {
         let text = name.text();
         key(if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
-            Name::new(&text.to_ascii_lowercase())
+            Name::new(Family::Php, &text.to_ascii_lowercase())
         } else {
             name.clone()
         });
@@ -249,6 +253,7 @@ impl CallRules for Php {
 /// workspace's PHP definitions, which its calls reach: its seed query is PHP's.
 impl CallRules for Blade {
     const SUPPORTED: bool = <Php as CallRules>::SUPPORTED;
+    const NAMES: Option<Family> = <Php as CallRules>::NAMES;
     const CALL_KINDS: &'static [&'static str] = <Php as CallRules>::CALL_KINDS;
     const FUNCTION_KINDS: &'static [&'static str] = <Php as CallRules>::FUNCTION_KINDS;
     const SEED_LANGUAGE: Option<&'static str> = Some("php");
@@ -310,6 +315,7 @@ impl CallRules for Blade {
 /// TypeScript, TSX and JavaScript: the registry refuses `calls`.
 impl CallRules for Refused {
     const SUPPORTED: bool = false;
+    const NAMES: Option<Family> = None;
     const CALL_KINDS: &'static [&'static str] = &[];
     const FUNCTION_KINDS: &'static [&'static str] = &[];
     const SEED_LANGUAGE: Option<&'static str> = None;
@@ -449,14 +455,17 @@ pub(super) mod kit {
         );
 
         let (name, label) = expect.label;
-        assert_eq!(<C<A> as CallRules>::label(&Name::new(name)), label);
+        assert_eq!(
+            <C<A> as CallRules>::label(&Name::new(A::FAMILY, name)),
+            label
+        );
 
         for (name, flags, keys) in expect.keys {
             let mut read = Vec::new();
             <C<A> as CallRules>::definition_keys(
-                &Name::new(name),
+                &Name::new(A::FAMILY, name),
                 *flags,
-                |name| [name.clone(), Name::new("alt.f")].into_iter(),
+                |name| [name.clone(), Name::new(A::FAMILY, "alt.f")].into_iter(),
                 |key| read.push(key.text().to_owned()),
             );
             assert_eq!(read, *keys, "{name} {flags}");

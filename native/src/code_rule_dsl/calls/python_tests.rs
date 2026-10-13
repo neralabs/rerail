@@ -1,7 +1,7 @@
 use super::closure::Graph;
 use super::names::Name;
 use super::summary::{Callee, Summary, callee_at};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use ast_grep_language::LanguageExt;
@@ -99,7 +99,7 @@ fn answers(files: &[(String, String)]) -> BTreeMap<String, Vec<Site>> {
                 None => Answer::NoEdge,
                 Some(Callee::Open) => Answer::Unknown,
                 Some(Callee::Name(name)) => {
-                    let (defs, open) = graph.link_of(&Name::new(&name));
+                    let (defs, open) = graph.link_of(&Name::new(Family::Python, &name));
                     if open {
                         Answer::Unknown
                     } else {
@@ -479,7 +479,7 @@ fn benchmark_python_calls_corpus() {
                     None => Answer::NoEdge,
                     Some(Callee::Open) => Answer::Unknown,
                     Some(Callee::Name(name)) => {
-                        let (defs, open) = graph.link_of(&Name::new(name));
+                        let (defs, open) = graph.link_of(&Name::new(Family::Python, name));
                         if open {
                             Answer::Unknown
                         } else {
@@ -542,7 +542,7 @@ fn benchmark_python_calls_corpus() {
                         // late-bound `cls()` names subclasses' too; a class whose instantiation
                         // runs nothing of the workspace may name nothing.
                         classes.iter().all(|class| {
-                            let (defs, open) = graph.link_of(&Name::new(class));
+                            let (defs, open) = graph.link_of(&Name::new(Family::Python, class));
                             open || defs.iter().all(|def| {
                                 let (file, start) = graph.def_site(*def);
                                 named.contains(&(

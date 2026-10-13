@@ -29,6 +29,7 @@
 
 use super::names::Name;
 use super::summary::{CLASS, Def, OPEN, Summary};
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::scope::php_names::{PhpNames, Resolved, builtin_function};
 use crate::code_rule_dsl::scope::{Scope, ScopeKind, ScopeTable};
 use crate::code_rule_dsl::value::{Context as ValueContext, Value, php as php_value};
@@ -1042,7 +1043,11 @@ pub(crate) fn extract<D: Doc>(
     extractor.targets.dedup();
     Summary {
         module: None,
-        names: extractor.names.iter().map(|name| Name::new(name)).collect(),
+        names: extractor
+            .names
+            .iter()
+            .map(|name| Name::new(Family::Php, name))
+            .collect(),
         defs: extractor.defs,
         edges: extractor.edges,
         targets: extractor.targets,
