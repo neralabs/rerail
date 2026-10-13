@@ -266,6 +266,10 @@ impl Reader<'_> {
                     end += 1;
                 }
                 self.bump(start..end);
+            } else if chr == '\u{feff}' && start == 0 {
+                // Biome lexes a file's leading byte order mark as a token: a `biome-ignore-all` after it is not at
+                // the top (`biome lint` 2.5.15 reports `suppressions/incorrect` for it).
+                self.token(start..start + chr.len_utf8(), false);
             } else if !(chr.is_whitespace() || chr == '\u{feff}') {
                 let mut end = start + chr.len_utf8();
                 while let Some((index, chr)) = chars.next_if(|(_, chr)| {
@@ -823,6 +827,9 @@ const c = (
         assert!(reported(source, "let foo", "lint/style/useConst").is_empty());
         let source = "// biome-ignore-all lint: reason\nuseEffect(a);\nuseEffect(b);\n";
         assert!(hooks(source, HOOK).is_empty());
+        // A leading byte order mark is a token to Biome: the suppression after it is not at the top.
+        let source = "\u{feff}// biome-ignore-all lint: reason\nuseEffect(a);\nuseEffect(b);\n";
+        assert_eq!(hooks(source, HOOK), [1, 2]);
         let source = "useEffect(a);\n// biome-ignore-all lint: reason\nuseEffect(b);\n";
         assert_eq!(hooks(source, HOOK), [0, 2]);
         let source = "\"use strict\";\n// biome-ignore-all lint: reason\nuseEffect(b);\n";
