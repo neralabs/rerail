@@ -86,6 +86,13 @@ fn inline_text_around_php_blocks_is_blanked() {
         "<p><?= $a, $b ?></p>\n",
         &format!("{}echo$a, $b ?>{}", blanked("<p>"), blanked("</p>\n")),
     );
+    // Before a name, a number or `\`, `echo` would read as one word with it: the tag is blanked.
+    for expression in ["htmlspecialchars($t)", "TRUE", "new Foo()", "\\f()", "1"] {
+        assert_view(
+            &format!("<p><?= {expression} ?></p>\n"),
+            &format!("{}{expression} ?>{}", blanked("<p><?= "), blanked("</p>\n")),
+        );
+    }
     assert_view(
         INLINE_REAL_EVAL,
         &format!(
@@ -314,6 +321,30 @@ fn a_short_open_tag_opens_php() {
     );
 }
 
+#[test]
+fn the_data_after_halt_compiler_is_no_php() {
+    assert_view(
+        "<?php f();\n__halt_compiler();\neval('x'); ?>\n<p>",
+        &format!(
+            "<?php f();\n__halt_compiler();{}",
+            blanked("\neval('x'); ?>\n<p>")
+        ),
+    );
+    // A `?>` ends the call, as it ends any statement.
+    assert_view(
+        "<?php __HALT_COMPILER() ?>data eval('x');\n",
+        &format!("<?php __HALT_COMPILER() ; {}", blanked("data eval('x');\n")),
+    );
+    // Not the call: a longer name, or a method.
+    for source in [
+        "<?php __halt_compilers(); ?>\n<p>",
+        "<?php $o->x__halt_compiler(); ?>\n<p>",
+    ] {
+        assert!(!view(source).contains("<p>"), "{source:?}");
+        assert!(view(source).contains("compiler"), "{source:?}");
+    }
+}
+
 /// The minimal templates of NER-1808 and of its review, which the grammar read with errors.
 const TEMPLATES: &[&str] = &[
     INLINE,
@@ -328,6 +359,9 @@ const TEMPLATES: &[&str] = &[
     "<?php $x = match ($a) { 1 => 2 } ?>html<?php eval(1);\n",
     "<?php echo $o->{$field} ?>html<?php eval(1);\n",
     "<?php if ($a) { ?>\n<p>a</p>\n<?php } else { ?>\n<p>b</p>\n<?php } ?>\n",
+    "<p><?= htmlspecialchars($t) ?></p>\n",
+    "<p><?= new Foo() ?></p>\n",
+    "<p><?= eval('i') ?></p>\n",
 ];
 
 #[test]
@@ -408,4 +442,16 @@ fn inline_text_is_no_php_code_to_a_rule() {
             "{source:?}"
         );
     }
+    // `eval` right after `<?=` is found too.
+    let source = "<p><?= eval('i') ?></p>\n";
+    assert_eq!(
+        violation_lines(&evaluate_file(&compiled, "php", "echo.php", source), source),
+        [1]
+    );
+    // Code after `__halt_compiler();` is data: its `eval` is no finding.
+    let source = "<?php f();\n__halt_compiler();\neval('x');\n";
+    assert_eq!(
+        violation_lines(&evaluate_file(&compiled, "php", "halt.php", source), source),
+        Vec::<usize>::new()
+    );
 }

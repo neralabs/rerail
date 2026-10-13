@@ -97,6 +97,11 @@ pub(super) fn view(source: &str) -> Cow<'_, str> {
                     pos = end;
                 }
                 None => {
+                    // What follows `__halt_compiler();` is the file's data, not PHP.
+                    if let Some(data) = halt_compiler_data(&mut view, bytes, pos) {
+                        view.blank(data..len);
+                        break;
+                    }
                     last = Some(Last::Code(byte));
                     pos += 1;
                 }
@@ -181,15 +186,61 @@ fn open_tag(source: &[u8], mut from: usize) -> Option<Range<usize>> {
 }
 
 /// Writes a `<?=` tag as `echo` over it and the blank that follows (whether it did), so its
-/// expressions read as the `echo` PHP compiles it to; else blanks it, its expression a statement.
+/// expressions read as the `echo` PHP compiles it to; else blanks it, its expression a
+/// statement. `echo` takes the blank's place, so only where what follows cannot continue the
+/// word (`echo$x`, `echo(…)`); before a name, a number or `\` it would read as one word.
 fn short_echo(view: &mut Masked<'_>, source: &[u8], tag: &Range<usize>) -> bool {
-    let echoes = matches!(source.get(tag.end), Some(b' ' | b'\t'));
+    let echoes = matches!(source.get(tag.end), Some(b' ' | b'\t'))
+        && source
+            .get(tag.end + 1)
+            .is_some_and(|&byte| !php_literal::label_byte(byte) && byte != b'\\');
     if echoes {
         view.put(tag.start, b"echo");
     } else {
         view.blank(tag.clone());
     }
     echoes
+}
+
+/// Where the data after a `__halt_compiler();` at `at` starts (PHP stops compiling there; a `?>`
+/// may end the call, as it ends any statement, and becomes its `;`), `None` where none is at `at`.
+fn halt_compiler_data(view: &mut Masked<'_>, source: &[u8], at: usize) -> Option<usize> {
+    const HALT: &[u8] = b"__halt_compiler";
+    let word = source.get(at..at + HALT.len())?;
+    if !word.eq_ignore_ascii_case(HALT)
+        || source
+            .get(at + HALT.len())
+            .is_some_and(|&byte| php_literal::label_byte(byte))
+        || (at > 0 && php_literal::label_byte(source[at - 1]))
+    {
+        return None;
+    }
+    let blanks = |mut from: usize| {
+        while source
+            .get(from)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            from += 1;
+        }
+        from
+    };
+    let open = blanks(at + HALT.len());
+    if source.get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = blanks(open + 1);
+    if source.get(close) != Some(&b')') {
+        return None;
+    }
+    let end = blanks(close + 1);
+    match source.get(end) {
+        Some(b';') => Some(end + 1),
+        Some(b'?') if source.get(end + 1) == Some(&b'>') => {
+            view.put(end, b"; ");
+            Some(end + 2)
+        }
+        _ => None,
+    }
 }
 
 /// The view's bytes: `source`'s until one differs.
