@@ -140,10 +140,10 @@ async function loadContext() {
 
 /**
  * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
- * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode and
- * suppressions (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's options don't apply,
- * from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is written at every
- * folder.
+ * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
+ * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
+ * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
+ * written at every folder.
  */
 export function toStoredRules(entries) {
   const rules = new Map();
@@ -153,7 +153,7 @@ export function toStoredRules(entries) {
     if (known !== undefined) {
       if (!known.folders.includes(entry.folder)) {
         known.folders.push(entry.folder);
-        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions });
+        known.folderStates.push(folderState(entry));
         known.enabled = known.enabled && entry.on;
         known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
@@ -167,7 +167,7 @@ export function toStoredRules(entries) {
       origin: entry.source.kind === "library_rule" ? "user" : "rerail",
       source: entry.source,
       folders: [entry.folder],
-      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions }],
+      folderStates: [folderState(entry)],
       mixed: false,
       onSource: entry.onSource,
       modeSource: entry.modeSource,
@@ -181,6 +181,11 @@ export function toStoredRules(entries) {
   }
   return rules;
 }
+
+/** One folder's own on, mode and suppressions of a rule, with what decided its suppressions. */
+const folderState = entry => ({
+  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+});
 
 /**
  * The packs added to the repository: pack id → every folder it is attached at, from the rules present

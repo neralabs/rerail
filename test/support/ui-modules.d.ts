@@ -64,7 +64,8 @@ declare module "*/ui/poll.js" {
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
   export type Suppressions = "honour" | "ignore";
-  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions }
+  /** One folder's own on, mode and suppressions, with what decided its suppressions. */
+  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object }
   /** A rule as the page stores it from `GET /api/repository/rules`; only the fields the tests read. */
   export interface StoredRule {
     rule: { id: string; mode: string };

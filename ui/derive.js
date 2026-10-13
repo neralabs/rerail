@@ -100,24 +100,25 @@ export function suppressionsText(stored, checkoutPath) {
 export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
 
 /**
- * Whether the pack's suppressions setting, written as `owner` ("repository" or "checkout"), decides `rule`: not where
- * the rule has a setting of its own, nor, for the repository, where a worktree's setting decides it.
+ * Whether the pack's suppressions setting, written as `owner` ("repository" or "checkout"), decides a folder whose
+ * suppressions `source` decided: not where the rule has a setting of its own, nor, for the repository, where a worktree's
+ * setting decides it.
  */
-export const followsPack = (rule, owner) =>
-  rule.suppressionsSource?.target !== "rule" && !(owner === "repository" && rule.suppressionsSource?.by === "checkout");
+export const followsPack = (source, owner) =>
+  source?.target !== "rule" && !(owner === "repository" && source?.by === "checkout");
 
 /**
  * How an added pack's rules here treat suppression comments, from each rule's own value, and what the pack's switch
- * (written as `owner`) sets: honour once every rule it decides ignores them in every folder, else ignore. A rule with a
- * setting of its own counts in the text but not in the switch, which does not change it.
+ * (written as `owner`) sets: honour once every folder of its rules it decides ignores them, else ignore. A folder where a
+ * rule has a setting of its own counts in the text but not in the switch, which does not change it.
  */
 export function packSuppressions(rules, owner) {
   const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
   const text = ignoring === 0 ? "honoured by its rules"
     : ignoring === rules.length ? "ignored by its rules"
     : `ignored by ${ignoring} of its ${rules.length} rules`;
-  const decided = rules.filter(rule => followsPack(rule, owner));
-  return { text, next: decided.length > 0 && decided.every(r => nextSuppressions(r) === "honour") ? "honour" : "ignore" };
+  const decided = rules.flatMap(rule => rule.folderStates.filter(state => followsPack(state.suppressionsSource, owner)));
+  return { text, next: decided.length > 0 && decided.every(state => state.suppressions === "ignore") ? "honour" : "ignore" };
 }
 
 /**

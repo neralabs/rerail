@@ -66,22 +66,23 @@ export function settingWrites({ toast, invalidate, owner }) {
   }
 
   /**
-   * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it on the
-   * pack's rules that follow their pack: not on a rule with a setting of its own, nor on one this worktree decides
-   * when the change is the repository's.
+   * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it in the
+   * folders of the pack's rules that follow their pack: not where a rule has a setting of its own, nor where this
+   * worktree decides when the change is the repository's.
    */
   function setPackSuppressions(packId, suppressions, label) {
     const by = owner();
-    const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId && followsPack(r, by));
+    const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId
+      && r.folderStates.some(state => followsPack(state.suppressionsSource, by)));
     const folders = byFolder((data.attachedPacks.get(packId) ?? []).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(folders, { suppressions }, rules, showSuppressions(suppressions), label);
+    return save(folders, { suppressions }, rules, showSuppressions(suppressions, state => followsPack(state.suppressionsSource, by)), label);
   }
 
   return { setEnabled, setSuppressions, setPackSuppressions };
 }
 
-/** Show a suppressions change on a stored rule, in every folder it is added at. */
-const showSuppressions = suppressions => r => {
-  r.suppressions = suppressions;
-  r.folderStates = r.folderStates.map(state => ({ ...state, suppressions }));
+/** Show a suppressions change on a stored rule, in every folder it is added at that `changes` (all by default). */
+const showSuppressions = (suppressions, changes = () => true) => r => {
+  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions } : state));
+  r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;
 };

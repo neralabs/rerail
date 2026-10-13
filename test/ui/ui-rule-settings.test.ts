@@ -92,6 +92,18 @@ describe("a rule's suppression comments and options on the page", () => {
     expect(packSuppressions(worktree, "repository").next).toBe("ignore");
     expect(packSuppressions(worktree, "checkout").next).toBe("ignore");
   });
+
+  // Self-review round 5: the pack's setting decides each folder on its own; a rule honouring them in one folder by its
+  // own setting kept the switch on ignore, since only the rule's first folder's decider was looked at.
+  it("offers to honour them when only a folder the pack's setting does not decide honours them", () => {
+    const rules = [...toStoredRules([
+      entry("eslint:no-var", "", { suppressions: "ignore", suppressionsSource: inRepository("", "pack") }),
+      entry("eslint:no-var", "web", { suppressions: "honour", suppressionsSource: inRepository("web", "rule") }),
+      entry("eslint:radix", "", { suppressions: "ignore", suppressionsSource: inRepository("", "pack") }),
+      entry("eslint:radix", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "pack") }),
+    ]).values()];
+    expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+  });
 });
 
 describe("the page's rule setting writes", () => {
@@ -181,6 +193,23 @@ describe("the page's rule setting writes", () => {
     await saving;
 
     expect(toast).toHaveBeenCalledWith("Ignored for ESLint.");
+  });
+
+  // Self-review round 5: a folder where the rule has its own setting keeps it, while the pack's other folders change.
+  it("shows a pack change only in the folders the pack's setting decides", async () => {
+    data.rules = toStoredRules([
+      entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inRepository("", "pack") }),
+      entry("eslint:no-var", "web", { suppressions: "honour", suppressionsSource: inRepository("web", "rule") }),
+    ]);
+    const saving = page().setPackSuppressions("eslint", "ignore", "Ignored for ESLint.");
+
+    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["ignore", "honour"]);
+    expect(stored("eslint:no-var").suppressions).toBe("ignore");
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    writes()[1]!.answer(200, {});
+    await saving;
   });
 
   it("switches rules on or off with one write per folder, each naming the rules added there", async () => {
