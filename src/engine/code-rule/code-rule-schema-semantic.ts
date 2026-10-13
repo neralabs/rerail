@@ -12,34 +12,33 @@ const phpcsCode = z
   .regex(/^\w+\.\w+\.\w+(?:\.\w+)?$/, "Must be a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code).");
 
 /**
- * The suppression kinds a violation's `suppress` may ask for, one entry per linter, in the engine's order (its table in
+ * A violation's `suppress`: the suppression kinds it may ask for, one entry per linter, in the engine's order (its table in
  * `native/src/code_rule_dsl/suppress.rs`): the key is the kind's `suppress` key and registry name, the value its shape.
  * Which languages honour a kind is the registry's (`suppressions`) and the engine's to check. A new kind is one entry here.
  */
-const suppressionKinds = {
-  /** ESLint's `eslint-disable` comments. */
-  eslint: z.object({ rules: z.array(eslintRuleName).min(1).max(256) }).strict().optional(),
-  /** Ruff's `# noqa` comments; `parent: "statement"` also reads them where the enclosing statement starts. */
-  noqa: z.object({ codes: z.array(ruffCode).min(1).max(256), parent: z.literal("statement").optional() }).strict().optional(),
-  /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
-  nosec: z.object({ codes: z.array(banditTest).min(1).max(256) }).strict().optional(),
-  /** PHPStan's `@phpstan-ignore` comments. */
-  phpstan: z.object({ identifiers: z.array(phpstanIdentifier).min(1).max(256) }).strict().optional(),
-  /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
-  psalm: z.object({ issues: z.array(psalmIssue).min(1).max(256), suppressAll: z.boolean().optional() }).strict().optional(),
-  /** PHP_CodeSniffer's `phpcs:` annotations, as version 4 reads them unless `version: 3` (which adds `@codingStandardsIgnore*`). */
-  phpcs: z.object({ sniffs: z.array(phpcsCode).min(1).max(256), version: z.union([z.literal(3), z.literal(4)]).optional() }).strict().optional(),
-} as const;
-
-const suppressionKeys = Object.keys(suppressionKinds);
-
 export const codeRuleSuppressSchema = z
-  .object(suppressionKinds)
+  .object({
+    /** ESLint's `eslint-disable` comments. */
+    eslint: z.object({ rules: z.array(eslintRuleName).min(1).max(256) }).strict().optional(),
+    /** Ruff's `# noqa` comments; `parent: "statement"` also reads them where the enclosing statement starts. */
+    noqa: z.object({ codes: z.array(ruffCode).min(1).max(256), parent: z.literal("statement").optional() }).strict().optional(),
+    /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
+    nosec: z.object({ codes: z.array(banditTest).min(1).max(256) }).strict().optional(),
+    /** PHPStan's `@phpstan-ignore` comments. */
+    phpstan: z.object({ identifiers: z.array(phpstanIdentifier).min(1).max(256) }).strict().optional(),
+    /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
+    psalm: z.object({ issues: z.array(psalmIssue).min(1).max(256), suppressAll: z.boolean().optional() }).strict().optional(),
+    /** PHP_CodeSniffer's `phpcs:` annotations, as version 4 reads them unless `version: 3` (which adds `@codingStandardsIgnore*`). */
+    phpcs: z.object({ sniffs: z.array(phpcsCode).min(1).max(256), version: z.union([z.literal(3), z.literal(4)]).optional() }).strict().optional(),
+  })
   .strict()
-  .refine(
-    suppress => Object.values(suppress).some(value => value !== undefined),
-    `suppress must hold ${suppressionKeys.slice(0, -1).join(", ")}, or ${suppressionKeys.at(-1)}.`,
-  );
+  .refine(suppress => Object.values(suppress).some(value => value !== undefined), { error: () => `suppress must hold ${suppressionKinds()}.` });
+
+/** `eslint, noqa, ..., or phpcs`: the kinds a `suppress` may hold, in order. */
+function suppressionKinds(): string {
+  const keys = Object.keys(codeRuleSuppressSchema.shape);
+  return `${keys.slice(0, -1).join(", ")}, or ${keys.at(-1)}`;
+}
 
 /** A violation's `suppress`: per kind, the suppressions it honours. */
 export type CodeRuleDslSuppress = z.infer<typeof codeRuleSuppressSchema>;
