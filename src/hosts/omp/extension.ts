@@ -25,7 +25,7 @@ import { nodeExecutable } from "../../runtime/daemon-control.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
-import { registerRerailCommands } from "../../harness/rerail-command.js";
+import { registerHostCommands } from "../../harness/host-commands.js";
 import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "../../presentation/session-presentation.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
@@ -320,7 +320,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           await initialize(currentContext, { rebuild: true });
         },
       });
-      registerRerailCommands(pi, {
+      registerHostCommands(pi, {
         sessionId: () => activeSession?.sessionId,
         packageRoot: PACKAGE_ROOT,
         cwd: () => currentContext?.cwd ?? process.cwd(),

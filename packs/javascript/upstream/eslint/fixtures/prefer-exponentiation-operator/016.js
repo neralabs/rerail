@@ -1,0 +1,1 @@
+let Math; Math.pow(a, b);

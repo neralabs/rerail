@@ -134,7 +134,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every file rule a project can add (the packs core ships; core has no rules of its own); semantic kinds read `fixtures/host/benchmark/<kind>`. */
+/** `bundled` is every code rule a project can add (the packs core ships; core has no rules of its own); semantic kinds read `fixtures/host/benchmark/<kind>`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];
@@ -146,7 +146,7 @@ function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocu
     };
   }
   if (kind === "bundled") {
-    const documents = loadBundledRules().flatMap(document => document.kind === "file" ? [document.rule] : []).map(rule => {
+    const documents = loadBundledRules().flatMap(document => document.kind === "code" ? [document.rule] : []).map(rule => {
       const source = JSON.stringify(rule);
       return { path: `${rule.id}.json`, source, clauses: clausesSchema.parse(rule).clauses };
     });
@@ -395,7 +395,7 @@ function childArguments(side: Side, options: Options) {
 async function child(options: Options, side: Side) {
   const childOptions = childArguments(side, options);
   const stdout = await new Promise<string>((resolveResult, reject) => {
-    const worker = spawn(process.execPath, [...process.execArgv, script, ...childOptions], { env: { ...process.env, ...side.environment, RERAIL_NATIVE_KERNEL_PATH: side.addon }, stdio: ["ignore", "pipe", "inherit"] });
+    const worker = spawn(process.execPath, [...process.execArgv, script, ...childOptions], { env: { ...process.env, ...side.environment, RERAIL_ENGINE_PATH: side.addon }, stdio: ["ignore", "pipe", "inherit"] });
     const chunks: Buffer[] = []; worker.stdout.on("data", chunk => chunks.push(chunk)); worker.on("error", reject); worker.on("close", code => code === 0 ? resolveResult(Buffer.concat(chunks).toString("utf8")) : reject(new Error(`${side.name} exited ${code}`)));
   });
   return childResultSchema.parse(JSON.parse(stdout));

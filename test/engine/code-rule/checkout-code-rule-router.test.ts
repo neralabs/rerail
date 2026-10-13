@@ -33,7 +33,7 @@ function needle(id: string, code: string, mode: RuleMode = "block"): CodeRule {
 }
 
 function file(rule: CodeRule) {
-  return { kind: "file" as const, rule };
+  return { kind: "code" as const, rule };
 }
 
 function git(cwd: string, ...args: string[]): void {

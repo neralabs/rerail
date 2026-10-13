@@ -1,0 +1,1 @@
+class B { private constructor() {} } // allow: protectedConstructors

@@ -130,7 +130,8 @@ Exemption `non-engine-families`: the children of `fixtures/host/` and `fixtures/
 
 Every `fixtures/<family>/` has `languages/<family>.json` or `packs/<family>/`, or is a declared shared
 family: `ecma` (ECMAScript recordings shared by the javascript and typescript languages and their packs),
-`host` and `packs` (not tied to a language). Every pack ships at least one rule document in `rules/`.
+`host` and `packs` (not tied to a language). Every pack holds at least one rule document in `rules/`, or in
+`candidates/rules/` while it ships none because all its ports are candidates.
 
 ## Layering
 
@@ -161,7 +162,7 @@ is `fixtures`; or the bare segment `"fixtures"` as a direct argument of a `join(
 earlier arguments are one root (any balanced expression) and then only `"."`/`".."` segments, the call
 possibly spanning lines (`join(here, "..", "fixtures")`, `resolve(process.cwd(), "fixtures")`,
 `path.join(repoRoot(), "fixtures")`); or the bare segment anywhere on a path-building line of a file that
-reads the `RERAIL_FIXTURES_DIR` override. Compared literals (`startsWith(`, `===`, …), name lists and
+reads the `RERAIL_ORACLES_DIR` override. Compared literals (`startsWith(`, `===`, …), name lists and
 deeper segments (`join(root, "labels", "fixtures")`) do not count. No file under `src/` resolves one; per
 language (Rust, TypeScript/JavaScript, Python, PHP, shell) at most one file does.
 Exemptions: `data-roots` (generators write beside themselves) and `structure-gate` (this gate and its tests).

@@ -1,0 +1,1 @@
+switch(Number.NaN) { case foo: break; default: break; }

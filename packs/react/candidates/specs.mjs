@@ -1,5 +1,5 @@
-// The React pack's policies as compact specs, one entry per pack rule (`candidate: true`: a draft that does not pass
-// its fixtures yet, written to packs/react/candidates/). build.mjs turns each into a rerail.policy/v1 document
+// The React pack's policies as compact specs, one entry per pack rule (`candidate: true`: a port that does not pass
+// its fixtures or the V1 rule validation gates yet, written to packs/react/candidates/). build.mjs turns each into a rerail.policy/v1 document
 // (scope, violation, eslint suppression and a shared `define` are added there). Edit here, then run build.mjs.
 const R = "eslint-plugin-react";
 const H = "eslint-plugin-react-hooks";
@@ -475,6 +475,7 @@ const HOOKS_UTILS = {
 export const SPECS = [
   {
     id: "react-no-danger",
+    candidate: true,
     tool: R,
     upstream: "react/no-danger",
     capabilities: ["syntax", "suppression"],
@@ -490,6 +491,7 @@ export const SPECS = [
   },
   {
     id: "react-no-find-dom-node",
+    candidate: true,
     tool: R,
     upstream: "react/no-find-dom-node",
     capabilities: ["syntax", "suppression"],
@@ -514,6 +516,7 @@ export const SPECS = [
   },
   {
     id: "react-no-is-mounted",
+    candidate: true,
     tool: R,
     upstream: "react/no-is-mounted",
     capabilities: ["syntax", "suppression"],
@@ -537,6 +540,7 @@ export const SPECS = [
   },
   {
     id: "react-no-render-return-value",
+    candidate: true,
     tool: R,
     upstream: "react/no-render-return-value",
     capabilities: ["syntax", "suppression"],
@@ -570,6 +574,7 @@ export const SPECS = [
   },
   {
     id: "react-jsx-no-duplicate-props",
+    candidate: true,
     tool: R,
     upstream: "react/jsx-no-duplicate-props",
     capabilities: ["syntax", "compare", "suppression"],
@@ -594,6 +599,7 @@ export const SPECS = [
   },
   {
     id: "react-no-children-prop",
+    candidate: true,
     tool: R,
     upstream: "react/no-children-prop",
     capabilities: ["syntax", "scope", "value", "arguments", "suppression"],
@@ -616,6 +622,7 @@ export const SPECS = [
   },
   {
     id: "react-jsx-no-comment-textnodes",
+    candidate: true,
     tool: R,
     upstream: "react/jsx-no-comment-textnodes",
     capabilities: ["syntax", "suppression"],
@@ -631,6 +638,7 @@ export const SPECS = [
   },
   {
     id: "react-void-dom-elements-no-children",
+    candidate: true,
     tool: R,
     upstream: "react/void-dom-elements-no-children",
     capabilities: ["syntax", "scope", "value", "arguments", "suppression"],
@@ -687,6 +695,7 @@ export const SPECS = [
   },
   {
     id: "react-self-closing-comp",
+    candidate: true,
     tool: R,
     upstream: "react/self-closing-comp",
     capabilities: ["syntax", "suppression"],
@@ -710,6 +719,7 @@ export const SPECS = [
   },
   {
     id: "react-no-string-refs",
+    candidate: true,
     tool: R,
     upstream: "react/no-string-refs",
     capabilities: ["syntax", "suppression"],
@@ -726,6 +736,7 @@ export const SPECS = [
   },
   {
     id: "react-no-direct-mutation-state",
+    candidate: true,
     tool: R,
     upstream: "react/no-direct-mutation-state",
     capabilities: ["syntax", "suppression"],
@@ -812,6 +823,7 @@ export const SPECS = [
   },
   {
     id: "react-no-danger-with-children",
+    candidate: true,
     tool: R,
     upstream: "react/no-danger-with-children",
     capabilities: ["syntax", "scope", "arguments", "suppression"],
@@ -875,6 +887,7 @@ export const SPECS = [
   },
   {
     id: "react-button-has-type",
+    candidate: true,
     shared: BUTTON_UTILS,
     tool: R,
     upstream: "react/button-has-type",
@@ -955,6 +968,7 @@ export const SPECS = [
   },
   {
     id: "react-jsx-key",
+    candidate: true,
     shared: JSX_KEY_UTILS,
     tool: R,
     upstream: "react/jsx-key",
@@ -978,6 +992,7 @@ export const SPECS = [
   },
   {
     id: "react-jsx-no-undef",
+    candidate: true,
     tool: R,
     upstream: "react/jsx-no-undef",
     capabilities: ["syntax", "scope", "suppression"],
@@ -1022,6 +1037,7 @@ export const SPECS = [
   },
   {
     id: "react-no-unescaped-entities",
+    candidate: true,
     tool: R,
     upstream: "react/no-unescaped-entities",
     capabilities: ["syntax", "suppression"],
@@ -1035,6 +1051,7 @@ export const SPECS = [
   },
   {
     id: "react-jsx-no-target-blank",
+    candidate: true,
     tool: R,
     upstream: "react/jsx-no-target-blank",
     capabilities: ["syntax", "value", "compare", "suppression"],
@@ -1061,6 +1078,7 @@ export const SPECS = [
   },
   {
     id: "react-hooks-rules-of-hooks",
+    candidate: true,
     shared: Object.fromEntries(Object.entries(HOOKS_UTILS).filter(([name]) => name !== "class-field" && name !== "class-function")),
     tool: H,
     upstream: "react-hooks/rules-of-hooks",

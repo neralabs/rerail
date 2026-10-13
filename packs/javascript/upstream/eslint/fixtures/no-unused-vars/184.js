@@ -1,0 +1,1 @@
+(function z(foo) { var bar = 33; })();

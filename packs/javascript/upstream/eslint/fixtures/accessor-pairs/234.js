@@ -1,0 +1,1 @@
+A = class { set a(foo) {} set b(bar) {} };

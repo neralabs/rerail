@@ -125,7 +125,7 @@ export interface CheckoutRuleSet {
   readonly status: RepositoryStatus;
   /** Changes whenever anything that could change `rulesFor` / `conversationRules` changes. */
   readonly signature: string;
-  /** File rules for one path relative to the checkout root. */
+  /** Code rules for one path relative to the checkout root. */
   rulesFor(relativePath: string): readonly EffectiveRule[];
   /** Conversation rules for the session's starting folder (relative to the checkout root). */
   conversationRules(startFolder: string): readonly EffectiveRule[];

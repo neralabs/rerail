@@ -1,0 +1,1 @@
+declare module 'module' { var bar: 'car' }

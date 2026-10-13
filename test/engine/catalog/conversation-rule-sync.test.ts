@@ -79,7 +79,7 @@ describe("LiveConversationRules", () => {
       expect(matched(registry, "Guest checkout remains available.")).toEqual(["shared"]);
 
       // A configuration change that leaves the conversation rules alone changes nothing the session sees.
-      upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "file");
+      upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code");
       addAttachment(database, { repositoryKey: key, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
       expect(sync.refresh()).toBe(false);
       expect(matched(registry, "Sessions add their own rules.")).toEqual(["session:only"]);

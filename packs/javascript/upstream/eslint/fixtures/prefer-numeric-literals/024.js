@@ -1,0 +1,1 @@
+parseInt(1n, 2);

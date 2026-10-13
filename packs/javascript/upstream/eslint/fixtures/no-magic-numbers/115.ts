@@ -1,0 +1,1 @@
+type Foo = Bar[5.6e1];

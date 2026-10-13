@@ -1,0 +1,205 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-useless-catch",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-useless-catch` rule (https://eslint.org/docs/latest/rules/no-useless-catch). Flags a catch clause whose first statement rethrows its own identifier parameter: the whole try statement when there is no finally block, else the catch clause.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-catch",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "try_statement"
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "finally_clause"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "matches": "useless-catch"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "useless-catch": {
+              "all": [
+                {
+                  "kind": "catch_clause"
+                },
+                {
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$P"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "statement_block",
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "throw_statement"
+                        },
+                        {
+                          "not": {
+                            "follows": {
+                              "all": [
+                                {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "regex": "^\\{$"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "param-ref"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "param-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$P"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "param-ref"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-catch",
+        "message": "Unnecessary try/catch wrapper."
+      }
+    },
+    {
+      "id": "unnecessary-catch-clause",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "useless-catch"
+              },
+              {
+                "inside": {
+                  "kind": "try_statement",
+                  "has": {
+                    "kind": "finally_clause"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "useless-catch": {
+              "all": [
+                {
+                  "kind": "catch_clause"
+                },
+                {
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$P"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "statement_block",
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "throw_statement"
+                        },
+                        {
+                          "not": {
+                            "follows": {
+                              "all": [
+                                {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "regex": "^\\{$"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "param-ref"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "param-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$P"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "param-ref"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-useless-catch",
+        "message": "Unnecessary catch clause."
+      }
+    }
+  ]
+}

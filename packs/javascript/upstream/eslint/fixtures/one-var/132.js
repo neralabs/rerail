@@ -1,0 +1,1 @@
+switch (foo) { case bar: var baz = true, quux = false; }

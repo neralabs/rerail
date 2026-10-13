@@ -1,0 +1,6 @@
+class C {
+    static {
+        var x;
+        foo();
+    }
+}

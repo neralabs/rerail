@@ -28,7 +28,7 @@ function sameModel(a: Model, b: Model): boolean {
 
 type PlaygroundRuleDocument =
   | { kind: "conversation"; rule: ConversationRule }
-  | { kind: "file"; rule: CodeRule };
+  | { kind: "code"; rule: CodeRule };
 
 interface RuleExecutionConfig {
   databasePath: string;
@@ -324,7 +324,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
     const document =
       rule.kind === "conversation"
         ? { kind: "conversation" as const, rule: sdk.parseConversationRule(definition) }
-        : { kind: "file" as const, rule: sdk.codeRuleSchema.parse(definition) };
+        : { kind: "code" as const, rule: sdk.codeRuleSchema.parse(definition) };
     if (document.rule.id !== rule.id || sdk.ruleDocumentDigest(document) !== rule.digest)
       throw new CannotExercise("Pinned rule definition does not match its id and digest.");
     try {

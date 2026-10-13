@@ -174,7 +174,7 @@ function checkPlaygroundPaths(root, file, published) {
 }
 
 function trackedFiles(root) {
-  const result = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" });
+  const result = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
   if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr}`);
   return result.stdout.split("\0").filter(Boolean).sort();
 }

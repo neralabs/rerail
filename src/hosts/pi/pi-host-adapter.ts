@@ -12,7 +12,7 @@ import {
 } from "../../engine/adapter-contract.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
-import { registerRerailCommands } from "../../harness/rerail-command.js";
+import { registerHostCommands } from "../../harness/host-commands.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin } from "../../presentation/session-presentation.js";
 import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
@@ -124,7 +124,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
         await initialize(context, true);
       },
     });
-    registerRerailCommands(pi, {
+    registerHostCommands(pi, {
       packageRoot: runtime.packageRoot,
       host: "pi",
       cwd: () => runtime.currentContext()?.cwd ?? process.cwd(),

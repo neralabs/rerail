@@ -24,13 +24,13 @@ The authoritative source check used to determine whether another representation 
 
 Context or behavior required by a Ground-Truth Oracle that is unavailable or not yet proven equivalent in a Generation Check.
 
-## File Rule
+## Code Rule
 
-A Rule over repository source files (kind `file`): one versioned, customer-authored `rerail.policy/v1` document holding its Clauses, its Where It Applies path patterns, rationale, and Rule Mode. Its applicability is stored separately in the machine rule catalog.
+A Rule over repository source files (kind `code`): one versioned, customer-authored `rerail.policy/v1` document holding its Clauses, its Where It Applies path patterns, rationale, and Rule Mode. Its applicability is stored separately in the machine rule catalog.
 
 ## Clause
 
-One constraint inside a File Rule: an `id`, exactly one form (`forbid`, `require_each`, `budget`, `llm`, or `define` for shared definitions), and, for every form except `define`, the Violation it reports.
+One constraint inside a Code Rule: an `id`, exactly one form (`forbid`, `require_each`, `budget`, `llm`, or `define` for shared definitions), and, for every form except `define`, the Violation it reports.
 
 ## Violation
 
@@ -50,11 +50,11 @@ What Rerail does when a rule of either kind fires, set once on every rule docume
 
 ## Rule Applicability
 
-Where a rule definition applies: `global` across the user's machine or `project` across the repositories explicitly assigned to one project. Applicability is independent from a File Rule's path criteria and a Conversation Rule's sample boundary.
+Where a rule definition applies: `global` across the user's machine or `project` across the repositories explicitly assigned to one project. Applicability is independent from a Code Rule's path criteria and a Conversation Rule's sample boundary.
 
 ## Where It Applies
 
-Repository-relative `scope.include` and `scope.exclude` patterns on a File Rule. After Rule Applicability selects a rule, these criteria filter its candidate paths; excludes win. They are distinct from applicability and from an Audit's scope and run mode.
+Repository-relative `scope.include` and `scope.exclude` patterns on a Code Rule. After Rule Applicability selects a rule, these criteria filter its candidate paths; excludes win. They are distinct from applicability and from an Audit's scope and run mode.
 
 ## Project
 
@@ -110,4 +110,4 @@ The one place the engine reads a language family: its scope, values, call argume
 
 ## Language Pack
 
-A language's registry entry, its engine adapter, and the rule packs written in it. A File Rule for a `planned` language, or one reading a capability its language does not support yet, is stored but inactive: compiling it is refused as `language-not-supported`.
+A language's registry entry, its engine adapter, and the rule packs written in it. A Code Rule for a `planned` language, or one reading a capability its language does not support yet, is stored but inactive: compiling it is refused as `language-not-supported`.

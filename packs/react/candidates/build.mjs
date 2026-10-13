@@ -1,11 +1,12 @@
 // Writes the React pack's policies from specs.mjs: packs/react/rules/<id>.json (ported rules) and
 // packs/react/candidates/rules/<id>.json (candidates). The two conformance.json files are maintained by hand and must
-// list exactly the ported / candidate specs (id, upstream, policy, capabilities, match), which this script checks.
+// list exactly the ported / candidate specs (id, upstream, policy, capabilities, match), which this script checks; a
+// pack with no ported specs has no conformance.json.
 // Candidates are scored as their own pack: node --import tsx conformance/languages/cli.ts
 //   --pack-dir packs/react/candidates --corpus-root <checkout>/.rerail/corpora/react
 // Usage: node packs/react/candidates/build.mjs
 // Run offline by a maintainer, never in CI.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SPECS } from "./specs.mjs";
@@ -68,6 +69,10 @@ for (const [directory, specs] of [
   [CANDIDATES, SPECS.filter(spec => spec.candidate)],
 ]) {
   const path = join(directory, "conformance.json");
+  if (specs.length === 0) {
+    if (existsSync(path)) throw new Error(`${relative(REPOSITORY, path)} exists, but no spec is listed there`);
+    continue;
+  }
   const listed = JSON.stringify(JSON.parse(readFileSync(path, "utf8")).rules);
   if (listed !== JSON.stringify(specs.map(manifest))) throw new Error(`${relative(REPOSITORY, path)} rules differ from the specs`);
 }

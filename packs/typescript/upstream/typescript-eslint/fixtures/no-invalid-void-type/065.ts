@@ -1,0 +1,1 @@
+export function f(x?: string): string | void {}

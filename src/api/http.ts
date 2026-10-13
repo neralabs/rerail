@@ -37,7 +37,7 @@ const COMPONENTS: ReadonlyArray<[z.ZodType, string]> = [
   ...semanticSchemaComponents(codeRuleParseSchema, codeRuleFormatArgsSchema),
   [codeRulePredicateSchema, "PolicyPredicate"],
   [codeRuleQuerySchema, "PolicyQuery"],
-  [codeRuleSchema, "FileRule"],
+  [codeRuleSchema, "CodeRule"],
   [matchConditionSchema, "MatchCondition"],
   [conversationRuleSchema, "ConversationRule"],
   [effectiveRuleSchema, "EffectiveRule"],

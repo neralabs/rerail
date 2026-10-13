@@ -152,7 +152,7 @@
     "node": ">=24"
   },
   "napi": {
-    "binaryName": "rerail",
+    "binaryName": "rerail_engine",
     "targets": [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

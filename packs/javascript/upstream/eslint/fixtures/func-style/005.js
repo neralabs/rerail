@@ -1,0 +1,1 @@
+var object = { foo: function(){} };

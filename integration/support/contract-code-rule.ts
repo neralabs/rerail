@@ -34,7 +34,7 @@ export function seedContractCodeRule(rerailHome: string, workspaceRoot: string):
   mkdirSync(rerailHome, { recursive: true });
   setUpTestRepository(
     workspaceRoot,
-    { library: [{ kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) }] },
+    { library: [{ kind: "code", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) }] },
     defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome }),
   );
 }

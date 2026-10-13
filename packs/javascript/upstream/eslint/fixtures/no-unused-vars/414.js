@@ -1,0 +1,1 @@
+function foo(a = 1, b){alert(b);} foo();

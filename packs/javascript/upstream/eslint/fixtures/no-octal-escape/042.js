@@ -1,0 +1,1 @@
+var foo = "foo \251 bar";

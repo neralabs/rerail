@@ -1,0 +1,1 @@
+type T = { set prop(value: any): void }

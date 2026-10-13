@@ -1,0 +1,1 @@
+switch (a) { default: class C {} break; }

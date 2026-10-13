@@ -7,5 +7,5 @@
 export { type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
 export { NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
-export { registerRerailCommands, type RerailCommandContext, type RerailCommandHost } from "./rerail-command.js";
+export { registerHostCommands, type HostCommandContext, type HostCommandHost } from "./host-commands.js";
 export { RERAIL_COMMANDS } from "./rerail-commands.js";

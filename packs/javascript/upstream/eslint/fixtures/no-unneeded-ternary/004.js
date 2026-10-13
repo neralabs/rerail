@@ -1,0 +1,1 @@
+var a = x === 2 ? 'Yes' : false;

@@ -1,0 +1,1 @@
+async function foo() { async () => { await doSomething() } }

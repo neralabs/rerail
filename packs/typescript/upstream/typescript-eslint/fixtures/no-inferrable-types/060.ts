@@ -1,0 +1,1 @@
+const a: boolean = Boolean?.(null);

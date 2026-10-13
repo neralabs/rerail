@@ -1,0 +1,1 @@
+const f = function f(a = 5) {}
