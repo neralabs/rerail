@@ -49,13 +49,14 @@ const TEST_CASES = ["fit", "it", "test", "xit", "xtest", "bench"];
  * on `describe`, `it` and `test` alone. `skippable`: the chains with a `.skip` member (valid-vitest-fn-call-chains.ts),
  * and `expect`, `expectTypeOf`, `vi` and `vitest`, whose chains upstream does not check (an `it` destructured as
  * `{ expect: it }` reports `it.skip()`). `xdisabled`: the `x` functions. `test`: TestCaseName (expect-expect and a
- * test without a function).
+ * test without a function). `block`: DescribeAlias and TestCaseName, the calls whose `{ skip: true }` option counts.
  */
 const FUNCTIONS = {
   focusable: ["describe", "it", "test"],
   skippable: ["bench", "describe", "it", "suite", "test", "expect", "expectTypeOf", "vi", "vitest"],
   xdisabled: ["xdescribe", "xit", "xtest"],
   test: TEST_CASES,
+  block: ["describe", "fdescribe", "xdescribe", ...TEST_CASES],
 };
 
 const oneOf = names => `^(?:${names.join("|")})$`;
@@ -266,15 +267,50 @@ const TEST_CONTEXT = {
   },
 };
 
-/** The define clause each document opens with: the utilities for the function sets it names. */
-function define(...labels) {
+/**
+ * `vitest-<modifier>-modifier`: a member chain whose first `.<modifier>` link (from the head) binds `$MODIFIER`, the
+ * property upstream reports (`vitestFnCall.members.find(...)`), so a finding sits where the plugin's does.
+ * `vitest-<modifier>-option`: a call's arguments whose second is an object whose last `<modifier>` property is
+ * `<modifier>: true` (upstream's `findVitestModeProperty`, `test('x', { only: true }, fn)`); its key binds `$MODIFIER`.
+ */
+function modifierUtilities(modifier) {
+  const self = `vitest-${modifier}-modifier`;
+  const property = {
+    any: [
+      { kind: "pair", has: { field: "key", any: [{ kind: "property_identifier" }, { kind: "string" }], regex: `^["']?${modifier}["']?$` } },
+      { kind: "shorthand_property_identifier", regex: `^${modifier}$` },
+    ],
+  };
+  return {
+    [self]: {
+      kind: "member_expression",
+      any: [{ has: { field: "object", matches: self } }, { has: { field: "property", regex: `^${modifier}$`, pattern: "$MODIFIER" } }],
+    },
+    [`vitest-${modifier}-option`]: {
+      kind: "arguments",
+      has: {
+        nthChild: { position: 2, ofRule: { not: { kind: "comment" } } },
+        kind: "object",
+        has: {
+          ...property,
+          nthChild: { position: 1, reverse: true, ofRule: property },
+          all: [{ kind: "pair" }, { has: { field: "value", kind: "true" } }, { has: { field: "key", pattern: "$MODIFIER" } }],
+        },
+      },
+    },
+  };
+}
+
+/** The define clause each document opens with: the utilities for the function sets and modifiers it names. */
+function define(labels, modifiers = []) {
   const utils = {};
   for (const label of labels) Object.assign(utils, functionUtilities(label, FUNCTIONS[label]));
+  for (const modifier of modifiers) Object.assign(utils, modifierUtilities(modifier));
   Object.assign(utils, TEST_CONTEXT, MODULE_SOURCE);
   return { id: "vitest-functions", define: { language: "typescript", utils } };
 }
 
-const violation = (rule, message) => ({ anchor: "witness.span", code: `vitest/${rule}`, message, suppress: { eslint: { rules: [`vitest/${rule}`] } } });
+const violation = (rule, message, anchor = "witness.span") => ({ anchor, code: `vitest/${rule}`, message, suppress: { eslint: { rules: [`vitest/${rule}`] } } });
 const ast = rule => ({ ast: { language: "typescript", rule } });
 
 const DOCUMENTS = {
@@ -282,7 +318,7 @@ const DOCUMENTS = {
     mode: "steer",
     description: "A test whose function never calls `expect` or `assert`.",
     clauses: [
-      define("test"),
+      define(["test"]),
       {
         id: "no-assertion",
         forbid: ast({
@@ -314,27 +350,55 @@ const DOCUMENTS = {
     mode: "log",
     description: "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
     clauses: [
-      define("skippable", "xdisabled", "test"),
+      define(["skippable", "xdisabled", "test", "block"], ["skip"]),
       {
         id: "skip",
+        // Upstream reports the `.skip` property, a `{ skip: true }` option's key, or the call's head (`xit`, `pending`);
+        // `$MODIFIER` is that node.
         forbid: ast({
           kind: "call_expression",
-          has: {
-            field: "function",
-            any: [
-              { kind: "member_expression", regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b", has: { field: "object", matches: "vitest-skippable-chain" } },
-              {
-                kind: "identifier",
+          any: [
+            {
+              has: {
+                field: "function",
                 any: [
-                  { regex: "^(?:xit|xtest|xdescribe)$", matches: "vitest-xdisabled-head" },
-                  // Upstream reports `pending()` only where nothing binds `pending`.
-                  { regex: "^pending$", resolves: { global: ["pending"] } },
+                  {
+                    kind: "member_expression",
+                    regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b",
+                    has: { field: "object", matches: "vitest-skippable-chain" },
+                    matches: "vitest-skip-modifier",
+                  },
+                  {
+                    kind: "identifier",
+                    pattern: "$MODIFIER",
+                    any: [
+                      { regex: "^(?:xit|xtest|xdescribe)$", matches: "vitest-xdisabled-head" },
+                      // Upstream reports `pending()` only where nothing binds `pending`.
+                      { regex: "^pending$", resolves: { global: ["pending"] } },
+                    ],
+                  },
+                  // `xit.each([])(...)` and `xit.each\`\`(...)`: the call `each` returns, reported at its head.
+                  {
+                    kind: "call_expression",
+                    has: {
+                      field: "function",
+                      kind: "member_expression",
+                      regex: "^(?:xit|xtest|xdescribe)\\.each$",
+                      has: { field: "object", kind: "identifier", pattern: "$MODIFIER", matches: "vitest-xdisabled-head" },
+                    },
+                  },
                 ],
               },
-            ],
-          },
+            },
+            {
+              all: [
+                { has: { field: "function", regex: "^(?:describe|fdescribe|xdescribe|fit|it|test|xit|xtest|bench)(?:\\.\\w+)*$", matches: "vitest-block-chain" } },
+                { has: { field: "arguments", matches: "vitest-skip-option" } },
+              ],
+            },
+          ],
         }),
-        violation: violation("no-disabled-tests", "This test is disabled. Fix it or delete it."),
+        violation: violation("no-disabled-tests", "This test is disabled. Fix it or delete it.", "capture.MODIFIER"),
       },
       {
         id: "missing-function",
@@ -353,19 +417,31 @@ const DOCUMENTS = {
     mode: "steer",
     description: "A focused test (`.only`), which makes Vitest skip every other test in the file.",
     clauses: [
-      define("focusable"),
+      define(["focusable"], ["only"]),
       {
         id: "only",
+        // Upstream reports the `.only` property, or a `{ only: true }` option's key; `$MODIFIER` is that node.
         forbid: ast({
           kind: "call_expression",
-          has: {
-            field: "function",
-            kind: "member_expression",
-            regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
-            has: { field: "object", matches: "vitest-focusable-chain" },
-          },
+          any: [
+            {
+              has: {
+                field: "function",
+                kind: "member_expression",
+                regex: "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
+                has: { field: "object", matches: "vitest-focusable-chain" },
+                matches: "vitest-only-modifier",
+              },
+            },
+            {
+              all: [
+                { has: { field: "function", regex: "^(?:describe|it|test)(?:\\.\\w+)*$", matches: "vitest-focusable-chain" } },
+                { has: { field: "arguments", matches: "vitest-only-option" } },
+              ],
+            },
+          ],
         }),
-        violation: violation("no-focused-tests", "Remove .only: a focused test makes Vitest skip every other test."),
+        violation: violation("no-focused-tests", "Remove .only: a focused test makes Vitest skip every other test.", "capture.MODIFIER"),
       },
     ],
   },

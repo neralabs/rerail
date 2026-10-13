@@ -17,6 +17,7 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-global-extend.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-local-binding.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test-default.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test-mode-options.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-parameter.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-suite-only.test.ts` | written by Rerail |
@@ -30,6 +31,7 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-extend-not-a-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-extend-parenthesized.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-import-escaped.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-mode-options.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-require-comment.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-require-default-value.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-require-parenthesized.test.ts` | written by Rerail |
