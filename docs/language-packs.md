@@ -30,9 +30,12 @@ family's grammar) is the engine's answer alone. The host's schema checks a rule'
 ## The engine adapter
 
 Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
-`with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family; every other
-call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
-`A: Adapter` from inside the macro.
+`with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family, and the
+registry also generates `Family`, `GrammarDialect`, `Family::of` and `honours`, so no enum is edited by hand. Every
+other call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
+`A: Adapter` from inside the macro. A family's call names carry their family (`CallRules::NAMES`), and its value
+semantics (`truthy`, `type_name`, `equals`, `order`, `relation`, `numeric`, `integer`, `to_str`) belong to
+`ValueRules`. [Adding a language](#adding-a-language) lists the steps.
 
 | Part | Holds |
 |---|---|
@@ -75,15 +78,17 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser`, its `grammar` (`vendored:<name>`, built by `build.rs`, or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` and its `grammar` (`vendored:<name>`, built by `build.rs`, or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Reserved today: Rust 9, SQL 10 and Vue 12 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
-`parser` and `embeds` are validated but drive no behaviour yet: an embedding family's adapter finds the embedded
-code itself (`Adapter::regions`). Changes stay additive within `rerail.language/v1`: a new optional field or a new
-value is a v1 change, and renaming or removing a field, or changing what a value means, needs `rerail.language/v2`.
+`parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
+(`via`); a supported entry may embed only supported languages. An embedding's `Embedder` produces the embedded
+program and `Adapter::regions` yields its regions. Changes stay additive within `rerail.language/v1`: a new
+optional field or a new value is a v1 change, and renaming or removing a field, or changing what a value means,
+needs `rerail.language/v2`.
 
 The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
@@ -112,17 +117,39 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 ## Adding a language
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
-   capability `not-supported-yet`, its suppressions and anything it embeds. Run `npm run generate:languages` and
-   commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs for it can land now.
-2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and give each dialect a
-   `variant`, `parser`, `grammar` and the next unused `tapeTag`.
-3. Write its adapter. For a new dialect in an existing family, add the `GrammarDialect` variant; the compiler names
-   each per-dialect table that must learn it (ECMAScript's scope scripts in `scope/ecma.rs`, for one). For a new
-   family, add the `Family` variant and its adapter type in `language/adapter.rs`: implement `Adapter`
-   and each concern trait it supports (`Refused` for the rest), and add its expectations to the adapter kit. The
-   generated `with_adapter!` then dispatches to it; the build fails until every trait item exists.
-4. Flip `status` to `supported`, and each capability to `supported` as its oracle suite passes; mark one the language
-   will never have `refused`.
+   capability `not-supported-yet`, its suppressions and anything it embeds. Give each dialect the `tapeTag` it
+   reserves (Rust 9, SQL 10 and Vue 12 are taken; 11 is free for a second SQL dialect). Run
+   `npm run generate:languages` and commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`.
+   Rules and packs for it can land now.
+2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and flip the entry to
+   `supported` with each dialect's `variant`, `parser` and `grammar`. The build generates `GrammarDialect::<Variant>`,
+   `Family::<Family>`, `Family::of` and `honours`, and the `with_adapter!` arm; no enum is edited by hand. The build
+   fails until `adapter::<Family>` exists.
+3. Write its adapter module, in its own file, registered by one `mod` and one `pub(crate) use` line in
+   `native/src/code_rule_dsl/language/adapter.rs`. For a new family, its type implements `Adapter` and each concern
+   trait, or `Refused` for a concern the language will not have:
+   - `ScopeRules`;
+   - `ValueRules`, with `const LANG: Family = Family::<Family>` and the hooks `truthy`, `type_name`, `equals`,
+     `order`, `relation`, `numeric`, `integer` and `to_str`;
+   - `ArgumentRules`;
+   - `CallRules`, with `const NAMES: Option<Family>`, the family whose namespace its call names live in;
+   - `FormatArgRules`;
+   - `SyntaxRules`, including `embedded_pattern`.
+   A new dialect in an existing family needs only the per-dialect tables the compiler names (ECMAScript's scope
+   scripts in `scope/ecma.rs`, for one).
+4. A suppression kind the language needs and the engine lacks is one row in `suppression_kinds!` in
+   `native/src/code_rule_dsl/suppress.rs` (`Variant key: Spec = linter::spec, "detail";`, its parser in
+   `suppress/<linter>.rs`), one entry in `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`,
+   its name in the registry entry's `suppressions`, and its use in the adapter's `suppresses`.
+5. An embedding (`embeds` with a new `via`) adds `native/src/code_rule_dsl/embed/<via>.rs`, implementing `Embedder`
+   (one program per file: `dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's
+   bytes to the host's), and one `mod` and one `pub(crate) use` line in `embed.rs`. `KindCatalog` numbers each
+   embedded grammar's kinds and fields after the host's. `Adapter::regions(root, dialect)` yields
+   `Region { root, dialect }`, and a call summary reads one region.
+6. Add one `#[test]` function for the family to `native/src/code_rule_dsl/language/adapter/kit.rs`, calling
+   `kit::<Family>(&Expect { .. })` with the family's expectations.
+7. Flip each capability to `supported` only when it is implemented and proven by its oracle suite; mark one the
+   language will never have `refused`. Flip `status` last.
 
 ## Start a pack
 

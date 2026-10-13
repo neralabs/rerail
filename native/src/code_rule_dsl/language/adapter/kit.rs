@@ -1,5 +1,6 @@
 //! The adapter test kit: every family's adapter against known-good literals (`kit`), and the
-//! registry's capabilities against the concerns the adapters read.
+//! registry's capabilities against the concerns the adapters read. A new family adds one `#[test]`
+//! function calling `kit::<Family>(&Expect { .. })`.
 
 use super::value::kit as value_kit;
 use super::{
@@ -22,7 +23,12 @@ use std::sync::Arc;
 /// A document, and the kind and range of each of its regions' roots.
 type Document = (&'static str, &'static [(&'static str, Range<usize>)]);
 
-/// What one family's adapter answers.
+/// What one family's adapter answers: the expectations `kit` checks. `family`, `label` and
+/// `terminators` identify the adapter; `dialect` is the grammar its documents are read in; `name` is
+/// what the identifier `ﬁle` normalises to; `regions` lists each document with the kind and range of
+/// its regions' roots; `module` is the family's file suffix and the module of `pkg/mod<suffix>`; and
+/// `value`, `calls`, `arguments`, `format_args`, `syntax` and `scope` are the expectations of each
+/// concern's kit.
 struct Expect {
     family: Family,
     label: &'static str,
@@ -76,6 +82,9 @@ impl Drop for Package {
     }
 }
 
+/// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
+/// `terminators`), name normalisation, the regions of each document, module paths, and each
+/// concern's own kit. A new family adds one `#[test]` function calling `kit::<Family>(&Expect { .. })`.
 fn kit<A: Adapter>(expect: &Expect) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
