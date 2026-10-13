@@ -335,6 +335,9 @@ fn a_short_open_tag_opens_php() {
             blanked("?>tail<?")
         ),
     );
+    // A first short tag before `php…` is blanked: the grammar's `php_tag` would read `<?php` and
+    // leave `eval` where PHP reads a call of `phpeval`.
+    assert_view("<?phpeval('1');?>", "  phpeval('1');?>");
 }
 
 #[test]
@@ -501,4 +504,13 @@ fn inline_text_is_no_php_code_to_a_rule() {
             "{source:?}"
         );
     }
+    // `<?phpeval('1')` is a short tag and a call of `phpeval`, no `eval`.
+    let source = "<?phpeval('1');?>\n";
+    assert_eq!(
+        violation_lines(
+            &evaluate_file(&compiled, "php", "phpeval.php", source),
+            source
+        ),
+        Vec::<usize>::new()
+    );
 }

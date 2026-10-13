@@ -36,9 +36,16 @@ pub(super) fn view(source: &str) -> Cow<'_, str> {
     // The last PHP the view read before a `?>`, outside blanks and comments.
     let mut last = None;
     // The first tag is the grammar's `php_tag`, but for a `<?=` whose expressions only `echo`
-    // reads as a statement.
+    // reads as a statement, and a short `<?` before `php…` (`<?phpeval(…)`), whose `<?php` the
+    // grammar's `php_tag` would take: blanked, the code after it reads as the name it is.
     if bytes[first.clone()] == *b"<?=" && short_echo(&mut view, bytes, &first) {
         last = Some(Last::Code(b'o'));
+    } else if first.len() == 2
+        && bytes
+            .get(first.end..first.end + 3)
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"php"))
+    {
+        view.blank(first.clone());
     }
     let mut pos = first.end;
     // The line comment a `?>` ended, as PHP's lexer ends one.
