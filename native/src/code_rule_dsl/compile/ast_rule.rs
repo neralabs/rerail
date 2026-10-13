@@ -439,12 +439,17 @@ pub(crate) fn compile_ast_rule(
                      carries; list its concrete kinds under `any`"
                 ),
             ),
-            // Blade's `comment` is the template's comments and its embedded PHP's alike.
-            Ok(own) => match (kind, language.kinds().embedded_comment_kind()) {
-                ("comment", Some(embedded)) => AstMatcher::Any(vec![
-                    AstMatcher::Kind(own),
-                    AstMatcher::Kind(KindMatcher::from_id(embedded)),
-                ]),
+            // Blade's `comment` is the template's comments of every kind and its embedded PHP's.
+            Ok(own) => match (kind, language.kinds().other_comment_kinds()) {
+                ("comment", others) if !others.is_empty() => AstMatcher::Any(
+                    std::iter::once(AstMatcher::Kind(own))
+                        .chain(
+                            others
+                                .into_iter()
+                                .map(|id| AstMatcher::Kind(KindMatcher::from_id(id))),
+                        )
+                        .collect(),
+                ),
                 _ => AstMatcher::Kind(own),
             },
             Err(error) => grammar_gap(gaps, format!("{path}/kind: {error}")),
