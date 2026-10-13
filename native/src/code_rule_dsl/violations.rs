@@ -27,7 +27,7 @@ mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
 use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
-use crate::code_rule_dsl::language::{Family, GrammarDialect, Suppression};
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::replacer::{Content, Replacer, TemplateFix};
@@ -456,42 +456,11 @@ pub(super) fn bind(
         // honours its own linters' comments or none.
         let family = matchers.first().map(|grammar| Family::of(grammar.language));
         let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
-        let requested = [
-            (
-                suppress.eslint.is_some(),
-                Suppression::Eslint,
-                "eslint: eslint-disable comments are ESLint's",
-            ),
-            (
-                suppress.noqa.is_some(),
-                Suppression::Noqa,
-                "noqa: noqa comments are Ruff's",
-            ),
-            (
-                suppress.nosec.is_some(),
-                Suppression::Nosec,
-                "nosec: nosec comments are Bandit's",
-            ),
-            (
-                suppress.phpstan.is_some(),
-                Suppression::Phpstan,
-                "phpstan: @phpstan-ignore comments are PHPStan's",
-            ),
-            (
-                suppress.psalm.is_some(),
-                Suppression::Psalm,
-                "psalm: @psalm-suppress tags are Psalm's",
-            ),
-            (
-                suppress.phpcs.is_some(),
-                Suppression::Phpcs,
-                "phpcs: phpcs: annotations are PHP_CodeSniffer's",
-            ),
-        ];
-        for (set, linter, detail) in requested {
-            if set && !family.is_some_and(|family| family.honours(linter)) {
+        for linter in suppress.requested() {
+            if !family.is_some_and(|family| family.honours(linter)) {
                 return Err(invalid(format!(
-                    "{path}/suppress/{detail}; a {language} query has none"
+                    "{path}/suppress/{}; a {language} query has none",
+                    linter.detail()
                 )));
             }
         }
