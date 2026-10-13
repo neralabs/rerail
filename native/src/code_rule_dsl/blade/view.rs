@@ -37,20 +37,25 @@
 //! What Blade does not compile is not read: `@verbatim` blocks, `{{-- --}}` comments, escaped
 //! `@{{ }}` echoes, `@@` directives and their arguments, and the arguments of directives
 //! `BladeCompiler` 13.34.0 has no `compile*` method for (an application's `Blade::directive` or
-//! `Blade::if`, a package's such as Livewire's), even where the grammar's error recovery reads one
-//! as a block (`<div>@icon('x')</div>`). Such a directive with arguments is a marker that may read
-//! and assign every variable, since the application compiles it to PHP the template does not
-//! show; the body of a pair of them (`@name(...) ... @endname`) is read as the template's.
+//! `Blade::if`, a package's such as Livewire's), which Forte's default registry reads as text
+//! (`<div>@icon('x')</div>`). Such a directive with arguments is a marker that may read and assign
+//! every variable, since the application compiles it to PHP the template does not show; the body
+//! of a pair of them (`@name(...) ... @endname`) is read as the template's.
 //! A directive's arguments run to the `)` Blade finds with PHP's tokenizer, so one in a comment,
 //! string or heredoc does not end them.
-//! Blade's compiler does not read HTML, so the view reads what it compiles wherever it stands: the
-//! text of `<script>` and `<style>`, which the grammar does not parse (their tags' attributes it
-//! does), is parsed as a template of its own (a `<script type="text/x-template">` holds directives
-//! and components); echoes in an attribute's name or value, or in text the grammar's error
-//! recovery left unread, are found as Blade's compiler finds them.
+//!
+//! The view walks the template's Forte tree (`blade::forte::tree`): Forte pairs a block's
+//! directives (`directive_block`: its start, branches and end, each directive's body its children)
+//! and lexes Blade wherever Blade's compiler reads it, `<script>` and `<style>` text and attribute
+//! names and values included. What Forte leaves as text (a directive its registry does not know,
+//! an HTML comment's text) is read as Blade's compiler reads it (`loose`). A control directive
+//! Forte leaves unpaired (in an attribute's value) is not read: the view reads no half of a
+//! structure.
 
+use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
 use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::GrammarDialect;
+use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use tree_sitter::{Node as TsNode, Parser, Tree};
@@ -59,6 +64,15 @@ use tree_sitter::{Node as TsNode, Parser, Tree};
 pub(crate) struct View {
     segments: SegmentMap,
     tree: Tree,
+}
+
+/// A template as Blade reads it (`View::build`).
+pub(crate) struct Reading {
+    /// The PHP it embeds, `None` where it embeds none.
+    pub(crate) view: Option<View>,
+    /// Its syntax errors, sorted: Forte's, but where Forte read a directive's arguments Blade
+    /// does not (`Emitter::stray_arguments`), those of the template Blade reads there instead.
+    pub(crate) syntax_errors: Vec<Range<usize>>,
 }
 
 /// Directives Blade compiles to control flow (a condition, a loop, a `@php` block, a guard):
@@ -260,26 +274,49 @@ pub(crate) fn compiles(name: &str) -> bool {
 }
 
 impl View {
-    /// The program `root`'s Blade tree embeds, `None` where it embeds no PHP.
-    pub(crate) fn build(root: TsNode<'_>, template: &str) -> Option<Self> {
+    /// The template `tree` reads as Blade reads it. `Err` where `budget` interrupted it (polled
+    /// before each sub-template is parsed, `Emitter::template`).
+    pub(crate) fn build(
+        tree: &BladeTree,
+        template: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Result<Reading, String> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
             segments: SegmentMap::new(),
             loosened: 0,
+            consumed: 0,
+            loops: 0,
+            switches: 0,
+            origin: 0,
+            depth: 0,
+            budget,
+            interrupted: false,
+            strays: Vec::new(),
+            reporting: true,
         };
-        emitter.children(root);
-        if emitter.segments.is_empty() {
-            return None;
+        emitter.body(tree.root());
+        if emitter.interrupted {
+            return Err("tape operation interrupted".into());
         }
-        let mut parser = Parser::new();
-        parser
-            .set_language(&GrammarDialect::Php.get_ts_language())
-            .ok()?;
-        let tree = parser.parse(&emitter.out, None)?;
-        Some(Self {
-            segments: emitter.segments,
-            tree,
+        let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
+        let view = (!emitter.segments.is_empty())
+            .then(|| {
+                let mut parser = Parser::new();
+                parser
+                    .set_language(&GrammarDialect::Php.get_ts_language())
+                    .ok()?;
+                parser.parse(&emitter.out, None)
+            })
+            .flatten()
+            .map(|tree| Self {
+                segments: emitter.segments,
+                tree,
+            });
+        Ok(Reading {
+            view,
+            syntax_errors,
         })
     }
 
@@ -308,27 +345,71 @@ struct Emitter<'t> {
     template: &'t str,
     out: String,
     segments: SegmentMap,
-    /// Where the text `loose` has read ends: a run of attributes is read once, from its first.
+    /// Where the text `loose` has read ends: text is read once.
     loosened: usize,
+    /// Where the last directive's arguments, as Blade reads them, end: a node Forte placed before
+    /// it (Forte ended the arguments at an earlier `)`) is part of them.
+    consumed: usize,
+    /// The loops and switches being read: `@break` and `@continue` in them are PHP's.
+    loops: usize,
+    switches: usize,
+    /// Where the tree being read starts in the template: a sub-template's (`Emitter::template`).
+    origin: usize,
+    /// The sub-templates being read, one inside the other (`Emitter::template`).
+    depth: usize,
+    /// Polled before each sub-template is parsed; once it holds, `interrupted` is set and nothing
+    /// more is read.
+    budget: &'t dyn Fn() -> bool,
+    interrupted: bool,
+    /// The `stray_arguments` read as the template, each with that template's syntax errors.
+    strays: Vec<(Range<usize>, Vec<Range<usize>>)>,
+    /// Whether the tree being read reports its syntax errors: the template's, and a stray
+    /// arguments' template read where they are reported; not a `template` Forte read as text.
+    reporting: bool,
 }
+
+/// A template's syntax errors as Blade reads it: Forte's (`forte`) and those of each stray
+/// arguments' template (`strays`), but none inside a stray read deeper than where it was found
+/// (Forte's errors there are about arguments Blade does not read). Sorted, without repeats.
+fn syntax_errors(
+    forte: &[Range<usize>],
+    strays: &[(Range<usize>, Vec<Range<usize>>)],
+) -> Vec<Range<usize>> {
+    let inside = |error: &Range<usize>, range: &Range<usize>| {
+        range.start <= error.start && error.end <= range.end
+    };
+    let read_over = |error: &Range<usize>, found_in: Option<usize>| {
+        strays.iter().enumerate().any(|(index, (range, _))| {
+            Some(index) != found_in
+                && found_in.is_none_or(|outer| inside(range, &strays[outer].0))
+                && inside(error, range)
+        })
+    };
+    let mut errors = forte
+        .iter()
+        .filter(|error| !read_over(error, None))
+        .cloned()
+        .chain(strays.iter().enumerate().flat_map(|(index, (_, errors))| {
+            errors
+                .iter()
+                .filter(move |error| !read_over(error, Some(index)))
+                .cloned()
+        }))
+        .collect::<Vec<_>>();
+    errors.sort_by_key(|range| (range.start, range.end));
+    errors.dedup();
+    errors
+}
+
+/// How deeply sub-templates may nest (`Emitter::template`). Past it, a range is read as text
+/// (`Emitter::loose`): each level re-lexes its range, so the bound keeps the work linear in the
+/// template and the recursion off the stack. Real templates nest two at most (a `@php` block in a
+/// `<script type="text/x-template">`).
+const TEMPLATE_DEPTH: usize = 4;
 
 /// An empty template range at `at`.
 fn at(at: usize) -> Range<usize> {
     at..at
-}
-
-fn children(node: TsNode<'_>) -> Vec<TsNode<'_>> {
-    let mut cursor = node.walk();
-    node.children(&mut cursor).collect()
-}
-
-/// Whether an attribute holds only text: no echo or directive the grammar read in it.
-fn plain(node: TsNode<'_>) -> bool {
-    children(node).into_iter().all(|kid| {
-        !kid.is_named()
-            || matches!(kid.kind(), "attribute_name" | "attribute_value")
-            || (kid.kind() == "quoted_attribute_value" && plain(kid))
-    })
 }
 
 /// One parenthesis around a directive's arguments, by its template byte.
@@ -349,52 +430,188 @@ impl Paren {
     }
 }
 
+/// The arguments Forte gave a directive, by template byte (`Emitter::forte_arguments`).
+struct ForteArguments {
+    /// Where the directive's name ends.
+    name: usize,
+    /// Forte's `(`.
+    open: usize,
+    /// Forte's `)`, if it found one.
+    close: Option<usize>,
+    /// Where Forte's arguments end.
+    end: usize,
+}
+
 /// A condition Blade decides at run time from what its directive passes its runtime.
-enum Condition<'n> {
+enum Condition {
     /// `(c)`: the template's own condition.
     Plain,
     /// `(!(c))`.
     Not,
     /// `(isset(a))`, `(empty(a))`: the construct names the directive's own bytes.
     Construct,
-    /// A call of the directive with its arguments, or nothing where it has none.
-    Runtime(TsNode<'n>),
+    /// A call of the directive (its `@name` at these template bytes) with its arguments, or
+    /// nothing where it has none.
+    Runtime(Range<usize>),
 }
 
-impl Emitter<'_> {
-    /// The `(` and `)` around the arguments of the directive `kids[from - 1]`, and the index of the
-    /// first kid after the `)`. As Blade reads them, the arguments open with a `(` after the
-    /// directive and any spaces or tabs, and run to the `)` that balances it (`balanced`),
-    /// wherever the grammar ends them (`@section('a', __('b'))`, which it may read as an error);
-    /// without one, to the grammar's first `)`.
-    fn parens(&self, kids: &[TsNode<'_>], from: usize) -> Option<(Paren, Paren, usize)> {
-        let directive = kids.get(from.checked_sub(1)?)?;
-        let first = kids.get(from)?;
-        let open = directive.end_byte()
-            + self.template[directive.end_byte()..]
-                .bytes()
-                .take_while(|byte| *byte == b' ' || *byte == b'\t')
-                .count();
-        if first.start_byte() != open || self.template.as_bytes().get(open) != Some(&b'(') {
-            return None;
+/// How Blade compiles a block (`directive_block`), by its start directive's name.
+enum Block {
+    /// `if` with a condition, `elseif`/`else` branches: `@if`, `@auth`, `@can`, `@pushIf`, ...
+    Conditional,
+    /// `@foreach`, `@forelse`, `@for`, `@while`.
+    Loop,
+    Switch,
+    /// A body Blade's runtime may skip: `@once`, `@pushOnce`, `@prependOnce`.
+    Guarded,
+    /// Directives around a body Blade compiles as the template's (`@section`, `@push`, ...).
+    Plain,
+}
+
+impl Block {
+    fn of(name: &str) -> Self {
+        const CONDITIONAL: &[&str] = &[
+            "if",
+            "unless",
+            "isset",
+            "empty",
+            "auth",
+            "guest",
+            "can",
+            "cannot",
+            "canany",
+            "env",
+            "production",
+            "error",
+            "session",
+            "context",
+            "hasSection",
+            "sectionMissing",
+            "hasStack",
+            "pushIf",
+        ];
+        let is = |names: &[&str]| names.iter().any(|known| known.eq_ignore_ascii_case(name));
+        if is(CONDITIONAL) {
+            Self::Conditional
+        } else if is(&["foreach", "forelse", "for", "while"]) {
+            Self::Loop
+        } else if name.eq_ignore_ascii_case("switch") {
+            Self::Switch
+        } else if is(&["once", "pushOnce", "prependOnce"]) {
+            Self::Guarded
+        } else {
+            Self::Plain
         }
-        let close = match balanced(&self.template[open..]) {
-            Some(close) => open + close,
-            None => kids[from + 1..]
-                .iter()
-                .find(|kid| !kid.is_named() && kid.kind() == ")")?
-                .start_byte(),
-        };
-        let next = (from + 1..kids.len())
-            .find(|&index| kids[index].start_byte() > close)
-            .unwrap_or(kids.len());
-        Some((Paren(open), Paren(close), next))
     }
 }
 
+/// A directive's `@name` leaf, if it has one (`@endphp` closing a `@php` block has none).
+fn name_leaf<'r>(directive: &BladeNode<'r>) -> Option<BladeNode<'r>> {
+    directive.field("name")
+}
+
+/// The directives of a block other than its start and end: its branches, in order.
+fn branches<'r>(block: &BladeNode<'r>) -> Vec<BladeNode<'r>> {
+    block
+        .children()
+        .filter(|child| child.field_name().is_none() && child.kind() == "directive")
+        .collect()
+}
+
+/// One directive of a structure and what it governs: its own children (a block Forte paired), or
+/// the siblings up to the structure's next directive (one Forte left unpaired, in an attribute's
+/// value).
+struct Arm<'r> {
+    directive: BladeNode<'r>,
+    siblings: Option<Vec<BladeNode<'r>>>,
+}
+
+/// A control structure: its start, its branches (`@else...`, `@empty`, ...) and where it closes.
+struct Parts<'r> {
+    start: Arm<'r>,
+    branches: Vec<Arm<'r>>,
+    /// Its end directive, or where it ends unclosed.
+    close: Range<usize>,
+}
+
+/// A directive's lowercase name, without its `@`.
+fn directive_name(directive: &BladeNode<'_>) -> Option<String> {
+    let leaf = name_leaf(directive)?;
+    Some(String::from_utf8_lossy(leaf.bytes().get(1..)?).to_ascii_lowercase())
+}
+
+/// Whether `name` is a directive Blade compiles to the start of a control structure.
+fn opens(name: &str) -> bool {
+    !matches!(Block::of(name), Block::Plain) && compiles(name)
+}
+
+/// Whether `name` closes the structure `opener` opened (`@endif` an `@if` or `@hasSection`).
+fn closes(opener: &str, name: &str) -> bool {
+    match opener {
+        "if" | "hassection" | "sectionmissing" | "hasstack" => name == "endif",
+        _ => name.strip_prefix("end") == Some(opener),
+    }
+}
+
+/// Whether `name` is a branch of the structure `opener` opened.
+fn branches_of(opener: &str, name: &str) -> bool {
+    match Block::of(opener) {
+        Block::Conditional if opener == "pushif" => name == "elsepushif",
+        Block::Conditional => {
+            name == "else" || name.starts_with("elseif") || {
+                matches!(
+                    name,
+                    "elseauth" | "elseguest" | "elsecan" | "elsecannot" | "elsecanany"
+                )
+            }
+        }
+        Block::Loop => opener == "forelse" && name == "empty",
+        _ => false,
+    }
+}
+
+/// The control structures Forte left unpaired among `nodes` (an attribute's value holds its
+/// directives side by side), as Blade's compiler pairs them: each opener with its branches and its
+/// end, by index. An opener left unclosed, or closed past by an outer structure's end, is none.
+fn flat_structures(nodes: &[BladeNode<'_>]) -> Vec<(usize, Vec<usize>, usize)> {
+    let mut open: Vec<(usize, String, Vec<usize>)> = Vec::new();
+    let mut found = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        if node.kind() != "directive" {
+            continue;
+        }
+        let Some(name) = directive_name(node) else {
+            continue;
+        };
+        if opens(&name) {
+            open.push((index, name, Vec::new()));
+        } else if let Some(at) = open
+            .iter()
+            .rposition(|(_, opener, _)| closes(opener, &name))
+        {
+            let (start, _, branches) = open.drain(at..).next().expect("an open structure");
+            found.push((start, branches, index));
+        } else if let Some((_, opener, branches)) = open.last_mut()
+            && branches_of(opener, &name)
+        {
+            branches.push(index);
+        }
+    }
+    found.sort_unstable_by_key(|(start, _, _)| *start);
+    found
+}
+
+/// Whether a tag is a component Blade compiles (`<x-...>`, `<x:...>`).
+fn is_component(tag: &BladeNode<'_>) -> bool {
+    tag.field("name").is_some_and(|name| {
+        let name = name.bytes();
+        name.starts_with(b"x-") || name.starts_with(b"x:")
+    })
+}
+
 impl<'t> Emitter<'t> {
-    fn text(&self, node: TsNode<'_>) -> &'t str {
-        &self.template[node.byte_range()]
+    fn text(&self, range: Range<usize>) -> &'t str {
+        &self.template[range]
     }
 
     fn push(&mut self, text: &str, anchor: Range<usize>, copied: bool, omit: bool) {
@@ -438,139 +655,228 @@ impl<'t> Emitter<'t> {
         self.marker(start..directive.end);
     }
 
-    fn children(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        self.sequence(&kids, 0);
+    /// A node's children in order.
+    fn body(&mut self, node: BladeNode<'_>) {
+        let children = node.children().collect::<Vec<_>>();
+        self.sequence(&children);
     }
 
-    /// Nodes in order, a directive with arguments read as one.
-    fn sequence(&mut self, kids: &[TsNode<'_>], from: usize) {
-        self.sequence_within(kids, from, None);
+    /// A directive's body: its children after its name and arguments, after what Forte read as
+    /// its arguments where Blade reads none (`read_stray`).
+    fn directive_body(&mut self, directive: BladeNode<'_>) {
+        self.read_stray(&directive);
+        let children = directive
+            .children()
+            .filter(|child| child.is_named() && !matches!(&*child.kind(), "directive_name" | "php"))
+            .collect::<Vec<_>>();
+        self.sequence(&children);
     }
 
-    /// Nodes in order, a directive with arguments read as one. Within an error the grammar
-    /// recovered from (`within`), the bytes no named node holds are text Blade still compiles.
-    fn sequence_within(&mut self, kids: &[TsNode<'_>], from: usize, within: Option<Range<usize>>) {
-        let mut cursor = within.as_ref().map(|within| within.start);
-        let mut index = from;
-        while index < kids.len() {
-            let kid = kids[index];
-            if let Some(at) = cursor {
-                // A token, or PHP the grammar read outside the echo or directive it recovered
-                // from: text, which may hold that echo whole.
-                if !kid.is_named() || matches!(kid.kind(), "php_only" | "parameter") {
-                    index += 1;
-                    continue;
-                }
-                self.loose(at..kid.start_byte().max(at));
-            }
-            if matches!(kid.kind(), "directive" | "directive_start")
-                && let Some((open, close, next)) = self.parens(kids, index + 1)
-            {
-                self.directive(kid, open, close);
-                cursor = cursor.map(|at| at.max(close.end_byte()));
-                index = next;
+    /// Sibling nodes in order, a control structure Forte left unpaired among them read as Blade
+    /// pairs it (`flat_structures`).
+    fn sequence(&mut self, nodes: &[BladeNode<'_>]) {
+        let structures = flat_structures(nodes);
+        let mut structures = structures.into_iter().peekable();
+        let mut index = 0;
+        while index < nodes.len() {
+            let Some((start, branches, end)) = structures.next_if(|(start, _, _)| *start == index)
+            else {
+                self.node(nodes[index]);
+                index += 1;
                 continue;
+            };
+            // Structures nested in this one are read as its arms' siblings.
+            while structures.next_if(|(nested, _, _)| *nested < end).is_some() {}
+            let mut bounds = branches.clone();
+            bounds.push(end);
+            let arm = |at: usize, until: usize| Arm {
+                directive: nodes[at],
+                siblings: Some(nodes[at + 1..until].to_vec()),
+            };
+            let parts = Parts {
+                start: arm(start, bounds[0]),
+                branches: branches
+                    .iter()
+                    .zip(&bounds[1..])
+                    .map(|(&at, &until)| arm(at, until))
+                    .collect(),
+                close: self.closing(&nodes[end]),
+            };
+            if self.span(&nodes[start]).start >= self.consumed {
+                self.structure(parts);
+                self.read_stray(&nodes[end]);
             }
-            self.node(kid);
-            cursor = cursor.map(|at| at.max(kid.end_byte()));
-            index += 1;
-        }
-        if let (Some(at), Some(within)) = (cursor, within) {
-            self.loose(at..within.end.max(at));
-        }
-    }
-
-    fn node(&mut self, node: TsNode<'_>) {
-        match node.kind() {
-            "php_statement" => self.php_statement(node),
-            "conditional" => self.conditional(node),
-            "loop" => self.repeat(node),
-            "switch" => self.switch(node),
-            "once" => self.guarded(node),
-            "stack" | "livewire" => {
-                let kids = children(node);
-                let name = kids.first().map(|first| self.text(*first));
-                match name {
-                    Some("@pushOnce" | "@prependOnce" | "@pushIf") => self.guarded(node),
-                    _ => self.sequence(&kids, 0),
-                }
-            }
-            // An element's children in order, a directive with arguments read as one.
-            "element" => self.children(node),
-            "start_tag" | "self_closing_tag" => self.tag(node),
-            // The tags' attributes as any tag's; the text between them as Blade reads it.
-            "script_element" | "style_element" => {
-                for kid in children(node) {
-                    if kid.kind() == "raw_text" {
-                        self.raw_text(kid.byte_range());
-                    } else {
-                        self.node(kid);
-                    }
-                }
-            }
-            "ERROR" => {
-                let kids = children(node);
-                self.sequence_within(&kids, 0, Some(node.byte_range()));
-            }
-            // Text holds no echo the grammar read, but Blade compiles any it holds: one in an
-            // attribute's name (`x-on:{{ $event }}`) or an HTML comment.
-            "attribute" if plain(node) => self.plain_attributes(node),
-            "text" | "attribute_name" | "attribute_value" => self.loose(node.byte_range()),
-            "comment" if self.text(node).starts_with("<!--") => self.loose(node.byte_range()),
-            "verbatim" | "comment" | "keyword" | "doctype" | "entity" | "raw_text"
-            | "directive_end" | "tag_name" => {}
-            _ => self.children(node),
+            index = end + 1;
         }
     }
 
-    fn php_statement(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&first) = kids.first() else {
+    /// What an arm governs: its directive's children, or its siblings.
+    fn arm_body(&mut self, arm: &Arm<'_>) {
+        match &arm.siblings {
+            None => self.directive_body(arm.directive),
+            Some(siblings) => {
+                self.directive_body(arm.directive);
+                self.sequence(siblings);
+            }
+        }
+    }
+
+    /// A directive outside the structure's own syntax (`directive`), then what its arm governs.
+    fn arm(&mut self, arm: &Arm<'_>) {
+        self.directive(arm.directive);
+        if let Some(siblings) = &arm.siblings {
+            self.sequence(siblings);
+        }
+    }
+
+    /// The template bytes a node of the tree being read spans, widened to whole characters:
+    /// Forte lexes bytes and can end a text node inside a multi-byte character (`<a é@b)` splits
+    /// `é` in an attribute name), and the view slices the template as `str`. The bytes it widens
+    /// over are no syntax, which is ASCII.
+    fn span(&self, node: &BladeNode<'_>) -> Range<usize> {
+        let range = node.range();
+        self.template.floor_char_boundary(range.start + self.origin)
+            ..self.template.ceil_char_boundary(range.end + self.origin)
+    }
+
+    /// Reads `range` of the template as a template of its own: what Forte left unread there
+    /// (text in `<script>` and `<style>`, which Blade's compiler reads as any text; what Forte's
+    /// recovery swallowed into a `@php` block or a directive's arguments). Its syntax errors are
+    /// not the template's: Forte reported what it found there.
+    fn template(&mut self, range: Range<usize>) {
+        let reporting = std::mem::replace(&mut self.reporting, false);
+        self.sub_template(range);
+        self.reporting = reporting;
+    }
+
+    /// Reads `range` as a template of its own (`template`); its syntax errors, by template byte,
+    /// `None` where it was not parsed. Past `TEMPLATE_DEPTH` nested sub-templates, the range is
+    /// read as text.
+    fn sub_template(&mut self, range: Range<usize>) -> Option<Vec<Range<usize>>> {
+        if range.is_empty() || self.interrupted {
+            return None;
+        }
+        if (self.budget)() {
+            self.interrupted = true;
+            return None;
+        }
+        if self.depth >= TEMPLATE_DEPTH {
+            self.loose(range);
+            return None;
+        }
+        let tree = parse_tree(&self.template.as_bytes()[range.clone()]);
+        let origin = std::mem::replace(&mut self.origin, range.start);
+        self.depth += 1;
+        self.body(tree.root());
+        self.depth -= 1;
+        self.origin = origin;
+        Some(
+            tree.error_ranges()
+                .iter()
+                .map(|error| error.start + range.start..error.end + range.start)
+                .collect(),
+        )
+    }
+
+    fn node(&mut self, node: BladeNode<'_>) {
+        let range = self.span(&node);
+        // Text is read from `loosened` on; any other node Blade read as a directive's arguments
+        // is not read again.
+        if range.start < self.consumed && node.kind() != "text" {
+            return;
+        }
+        match &*node.kind() {
+            "echo" | "raw_echo" | "triple_echo" => self.echo_node(node),
+            "php_block" => self.php_block(node),
+            "php_tag" => self.php_tag(node),
+            "directive" => self.directive(node),
+            "directive_block" => self.block(node),
+            "element" | "component" | "slot" => self.tag(node),
+            // Blade compiles what text holds that Forte leaves as text: an application's
+            // directive, an echo in an HTML comment.
+            "text" | "comment_text" => self.loose(range),
+            "verbatim" | "blade_comment" | "escape" | "doctype" => {}
+            _ => self.body(node),
+        }
+    }
+
+    /// `{{ e }}`, `{!! e !!}`: an echo Blade compiles once it is closed.
+    fn echo_node(&mut self, node: BladeNode<'_>) {
+        let children = node.children().collect::<Vec<_>>();
+        let (Some(open), Some(close)) = (children.first(), children.last()) else {
             return;
         };
-        let php = kids.iter().find(|kid| kid.kind() == "php_only").copied();
-        let last = *kids.last().expect("a first child");
-        match first.kind() {
-            "{{" | "{!!" => {
-                // `@{{ ... }}` is Blade's escape for a literal echo.
-                if self.template[..first.start_byte()].ends_with('@') {
-                    return;
-                }
-                if let Some(php) = php {
-                    self.echo(first.byte_range(), php.byte_range(), last.byte_range());
-                }
+        let closed = matches!(&*close.kind(), "}}" | "!!}" | "}}}");
+        let open = self.span(open);
+        if !closed {
+            return;
+        }
+        // `@{{ ... }}` is Blade's escape for a literal echo, which Forte reads as an echo in a
+        // `<script>`'s raw text: Blade writes it as text, after compiling the directives it holds.
+        if self.template[..open.start].ends_with('@') {
+            return self.loose(open.end..self.span(&node).end);
+        }
+        if let Some(php) = node.field("expression") {
+            let (php, close) = (self.span(&php), self.span(close));
+            self.echo(open, php, close);
+        }
+    }
+
+    /// `@php ... @endphp`. Blade's `@php` runs to the first `@endphp` after it wherever it stands,
+    /// which Forte's lexer misses in a `<script>`'s raw text (it then reads the rest of the
+    /// template as the block): there the view ends the block at that `@endphp` and reads what
+    /// follows as the template.
+    fn php_block(&mut self, node: BladeNode<'_>) {
+        let range = self.span(&node);
+        let closed = node
+            .children()
+            .last()
+            .filter(|last| last.kind() == "@endphp");
+        if let Some(close) = closed {
+            if let Some(php) = node.field("code") {
+                let (php, close) = (self.span(&php), self.span(&close));
+                self.statements(php, close);
             }
-            "php_tag" => {
-                if let Some(php) = php {
-                    if self.text(first) == "<?=" {
-                        self.echo(first.byte_range(), php.byte_range(), last.byte_range());
-                    } else {
-                        self.statements(php.byte_range(), last.byte_range());
-                    }
-                }
+            return;
+        }
+        let open = range.start + "@php".len();
+        let Some(end) = self.template[open..range.end].find("@endphp") else {
+            if let Some(php) = node.field("code") {
+                let php = self.span(&php);
+                self.statements(php, at(range.end));
             }
-            "directive_start" => {
-                if let Some(php) = php {
-                    self.statements(php.byte_range(), last.byte_range());
-                }
-            }
-            "directive" => {
-                if let Some((open, close, _)) = self.parens(&kids, 1) {
-                    // `@php (...) @endphp` is a block whose PHP is all between them, its
-                    // parentheses too (Blade's `storePhpBlocks`).
-                    let block = self.template[close.end_byte()..]
-                        .trim_start()
-                        .starts_with("@endphp");
-                    if block {
-                        self.copy(open.start_byte()..close.end_byte());
-                    } else {
-                        self.copy(open.end_byte()..close.start_byte());
-                    }
-                    self.emit("\n;", at(close.start_byte()));
-                }
-            }
-            _ => {}
+            return;
+        };
+        let end = open + end;
+        let text = &self.template[open..end];
+        let php = open + (text.len() - text.trim_start().len())
+            ..end - (text.len() - text.trim_end().len());
+        if !php.is_empty() {
+            self.statements(php, end..end + "@endphp".len());
+        }
+        self.loosened = self.loosened.max(end + "@endphp".len());
+        self.template(end + "@endphp".len()..range.end);
+    }
+
+    /// `<?php ... ?>`, `<?= e ?>`. A tag's statements are all its bytes between `<?php` and
+    /// `?>`, as PHP reads them (a `#` comment runs to the `?>`).
+    fn php_tag(&mut self, node: BladeNode<'_>) {
+        let Some(php) = node.field("code") else {
+            return;
+        };
+        let php = self.span(&php);
+        let children = node.children().collect::<Vec<_>>();
+        let Some(open) = children.first().map(|first| self.span(first)) else {
+            return;
+        };
+        let close = children
+            .last()
+            .filter(|last| last.kind() == "?>")
+            .map_or(at(self.span(&node).end), |last| self.span(last));
+        if self.text(open.clone()) == "<?=" {
+            self.echo(open, php, close);
+        } else {
+            self.statements(open.end..close.start, close);
         }
     }
 
@@ -591,29 +897,258 @@ impl<'t> Emitter<'t> {
         self.emit(if ended { "\n" } else { "\n;" }, close);
     }
 
-    /// A condition from a directive's arguments `open..close`, after `if`/`elseif` was written
-    /// over `directive`.
+    /// Where Forte's arguments of a directive open (its `(`), close (its `)`, if any) and end,
+    /// and where the directive's name ends.
+    fn forte_arguments(&self, directive: &BladeNode<'_>) -> Option<ForteArguments> {
+        let name = self.span(&name_leaf(directive)?).end;
+        let (mut open, mut close, mut end) = (None, None, 0);
+        for child in directive.children() {
+            match &*child.kind() {
+                "(" => open = Some(self.span(&child).start),
+                ")" => close = Some(self.span(&child).start),
+                "php" if child.field_name() == Some("arguments") => {}
+                _ => continue,
+            }
+            end = end.max(self.span(&child).end);
+        }
+        Some(ForteArguments {
+            name,
+            open: open?,
+            close,
+            end,
+        })
+    }
+
+    /// Whether Blade reads the `(` at `open` as the arguments of the directive whose name ends at
+    /// `name`: only spaces and tabs between them (`[ \t]*` in `compileStatements`), where Forte's
+    /// lexer also skips line breaks.
+    fn blade_arguments(&self, name: usize, open: usize) -> bool {
+        self.template.as_bytes()[name..open]
+            .iter()
+            .all(|byte| matches!(byte, b' ' | b'\t'))
+    }
+
+    /// The `(` and `)` around a directive's arguments, as Blade reads them: from the `(` Forte
+    /// found after its name (and any spaces or tabs) to the `)` that balances it (`balanced`),
+    /// wherever Forte ended them (`@section('a', __('b'))`); without one, to Forte's `)`. Then
+    /// where Forte's arguments end.
+    fn parens(&self, directive: &BladeNode<'_>) -> Option<(Paren, Paren, usize)> {
+        let arguments = self.forte_arguments(directive)?;
+        if !self.blade_arguments(arguments.name, arguments.open) {
+            return None;
+        }
+        let open = arguments.open;
+        let close = match balanced(&self.template[open..]) {
+            Some(close) => open + close,
+            None => arguments.close?,
+        };
+        Some((Paren(open), Paren(close), arguments.end))
+    }
+
+    /// Forte's arguments of a directive Blade reads without them (a line break before the `(`,
+    /// `@endforeach\n(...)`): template text after the directive, through the whitespace after
+    /// them up to the directive's next child or end (unclosed arguments end before trailing
+    /// whitespace, and Forte reports them at the end of the template).
+    fn stray_arguments(&self, directive: &BladeNode<'_>) -> Option<Range<usize>> {
+        let arguments = self.forte_arguments(directive)?;
+        if self.blade_arguments(arguments.name, arguments.open) {
+            return None;
+        }
+        let next = directive
+            .children()
+            .map(|child| self.span(&child).start)
+            .filter(|start| *start >= arguments.end)
+            .min()
+            .unwrap_or_else(|| self.span(directive).end);
+        let end = if self.template.as_bytes()[arguments.end..next]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+        {
+            next
+        } else {
+            arguments.end
+        };
+        Some(arguments.open..end)
+    }
+
+    /// Reads a directive's `stray_arguments` as the template.
+    fn read_stray(&mut self, directive: &BladeNode<'_>) {
+        if let Some(stray) = self.stray_arguments(directive) {
+            let end = stray.end;
+            // Where the template's errors are reported (`reporting`), the errors of the template
+            // Blade reads here replace Forte's (`syntax_errors`).
+            if let Some(errors) = self.sub_template(stray.clone())
+                && self.reporting
+            {
+                self.strays.push((stray, errors));
+            }
+            self.loosened = self.loosened.max(end);
+        }
+    }
+
+    /// The bytes a structure's closing directive spans as Blade reads it: without its
+    /// `stray_arguments`.
+    fn closing(&self, end: &BladeNode<'_>) -> Range<usize> {
+        let span = self.span(end);
+        match (self.stray_arguments(end), name_leaf(end)) {
+            (Some(_), Some(name)) => span.start..self.span(&name).end,
+            _ => span,
+        }
+    }
+
+    /// Marks a directive's arguments read through `close`: Forte's nodes before it are part of
+    /// them. What Forte read as arguments past it (`forte_end`) is the template's.
+    fn consume(&mut self, close: Paren, forte_end: usize) {
+        self.consumed = self.consumed.max(close.end_byte());
+        self.loosened = self.loosened.max(close.end_byte());
+        if forte_end > close.end_byte() {
+            self.template(close.end_byte()..forte_end);
+            self.loosened = self.loosened.max(forte_end);
+        }
+    }
+
+    /// A directive outside the blocks Blade compiles to control flow: one with arguments, `@break`
+    /// and `@continue` in a loop, `@case` and `@default` in a switch; then its body.
+    fn directive(&mut self, directive: BladeNode<'_>) {
+        let Some(name_leaf) = name_leaf(&directive) else {
+            return self.directive_body(directive);
+        };
+        let name_range = self.span(&name_leaf);
+        let name = &self.template[name_range.start + 1..name_range.end];
+        let head = self.parens(&directive);
+        let parens = head.map(|(open, close, _)| (open, close));
+        let is = |known: &str| name.eq_ignore_ascii_case(known);
+        if self.loops > 0 && (is("break") || is("continue")) {
+            self.loop_operator(name_range, parens);
+        } else if self.switches > 0 && is("case") {
+            if let Some((open, close)) = parens {
+                self.emit("case", name_range);
+                self.emit(" (", open.byte_range());
+                self.copy(open.end_byte()..close.start_byte());
+                self.emit(")", close.byte_range());
+                self.emit(":\n", at(close.end_byte()));
+            }
+        } else if self.switches > 0 && is("default") {
+            self.emit("default", name_range.clone());
+            self.emit(":\n", at(name_range.end));
+        } else if let Some((open, close)) = parens {
+            if is("php") {
+                // `@php (...) @endphp` is a block whose PHP is all between them, its
+                // parentheses too (Blade's `storePhpBlocks`).
+                let block = self.template[close.end_byte()..]
+                    .trim_start()
+                    .starts_with("@endphp");
+                if block {
+                    self.copy(open.start_byte()..close.end_byte());
+                } else {
+                    self.copy(open.end_byte()..close.start_byte());
+                }
+                self.emit("\n;", at(close.start_byte()));
+            } else if !CONTROL.iter().any(|control| is(control)) {
+                self.directive_at(name_range, open, close);
+            }
+        }
+        if let Some((_, close, end)) = head {
+            self.consume(close, end);
+        }
+        self.directive_body(directive);
+    }
+
+    /// A block Forte paired (`directive_block`), compiled as its start directive says.
+    fn block(&mut self, block: BladeNode<'_>) {
+        let Some(start) = block.field("start") else {
+            return self.body(block);
+        };
+        let Some(name) = directive_name(&start) else {
+            return self.body(block);
+        };
+        let parts = Parts {
+            start: Arm {
+                directive: start,
+                siblings: None,
+            },
+            branches: branches(&block)
+                .into_iter()
+                .map(|directive| Arm {
+                    directive,
+                    siblings: None,
+                })
+                .collect(),
+            close: block
+                .field("end")
+                .map_or(at(self.span(&block).end), |end| self.closing(&end)),
+        };
+        if !compiles(&name) {
+            // A pair Blade does not compile (an application's `Blade::if`, a package's) is text
+            // around a body Blade compiles as the template's.
+            let name_range = self.span(&name_leaf(&start).expect("a named directive"));
+            if let Some((_, close, end)) = self.parens(&start) {
+                self.application_directive(name_range);
+                self.consume(close, end);
+            }
+            self.directive_body(start);
+            for branch in &parts.branches {
+                self.arm(branch);
+            }
+            if let Some(end) = block.field("end") {
+                self.read_stray(&end);
+            }
+            return;
+        }
+        if let Block::Plain = Block::of(&name) {
+            self.directive(start);
+            for branch in &parts.branches {
+                self.arm(branch);
+            }
+            if let Some(end) = block.field("end") {
+                self.directive(end);
+            }
+            return;
+        }
+        self.structure(parts);
+        if let Some(end) = block.field("end") {
+            self.read_stray(&end);
+        }
+    }
+
+    /// A control structure Blade compiles, as its start directive says.
+    fn structure(&mut self, parts: Parts<'_>) {
+        let start = parts.start.directive;
+        let (Some(name), Some(leaf)) = (directive_name(&start), name_leaf(&start)) else {
+            return;
+        };
+        let name_range = self.span(&leaf);
+        match Block::of(&name) {
+            Block::Conditional => self.conditional(parts, name_range, &name),
+            Block::Loop => self.repeat(parts, name_range, &name),
+            Block::Switch => self.switch(parts, name_range),
+            Block::Guarded => self.guarded(parts, name_range),
+            Block::Plain => {}
+        }
+    }
+
+    /// A condition from a directive's arguments, after `if`/`elseif` was written over
+    /// `directive` (its `@name`); then the arguments are read.
     fn condition(
         &mut self,
-        directive: TsNode<'_>,
-        parens: Option<(Paren, Paren)>,
-        condition: Condition<'_>,
+        directive: Range<usize>,
+        head: Option<(Paren, Paren, usize)>,
+        condition: Condition,
     ) {
-        let directive = directive.byte_range();
-        match (condition, parens) {
-            (Condition::Plain, Some((open, close))) => {
+        match (condition, head) {
+            (Condition::Plain, Some((open, close, _))) => {
                 self.emit("(", open.byte_range());
                 self.copy(open.end_byte()..close.start_byte());
                 self.emit(")", close.byte_range());
             }
-            (Condition::Not, Some((open, close))) => {
+            (Condition::Not, Some((open, close, _))) => {
                 self.emit("(", open.byte_range());
                 self.emit("!(", at(open.end_byte()));
                 self.copy(open.end_byte()..close.start_byte());
                 self.emit(")", at(close.start_byte()));
                 self.emit(")", close.byte_range());
             }
-            (Condition::Construct, Some((open, close))) => {
+            (Condition::Construct, Some((open, close, _))) => {
                 // `@isset(` is `if (isset(`: the name is the directive's own bytes.
                 self.emit("(", at(directive.start + 1));
                 self.emit(
@@ -625,9 +1160,9 @@ impl<'t> Emitter<'t> {
                 self.emit(")", close.byte_range());
                 self.emit(")", at(close.end_byte()));
             }
-            (Condition::Runtime(name), Some((open, close))) => {
-                self.emit("(", at(name.start_byte()));
-                self.placeholder("_", name.byte_range());
+            (Condition::Runtime(name), Some((open, close, _))) => {
+                self.emit("(", at(name.start));
+                self.placeholder("_", name);
                 self.emit("(", open.byte_range());
                 self.copy(open.end_byte()..close.start_byte());
                 self.emit(")", close.byte_range());
@@ -635,322 +1170,199 @@ impl<'t> Emitter<'t> {
             }
             (_, None) => self.placeholder("(0)", at(directive.end)),
         }
-        let end = parens.map_or(directive.end, |(_, close)| close.end_byte());
+        let end = head.map_or(directive.end, |(_, close, _)| close.end_byte());
         self.emit(":\n", at(end));
+        if let Some((_, close, end)) = head {
+            self.consume(close, end);
+        }
     }
 
-    fn conditional(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&start) = kids.first() else {
-            return;
-        };
-        let name = self.text(start).trim().trim_start_matches('@').to_owned();
-        if !compiles(&name) {
-            // A pair Blade does not compile (an application's `Blade::if`, a package's) is text
-            // around a body Blade compiles as the template's.
-            return self.unknown_block(&kids);
-        }
-        let head = self.parens(&kids, 1);
-        let body = head.map_or(1, |(_, _, next)| next);
-        let end = kids
-            .last()
-            .filter(|kid| kid.kind() == "directive_end")
-            .copied();
-        let stop = if end.is_some() {
-            kids.len() - 1
-        } else {
-            kids.len()
-        };
-        let has_else = kids[body..]
-            .iter()
-            .any(|kid| kid.kind() == "conditional_keyword");
+    fn conditional(&mut self, parts: Parts<'_>, name_range: Range<usize>, name: &str) {
         // Blade's variables of the branch: defined in it, forgotten after it.
-        let variable = match name.as_str() {
-            "error" | "session" | "context" => Some(()),
-            _ => None,
-        };
-        if variable.is_some() && !has_else {
-            self.marker(start.byte_range());
+        let variable = ["error", "session", "context"].contains(&name);
+        if variable && parts.branches.is_empty() {
+            self.marker(name_range.clone());
         }
-        self.emit("if ", start.byte_range());
-        let condition = match name.as_str() {
+        self.emit("if ", name_range.clone());
+        let condition = match name {
             "if" => Condition::Plain,
             "unless" => Condition::Not,
             "isset" | "empty" => Condition::Construct,
-            _ => Condition::Runtime(start),
+            _ => Condition::Runtime(name_range.clone()),
         };
-        self.condition(start, head.map(|(open, close, _)| (open, close)), condition);
-        let mut index = body;
-        while index < stop {
-            let kid = kids[index];
-            if kid.kind() == "conditional_keyword" {
-                self.else_clause(kid);
-            } else if matches!(kid.kind(), "directive" | "directive_start")
-                && let Some((open, close, next)) = self.parens(&kids, index + 1)
-            {
-                self.directive(kid, open, close);
-                index = next;
-                continue;
+        let head = self.parens(&parts.start.directive);
+        self.condition(name_range, head, condition);
+        self.arm_body(&parts.start);
+        for branch in &parts.branches {
+            self.else_clause(branch);
+        }
+        self.emit("endif;\n", parts.close.clone());
+        if variable {
+            self.marker(parts.close);
+        }
+    }
+
+    /// A branch of a conditional (`@elseif(c)`, `@else`, `@elsecan(...)`) and its body.
+    fn else_clause(&mut self, branch: &Arm<'_>) {
+        let Some(name_leaf) = name_leaf(&branch.directive) else {
+            return self.arm_body(branch);
+        };
+        let name_range = self.span(&name_leaf);
+        let name = &self.template[name_range.start + 1..name_range.end];
+        let head = self.parens(&branch.directive);
+        if !compiles(name) {
+            // `@else` of a `Blade::if` (`@elsefeature(...)`) Blade does not compile: text.
+            if let Some((_, close, end)) = head {
+                self.application_directive(name_range);
+                self.consume(close, end);
+            }
+        } else if name.eq_ignore_ascii_case("else") {
+            self.emit("else", name_range.clone());
+            self.emit(":\n", at(name_range.end));
+        } else {
+            let condition = if name.eq_ignore_ascii_case("elseif") {
+                Condition::Plain
             } else {
-                self.node(kid);
+                Condition::Runtime(name_range.clone())
+            };
+            self.emit("elseif ", name_range.clone());
+            self.condition(name_range, head, condition);
+        }
+        self.arm_body(branch);
+    }
+
+    /// A body Blade's runtime may skip (`@once`, `@pushOnce`, `@prependOnce`).
+    fn guarded(&mut self, parts: Parts<'_>, name_range: Range<usize>) {
+        let head = self.parens(&parts.start.directive);
+        self.emit("if ", name_range.clone());
+        self.condition(name_range.clone(), head, Condition::Runtime(name_range));
+        self.arm_body(&parts.start);
+        for branch in &parts.branches {
+            self.arm(branch);
+        }
+        self.emit("endif;\n", parts.close);
+    }
+
+    fn repeat(&mut self, parts: Parts<'_>, name_range: Range<usize>, name: &str) {
+        let Some((open, close, end)) = self.parens(&parts.start.directive) else {
+            self.arm_body(&parts.start);
+            for branch in &parts.branches {
+                self.arm(branch);
             }
-            index += 1;
-        }
-        let close = end.map_or(at(node.end_byte()), |end| end.byte_range());
-        self.emit("endif;\n", close.clone());
-        if variable.is_some() {
-            self.marker(close);
-        }
-    }
-
-    fn else_clause(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&directive) = kids.first() else {
             return;
         };
-        // `@else` of a `Blade::if` (`@elsefeature(...)`) Blade does not compile: text.
-        if !compiles(self.text(directive).trim_start().trim_start_matches('@')) {
-            if self.parens(&kids, 1).is_some() {
-                self.application_directive(directive.byte_range());
-            }
-            return;
-        }
-        let head = self.parens(&kids, 1).map(|(open, close, _)| (open, close));
-        if self.text(directive) == "@else" {
-            self.emit("else", directive.byte_range());
-            self.emit(":\n", at(directive.end_byte()));
-            return;
-        }
-        self.emit("elseif ", directive.byte_range());
-        let condition = if self.text(directive) == "@elseif" {
-            Condition::Plain
-        } else {
-            Condition::Runtime(directive)
-        };
-        self.condition(directive, head, condition);
-    }
-
-    /// A container whose body Blade may skip at run time (`@once`, `@pushOnce`, `@pushIf`).
-    fn guarded(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&start) = kids.first() else {
-            return;
-        };
-        if !compiles(self.text(start).trim().trim_start_matches('@')) {
-            return self.unknown_block(&kids);
-        }
-        let head = self.parens(&kids, 1);
-        self.emit("if ", start.byte_range());
-        self.condition(
-            start,
-            head.map(|(open, close, _)| (open, close)),
-            Condition::Runtime(start),
-        );
-        let body = head.map_or(1, |(_, _, next)| next);
-        let end = kids
-            .last()
-            .filter(|kid| kid.kind() == "directive_end")
-            .copied();
-        let stop = if end.is_some() {
-            kids.len() - 1
-        } else {
-            kids.len()
-        };
-        self.sequence(&kids[..stop], body);
-        let close = end.map_or(at(node.end_byte()), |end| end.byte_range());
-        self.emit("endif;\n", close);
-    }
-
-    fn repeat(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&start) = kids.first() else {
-            return;
-        };
-        let name = self.text(start).trim().trim_start_matches('@').to_owned();
-        if !compiles(&name) {
-            return self.unknown_block(&kids);
-        }
-        let Some((open, close, body)) = self.parens(&kids, 1) else {
-            self.sequence(&kids, 1);
-            return;
-        };
-        let keyword = match name.as_str() {
+        let keyword = match name {
             "foreach" | "forelse" => "foreach",
             "for" => "for",
             _ => "while",
         };
         let each = keyword == "foreach";
         if each {
-            self.marker(start.byte_range());
+            self.marker(name_range.clone());
         }
-        self.emit(keyword, start.byte_range());
+        self.emit(keyword, name_range);
         self.emit(" (", open.byte_range());
         self.copy(open.end_byte()..close.start_byte());
         self.emit(")", close.byte_range());
         self.emit(":\n", at(close.end_byte()));
-        let end = kids
-            .last()
-            .filter(|kid| kid.kind() == "directive_end")
-            .copied();
-        let stop = if end.is_some() {
-            kids.len() - 1
-        } else {
-            kids.len()
-        };
+        self.loops += 1;
+        self.consume(close, end);
+        self.arm_body(&parts.start);
         let mut looping = true;
-        let mut index = body;
-        while index < stop {
-            let kid = kids[index];
-            if kid.kind() == "directive" {
-                let operator = self.parens(&kids, index + 1);
-                match self.text(kid) {
-                    "@empty" if looping && name == "forelse" => {
-                        self.emit("endforeach;\n", kid.byte_range());
-                        self.marker(kid.byte_range());
-                        self.emit("if ", kid.byte_range());
-                        self.placeholder("(0)", at(kid.end_byte()));
-                        self.emit(":\n", at(kid.end_byte()));
-                        looping = false;
-                        index += 1;
-                        continue;
-                    }
-                    "@break" | "@continue" => {
-                        self.loop_operator(kid, operator.map(|(open, close, _)| (open, close)));
-                        index = operator.map_or(index + 1, |(_, _, next)| next);
-                        continue;
-                    }
-                    _ => {}
-                }
-                if let Some((open, close, next)) = operator {
-                    self.directive(kid, open, close);
-                    index = next;
-                    continue;
-                }
+        for branch in &parts.branches {
+            let empty = looping
+                && name == "forelse"
+                && directive_name(&branch.directive).as_deref() == Some("empty")
+                && self.parens(&branch.directive).is_none();
+            if let Some(leaf) = name_leaf(&branch.directive).filter(|_| empty) {
+                let range = self.span(&leaf);
+                self.loops -= 1;
+                looping = false;
+                self.emit("endforeach;\n", range.clone());
+                self.marker(range.clone());
+                self.emit("if ", range.clone());
+                self.placeholder("(0)", at(range.end));
+                self.emit(":\n", at(range.end));
+                self.arm_body(branch);
+            } else {
+                self.arm(branch);
             }
-            self.node(kid);
-            index += 1;
         }
-        let close = end.map_or(at(node.end_byte()), |end| end.byte_range());
         if !looping {
-            self.emit("endif;\n", close);
+            self.emit("endif;\n", parts.close);
             return;
         }
+        self.loops -= 1;
         let ending = match keyword {
             "foreach" => "endforeach;\n",
             "for" => "endfor;\n",
             _ => "endwhile;\n",
         };
-        self.emit(ending, close.clone());
+        self.emit(ending, parts.close.clone());
         if each {
-            self.marker(close);
+            self.marker(parts.close);
         }
     }
 
-    /// `@break`, `@continue`, `@break(c)` (`if (c) break;`) and `@break(2)` (`break 2;`).
-    fn loop_operator(&mut self, directive: TsNode<'_>, parens: Option<(Paren, Paren)>) {
-        let keyword = &self.text(directive)[1..];
+    /// `@break`, `@continue`, `@break(c)` (`if (c) break;`) and `@break(2)` (`break 2;`), the
+    /// directive's `@name` at template bytes `directive`.
+    fn loop_operator(&mut self, directive: Range<usize>, parens: Option<(Paren, Paren)>) {
+        let keyword = self.template[directive.start + 1..directive.end].to_ascii_lowercase();
         let Some((open, close)) = parens else {
-            self.emit(keyword, directive.byte_range());
-            self.emit(";\n", at(directive.end_byte()));
+            self.emit(&keyword, directive.clone());
+            self.emit(";\n", at(directive.end));
             return;
         };
         let arguments = open.end_byte()..close.start_byte();
         let argument = self.template[arguments.clone()].trim();
         if !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit()) {
-            self.emit(keyword, directive.byte_range());
+            self.emit(&keyword, directive);
             self.emit(" ", open.byte_range());
             self.copy(arguments);
             self.emit(";\n", close.byte_range());
             return;
         }
-        self.emit("if ", directive.byte_range());
+        self.emit("if ", directive);
         self.emit("(", open.byte_range());
         self.copy(arguments);
         self.emit(")", close.byte_range());
         self.emit(&format!(" {keyword};\n"), at(close.end_byte()));
     }
 
-    fn switch(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let Some(&start) = kids.first() else {
+    fn switch(&mut self, parts: Parts<'_>, name_range: Range<usize>) {
+        let Some((open, close, end)) = self.parens(&parts.start.directive) else {
+            self.arm_body(&parts.start);
+            for branch in &parts.branches {
+                self.arm(branch);
+            }
             return;
         };
-        if !compiles(self.text(start).trim().trim_start_matches('@')) {
-            return self.unknown_block(&kids);
-        }
-        let Some((open, close, body)) = self.parens(&kids, 1) else {
-            self.sequence(&kids, 1);
-            return;
-        };
-        self.emit("switch", start.byte_range());
+        self.emit("switch", name_range);
         self.emit(" (", open.byte_range());
         self.copy(open.end_byte()..close.start_byte());
         self.emit(")", close.byte_range());
         self.emit(":\n", at(close.end_byte()));
-        let end = kids
-            .last()
-            .filter(|kid| kid.kind() == "directive_end")
-            .copied();
-        let stop = if end.is_some() {
-            kids.len() - 1
-        } else {
-            kids.len()
-        };
-        let mut index = body;
-        while index < stop {
-            let kid = kids[index];
-            if kid.kind() == "directive" {
-                let operator = self.parens(&kids, index + 1);
-                match (self.text(kid), operator) {
-                    ("@case", Some((open, close, next))) => {
-                        self.emit("case", kid.byte_range());
-                        self.emit(" (", open.byte_range());
-                        self.copy(open.end_byte()..close.start_byte());
-                        self.emit(")", close.byte_range());
-                        self.emit(":\n", at(close.end_byte()));
-                        index = next;
-                        continue;
-                    }
-                    ("@default", _) => {
-                        self.emit("default", kid.byte_range());
-                        self.emit(":\n", at(kid.end_byte()));
-                        index += 1;
-                        continue;
-                    }
-                    ("@break" | "@continue", _) => {
-                        self.loop_operator(kid, operator.map(|(open, close, _)| (open, close)));
-                        index = operator.map_or(index + 1, |(_, _, next)| next);
-                        continue;
-                    }
-                    (_, Some((open, close, next))) => {
-                        self.directive(kid, open, close);
-                        index = next;
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-            self.node(kid);
-            index += 1;
+        // `break` and `continue` end a switch as they end a loop.
+        self.switches += 1;
+        self.loops += 1;
+        self.consume(close, end);
+        self.arm_body(&parts.start);
+        for branch in &parts.branches {
+            self.arm(branch);
         }
-        let close = end.map_or(at(node.end_byte()), |end| end.byte_range());
-        self.emit("endswitch;\n", close);
-    }
-
-    /// A directive with arguments outside Blade's control structures.
-    fn directive(&mut self, directive: TsNode<'_>, open: Paren, close: Paren) {
-        self.directive_at(directive.byte_range(), open, close);
+        self.loops -= 1;
+        self.switches -= 1;
+        self.emit("endswitch;\n", parts.close);
     }
 
     /// The directive at template bytes `directive` (its `@` and name), with arguments.
     fn directive_at(&mut self, directive: Range<usize>, open: Paren, close: Paren) {
         let template = self.template;
         let arguments = open.end_byte()..close.start_byte();
-        // A directive the grammar recovered from an error may hold the whitespace before it.
         let name = &template[directive.clone()].trim_start()[1..];
         let sign = directive.end - name.len() - 1;
-        // Blade's directive pattern (`\B@`): one a word byte precedes (`x_@json(...)`, which the
-        // grammar reads as a directive) is text, which may hold echoes.
+        // Blade's directive pattern (`\B@`): one a word byte precedes (`x_@json(...)`, which
+        // Forte reads as a directive) is text, which may hold echoes.
         if sign > 0 && word(template.as_bytes()[sign - 1]) {
             return self.loose(open.start_byte()..close.end_byte());
         }
@@ -1042,154 +1454,103 @@ impl<'t> Emitter<'t> {
         self.emit(";\n", at(close.end_byte()));
     }
 
-    /// A tag's attributes; a component's (`<x-...>`) bound ones (`:name="php"`, `:$name`) are PHP.
-    fn tag(&mut self, node: TsNode<'_>) {
-        let kids = children(node);
-        let component = kids
-            .iter()
-            .find(|kid| kid.kind() == "tag_name")
-            .is_some_and(|name| {
-                let name = self.text(*name);
-                name.starts_with("x-") || name.starts_with("x:")
+    /// An element's attributes and content; a component's (`<x-...>`) bound attributes
+    /// (`:name="php"`, `:$name`) are PHP. The text of `<script>` and `<style>`, which Forte reads
+    /// as raw text (Blade's own constructs aside), is read as a template of its own where it holds
+    /// a component tag, as Blade's compiler reads any text (a `<script type="text/x-template">`).
+    fn tag(&mut self, node: BladeNode<'_>) {
+        let component = is_component(&node);
+        let raw = node.kind() == "element"
+            && node.field("name").is_some_and(|name| {
+                let name = name.bytes();
+                name.eq_ignore_ascii_case(b"script") || name.eq_ignore_ascii_case(b"style")
             });
+        let children = node.children().collect::<Vec<_>>();
+        // The content: between the start tag's `>` and the closing tag's `<`.
+        let open = children.iter().position(|child| child.kind() == ">");
+        let close = children
+            .iter()
+            .position(|child| child.field_name() == Some("closing_name"))
+            .map(|name| name.saturating_sub(2))
+            .unwrap_or(children.len());
+        let content = open.filter(|&open| raw && open < close).and_then(|open| {
+            let start = self.span(&children[open]).end;
+            let end = children
+                .get(close)
+                .map_or(self.span(&node).end, |child| self.span(child).start);
+            let text = &self.template[start..end.max(start)];
+            (text.contains("<x-") || text.contains("<x:")).then_some((open + 1..close, start..end))
+        });
         // A component's attributes by name, the last of a name winning (Blade reads them into
         // an array): an earlier one of the same name is not compiled.
-        let template = self.template;
-        let key = |attribute: TsNode<'_>| -> Option<&'t str> {
-            let name = children(attribute)
-                .into_iter()
-                .find(|kid| kid.kind() == "attribute_name")?;
-            let name = &template[name.byte_range()];
-            let name = name
-                .strip_prefix(':')
-                .filter(|rest| !rest.starts_with(':'))
-                .unwrap_or(name);
-            Some(name.trim_start_matches('$'))
-        };
-        let mut index = 0;
-        while index < kids.len() {
-            let kid = kids[index];
-            if component
-                && kid.kind() == "attribute"
-                && let Some(name) = key(kid)
-                && kids[index + 1..]
-                    .iter()
-                    .any(|later| later.kind() == "attribute" && key(*later) == Some(name))
-            {
-                index += 1;
-                continue;
-            }
-            if component
-                && kid.kind() == "attribute"
-                && let Some(bound) = self.bound(kid)
-            {
-                self.copy(bound.clone());
-                self.emit("\n;", at(bound.end));
-            } else if kid.kind() == "directive"
-                && let Some((open, close, next)) = self.parens(&kids, index + 1)
-            {
-                self.directive(kid, open, close);
-                index = next;
-                continue;
-            } else {
-                self.node(kid);
-            }
-            index += 1;
-        }
-    }
-
-    /// An attribute that holds only text, read with the attributes after it that hold only text,
-    /// and the name of the one after them: the grammar may split an echo across them
-    /// (`wire:model.{{ $modifier }}="search"`, `x-on:{{ $event }}.window="@js($id)"`).
-    fn plain_attributes(&mut self, attribute: TsNode<'_>) {
-        let mut end = attribute.end_byte();
-        let mut next = attribute.next_sibling();
-        while let Some(sibling) = next {
-            if sibling.kind() != "attribute" || self.text(sibling).starts_with(':') {
-                break;
-            }
-            if !plain(sibling) {
-                if let Some(name) = children(sibling)
-                    .into_iter()
-                    .find(|kid| kid.kind() == "attribute_name")
-                {
-                    end = name.end_byte();
+        let keys = children
+            .iter()
+            .map(|child| {
+                let name = child
+                    .field("name")
+                    .filter(|_| child.kind() == "attribute")?;
+                let name = name.bytes();
+                let mut name = name
+                    .strip_prefix(b":")
+                    .filter(|rest| !rest.starts_with(b":"))
+                    .unwrap_or(name);
+                while let Some(rest) = name.strip_prefix(b"$") {
+                    name = rest;
                 }
-                break;
+                Some(name.to_vec())
+            })
+            .collect::<Vec<_>>();
+        for (index, child) in children.iter().enumerate() {
+            if let Some((children, range)) = &content
+                && children.contains(&index)
+            {
+                if index == children.start {
+                    self.template(range.clone());
+                    self.loosened = self.loosened.max(range.end);
+                }
+                continue;
             }
-            end = sibling.end_byte();
-            next = sibling.next_sibling();
+            if component && child.kind() == "attribute" {
+                if keys[index].is_some() && keys[index + 1..].contains(&keys[index]) {
+                    continue;
+                }
+                if let Some(bound) = self.bound(child) {
+                    self.copy(bound.clone());
+                    self.emit("\n;", at(bound.end));
+                    continue;
+                }
+            }
+            self.node(*child);
         }
-        self.loose(attribute.start_byte()..end);
     }
 
     /// The PHP a component attribute binds: `:name="php"`'s value, `:$name`'s variable.
-    fn bound(&self, attribute: TsNode<'_>) -> Option<Range<usize>> {
-        let kids = children(attribute);
-        let name = kids.iter().find(|kid| kid.kind() == "attribute_name")?;
-        let text = self.text(*name);
+    fn bound(&self, attribute: &BladeNode<'_>) -> Option<Range<usize>> {
+        let name = self.span(&attribute.field("name")?);
+        let text = self.text(name.clone());
         if !text.starts_with(':') || text.starts_with("::") {
             return None;
         }
-        match kids
-            .iter()
-            .find(|kid| kid.kind() == "quoted_attribute_value")
-        {
+        let value = attribute.field("value").filter(|value| {
+            let bytes = value.bytes();
+            bytes.len() >= 2 && matches!(bytes[0], b'"' | b'\'') && bytes.last() == Some(&bytes[0])
+        });
+        match value {
             Some(value) => {
-                let range = value.byte_range();
-                (range.len() >= 2).then(|| range.start + 1..range.end - 1)
+                let range = self.span(&value);
+                Some(range.start + 1..range.end - 1)
             }
-            None if text.starts_with(":$") => Some(name.start_byte() + 1..name.end_byte()),
+            None if attribute.field("value").is_none() && text.starts_with(":$") => {
+                Some(name.start + 1..name.end)
+            }
             None => None,
         }
     }
 
-    /// A block the grammar read around a directive `BladeCompiler` does not compile (its error
-    /// recovery's, or a package's block such as `@capture ... @endcapture`, an application's
-    /// `Blade::if`): with arguments, the directive is an application's (`application_directive`);
-    /// what follows them is the template's.
-    fn unknown_block(&mut self, kids: &[TsNode<'_>]) {
-        let head = self.parens(kids, 1);
-        if head.is_some() {
-            self.application_directive(kids[0].byte_range());
-        }
-        let body = head.map_or(1, |(_, _, next)| next);
-        self.sequence(kids, body);
-    }
-
-    /// `<script>` and `<style>` text, which Blade's compiler reads as it reads any template text:
-    /// parsed as a template of its own over those bytes.
-    fn raw_text(&mut self, range: Range<usize>) {
-        let point = |at: usize| {
-            let before = &self.template[..at];
-            let row = before.matches('\n').count();
-            let column = before.len() - before.rfind('\n').map_or(0, |newline| newline + 1);
-            tree_sitter::Point { row, column }
-        };
-        let ranges = [tree_sitter::Range {
-            start_byte: range.start,
-            end_byte: range.end,
-            start_point: point(range.start),
-            end_point: point(range.end),
-        }];
-        let mut parser = Parser::new();
-        if range.is_empty()
-            || parser
-                .set_language(&GrammarDialect::Blade.get_ts_language())
-                .is_err()
-            || parser.set_included_ranges(&ranges).is_err()
-        {
-            return;
-        }
-        if let Some(tree) = parser.parse(self.template, None) {
-            self.children(tree.root_node());
-        }
-    }
-
-    /// Echoes, and directives with arguments that compile to a statement, in text the grammar did
-    /// not read as Blade (an attribute's name, an HTML comment, or what its error recovery left),
-    /// found as Blade's compiler finds them. A directive Blade compiles to control flow there is
-    /// not read: the view reads no half of a structure.
+    /// Echoes, and directives with arguments that compile to a statement, in text Forte did not
+    /// read as Blade (a directive its registry does not know, an HTML comment's text), found as
+    /// Blade's compiler finds them. A directive Blade compiles to control flow there is not read:
+    /// the view reads no half of a structure.
     fn loose(&mut self, range: Range<usize>) {
         let range = range.start.max(self.loosened)..range.end;
         if range.is_empty() {
@@ -1201,7 +1562,9 @@ impl<'t> Emitter<'t> {
         let mut index = 0;
         // Where the last escaped directive (`@@name(...)`) ends: a directive inside it is text.
         let mut escaped_until = 0;
-        while let Some(found) = text[index..].find(['{', '@']) {
+        // `@@` and an escaped directive can step past the range's end (the second `@` is the next
+        // node's): the text ends there.
+        while let Some(found) = text.get(index..).and_then(|rest| rest.find(['{', '@'])) {
             index += found;
             let rest = &text[index..];
             if rest.starts_with('@') {
@@ -1236,15 +1599,18 @@ impl<'t> Emitter<'t> {
             } else {
                 self.template[..range.start].ends_with('@')
             };
+            if escaped {
+                // Blade writes `@{{ ... }}` as text, after compiling the directives it holds.
+                index += open.len();
+                continue;
+            }
             let Some(end) = rest[open.len()..].find(close) else {
                 break;
             };
             let start = range.start + index;
             let php = start + open.len()..start + open.len() + end;
             let after = php.end + close.len();
-            if !escaped {
-                self.echo(start..start + open.len(), php.clone(), php.end..after);
-            }
+            self.echo(start..start + open.len(), php.clone(), php.end..after);
             index = after - range.start;
         }
     }

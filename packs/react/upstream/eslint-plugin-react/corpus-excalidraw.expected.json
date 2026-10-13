@@ -13,6 +13,7 @@
    "react/jsx-no-duplicate-props",
    "react/jsx-no-target-blank",
    "react/jsx-no-undef",
+   "react/no-array-index-key",
    "react/no-children-prop",
    "react/no-danger",
    "react/no-danger-with-children",
@@ -130,6 +131,78 @@
    "path": "packages/excalidraw/components/welcome-screen/WelcomeScreen.Center.tsx",
    "line": 76,
    "column": 5
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "excalidraw-app/components/AppWelcomeScreen.tsx",
+   "line": 27,
+   "column": 20
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/ColorPicker/CustomColorList.tsx",
+   "line": 68,
+   "column": 18
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+   "line": 76,
+   "column": 22
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/ContextMenu.tsx",
+   "line": 79,
+   "column": 31
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/ContextMenu.tsx",
+   "line": 100,
+   "column": 22
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/HintViewer.tsx",
+   "line": 299,
+   "column": 24
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/IconPicker.tsx",
+   "line": 239,
+   "column": 30
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/IconPicker.tsx",
+   "line": 243,
+   "column": 46
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/LibraryMenuSection.tsx",
+   "line": 93,
+   "column": 36
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/PublishLibrary.tsx",
+   "line": 346,
+   "column": 59
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/SearchMenu.tsx",
+   "line": 467,
+   "column": 26
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "packages/excalidraw/components/TTDDialog/TTDDialogOutput.tsx",
+   "line": 81,
+   "column": 24
   },
   {
    "rule": "react/no-danger",

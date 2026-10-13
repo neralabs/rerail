@@ -11,6 +11,7 @@
    "react/jsx-no-duplicate-props",
    "react/jsx-no-target-blank",
    "react/jsx-no-undef",
+   "react/no-array-index-key",
    "react/no-children-prop",
    "react/no-danger",
    "react/no-danger-with-children",
@@ -311,6 +312,77 @@
    "jsx-no-undef/invalid-003.jsx",
    "jsx-no-undef/invalid-004.jsx",
    "jsx-no-undef/invalid-005.jsx",
+   "no-array-index-key/valid-000.jsx",
+   "no-array-index-key/valid-001.jsx",
+   "no-array-index-key/valid-002.jsx",
+   "no-array-index-key/valid-003.jsx",
+   "no-array-index-key/valid-004.jsx",
+   "no-array-index-key/valid-005.jsx",
+   "no-array-index-key/valid-006.jsx",
+   "no-array-index-key/valid-007.jsx",
+   "no-array-index-key/valid-008.jsx",
+   "no-array-index-key/valid-009.jsx",
+   "no-array-index-key/valid-010.jsx",
+   "no-array-index-key/valid-011.jsx",
+   "no-array-index-key/valid-012.jsx",
+   "no-array-index-key/valid-013.jsx",
+   "no-array-index-key/valid-014.jsx",
+   "no-array-index-key/valid-015.jsx",
+   "no-array-index-key/valid-016.jsx",
+   "no-array-index-key/valid-017.jsx",
+   "no-array-index-key/valid-018.jsx",
+   "no-array-index-key/valid-019.jsx",
+   "no-array-index-key/valid-020.jsx",
+   "no-array-index-key/valid-021.jsx",
+   "no-array-index-key/valid-022.jsx",
+   "no-array-index-key/valid-023.jsx",
+   "no-array-index-key/valid-024.jsx",
+   "no-array-index-key/valid-025.jsx",
+   "no-array-index-key/valid-026.jsx",
+   "no-array-index-key/valid-027.jsx",
+   "no-array-index-key/valid-028.jsx",
+   "no-array-index-key/valid-029.jsx",
+   "no-array-index-key/invalid-000.jsx",
+   "no-array-index-key/invalid-001.jsx",
+   "no-array-index-key/invalid-002.jsx",
+   "no-array-index-key/invalid-003.jsx",
+   "no-array-index-key/invalid-004.jsx",
+   "no-array-index-key/invalid-005.jsx",
+   "no-array-index-key/invalid-006.jsx",
+   "no-array-index-key/invalid-007.jsx",
+   "no-array-index-key/invalid-008.jsx",
+   "no-array-index-key/invalid-009.jsx",
+   "no-array-index-key/invalid-010.jsx",
+   "no-array-index-key/invalid-011.jsx",
+   "no-array-index-key/invalid-012.jsx",
+   "no-array-index-key/invalid-013.jsx",
+   "no-array-index-key/invalid-014.jsx",
+   "no-array-index-key/invalid-015.jsx",
+   "no-array-index-key/invalid-016.jsx",
+   "no-array-index-key/invalid-017.jsx",
+   "no-array-index-key/invalid-018.jsx",
+   "no-array-index-key/invalid-019.jsx",
+   "no-array-index-key/invalid-020.jsx",
+   "no-array-index-key/invalid-021.jsx",
+   "no-array-index-key/invalid-022.jsx",
+   "no-array-index-key/invalid-023.jsx",
+   "no-array-index-key/invalid-024.jsx",
+   "no-array-index-key/invalid-025.jsx",
+   "no-array-index-key/invalid-026.jsx",
+   "no-array-index-key/invalid-027.jsx",
+   "no-array-index-key/invalid-028.jsx",
+   "no-array-index-key/invalid-029.jsx",
+   "no-array-index-key/invalid-030.jsx",
+   "no-array-index-key/invalid-031.jsx",
+   "no-array-index-key/invalid-032.jsx",
+   "no-array-index-key/invalid-033.jsx",
+   "no-array-index-key/invalid-034.jsx",
+   "no-array-index-key/invalid-035.jsx",
+   "no-array-index-key/invalid-036.jsx",
+   "no-array-index-key/invalid-037.jsx",
+   "no-array-index-key/invalid-038.jsx",
+   "no-array-index-key/invalid-039.jsx",
+   "no-array-index-key/invalid-040.jsx",
    "no-children-prop/valid-000.jsx",
    "no-children-prop/valid-001.jsx",
    "no-children-prop/valid-002.jsx",
@@ -1631,6 +1703,252 @@
   },
   {
    "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-000.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-001.jsx",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-002.jsx",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-003.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-004.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-005.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-010.jsx",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-011.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-012.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-013.jsx",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-014.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-015.jsx",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-016.jsx",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-017.jsx",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-018.jsx",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-037.jsx",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-038.jsx",
+   "line": 3,
+   "column": 12
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-039.jsx",
+   "line": 3,
+   "column": 12
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/invalid-040.jsx",
+   "line": 3,
+   "column": 12
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-000.jsx",
+   "line": 1,
+   "column": 2
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-001.jsx",
+   "line": 1,
+   "column": 2
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-002.jsx",
+   "line": 1,
+   "column": 2
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-003.jsx",
+   "line": 1,
+   "column": 2
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-004.jsx",
+   "line": 1,
+   "column": 2
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-005.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-006.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-007.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-008.jsx",
+   "line": 1,
+   "column": 19
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-009.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-010.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-015.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-016.jsx",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-017.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-018.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-019.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-020.jsx",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-021.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-022.jsx",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-023.jsx",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-024.jsx",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "react/jsx-no-undef",
+   "path": "no-array-index-key/valid-029.jsx",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "react/jsx-no-undef",
    "path": "no-children-prop/invalid-009.jsx",
    "line": 1,
    "column": 2
@@ -2060,6 +2378,258 @@
    "path": "self-closing-comp/valid-031.jsx",
    "line": 1,
    "column": 18
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "jsx-key/valid-027.jsx",
+   "line": 11,
+   "column": 28
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-000.jsx",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-001.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-002.jsx",
+   "line": 1,
+   "column": 38
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-003.jsx",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-004.jsx",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-005.jsx",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-006.jsx",
+   "line": 1,
+   "column": 78
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-007.jsx",
+   "line": 4,
+   "column": 80
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-008.jsx",
+   "line": 4,
+   "column": 18
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-009.jsx",
+   "line": 6,
+   "column": 18
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-010.jsx",
+   "line": 1,
+   "column": 46
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-011.jsx",
+   "line": 1,
+   "column": 45
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-012.jsx",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-013.jsx",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-014.jsx",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-015.jsx",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-016.jsx",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-017.jsx",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-018.jsx",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-019.jsx",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-020.jsx",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-021.jsx",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-022.jsx",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-023.jsx",
+   "line": 1,
+   "column": 70
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-024.jsx",
+   "line": 1,
+   "column": 69
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-025.jsx",
+   "line": 1,
+   "column": 67
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-026.jsx",
+   "line": 1,
+   "column": 68
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-027.jsx",
+   "line": 1,
+   "column": 67
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-028.jsx",
+   "line": 1,
+   "column": 72
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-029.jsx",
+   "line": 3,
+   "column": 51
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-030.jsx",
+   "line": 5,
+   "column": 45
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-031.jsx",
+   "line": 3,
+   "column": 51
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-032.jsx",
+   "line": 5,
+   "column": 45
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-033.jsx",
+   "line": 3,
+   "column": 51
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-034.jsx",
+   "line": 5,
+   "column": 45
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-035.jsx",
+   "line": 3,
+   "column": 51
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-036.jsx",
+   "line": 5,
+   "column": 45
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-037.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-038.jsx",
+   "line": 3,
+   "column": 25
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-039.jsx",
+   "line": 3,
+   "column": 32
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "no-array-index-key/invalid-040.jsx",
+   "line": 3,
+   "column": 25
   },
   {
    "rule": "react/no-children-prop",
@@ -4196,6 +4766,252 @@
    "path": "jsx-no-undef/valid-008.jsx",
    "line": 5,
    "column": 13
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-000.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-001.jsx",
+   "line": 1,
+   "column": 26
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-002.jsx",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-003.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-004.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-005.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-010.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-011.jsx",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-012.jsx",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-013.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-014.jsx",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-015.jsx",
+   "line": 1,
+   "column": 38
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-016.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-017.jsx",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-018.jsx",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-037.jsx",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-038.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-039.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/invalid-040.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-000.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-001.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-002.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-003.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-004.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-005.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-006.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-007.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-008.jsx",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-009.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-010.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-015.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-016.jsx",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-017.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-018.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-019.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-020.jsx",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-021.jsx",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-022.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-023.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-024.jsx",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "no-array-index-key/valid-029.jsx",
+   "line": 1,
+   "column": 19
   },
   {
    "rule": "react/react-in-jsx-scope",

@@ -15,8 +15,8 @@ export const LANGUAGES_DIRECTORY = resolve(ROOT, "languages");
 export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "code-rule", "code-rule-language-registry.generated.ts");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name. */
-export const LANGUAGE_PARSERS = ["tree-sitter"] as const;
+/** The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/). */
+export const LANGUAGE_PARSERS = ["tree-sitter", "forte"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
 const support = z.enum(["supported", "refused", "not-supported-yet"]);
@@ -26,7 +26,7 @@ const dialectSchema = z
     variant: z.string().regex(/^[A-Z][A-Za-z0-9]*$/u, "Must be the engine's GrammarDialect variant (a Rust type name).").optional(),
     suffixes: z.array(z.string().regex(/^\.[^/A-Z]+$/u, "Must be a lowercase `.suffix`.")).min(1),
     parser: z.enum(LANGUAGE_PARSERS).optional(),
-    grammar: z.string().regex(/^(?:vendored:[a-z][a-z0-9-]*|ast-grep:[A-Z][A-Za-z0-9]*)$/u, "Must be vendored:<name> or ast-grep:<Language>.").optional(),
+    grammar: z.string().regex(/^(?:vendored:[a-z][a-z0-9-]*|native:[a-z][a-z0-9-]*|ast-grep:[A-Z][A-Za-z0-9]*)$/u, "Must be vendored:<name>, native:<name> or ast-grep:<Language>.").optional(),
     tapeTag: z.number().int().min(1).max(255).optional(),
   })
   .strict();

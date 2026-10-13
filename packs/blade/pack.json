@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "15 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "17 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Blade templates",
   "match": {
     "any": [
@@ -139,6 +139,18 @@
           "text": "<script>\n    const user = {{ Js::from($user) }};\n</script>\n"
         }
       }
+    },
+    {
+      "id": "tlint-no-dump-directives",
+      "document": "rules/tlint-no-dump-directives.json",
+      "title": "tlint NoDumpDirectives: No @dd or @dump directive",
+      "group": "tlint"
+    },
+    {
+      "id": "tlint-no-ray-directive",
+      "document": "rules/tlint-no-ray-directive.json",
+      "title": "tlint NoRayDirective: No @ray directive",
+      "group": "tlint"
     },
     {
       "id": "tlint-space-after-blade-directives",

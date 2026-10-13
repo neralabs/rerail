@@ -115,7 +115,7 @@ fn persisted_image_round_trips_without_parsing() {
         .collect::<String>();
     assert_eq!(
         digest,
-        "02c57e4f47757c7c59658fb4fbb526bc49c6ac4f20d07405bb65b1a2845889c1"
+        "6fe4a84d7213cb437802c2ed6f023ddc6f8a3c6531db28e16115908c3a4481a7"
     );
 }
 
@@ -263,7 +263,12 @@ fn positions_count_only_line_feeds_in_every_dialect() {
             "<p>{{ $x }}</p>\r@if($y)\u{2028}\r\n{{ $z }}\u{2029}\n\r@endif\r",
         ),
     ] {
-        let (native, tape, _, _) = fixture(source, lang);
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .unwrap()
+            .unwrap();
+        let tape =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
         let tree_sitter_point = |byte: usize| {
             let before = &source.as_bytes()[..byte];
             let row = before.iter().filter(|&&b| b == b'\n').count();
@@ -287,10 +292,10 @@ fn positions_count_only_line_feeds_in_every_dialect() {
                 );
             }
         }
-        // A Blade tape appends its embedded PHP view's nodes, which the native template lacks;
-        // `corpus_parity` compares those against the native view.
+        // A Blade tape is Forte's tree and its embedded PHP view's nodes; `corpus_parity`
+        // compares those against the Forte tree and the view.
         if lang != GrammarDialect::Blade {
-            let native = AstGrep::doc(native);
+            let native = AstGrep::doc(StrDoc::new(source, lang));
             let native_nodes = native.root().dfs().collect::<Vec<_>>();
             let tape_nodes = restored.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
