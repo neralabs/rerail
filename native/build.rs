@@ -214,21 +214,20 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
         }
     }
     // A Blade tape is the template's Forte tree and the PHP view of it: the port, its directive
-    // registry and how the view is built are part of the tape. Their tests are not.
-    let mut blade_sources = Vec::new();
-    collect_sources(
-        &manifest.join("src/code_rule_dsl/blade"),
-        &mut blade_sources,
-    );
-    blade_sources.retain(|path| {
+    // registry and how the view is built are part of the tape, as is the view a PHP file is
+    // parsed from (`php_view`, which reads with Forte's scanners). Their tests are not.
+    let mut view_sources = Vec::new();
+    collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
+    view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
+    view_sources.retain(|path| {
         !path
             .file_name()
             .expect("file name")
             .to_string_lossy()
             .ends_with("tests.rs")
     });
-    blade_sources.sort();
-    let blade_sources = blade_sources
+    view_sources.sort();
+    let view_sources = view_sources
         .into_iter()
         .map(|path| {
             let relative = path
@@ -236,7 +235,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
                 .expect("source under manifest")
                 .to_string_lossy()
                 .into_owned();
-            let bytes = std::fs::read(&path).expect("Blade source is readable");
+            let bytes = std::fs::read(&path).expect("view source is readable");
             (relative, bytes)
         })
         .collect::<Vec<_>>();
@@ -249,7 +248,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
         .map(|(path, bytes)| (*path, bytes.as_slice()))
         .collect();
     tape_sources.extend(
-        blade_sources
+        view_sources
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
     );

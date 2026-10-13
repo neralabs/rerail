@@ -1202,3 +1202,92 @@ fn a_lookup_from_a_nearby_node_finds_what_a_lookup_from_the_root_finds() {
         agree(tape, &format!("{lang:?} tape"));
     }
 }
+
+/// A PHP template's tape is its view's tree (`php_view`) over the template: no syntax errors, every
+/// span reads the template, and inline text holds no node.
+#[test]
+fn a_php_template_tapes_its_php_view() {
+    let cases: [(&str, &[&str], &[&str]); 6] = [
+        (
+            "<?php\nprint(1);\n?>\n<script>\nx = eval('document.getElementById (option)');\n</script>\n",
+            &["<script>\nx = eval('document.getElementById (option)');\n</script>"],
+            &[],
+        ),
+        (
+            "<?php\neval('$a = 1;');\n?>\n<p>hi</p>\n<?php eval('$b = 2;'); ?>\n",
+            &["<p>hi</p>"],
+            &["eval('$a = 1;')", "eval('$b = 2;')"],
+        ),
+        (
+            "<html><?php foo(); ?></html>\n",
+            &["<html>", "</html>"],
+            &["foo()"],
+        ),
+        (
+            "<?php if ($a): ?>\n<p>x</p>\n<?php endif; ?>\n",
+            &["<p>x</p>"],
+            &[],
+        ),
+        ("<p><?= $x ?></p>\n", &["<p>", "</p>"], &[]),
+        (
+            "<p><?php $s = '?>'; $t = <<<EOT\n?>\nEOT;\nf($t) // c ?></p>\r\n<?php if ($a) { ?>é<?php } ?>\n",
+            &["</p>", "é"],
+            &["f($t)"],
+        ),
+    ];
+    for (source, inline, calls) in cases {
+        let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .unwrap()
+            .unwrap();
+        let tape =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        assert_eq!(
+            tape.syntax_error_ranges(),
+            Vec::<Range<usize>>::new(),
+            "{source:?}"
+        );
+        let inline = inline
+            .iter()
+            .map(|text| {
+                let start = source.find(text).unwrap();
+                start..start + text.len()
+            })
+            .collect::<Vec<_>>();
+        let root = AstGrep::doc(tape);
+        // The view's tree, node for node, its texts read from the template.
+        let view = AstGrep::doc(StrDoc::new(
+            &super::super::php_view::view(source),
+            GrammarDialect::Php,
+        ));
+        let native = view
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        let taped = root
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        assert_eq!(native, taped, "{source:?}");
+        let mut found = Vec::new();
+        for node in root.root().dfs() {
+            let range = node.range();
+            assert_eq!(node.text(), &source[range.clone()], "{source:?}");
+            if node.children().next().is_none() {
+                assert!(
+                    inline
+                        .iter()
+                        .all(|text| range.end <= text.start || text.end <= range.start),
+                    "{source:?}: {} at {range:?} is inline text",
+                    node.kind()
+                );
+            }
+            if node.kind() == "function_call_expression" {
+                found.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(found, calls, "{source:?}");
+    }
+}

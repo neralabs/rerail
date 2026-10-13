@@ -8,7 +8,6 @@ use super::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, FileInput, Metrics,
     Snapshot, Terms, package_marker_directory, python_module_in,
 };
-use ast_grep_language::LanguageExt;
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
@@ -354,7 +353,7 @@ fn stateless_calls(
                 None,
             )
         } else {
-            let root = language.ast_grep(file.source.as_str());
+            let root = crate::code_rule_dsl::php_view::ast_grep(language, &file.source);
             let has_errors = root.root().get_doc().tree.root_node().has_error();
             let bytes = file.source.len();
             calls::summarize(
