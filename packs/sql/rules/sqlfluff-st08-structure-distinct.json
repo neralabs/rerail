@@ -3,28 +3,166 @@
   "id": "sqlfluff-st08-structure-distinct",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST08 (structure.distinct): flag DISTINCT whose first selected expression is parenthesized, or DISTINCT used as a function around a non-subquery expression.",
-  "scope": { "include": ["**/*.sql"], "exclude": [] },
+  "description": "Port of SQLFluff 4.4.0's ST08 (structure.distinct): in a SELECT DISTINCT whose first selected expression is parenthesized alone, report the parentheses; where the parentheses start an arithmetic expression right after DISTINCT with no space, report DISTINCT; and report DISTINCT written as a function, DISTINCT(x), as an aggregate's lone argument (not around a subquery).",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
   "clauses": [
     {
       "id": "distinct-select-parentheses",
-      "forbid": { "ast": { "language": "sql", "rule": {
-        "all": [
-          { "kind": "parenthesized_expression" },
-          { "inside": { "kind": "term", "inside": { "kind": "select_expression", "has": { "kind": "keyword_distinct" } } } }
-        ]
-      } } },
-      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses.", "suppress": { "sqlfluff": { "rules": ["ST08", "L015", "all", "core", "structure", "structure.distinct"] } } }
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "parenthesized_expression",
+            "inside": {
+              "kind": "term",
+              "field": "value",
+              "nthChild": 1,
+              "inside": {
+                "kind": "select_expression",
+                "follows": {
+                  "kind": "keyword_distinct"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "distinct-before-parenthesized-operand",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "keyword_distinct",
+            "inside": {
+              "kind": "select",
+              "regex": "^(?is:select\\s+distinct\\()"
+            },
+            "precedes": {
+              "kind": "select_expression",
+              "has": {
+                "kind": "term",
+                "nthChild": 1,
+                "has": {
+                  "field": "value",
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "left",
+                    "kind": "parenthesized_expression"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
     },
     {
       "id": "distinct-function-parentheses",
-      "forbid": { "ast": { "language": "sql", "rule": {
-        "all": [
-          { "kind": "keyword_distinct" },
-          { "inside": { "kind": "invocation", "has": { "kind": "parenthesized_expression", "not": { "has": { "kind": "subquery" } } } } }
-        ]
-      } } },
-      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses.", "suppress": { "sqlfluff": { "rules": ["ST08", "L015", "all", "core", "structure", "structure.distinct"] } } }
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "keyword_distinct",
+            "inside": {
+              "kind": "invocation"
+            },
+            "precedes": {
+              "kind": "term",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "field": "alias",
+                      "regex": "(?s)."
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                ]
+              },
+              "has": {
+                "field": "value",
+                "kind": "parenthesized_expression",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "subquery"
+                      },
+                      {
+                        "kind": "select"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
     }
   ]
 }

@@ -8,6 +8,14 @@
     "evidence": "SQLite-only: `'`''a\"'.id` qualifies a column with a string literal, which SQLite reads as an identifier in that position; PostgreSQL and ANSI SQL never take a string as a qualifier. The grammar reads that term as the literal `'`''a\"'`, an ERROR at `.`, then the alias `id` (tree checked with the vendored grammar), so the file has a syntax error and the engine reports nothing on it (T1). Recorded under dialect sqlite only (fixtures.cases.json: reference sqlite3 3.50.4, no postgresDialect entry)."
   },
   {
+    "rule": "sqlfluff-am02-ambiguous-union",
+    "source": "fixtures",
+    "path": "postgres/AM02/test_postgres.sql",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "SQLFluff's AM02 returns no result unless the dialect is in its list (ansi, bigquery, clickhouse, databricks, db2, hive, mysql, redshift, snowflake, trino; rules/ambiguous/AM02.py), and this upstream case checks that the postgres dialect is skipped. The engine reads every .sql file with one grammar and no dialect setting, and the bare UNION is the same statement there. Checked with sqlfluff 4.4.0: `--dialect ansi` and `--dialect mysql` report AM02 at 5:1, `--dialect postgres` reports nothing; libpg_query (PostgreSQL 18.6) accepts the file (fixtures.cases.json)."
+  },
+  {
     "rule": "sqlfluff-pg01-postgres-excessive-locks",
     "source": "anki",
     "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",

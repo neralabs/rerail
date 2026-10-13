@@ -3,16 +3,47 @@
   "id": "sqlfluff-st01-structure-else-null",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST01 (structure.else_null): reject a CASE expression whose ELSE clause contains the NULL literal; report the CASE expression start.",
-  "scope": {"include": ["**/*.sql"], "exclude": []},
+  "description": "Port of SQLFluff 4.4.0's ST01 (structure.else_null): reject a CASE expression whose ELSE clause is the bare NULL literal; report the CASE expression start.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
   "clauses": [
     {
       "id": "redundant-else-null",
-      "forbid": {"ast": {"language": "sql", "rule": {
-        "kind": "case",
-        "has": {"stopBy": "neighbor", "kind": "keyword_else", "follows": {"stopBy": "neighbor", "kind": "literal", "has": {"kind": "keyword_null"}}}
-      }}},
-      "violation": {"anchor": "witness.start", "code": "ST01", "message": "Do not specify ELSE NULL in a CASE WHEN statement.", "suppress": { "sqlfluff": { "rules": ["ST01", "L035", "all", "structure", "structure.else_null"] } }}
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "case",
+            "has": {
+              "kind": "keyword_else",
+              "precedes": {
+                "kind": "literal",
+                "regex": "^(?i:null)$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST01",
+        "message": "Do not specify ELSE NULL in a CASE WHEN statement.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST01",
+              "L035",
+              "all",
+              "structure",
+              "structure.else_null"
+            ]
+          }
+        }
+      }
     }
   ]
 }

@@ -3,24 +3,377 @@
   "id": "sqlfluff-st02-structure-simple-case",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST02 (structure.simple_case): report searched CASE expressions with one WHEN that reduce to boolean COALESCE or a NULL-filling expression; simple CASE, multiple WHENs, compound NULL predicates, and DISTINCT FROM remain untouched. Anchor the WHEN condition.",
-  "scope": {"include": ["**/*.sql"], "exclude": []},
+  "description": "Port of SQLFluff 4.4.0's ST02 (structure.simple_case): report a searched CASE with one WHEN that is a boolean (THEN TRUE ELSE FALSE, or the reverse), or whose condition is `column IS NULL` with the column as its ELSE, or `column IS NOT NULL` with the column as its THEN; anchored at the WHEN condition. A simple CASE, several WHENs, a compound condition and IS DISTINCT FROM are not reported.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
   "clauses": [
     {
       "id": "boolean-case",
-      "forbid": {"ast": {"language": "sql", "rule": {
-        "kind": "case",
-        "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>.*?)\\s+THEN\\s+(?:TRUE\\s+ELSE\\s+FALSE|FALSE\\s+ELSE\\s+TRUE)\\s+END$"
-      }}},
-      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead.", "suppress": { "sqlfluff": { "rules": ["ST02", "L043", "all", "structure", "structure.simple_case"] } }}
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "case",
+            "all": [
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "follows": {
+                    "kind": "keyword_case",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_when",
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "keyword_when"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "precedes": {
+                    "pattern": "$C",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_then",
+                  "precedes": {
+                    "kind": "literal",
+                    "regex": "^(?i:true|false)$",
+                    "pattern": "$T",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_else",
+                  "precedes": {
+                    "kind": "literal",
+                    "regex": "^(?i:true|false)$",
+                    "pattern": "$E",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "compare": {
+                  "left": "T",
+                  "op": "ne",
+                  "right": "E",
+                  "collation": "fold-upper"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "ST02",
+        "message": "Unnecessary CASE statement. Use COALESCE function instead.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST02",
+              "L043",
+              "all",
+              "structure",
+              "structure.simple_case"
+            ]
+          }
+        }
+      }
     },
     {
-      "id": "null-filling-case",
-      "forbid": {"ast": {"language": "sql", "rule": {
-        "kind": "case",
-        "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>[^\\r\\n]+?\\s+IS(?:\\s+NOT)?\\s+NULL)\\s+THEN\\s+.+?\\s+(?:ELSE\\s+.+?\\s+)?END$"
-      }}},
-      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead.", "suppress": { "sqlfluff": { "rules": ["ST02", "L043", "all", "structure", "structure.simple_case"] } }}
+      "id": "is-null-else-operand",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "case",
+            "all": [
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "follows": {
+                    "kind": "keyword_case",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_when",
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "keyword_when"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "precedes": {
+                    "kind": "binary_expression",
+                    "pattern": "$C",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "kind": "keyword_is"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "right",
+                          "kind": "literal",
+                          "regex": "^(?i:null)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "pattern": "$X",
+                          "any": [
+                            {
+                              "kind": "field"
+                            },
+                            {
+                              "kind": "subscript",
+                              "has": {
+                                "field": "expression",
+                                "kind": "field"
+                              },
+                              "not": {
+                                "has": {
+                                  "field": "subscript",
+                                  "not": {
+                                    "kind": "literal"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_else",
+                  "precedes": {
+                    "pattern": "$E",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "compare": {
+                  "left": "X",
+                  "op": "eq",
+                  "right": "E",
+                  "text": "source",
+                  "collation": "fold-upper"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "ST02",
+        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST02",
+              "L043",
+              "all",
+              "structure",
+              "structure.simple_case"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "is-not-null-then-operand",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "case",
+            "all": [
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "follows": {
+                    "kind": "keyword_case",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_when",
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "keyword_when"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_when",
+                  "precedes": {
+                    "kind": "binary_expression",
+                    "pattern": "$C",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "kind": "is_not"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "right",
+                          "kind": "literal",
+                          "regex": "^(?i:null)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "pattern": "$X",
+                          "any": [
+                            {
+                              "kind": "field"
+                            },
+                            {
+                              "kind": "subscript",
+                              "has": {
+                                "field": "expression",
+                                "kind": "field"
+                              },
+                              "not": {
+                                "has": {
+                                  "field": "subscript",
+                                  "not": {
+                                    "kind": "literal"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "keyword_then",
+                  "precedes": {
+                    "pattern": "$T",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "compare": {
+                  "left": "X",
+                  "op": "eq",
+                  "right": "T",
+                  "text": "source",
+                  "collation": "fold-upper"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "ST02",
+        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST02",
+              "L043",
+              "all",
+              "structure",
+              "structure.simple_case"
+            ]
+          }
+        }
+      }
     }
   ]
 }
