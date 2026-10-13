@@ -20,20 +20,28 @@ fn main() {
 }
 
 /// The language registry, `languages/` at the repository root: validated, and generated into
-/// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes.
+/// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes. The languages only
+/// tests see (`native/test-languages/`, absent from a copy that carries none) are validated
+/// against it and generated as `#[cfg(test)]` items; they are not returned, so they are no part of
+/// the engine's identity.
 fn generate_languages() -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let directory = manifest
-        .parent()
-        .expect("repository root")
-        .join("languages");
+    let root = manifest.parent().expect("repository root");
+    let directory = root.join("languages");
+    let test_directory = manifest.join("test-languages");
     println!("cargo:rerun-if-changed={}", directory.display());
+    println!("cargo:rerun-if-changed={}", test_directory.display());
     let vendored = GRAMMARS
         .iter()
         .map(|grammar| grammar.name)
         .collect::<Vec<_>>();
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
-    languages::generate(&directory, &vendored, &out)
+    languages::generate(
+        &directory,
+        test_directory.is_dir().then_some(test_directory.as_path()),
+        &vendored,
+        &out,
+    )
 }
 
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and

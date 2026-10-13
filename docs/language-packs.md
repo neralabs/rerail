@@ -114,6 +114,22 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 3. **Supported.** The entry flips to `supported` once its dialects have a grammar, a parser and a tape tag and its
    adapter is in place; the build fails until each exists.
 
+## The test-only language
+
+`native/test-languages/exemplar.json` is a planned language only tests see: family `exemplar`, one dialect `exemplar`
+with the suffix `.exemplar`, every capability `not-supported-yet`, no suppressions and no tape tag. A test that needs
+"a planned language" names it, so flipping a real planned language to supported never touches a test. It is in no
+package and never in the product:
+
+- `languages/` and the generated host module do not list it; `npm run generate:languages` reads `languages/` alone.
+- `native/build.rs` validates it with the same rules as any entry, and against the registry for repeated ids, labels,
+  suffixes and tape tags, and generates it only as `#[cfg(test)]` items: `PLANNED_LANGUAGES` lists it in test builds
+  (`TEST_PLANNED_LANGUAGES` names the languages only tests plan) and not otherwise. It is no part of the engine's
+  identity.
+- A host test mocks the generated module with `exemplarRegistryModule()` and the native module with
+  `nativeRefusingExemplar` (`test/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
+  loads is a product build and does not know it. The engine's own refusal, `language-not-supported`, is a native test.
+
 ## Adding a language
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
@@ -156,7 +172,7 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
 The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/node/` or
 `packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
-example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
+example-proven rule and a ported one) and `fixtures/packs/exemplar/` (a pack for a planned language).
 
 ### A pack for a supported language
 
@@ -249,12 +265,12 @@ entry (below).
 
 ### A pack for a planned language
 
-The same files, with rules whose `language` the registry lists as `planned` (`vue`, `rust`, `sql`), or that read a
-capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
-skipped as `not supported yet` with the engine's reason, for example
-``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
-once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/vue/` is a
-complete example.
+The same files, with rules whose `language` the registry lists as `planned`, or that read a capability their
+language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is skipped as
+`not supported yet` with the engine's reason, for example
+``/clauses/0/forbid/ast/language: `exemplar` is not supported yet``. Write its `examples` now; checks 3 and 4 run
+them once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/exemplar/` is a
+complete example, for the test-only planned language above.
 
 ### A ported pack
 
