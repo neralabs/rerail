@@ -89,7 +89,8 @@ impl ClippyIndex {
                     .and_then(|parent| {
                         // An attribute the grammar makes a node's first child (a match arm's, a
                         // closure's) applies to that node; in a list of items, statements,
-                        // fields or variants it applies to the next one.
+                        // fields or variants it applies to the next one, and to that one's other
+                        // attributes (rustc sets an item's levels before checking its attributes).
                         let list = matches!(
                             parent.kind().as_ref(),
                             "source_file"
@@ -106,14 +107,27 @@ impl ClippyIndex {
                         if !list && parent.range().start == node.range().start {
                             Some(parent.range())
                         } else {
+                            let mut start = node.range().start;
+                            let mut previous = node.prev();
+                            while let Some(sibling) = previous {
+                                match sibling.kind().as_ref() {
+                                    "attribute_item" => start = sibling.range().start,
+                                    "line_comment" | "block_comment" => {}
+                                    _ => break,
+                                }
+                                previous = sibling.prev();
+                            }
                             parent
                                 .children()
                                 .find(|sibling| {
                                     sibling.range().start >= end
                                         && sibling.is_named()
-                                        && sibling.kind() != "attribute_item"
+                                        && !matches!(
+                                            sibling.kind().as_ref(),
+                                            "attribute_item" | "line_comment" | "block_comment"
+                                        )
                                 })
-                                .map(|target| target.range())
+                                .map(|target| start..target.range().end)
                         }
                     })
                     .unwrap_or_else(|| node.range())
@@ -321,6 +335,26 @@ mod tests {
         let source = "#[cfg_attr(all(), allow(clippy::double_parens))]\nfn a() { ((1)); }\n#[cfg_attr(any(), allow(clippy::double_parens))]\nfn b() { ((2)); }\n";
         assert!(suppressed(source, "clippy::double_parens", "((1))"));
         assert!(!suppressed(source, "clippy::double_parens", "((2))"));
+    }
+
+    #[test]
+    fn an_items_levels_cover_its_own_attributes() {
+        let source = "#[expect(clippy::allow_attributes)] // why\n#[allow(unused)]\nstruct A;\n#[allow(unused)]\n#[expect(clippy::allow_attributes)]\nstruct B;\n#[allow(dead_code)]\nstruct C;\n";
+        assert!(suppressed(
+            source,
+            "clippy::allow_attributes",
+            "allow(unused)]\nstruct A"
+        ));
+        assert!(suppressed(
+            source,
+            "clippy::allow_attributes",
+            "allow(unused)]\n#[expect"
+        ));
+        assert!(!suppressed(
+            source,
+            "clippy::allow_attributes",
+            "allow(dead_code)"
+        ));
     }
 
     #[derive(Deserialize)]
