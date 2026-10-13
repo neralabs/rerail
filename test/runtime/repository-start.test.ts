@@ -104,13 +104,13 @@ describe("repository start state", () => {
 
     const first = recorder();
     const setUp = await startRerail(main, first, answered(databasePath, "start"));
-    // Of the packs core ships, set-up adds guardrails alone: it fits any repository.
-    expect(setUp).toMatchObject({ previous: "stopped", setUpRan: true, repositoryName: "acme-web", ruleCount: 1 });
+    // No pack core ships has a match definition, so set-up adds none.
+    expect(setUp).toMatchObject({ previous: "stopped", setUpRan: true, repositoryName: "acme-web", ruleCount: 0 });
     expect(first.lines[0]).toBe("Rerail is on in acme-web. Connected to Claude Code and Cursor.");
-    expect(attachedPacks(main, databasePath)).toEqual(["guardrails@"]);
+    expect(attachedPacks(main, databasePath)).toEqual([]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
     expect(readOnlyStartState(main, databasePath)).toBe("started");
-    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: 1 });
+    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: 0 });
 
     const stop = recorder();
     expect(stopRerail(main, stop, { databasePath })).toBe("started");
@@ -129,14 +129,14 @@ describe("repository start state", () => {
     writeFiles(main, { "api/acme_api/app.py": "app = None\n" });
     const again = recorder("terminal");
     const restarted = await startRerail(main, again, started(databasePath));
-    expect(restarted).toMatchObject({ previous: "stopped", setUpRan: false, ruleCount: complexityRuleCount });
-    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount} rules are on, as you left them.`]);
-    expect(attachedPacks(main, databasePath)).toEqual(["complexity@src", "guardrails@"]);
+    expect(restarted).toMatchObject({ previous: "stopped", setUpRan: false, ruleCount: complexityRuleCount - 1 });
+    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount - 1} rules are on, as you left them.`]);
+    expect(attachedPacks(main, databasePath)).toEqual(["complexity@src"]);
     // The session-start note counts the rules on in this checkout, as the person left them.
-    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: complexityRuleCount });
+    expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: complexityRuleCount - 1 });
   });
 
-  it("sets a TypeScript repository up with guardrails alone, the one pack core ships that is recommended", async () => {
+  it("sets a TypeScript repository up with no pack, since no pack core ships is recommended", async () => {
     const root = await temporary("rerail-start-packs-");
     const databasePath = join(root, "rerail.sqlite");
     const main = gitRepository(join(root, "acme"));
@@ -149,8 +149,8 @@ describe("repository start state", () => {
 
     const io = recorder();
     const report = await startRerail(main, io, answered(databasePath, "start"));
-    expect(report).toMatchObject({ ruleCount: 1 });
-    expect(attachedPacks(main, databasePath)).toEqual(["guardrails@"]);
+    expect(report).toMatchObject({ ruleCount: 0 });
+    expect(attachedPacks(main, databasePath)).toEqual([]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
   });
 
@@ -170,7 +170,7 @@ describe("repository start state", () => {
     expect(attachedPacks(main, databasePath)).toEqual([]);
   });
 
-  it("sets a repository up without asking with its recommended packs (guardrails, of those core ships), starting it only when nobody started or stopped it", async () => {
+  it("sets a repository up without asking with its recommended packs (none core ships), starting it only when nobody started or stopped it", async () => {
     const root = await temporary("rerail-start-auto-");
     const databasePath = join(root, "rerail.sqlite");
     const fresh = gitRepository(join(root, "fresh"));
@@ -181,14 +181,14 @@ describe("repository start state", () => {
 
     const database = openRerailDatabase(databasePath);
     try {
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([{ packId: "guardrails", folder: "" }]);
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([{ packId: "guardrails", folder: "" }]);
+      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([]);
+      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([]);
     } finally {
       database.$client.close();
     }
     expect(workspaceStartState(fresh, databasePath)).toBe("started");
     expect(workspaceStartState(stopped, databasePath)).toBe("stopped");
-    expect(attachedPacks(fresh, databasePath)).toEqual(["guardrails@"]);
+    expect(attachedPacks(fresh, databasePath)).toEqual([]);
   });
 
   it("takes a checkout's own value, then the nearest containing checkout's, then the repository's", async () => {

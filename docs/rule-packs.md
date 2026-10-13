@@ -8,14 +8,13 @@ Rerail recommends packs for a repository by matching the repository's files agai
 
 ## The packs
 
-Only rules that already exist ship as packs. Rerail ships two:
+Only rules that already exist ship as packs. Rerail ships one:
 
 | Pack | Category | Rules | Where it applies | What it is |
 |---|---|--:|---|---|
 | Cyclomatic complexity (limit 6) | language | 3 | never recommended; runs only in repositories that add it | One rule each for Python, TypeScript and JavaScript that flags a function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6. The documents are in `packs/complexity/rules/`. Group: Complexity. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| Guardrails | repository | 1 | recommended for every repository (its match is any file), for the whole repository | `guardrails-no-new-lint-suppression`, a [tool-call rule](tool-call-rules.md#shipped-rule-new-linter-suppression-comments) that steers a coding agent whose file write or edit adds a linter suppression comment (`eslint-disable`, `# noqa`, `# nosec`, `@ts-ignore`, `@phpstan-ignore` and the like): fix the cause, or ask the person to add it. The document is in `packs/guardrails/rules/`. Group: Suppressions. |
 
-The rule list is the pack file itself: `packs/<id>/pack.json`. A rule's title comes from its document's description. Core ships both packs inside its own package (`CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`, and `package.json` `files`); their rules run only in repositories that add them. Complexity has no match definition, so set-up never adds it; guardrails matches any file, so set-up recommends and adds it unless the person drops it in the review or picks packs themselves. The other packs under `packs/` are not shipped yet.
+The rule list is the pack file itself: `packs/complexity/pack.json`. A rule's title comes from its document's description. Core ships the pack inside its own package (`CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`, and `package.json` `files`); its rules run only in repositories that add it. It has no match definition, so setting a repository up adds no pack. The other packs under `packs/` are not shipped yet.
 
 A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
@@ -68,7 +67,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/engine/catalog/rule-packs.test.ts` holds the shipped packs to this: complexity lists exactly its three rules and guardrails its one, every rule starts in its document's mode, and every code rule's example is caught or passes as it says; `test/engine/catalog/guardrails-pack.test.ts` proves guardrails' examples, as a file a coding agent writes.
+`test/engine/catalog/rule-packs.test.ts` holds the shipped packs to this: complexity is the only one and lists exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
 
 ## Matching
 

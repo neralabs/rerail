@@ -4,8 +4,8 @@ Rule packs for Rerail. Each pack is published to npm as its own package, version
 the core package at the repository root.
 
 > Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the
-> complexity and guardrails packs inside its own package (`<id>/pack.json` and `<id>/rules/`). The packs here: `python`,
-> `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `complexity` and `guardrails`. Every rule document Rerail ships lives in
+> complexity pack inside its own package (`complexity/pack.json` and `complexity/rules/`). The packs here: `python`,
+> `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Every rule document Rerail ships lives in
 > a pack; core has no rules of its own.
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
@@ -28,7 +28,7 @@ Each pack lives in `packs/<id>/`:
 | --- | --- | --- |
 | `package.json` | npm package `@neralabs/rerail-pack-<id>`; core version range as a peer dependency; no dependencies | yes |
 | `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
-| `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), or conversation rules on an agent's tool calls, each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
+| `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated) | no |

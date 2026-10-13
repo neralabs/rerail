@@ -11,7 +11,6 @@ Small packs in the [pack format](../../docs/pack-format.md) that tests read, not
 - `eslint-port/` ports one ESLint rule whose violation carries `suppress.eslint`, scored on a file Rerail wrote with
   `eslint-disable` comments: it passes, and copies of it prove the suppression check of check 4 (a port without
   `suppress`, an exempted one, a stale exemption).
-- `conversation/` ships a conversation rule on an agent's tool calls, whose examples have no path: it passes.
 - `sample-php/` is the conformance runner's sample (`conformance/languages/runner.ts`, run by
   `test/language-conformance.test.ts`): two ports scored against PHP_CodeSniffer's recordings on authored fixtures and
   a one-file corpus (`corpora/mini/`).

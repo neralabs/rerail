@@ -66,9 +66,7 @@
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
     "packs/complexity/pack.json",
-    "packs/complexity/rules",
-    "packs/guardrails/pack.json",
-    "packs/guardrails/rules"
+    "packs/complexity/rules"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:js",

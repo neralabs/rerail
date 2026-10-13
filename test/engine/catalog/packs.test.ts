@@ -429,38 +429,6 @@ describe("validatePack", () => {
       ],
     });
   });
-
-  it("passes a pack whose rule is a conversation rule, its examples without a path", async () => {
-    const validation = await validatePack(join(FIXTURES, "conversation"), { corpora: false });
-    expect(failing(validation)).toEqual({});
-    expect(validation.rules).toEqual([{ id: "no-force-push", document: "rules/no-force-push.json", status: "ok" }]);
-  });
-
-  it("fails a conversation rule that is not valid", async () => {
-    const validation = await validatePack(
-      changed("conversation", directory => editJson(join(directory, "rules", "no-force-push.json"), ({ action: _action, ...rule }) => rule)),
-      { corpora: false },
-    );
-    expect(failing(validation)).toEqual({
-      rules: [expect.stringMatching(/^no-force-push: rules\/no-force-push\.json is neither a code rule \(it has no format\) nor a valid conversation rule: rule\.action /u)],
-    });
-  });
-
-  it("fails a conversation rule example that names a file", async () => {
-    const validation = await validatePack(
-      changed("conversation", directory =>
-        editJson(join(directory, "pack.json"), pack => ({
-          ...pack,
-          rules: z
-            .array(z.looseObject({ examples: z.looseObject({ caught: z.record(z.string(), z.unknown()) }) }))
-            .parse(pack.rules)
-            .map(rule => ({ ...rule, examples: { ...rule.examples, caught: { ...rule.examples.caught, path: "a.sh" } } })),
-        })),
-      ),
-      { corpora: false },
-    );
-    expect(failing(validation)).toEqual({ examples: ["no-force-push: the caught example has a path; a conversation rule's examples take none"] });
-  });
 });
 
 describe("packedFileFailures", () => {

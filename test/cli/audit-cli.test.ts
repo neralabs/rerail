@@ -128,9 +128,8 @@ describe("rerail scan and settings CLI", () => {
     ].join("\n"));
 
     await commands.get("rerail-start")!.handler("", { ui });
-    // Restarting a set-up repository ends on its scoped rules link, as the terminal's `rerail start` does. Set-up
-    // attached the guardrails pack, recommended for every repository with a file: its one rule is on.
-    expect(notices.at(-1)).toMatch(/ 1 rule is on, as you left them\.\n {2}http:\/\/\S+\?repository=[^#\s]+&checkout=[^#\s]+#rules$/u);
+    // Restarting a set-up repository ends on its scoped rules link, as the terminal's `rerail start` does.
+    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}http:\/\/\S+\?repository=[^#\s]+&checkout=[^#\s]+#rules$/u);
     expect(isRerailStarted(root)).toBe(true);
     // Every command that changed something rebuilds the runtime; the cancelled set-up changed nothing.
     expect(reattached).toBe(3);

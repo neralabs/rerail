@@ -5,8 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Of the packs core ships only guardrails has a match definition, and it fits any repository; set-up's recommendation
-// flow is exercised with the TypeScript pack added.
+// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
 vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
   const actual = await importOriginal<{ corePackDirectories(): string[]; loadBundledRules(packs: readonly string[]): unknown[] }>();
   const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
@@ -40,8 +39,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-/** What set-up recommends for the TypeScript fixture: the TypeScript pack, and guardrails, which fits any repository. */
-const TS_PACKS = ["guardrails", "typescript"];
+const TS_PACKS = ["typescript"];
 
 interface Fixture {
   root: string;
@@ -150,8 +148,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { answer: "yes", repo: setup.repo }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("Of the rule packs that come with Rerail, 2 look right for acme-api.");
-    expect(recommended.text()).toMatch(/Guardrails +1 +matches any file/u);
+    expect(recommended.text()).toContain("Of the rule packs that come with Rerail, 1 looks right for acme-api.");
     expect(recommended.text()).toContain("not found: OMP, Pi, Codex");
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
@@ -170,7 +167,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const again = agentIo();
     expect(await runSetup(again, request(setup, environment, { answer: "start", repo: setup.repo }))).toMatchObject({ status: "started" });
     expect(again.text()).not.toContain("Connected to");
-    expect(again.text()).toContain(`Rerail is on in acme-api. 2 rule packs are on, with ${enabledRules(setup)} rule`);
+    expect(again.text()).toContain(`Rerail is on in acme-api. 1 rule pack is on, with ${enabledRules(setup)} rules.`);
     expect(again.text()).toContain("http://127.0.0.1:4737/#rules");
     expect(startRows(setup)).toEqual(firstStart);
     expect(selected(setup)).toEqual(TS_PACKS);
@@ -290,11 +287,11 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(selected(setup)).toEqual(["complexity"]);
   });
 
-  it("offers no rule pack for a repository with no files yet, and starts with none", async () => {
+  it("offers no rule pack where none matches, and starts with none", async () => {
     const setup = await fixture();
-    // Guardrails matches any file, so only an empty repository has no pack that fits.
     const docs = join(setup.root, "docs");
     mkdirSync(docs);
+    writeFileSync(join(docs, "README.md"), "# docs\n");
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: docs });
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: docs }));
@@ -327,7 +324,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { repo: other }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("2 look right for landing-page.");
+    expect(recommended.text()).toContain("looks right for landing-page.");
     expect(recommended.text()).toContain(`rerail setup --answer start --repo ${other}`);
     expectUntouched(setup, other);
 
@@ -407,7 +404,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(await runSetup(asked, request(setup, environment, { answer: "start", repo: setup.repo, agentsError: "Unknown coding agent: only Claude Code." })))
       .toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Unknown coding agent: only Claude Code.");
-    expect(asked.text()).toContain("Start Rerail in acme-api with these 2 rule packs?");
+    expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
     expect(environment.connections).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
@@ -538,7 +535,6 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     }
   });
 });
-
 describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("says yes, starts with the recommended packs, and waits for Enter before the summary", async () => {
     const setup = await fixture();

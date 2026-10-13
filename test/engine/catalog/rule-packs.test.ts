@@ -52,9 +52,7 @@ const bundled = loadBundledRules();
 const pack = (id: string): RulePack => packs.find(candidate => candidate.id === id)!;
 const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
 const complexity = pack("complexity");
-const guardrails = pack("guardrails");
 const complexityIds = ["complexity-cyclomatic-javascript", "complexity-cyclomatic-python", "complexity-cyclomatic-typescript"];
-const guardrailsIds = ["guardrails-no-new-lint-suppression"];
 /** A shipped code rule the synthetic packs below reuse under their own ids. */
 const typescriptRule = bundled.find(document => document.rule.id === "complexity-cyclomatic-typescript")!;
 
@@ -72,8 +70,8 @@ function writePack(root: string, definition: { readonly id: string } & Readonly<
 
 /**
  * The shipped packs plus a TypeScript language pack, `lang-ts`, matched as a TypeScript pack is, and with
- * `repository` a neutral repository pack, `acme-api`; each has one example rule. Of the packs core ships only
- * guardrails has a match definition, and it matches any file, so the recommendation tests bring their own.
+ * `repository` a neutral repository pack, `acme-api`; each has one example rule. No pack core ships has a match
+ * definition, so the recommendation tests bring their own.
  */
 async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
   const root = await temporaryDirectory("rerail-test-packs-");
@@ -113,15 +111,11 @@ function fires(ruleId: string, path: string, text: string): boolean {
 }
 
 describe("shipped rule packs", () => {
-  it("are the complexity pack, never recommended, and the guardrails pack, recommended for any repository", () => {
-    expect(packs.map(candidate => candidate.id)).toEqual(["complexity", "guardrails"]);
+  it("are the complexity pack alone, with no match definition, so none is ever recommended", () => {
+    expect(packs.map(candidate => candidate.id)).toEqual(["complexity"]);
     expect(ids(complexity)).toEqual(complexityIds);
-    expect(ids(guardrails)).toEqual(guardrailsIds);
-    expect(bundled.map(document => document.rule.id).sort()).toEqual([...complexityIds, ...guardrailsIds]);
+    expect(bundled.map(document => document.rule.id).sort()).toEqual(complexityIds);
     expect(complexity.match).toBeUndefined();
-    expect(guardrails.category).toBe("repository");
-    expect(guardrails.match).toEqual({ any: [{ files: ["**"], label: "any file" }] });
-    expect(guardrails.rules.map(rule => [rule.kind, rule.mode, rule.on])).toEqual([["conversation", "steer", true]]);
   });
 
   it("start every rule in the mode its own document has", () => {
@@ -138,7 +132,7 @@ describe("shipped rule packs", () => {
   });
 
   it("are the packs core ships, whose rules are exactly the documents seeded disabled", () => {
-    expect(corePackDirectories()).toEqual(["complexity", "guardrails"].map(id => fileURLToPath(new URL(`../../../packs/${id}`, import.meta.url))));
+    expect(corePackDirectories()).toEqual([fileURLToPath(new URL("../../../packs/complexity", import.meta.url))]);
     expect(packs.flatMap(found => found.rules).every(rule => bundled.some(document => document.rule.id === rule.id))).toBe(true);
   });
 });
@@ -268,12 +262,9 @@ describe("recommendRulePacks", () => {
     });
     execFileSync("git", ["init", "-q", root]);
 
-    expect(reasons(root, await withTestPacks())).toEqual([
-      ["TypeScript", 1, "matches the typescript dependency in package.json and *.ts files in src", ""],
-      ["Guardrails", 1, "matches any file", ""],
-    ]);
-    // Of the packs core ships, only guardrails fits a TypeScript repository, as it fits any.
-    expect(reasons(root, packs)).toEqual([["Guardrails", 1, "matches any file", ""]]);
+    expect(reasons(root, await withTestPacks())).toEqual([["TypeScript", 1, "matches the typescript dependency in package.json and *.ts files in src", ""]]);
+    // Of the packs core ships, none fits even a TypeScript repository.
+    expect(reasons(root, packs)).toEqual([]);
   });
 
   it("picks a repository pack only for the repository it matches, after the language packs, for the whole repository", async () => {
@@ -289,12 +280,8 @@ describe("recommendRulePacks", () => {
     expect(reasons(root, withAcme)).toEqual([
       ["TypeScript", 1, "matches *.tsx files in web/src", "web/src"],
       ["acme-api", 1, "matches the acme_api package in api/acme_api", ""],
-      ["Guardrails", 1, "matches any file", ""],
     ]);
-    expect(reasons(root, await withTestPacks())).toEqual([
-      ["TypeScript", 1, "matches *.tsx files in web/src", "web/src"],
-      ["Guardrails", 1, "matches any file", ""],
-    ]);
+    expect(reasons(root, await withTestPacks())).toEqual([["TypeScript", 1, "matches *.tsx files in web/src", "web/src"]]);
   });
 
   it("counts only the rules a pack starts on, and never recommends a pack whose rules all start off", async () => {
@@ -324,26 +311,15 @@ describe("recommendRulePacks", () => {
     });
 
     const from = await withTestPacks();
-    expect(reasons(root, from)).toEqual([
-      ["TypeScript", 1, "matches the typescript dependency in packages/web/package.json", "packages/web"],
-      ["Guardrails", 1, "matches any file", ""],
-    ]);
+    expect(reasons(root, from)).toEqual([["TypeScript", 1, "matches the typescript dependency in packages/web/package.json", "packages/web"]]);
     writeFiles(root, { "tools/build.ts": "export {};\n" });
-    expect(recommendRulePacks(root, from).map(({ folder }) => folder)).toEqual(["", ""]);
+    expect(recommendRulePacks(root, from).map(({ folder }) => folder)).toEqual([""]);
   });
 
-  it("recommends only guardrails for a stack no language pack covers, not the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
+  it("recommends nothing for a stack no matching pack covers, not even the hand-picked complexity pack, outside Git and ignoring dependency folders", async () => {
     const root = await temporaryDirectory("rerail-python-");
     writeFiles(root, { "app/main.py": "print(1)\n", "pyproject.toml": "[project]\n", ".venv/lib/site.ts": "export {};\n", "go.mod": "module shop\n" });
-    expect(recommendRulePacks(root, await withTestPacks()).map(({ pack: found }) => found.id)).toEqual(["guardrails"]);
-  });
-
-  it("recommends guardrails for the whole repository wherever its files are, and nothing for a repository with none", async () => {
-    const root = await temporaryDirectory("rerail-one-folder-");
-    execFileSync("git", ["init", "-q", root]);
-    expect(recommendRulePacks(root, packs)).toEqual([]);
-    writeFiles(root, { "src/main.ts": "export {};\n" });
-    expect(reasons(root, packs)).toEqual([["Guardrails", 1, "matches any file in src", ""]]);
+    expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
   });
 
   it("ignores tracked files deleted from the worktree", async () => {
@@ -353,7 +329,7 @@ describe("recommendRulePacks", () => {
     execFileSync("git", ["-C", root, "add", "."]);
     rmSync(join(root, "legacy/index.ts"));
 
-    expect(recommendRulePacks(root, await withTestPacks()).map(({ pack: found }) => found.id)).toEqual(["guardrails"]);
+    expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
   });
 
   it("ignores tracked files a sparse checkout leaves off disk, and counts them once the checkout includes them", async () => {
@@ -366,9 +342,9 @@ describe("recommendRulePacks", () => {
     git("-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "-m", "base");
     git("sparse-checkout", "set", "--no-cone", "/README.md");
 
-    expect(recommendRulePacks(root, withAcme).map(({ pack: found }) => found.id)).toEqual(["guardrails"]);
+    expect(recommendRulePacks(root, withAcme)).toEqual([]);
     git("sparse-checkout", "set", "--no-cone", "/README.md", "/api/");
-    expect(recommendRulePacks(root, withAcme).map(({ pack: found }) => found.id)).toEqual(["acme-api", "guardrails"]);
+    expect(recommendRulePacks(root, withAcme).map(({ pack: found }) => found.id)).toEqual(["acme-api"]);
   });
 
   it("never recommends a pack without rules, even where its match fits", async () => {
@@ -414,17 +390,14 @@ describe("recommendRulePacks", () => {
     execFileSync("git", ["-C", root, "add", "."]);
 
     const from = await withTestPacks();
-    expect(recommendRulePacks(root, from).map(({ pack: found }) => found.id)).toEqual(["guardrails"]);
+    expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
-    expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([
-      ["lang-ts", "matches the typescript dependency in package.json"],
-      ["guardrails", "matches any file"],
-    ]);
+    expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);
   });
 });
 
 describe("rule pack API", () => {
-  it("lists the packs, recommends only guardrails for a TypeScript checkout, and tags By Rerail rules with their pack", async () => {
+  it("lists the packs, recommends none of them for a TypeScript checkout, and tags By Rerail rules with their pack", async () => {
     const root = realpathSync(await temporaryDirectory("rerail-rule-pack-api-"));
     const checkout = join(root, "web-app");
     writeFiles(checkout, { "src/main.ts": "export {};\n" });
@@ -447,7 +420,7 @@ describe("rule pack API", () => {
     try {
       const listed = await get("/api/rule-packs", rulePackListSchema);
       expect(listed.packs.map(found => [found.id, found.category, found.rules.length]))
-        .toEqual([["complexity", "language", complexityIds.length], ["guardrails", "repository", guardrailsIds.length]]);
+        .toEqual([["complexity", "language", complexityIds.length]]);
       const cyclomatic = complexity.rules.find(rule => rule.id === "complexity-cyclomatic-typescript")!;
       expect(listed.packs.find(found => found.id === "complexity")!.rules.find(rule => rule.id === "complexity-cyclomatic-typescript"))
         .toEqual({ id: "complexity-cyclomatic-typescript", kind: "code", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
@@ -456,13 +429,12 @@ describe("rule pack API", () => {
       const recommended = await get(`/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`, rulePackRecommendationsSchema);
       expect(recommended).toEqual({
         repositoryKey, checkoutPath: checkout,
-        recommendations: [{ packId: "guardrails", ruleCount: 1, reason: "matches any file in src", folder: "" }],
+        recommendations: [],
       });
 
       const { rules } = await get("/api/rerail-rules", rerailRules);
       const packOf = Object.fromEntries(rules.map(listedRule => [listedRule.rule.id, listedRule.packId]));
       expect(packOf["complexity-cyclomatic-typescript"]).toBe("complexity");
-      expect(packOf["guardrails-no-new-lint-suppression"]).toBe("guardrails");
     } finally {
       stores.close();
     }

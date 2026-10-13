@@ -102,19 +102,13 @@ export function readJson(repo, path) {
 export const POLICY_FORMAT = "rerail.policy/v1";
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1";
 
-/**
- * A rule document, as the catalog's `parseRuleDocument` reads one: a JSON object whose `format` is rerail.policy/v1 (a
- * code rule), or one with no `format` that has a string `id` and `match`, `sample` and `action` objects (a
- * conversation rule).
- */
+/** A rule document: a JSON object whose `format` is rerail.policy/v1. */
 export function isRuleDoc(repo, path) {
   if (!path.endsWith(".json")) return false;
   const text = repo.text(path);
-  if (text === null || !(text.includes(POLICY_FORMAT) || text.includes('"sample"'))) return false;
+  if (text === null || !text.includes(POLICY_FORMAT)) return false;
   const value = readJson(repo, path);
-  if (!isObject(value)) return false;
-  if (value.format === POLICY_FORMAT) return true;
-  return !("format" in value) && typeof value.id === "string" && isObject(value.match) && isObject(value.sample) && isObject(value.action);
+  return isObject(value) && value.format === POLICY_FORMAT;
 }
 
 export function isObject(value) {

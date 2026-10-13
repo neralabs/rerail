@@ -11,7 +11,6 @@ import {
   languageFor,
   languageNotSupportedOf,
   codeRuleSchema,
-  parseConversationRule,
   parseJsonWithoutDuplicateKeys,
   loadNativeBinding,
   type NativeCompiledCodeRuleDsl,
@@ -98,7 +97,6 @@ const documentSchema = z.object({
 
 type Compiled =
   | { kind: "compiled"; compiled: NativeCompiledCodeRuleDsl; codes: ReadonlySet<string> }
-  | { kind: "conversation" }
   | { kind: "not-supported-yet"; reason: string }
   | { kind: "failed"; message: string };
 
@@ -184,25 +182,16 @@ function idFailures(directory: string): string[] {
 }
 
 /**
- * A rule document as the catalog would take it (`parseRuleDocument`). A code rule, which has a `format`, must be valid
- * `rerail.policy/v1` and is then compiled by the engine against core's capabilities; `language-not-supported` is not a
- * failure: the rule is stored inactive until core reads its language. Any other document must be a valid conversation
- * rule, which compiles nothing.
+ * A code-rule document compiled as the catalog would take it: valid `rerail.policy/v1`, then compiled by the engine
+ * against core's capabilities. `language-not-supported` is not a failure: the rule is stored inactive until core reads
+ * its language.
  */
-function compileRule(text: string): Compiled {
+function compileCodeRule(text: string): Compiled {
   let document: unknown;
   try {
     document = JSON.parse(text);
   } catch (error) {
     return { kind: "failed", message: `is not JSON: ${message(error)}` };
-  }
-  if (typeof document === "object" && document !== null && !("format" in document)) {
-    try {
-      parseConversationRule(document);
-      return { kind: "conversation" };
-    } catch (error) {
-      return { kind: "failed", message: `is neither a code rule (it has no format) nor a valid conversation rule: ${message(error)}` };
-    }
   }
   const valid = codeRuleSchema.safeParse(document);
   if (!valid.success) return { kind: "failed", message: `is not a valid code rule (rerail.policy/v1): ${z.prettifyError(valid.error)}` };
@@ -395,8 +384,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   };
 
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
-  // carries the listed id and is a code rule that compiles against core's capabilities or a valid conversation rule;
-  // candidates and ports follow the same id rule.
+  // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
@@ -434,7 +422,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const text = readFileSync(path, "utf8");
       const documentId = documentIdOf(text);
       if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
-      const result = compileRule(text);
+      const result = compileCodeRule(text);
       compiled.set(rule.id, result);
       if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
     }
@@ -456,8 +444,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
 
   // Check 2: proof. Every rule has examples or a port entry.
-  // Check 3: examples. A caught example produces a violation of the rule, a passes example none. A conversation rule's
-  // examples are commands an agent runs, with no path, as the catalog requires; nothing evaluates them here.
+  // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
   if (pack === undefined) {
     fail("proof", "pack.json does not parse; see check 1");
     fail("examples", "pack.json does not parse; see check 1");
@@ -465,13 +452,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     for (const rule of pack.rules) {
       if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
-      if (rule.examples === undefined) continue;
-      if (result?.kind === "conversation") {
-        for (const side of ["caught", "passes"] as const)
-          if (rule.examples[side].path !== undefined) fail("examples", `${rule.id}: the ${side} example has a path; a conversation rule's examples take none`, rule.id);
-        continue;
-      }
-      if (result?.kind !== "compiled") continue;
+      if (rule.examples === undefined || result?.kind !== "compiled") continue;
       for (const side of ["caught", "passes"] as const) {
         const example = rule.examples[side];
         if (example.path === undefined) {
@@ -502,7 +483,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const result = listed === undefined ? undefined : compiled.get(listed.id);
       if (result?.kind === "not-supported-yet") notSupported.set(port.id, result.reason);
       else if (result === undefined && existsSync(join(directory, port.policy))) {
-        const candidate = compileRule(readFileSync(join(directory, port.policy), "utf8"));
+        const candidate = compileCodeRule(readFileSync(join(directory, port.policy), "utf8"));
         if (candidate.kind === "not-supported-yet") notSupported.set(port.id, candidate.reason);
       }
     }

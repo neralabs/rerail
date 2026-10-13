@@ -5,8 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Of the packs core ships only guardrails has a match definition, and it fits any repository; set-up's recommendation
-// flow is exercised with the TypeScript pack added.
+// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
 vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
   const actual = await importOriginal<{ corePackDirectories(): string[] }>();
   const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
@@ -21,7 +20,7 @@ import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "..
 import { attachedPacks } from "../support/attached-packs.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
-const TS_PACKS = ["guardrails", "typescript"];
+const TS_PACKS = ["typescript"];
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -104,17 +103,17 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
 
     expect(ui.selects.map(({ title }) => title)).toEqual([
       "You’re working in acme-api. Can Rerail read it to pick the rule packs that look right?",
-      "Start Rerail in acme-api with these 2 rule packs?",
+      "Start Rerail in acme-api with this rule pack?",
     ]);
     expect(ui.selects[0]!.options).toEqual([
       "Yes, read acme-api",
       "Use a different folder… — for example “~/code/landing-page”",
       "I’ll pick rule packs myself — Rerail won’t read the repo",
     ]);
-    expect(ui.notices[1]!.message).toContain("Of the rule packs that come with Rerail, 2 look right for acme-api.");
+    expect(ui.notices[1]!.message).toContain("Of the rule packs that come with Rerail, 1 looks right for acme-api.");
     expect(last).toMatchObject({ step: "done", question: null });
     expect(ui.notices.at(-1)).toEqual({ message: last!.screen, level: "info" });
-    expect(last!.screen).toContain("● Rerail is on in acme-api. 2 rule packs are on");
+    expect(last!.screen).toContain("● Rerail is on in acme-api. 1 rule pack is on");
     // Nothing for the coding agent to relay: the person reads every line.
     expect(ui.notices.map(({ message }) => message).join("\n")).not.toMatch(/Ask them this|run set-up again|Show the person/u);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");

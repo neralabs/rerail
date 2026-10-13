@@ -12,11 +12,11 @@ import type { RuleDocument } from "./rule-store.js";
 
 /**
  * The rule packs core ships inside its own package (`package.json` `files`) until it loads installed packs: the
- * complexity and guardrails packs. Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`): its `rules/`
+ * complexity pack alone. Each is a `packs/<id>/` directory in the pack layout (`docs/pack-format.md`): its `rules/`
  * documents are By Rerail rules, and its `pack.json` is read by `src/engine/catalog/rule-packs.ts`. Core has no rules
  * of its own: every rule it ships is in a pack.
  */
-export const CORE_RULE_PACKS = ["complexity", "guardrails"] as const;
+export const CORE_RULE_PACKS = ["complexity"] as const;
 
 /** `<package>/packs/<id>` for each pack core ships. */
 export function corePackDirectories(): string[] {
