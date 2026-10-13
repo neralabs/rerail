@@ -1,7 +1,32 @@
 //! SQLFluff 4.4.0's `noqa` directives, following `sqlfluff/core/rules/noqa.py`.
 
+use super::names;
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
+
+/// `suppress.sqlfluff`: `{ "rules": [...] }`, the references SQLFluff knows the violation's rule
+/// by, the keys of its `RulePack.reference_map` that map to the rule: its code, its name, its
+/// legacy aliases and its groups (`["AL05", "L025", "aliasing", "aliasing.unused", "all",
+/// "core"]`). A `-- noqa: p` directive suppresses the violation where `p` (a code, name, alias,
+/// group or `fnmatch` glob) matches one of them, as SQLFluff's `_parse_noqa` expands `p` over the
+/// map's keys.
+pub(super) fn spec(sqlfluff: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(sqlfluff, at)?, &["rules"], at)?;
+    names(
+        sqlfluff.get("rules"),
+        &format!("{at}/rules"),
+        reference,
+        "rule references",
+        "a rule's code, name, alias or group (non-empty, without commas or surrounding white space)",
+    )
+}
+
+/// A reference a `noqa` list can name: SQLFluff splits the list on commas and strips each.
+fn reference(name: &str) -> bool {
+    !name.is_empty() && !name.contains(',') && name.trim() == name
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Directive {
@@ -321,15 +346,16 @@ mod tests {
 
     #[test]
     fn read_reads_the_tree_like_the_hand_list() {
+        use crate::code_rule_dsl::language::GrammarDialect;
         use crate::code_rule_dsl::lines::Terminators;
-        use crate::code_rule_dsl::value::sql::test_grammar;
+        use ast_grep_language::LanguageExt;
         let oracle: Value = serde_json::from_str(ORACLE).unwrap();
         for file in ["inline.sql", "postgres_bodies.sql", "range.sql"] {
             let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
                 .join("sql/suppress/sqlfluff")
                 .join(file);
             let source = std::fs::read_to_string(path).unwrap();
-            let grep = test_grammar::parse(&source);
+            let grep = GrammarDialect::Sql.ast_grep(&source);
             let index = SqlfluffIndex::read(
                 &grep.root(),
                 &source,

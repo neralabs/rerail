@@ -1,12 +1,13 @@
 //! The arguments a SQL call passes, as PostgreSQL 18.6's parser (`gram.y`, `func_arg_list`,
 //! `func_arg_expr`, `extract_list`, `position_list`, `substr_list`, `overlay_list`, `trim_list`)
-//! reads them, over the DerekStride grammar's `invocation`.
+//! reads them, over the DerekStride grammar's `invocation`, and the signature slots they fill.
 
+use super::{Arguments, Passed};
 use crate::code_rule_dsl::value::sql;
 use ast_grep_core::{Doc, Node};
+use std::collections::BTreeSet;
 
 /// The grammar's call node: an `object_reference` callee, then `parameter:` children.
-#[allow(dead_code)]
 pub(crate) const SQL_CALL_KINDS: &[&str] = &["invocation"];
 
 /// One argument of a call.
@@ -36,7 +37,6 @@ pub(crate) struct SqlArgument<'r, D: Doc> {
 ///   and then the result is `None` for the unreadable shape rather than a guess.
 ///
 /// `None` when an argument is not one of those shapes (a parse error inside the call).
-#[allow(dead_code)]
 pub(crate) fn sql_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Vec<SqlArgument<'r, D>>> {
     if call.kind() != "invocation" || call.children().any(|child| child.is_error()) {
         return None;
@@ -69,6 +69,49 @@ pub(crate) fn sql_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Vec<SqlArg
         arguments.clear();
     }
     Some(arguments)
+}
+
+impl Arguments {
+    /// What a SQL call passes for each slot, as PostgreSQL binds a call's arguments to a
+    /// function's parameters (`ParseFuncOrColumn`, `FuncnameGetCandidates`): positional arguments
+    /// fill the slots in order, a named argument (`name => v`, `name := v`) the slot of its name
+    /// (PostgreSQL's folded name, as a slot is written). Every slot is unknown where PostgreSQL
+    /// refuses the call (a positional argument after a named one, a name passed twice or
+    /// for a slot a position already filled) or the arguments do not read (`sql_arguments`).
+    pub(crate) fn sql<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+        let unknown = || (0..self.slots.len()).map(|_| Passed::Unknown).collect();
+        let Some(arguments) = sql_arguments(call) else {
+            return unknown();
+        };
+        let mut passed: Vec<Passed<'r, D>> =
+            (0..self.slots.len()).map(|_| Passed::Absent).collect();
+        let mut names = BTreeSet::new();
+        let mut position = 0;
+        for argument in arguments {
+            match argument.name {
+                Some(name) => {
+                    let slot = self.slots.iter().position(|(slot, _)| *slot == name);
+                    if !names.insert(name) {
+                        return unknown();
+                    }
+                    if let Some(slot) = slot {
+                        if !matches!(passed[slot], Passed::Absent) {
+                            return unknown();
+                        }
+                        passed[slot] = Passed::Value(argument.value);
+                    }
+                }
+                None if !names.is_empty() => return unknown(),
+                None => {
+                    if let Some(slot) = passed.get_mut(position) {
+                        *slot = Passed::Value(argument.value);
+                    }
+                    position += 1;
+                }
+            }
+        }
+        passed
+    }
 }
 
 fn read_operand<'r, D: Doc>(operand: &Node<'r, D>) -> Option<SqlArgument<'r, D>> {
@@ -140,7 +183,8 @@ fn is_swapped_form<D: Doc>(call: &Node<'_, D>, count: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_rule_dsl::value::sql::test_grammar;
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use ast_grep_language::LanguageExt;
     use serde_json::Value as Json;
 
     /// 1-based line and 1-based code point column of a byte offset.
@@ -163,7 +207,7 @@ mod tests {
             &std::fs::read_to_string(dir.join("postgres.expected.json")).unwrap(),
         )
         .unwrap();
-        let grep = test_grammar::parse(&source);
+        let grep = GrammarDialect::Sql.ast_grep(&source);
         let root = grep.root();
         let invocations: Vec<_> = root.dfs().filter(|n| n.kind() == "invocation").collect();
 
@@ -217,7 +261,7 @@ mod tests {
 
     #[test]
     fn comments_and_keywords_are_not_arguments() {
-        let grep = test_grammar::parse("SELECT f(DISTINCT a, /* c */ b ORDER BY a)");
+        let grep = GrammarDialect::Sql.ast_grep("SELECT f(DISTINCT a, /* c */ b ORDER BY a)");
         let call = grep
             .root()
             .dfs()

@@ -14,6 +14,7 @@ pub(crate) use phpstan::PhpstanIndex;
 use psalm::Psalm;
 pub(crate) use psalm::PsalmIndex;
 use serde_json::Value;
+pub(crate) use sqlfluff::SqlfluffIndex;
 
 /// Names a `rules` or `codes` list may hold.
 const MAX_NAMES: usize = 256;
@@ -94,9 +95,6 @@ macro_rules! suppression_kinds {
 // Nothing here assumes comments. Clippy's `#[allow(clippy::..)]` attributes would be
 //     /// Clippy's `#[allow]`, `#[expect]` attributes.
 //     Clippy clippy: Clippy = clippy::spec, "#[allow] attributes are Clippy's";
-// and SQLFluff's `-- noqa` comments, a linter other than Ruff, their own kind:
-//     /// SQLFluff's `-- noqa` comments.
-//     Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
 // The host's twin is `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`.
 suppression_kinds! {
     /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
@@ -111,6 +109,9 @@ suppression_kinds! {
     Psalm psalm: Psalm = psalm::spec, "@psalm-suppress tags are Psalm's";
     /// PHP_CodeSniffer's `phpcs:` annotations.
     Phpcs phpcs: Phpcs = phpcs::spec, "phpcs: annotations are PHP_CodeSniffer's";
+    /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
+    /// name the violation's rule by.
+    Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
 }
 
 /// `a, b, or c`: the keys a `suppress` may hold.
@@ -174,7 +175,6 @@ mod eslint;
 #[cfg(test)]
 mod eslint_tests;
 mod noqa;
-mod sqlfluff;
 mod nosec;
 #[cfg(test)]
 mod php_corpus_tests;
@@ -183,6 +183,7 @@ mod phpstan;
 mod psalm;
 #[cfg(test)]
 mod ruff;
+mod sqlfluff;
 
 #[cfg(test)]
 mod tests {

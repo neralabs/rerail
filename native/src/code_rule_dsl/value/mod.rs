@@ -1,7 +1,6 @@
 //! Per-node values: what a literal, or an expression folded from literals, evaluates to. A value
 //! is `Unknown` whenever the engine cannot be sure, so every predicate over values is three-valued.
 
-pub(crate) mod sql;
 pub(crate) mod ecma;
 pub(crate) mod key;
 pub(crate) mod names;
@@ -9,6 +8,7 @@ pub(crate) mod php;
 pub(crate) mod php_compare;
 pub(crate) mod php_structure;
 pub(crate) mod python;
+pub(crate) mod sql;
 pub(crate) mod structure;
 pub(crate) mod text_regex;
 

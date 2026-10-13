@@ -7,6 +7,7 @@
 use super::{Value, int_float_order};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 fn digits_ok(s: &str, radix: u32) -> bool {
@@ -416,6 +417,41 @@ pub(crate) fn equals(left: &Value, right: &Value) -> Option<bool> {
     }
 }
 
+/// The order of two known values where PostgreSQL and SQLite agree: numbers by value, booleans
+/// `false < true`. Strings order by a collation the file does not name, NULL against nothing, and
+/// values of different types not at all (PostgreSQL refuses them): unknown.
+pub(crate) fn order(left: &Value, right: &Value) -> Option<Option<Ordering>> {
+    match (left, right) {
+        (Value::Int(left), Value::Int(right)) => Some(Some(left.cmp(right))),
+        (Value::Int(left), Value::Float(right)) => Some(int_float_order(left, *right)),
+        (Value::Float(left), Value::Int(right)) => {
+            Some(int_float_order(right, *left).map(Ordering::reverse))
+        }
+        (Value::Float(left), Value::Float(right)) => Some(left.partial_cmp(right)),
+        (Value::Bool(left), Value::Bool(right)) => Some(Some(left.cmp(right))),
+        _ => None,
+    }
+}
+
+/// Whether a value is true where it is a condition: a boolean; NULL and anything else are not
+/// known (NULL is neither, PostgreSQL takes no number as a condition, SQLite takes any).
+pub(crate) fn truthy(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(value) => Some(*value),
+        _ => None,
+    }
+}
+
+/// A value cast to text, where PostgreSQL and SQLite agree: an integer's digits, a string itself.
+/// A boolean is `true` or `1`, a number with a fraction is formatted apart: unknown.
+pub(crate) fn to_str(value: &Value) -> Option<String> {
+    match value {
+        Value::Int(value) => Some(value.to_string()),
+        Value::Str(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
 pub(crate) fn name(text: &str) -> Option<String> {
     let mut out = if text.starts_with("U&\"") {
         unicode_string(text, true)?
@@ -437,6 +473,21 @@ pub(crate) fn name(text: &str) -> Option<String> {
         out.pop();
     }
     Some(out)
+}
+
+/// An identifier's text as PostgreSQL names it (`name`), else as written: a MySQL or SQL Server
+/// quoted name, which PostgreSQL does not read. A name already folded is borrowed.
+pub(crate) fn identifier(text: Cow<'_, str>) -> Cow<'_, str> {
+    let folded = text.len() <= 63
+        && !text.starts_with(['"', '`', '['])
+        && !text.bytes().any(|byte| byte.is_ascii_uppercase());
+    if folded {
+        return text;
+    }
+    match name(&text) {
+        Some(name) => Cow::Owned(name),
+        None => text,
+    }
 }
 
 pub(crate) fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> Value {
@@ -599,14 +650,15 @@ mod tests {
 
     #[test]
     fn postgres_oracle_by_position() {
-        use crate::code_rule_dsl::value::sql::test_grammar;
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_language::LanguageExt;
         let source = std::fs::read_to_string(
             std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
                 .join("sql/scope/postgres.sql"),
         )
         .expect("postgres.sql");
-        let grep = test_grammar::parse(&source);
-        let nodes = test_grammar::nodes(&grep.root());
+        let grep = GrammarDialect::Sql.ast_grep(&source);
+        let nodes: Vec<_> = grep.root().dfs().collect();
         let oracle = oracle_root("sql/scope/postgres.expected.json");
         let excepted = |line: u64, column: u64| {
             POSTGRES_EXCEPTIONS
@@ -726,54 +778,5 @@ mod tests {
         assert_eq!(name("\"x\"\"y\""), Some("x\"y".into()));
         assert_eq!(name("`x`"), None);
         assert_eq!(name("\"\""), None);
-    }
-}
-
-/// The vendored SQL grammar (`native/grammars/tree-sitter-sql`, built by `build.rs`) as an
-/// ast-grep language, for the SQL modules' tree-level oracle tests until the registry's
-/// `GrammarDialect::Sql` reads it.
-#[cfg(test)]
-pub(crate) mod test_grammar {
-    use ast_grep_core::language::Language;
-    use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
-    use ast_grep_core::tree_sitter::{LanguageExt, StrDoc, TSLanguage};
-    use ast_grep_core::{AstGrep, Doc, Node};
-
-    unsafe extern "C" {
-        fn tree_sitter_sql() -> *const ();
-    }
-
-    #[derive(Clone, Copy)]
-    pub(crate) struct Sql;
-
-    impl Language for Sql {
-        fn kind_to_id(&self, kind: &str) -> u16 {
-            self.get_ts_language().id_for_node_kind(kind, true)
-        }
-        fn field_to_id(&self, field: &str) -> Option<u16> {
-            self.get_ts_language()
-                .field_id_for_name(field)
-                .map(|id| id.get())
-        }
-        fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-            builder.build(|src| StrDoc::try_new(src, *self))
-        }
-    }
-
-    impl LanguageExt for Sql {
-        fn get_ts_language(&self) -> TSLanguage {
-            // SAFETY: `tree_sitter_sql` is the generated parser's language function.
-            unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_sql) }.into()
-        }
-    }
-
-    /// `source` parsed with the SQL grammar.
-    pub(crate) fn parse(source: &str) -> AstGrep<StrDoc<Sql>> {
-        Sql.ast_grep(source)
-    }
-
-    /// Every node of `root`'s tree, in document order.
-    pub(crate) fn nodes<'r, D: Doc>(root: &Node<'r, D>) -> Vec<Node<'r, D>> {
-        root.dfs().collect()
     }
 }

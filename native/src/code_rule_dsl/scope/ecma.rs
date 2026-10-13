@@ -221,7 +221,10 @@ fn script(language: GrammarDialect) -> &'static Script {
         GrammarDialect::TypeScript => &TYPESCRIPT,
         GrammarDialect::Tsx => &TSX,
         GrammarDialect::JavaScript => &JAVASCRIPT,
-        GrammarDialect::Python | GrammarDialect::Php | GrammarDialect::Blade => {
+        GrammarDialect::Python
+        | GrammarDialect::Php
+        | GrammarDialect::Blade
+        | GrammarDialect::Sql => {
             unreachable!("only ECMAScript dialects build ECMAScript scopes")
         }
         #[cfg(test)]

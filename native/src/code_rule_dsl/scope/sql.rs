@@ -26,9 +26,16 @@
 //!
 //! A CTE name binds in a wrapper block around its `WITH` statement, so the CTE bodies and the main
 //! query (its children) all see it; SQLFluff resolves a CTE only as a `FROM` table.
+//!
+//! `visit` puts the blocks, bindings and qualified references into the file's `ScopeTable` (each
+//! block a `ScopeKind::Query` scope, each binding keyed by its folded name) and keeps the
+//! `SqlScopes` beside them, which resolve a reference and count a binding's uses
+//! (`ScopeRules for Sql`, `Usage::sql`).
 
+use super::{Binding as TableBinding, BuildError, Builder, Form, ScopeKind, Site, VALUE};
+use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
-use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use foldhash::{HashMap, HashMapExt};
 use std::ops::Range;
 
 /// What opened a block.
@@ -61,21 +68,30 @@ enum BindingKind {
 struct Block {
     parent: Option<usize>,
     kind: BlockKind,
+    /// From the node that opens the block to the end of its statement.
+    range: Range<usize>,
 }
 
 #[derive(Debug)]
 struct Binding {
     block: usize,
     /// The identifier that names the binding: the alias, else the last part of the table name.
-    name: Range<usize>,
+    name: NodeRef,
+    /// The relation, CTE or DML statement clause that binds it.
+    site: NodeRef,
+    form: Form,
     kind: BindingKind,
-    /// The relation has an alias.
+    /// The relation has an alias. Read by the AL05 oracle (`unused_aliases`); the pack's AL05
+    /// rule states the exemptions in its own terms.
+    #[cfg_attr(not(test), allow(dead_code))]
     aliased: bool,
-    /// The name AL05 compares: naked lower-cased, quoted exact.
+    /// The name AL05 compares, and the table's key: naked lower-cased, quoted exact.
     folded: String,
     /// The tuples RF01 matches references against.
     targets: Vec<Vec<String>>,
-    /// The folded last part of the table name, for AL05's repeated-table exemption.
+    /// The folded last part of the table name, for AL05's repeated-table exemption (the
+    /// oracle's, as `aliased`).
+    #[cfg_attr(not(test), allow(dead_code))]
     table: Option<String>,
     /// The byte offset from which the binding is visible (a CTE is not visible before it).
     visible_from: usize,
@@ -84,7 +100,7 @@ struct Binding {
 #[derive(Debug)]
 struct Reference {
     block: usize,
-    /// The table part of the reference (what RF01 reports); empty for a bare reference.
+    /// The table part of the reference (what RF01 reports); for a bare reference, its name.
     range: Range<usize>,
     /// The possible tables as RF01's `_get_table_refs` lists them: the last qualifier part, or the
     /// last two when the reference has a schema.
@@ -94,51 +110,118 @@ struct Reference {
     bare: bool,
 }
 
+/// How the references use one binding: AL05's walk (`SqlScopes::uses`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Uses {
+    /// References that use it.
+    pub(crate) reads: u32,
+    /// Those of them in a block nested in the binding's.
+    pub(crate) nested: u32,
+}
+
 /// The query blocks of one SQL file with their bindings and references.
 #[derive(Debug, Default)]
 pub(crate) struct SqlScopes {
     blocks: Vec<Block>,
     bindings: Vec<Binding>,
+    /// Sorted by start byte.
     references: Vec<Reference>,
+    /// Each block's bindings, by index.
+    by_block: Vec<Vec<usize>>,
+    /// Each binding's scope in the file's `ScopeTable` and its index among that scope's
+    /// bindings of its name (`visit`).
+    ids: Vec<(u32, usize)>,
+}
+
+/// Visits the SQL file at `root` into `builder`'s table: a `Query` scope per block (block `i` is
+/// scope `i + 1`, under the file's scope 0), a binding per relation, CTE and DML target under its
+/// folded name, and a reference per qualified column reference's table part; the table keeps
+/// the `SqlScopes`, which resolve those references.
+pub(crate) fn visit<D: Doc>(
+    builder: &mut Builder<'_>,
+    root: &Node<'_, D>,
+) -> Result<(), BuildError> {
+    let mut scopes = SqlScopes::build(root, &mut || {
+        builder.enter()?;
+        builder.leave();
+        Ok(())
+    })?;
+    for block in &scopes.blocks {
+        builder.current = block.parent.map_or(0, |parent| parent as u32 + 1);
+        builder.push(ScopeKind::Query, block.range.clone());
+    }
+    let mut ids = Vec::with_capacity(scopes.bindings.len());
+    for binding in &scopes.bindings {
+        let scope = binding.block as u32 + 1;
+        let index = builder
+            .scope(scope)
+            .bindings
+            .get(binding.folded.as_str())
+            .map_or(0, Vec::len);
+        let mut bound = TableBinding::new(
+            binding.name.start as usize,
+            VALUE,
+            Site {
+                form: binding.form,
+                node: Some(binding.site),
+                value: None,
+                annotation: None,
+            },
+        );
+        bound.name = Some(binding.name);
+        builder.bind(scope, &binding.folded, bound);
+        ids.push((scope, index));
+    }
+    for reference in scopes.references.iter().filter(|reference| !reference.bare) {
+        builder.current = reference.block as u32 + 1;
+        builder.reference(reference.range.clone(), VALUE);
+    }
+    builder.current = 0;
+    scopes.ids = ids;
+    builder.table.sql = Some(Box::new(scopes));
+    Ok(())
 }
 
 impl SqlScopes {
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>) -> Self {
+    /// The scopes of `root`'s file, `charge` paying for each node read.
+    fn build<D: Doc>(
+        root: &Node<'_, D>,
+        charge: &mut dyn FnMut() -> Result<(), BuildError>,
+    ) -> Result<Self, BuildError> {
         let mut reader = Reader::default();
-        reader.read(root);
-        reader.scopes
+        reader.read(root, charge)?;
+        let mut scopes = reader.scopes;
+        scopes
+            .references
+            .sort_by_key(|reference| reference.range.start);
+        scopes.by_block = vec![Vec::new(); scopes.blocks.len()];
+        for (index, binding) in scopes.bindings.iter().enumerate() {
+            scopes.by_block[binding.block].push(index);
+        }
+        Ok(scopes)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read<D: Doc>(root: &Node<'_, D>) -> Self {
+        Self::build(root, &mut || Ok(())).expect("no budget")
     }
 
     /// The byte ranges of qualifiers no binding resolves (RF01).
+    #[cfg(test)]
     pub(crate) fn unresolved(&self) -> Vec<Range<usize>> {
         self.references
             .iter()
             .filter(|reference| {
-                !reference.bare
-                    && self.blocks[reference.block].kind == BlockKind::Select
-                    && self.resolve(reference).is_none()
+                !reference.bare && self.checked(reference) && self.resolve(reference).is_none()
             })
             .map(|reference| reference.range.clone())
             .collect()
     }
 
     /// The byte ranges of alias names no reference uses (AL05).
+    #[cfg(test)]
     pub(crate) fn unused_aliases(&self) -> Vec<Range<usize>> {
-        let mut used: HashSet<(usize, &str)> = HashSet::new();
-        for reference in &self.references {
-            let mut block = Some(reference.block);
-            while let Some(index) = block {
-                if self.bindings.iter().any(|binding| {
-                    binding.block == index
-                        && binding.kind != BindingKind::Named
-                        && binding.folded == reference.used
-                }) {
-                    used.insert((index, &reference.used));
-                    break;
-                }
-                block = self.blocks[index].parent;
-            }
-        }
+        let uses = self.uses();
         let mut repeats: HashMap<(usize, &str), usize> = HashMap::new();
         for binding in &self.bindings {
             if let Some(table) = &binding.table {
@@ -147,27 +230,105 @@ impl SqlScopes {
         }
         self.bindings
             .iter()
-            .filter(|binding| {
+            .zip(&uses)
+            .filter(|(binding, uses)| {
                 binding.aliased
                     && matches!(binding.kind, BindingKind::Table | BindingKind::Function)
                     && self.blocks[binding.block].kind == BlockKind::Select
                     && binding.table.as_ref().is_none_or(|table| {
                         repeats.get(&(binding.block, table.as_str())) == Some(&1)
                     })
-                    && !used.contains(&(binding.block, binding.folded.as_str()))
+                    && uses.reads == 0
             })
-            .map(|binding| binding.name.clone())
+            .map(|(binding, _)| binding.name.start as usize..binding.name.end as usize)
             .collect()
     }
 
     /// The binding a reference at `range` resolves to, as the binding's name range.
+    #[cfg(test)]
     pub(crate) fn binding(&self, range: &Range<usize>) -> Option<Range<usize>> {
-        let reference = self
+        let reference = self.reference_at(range.start, range.end)?;
+        self.resolve(reference).map(|binding| {
+            let name = self.bindings[binding].name;
+            name.start as usize..name.end as usize
+        })
+    }
+
+    /// The qualified reference whose table part spans exactly `start..end`.
+    fn reference_at(&self, start: usize, end: usize) -> Option<&Reference> {
+        let first = self
             .references
+            .partition_point(|reference| reference.range.start < start);
+        self.references[first..]
             .iter()
-            .find(|reference| !reference.bare && reference.range == *range)?;
-        self.resolve(reference)
-            .map(|binding| self.bindings[binding].name.clone())
+            .take_while(|reference| reference.range.start == start)
+            .find(|reference| !reference.bare && reference.range.end == end)
+    }
+
+    /// The binding the qualified reference spanning `start..end` resolves to: its scope in the
+    /// file's table, its name there and its index among that scope's bindings of the name.
+    pub(crate) fn resolved(&self, start: usize, end: usize) -> Option<(u32, &str, usize)> {
+        let binding = self.resolve(self.reference_at(start, end)?)?;
+        let (scope, index) = self.ids[binding];
+        Some((scope, &self.bindings[binding].folded, index))
+    }
+
+    /// Whether RF01 reads the qualified reference spanning `start..end`: one of a `SELECT`'s
+    /// own clauses, as RF01 starts at `select_statement`.
+    pub(crate) fn reported(&self, start: usize, end: usize) -> bool {
+        self.reference_at(start, end)
+            .is_some_and(|reference| self.checked(reference))
+    }
+
+    fn checked(&self, reference: &Reference) -> bool {
+        self.blocks[reference.block].kind == BlockKind::Select
+    }
+
+    /// Each binding's uses, with the file table's scope, name and index of the binding. AL05's
+    /// walk: a reference (qualified, or a bare row reference) uses, in its own block or the
+    /// nearest enclosing block that binds its folded name, every relation of that name; a CTE
+    /// name or DML target is used by the same walk over those alone.
+    pub(crate) fn usage(&self) -> impl Iterator<Item = (u32, &str, usize, Uses)> {
+        self.uses()
+            .into_iter()
+            .zip(&self.bindings)
+            .zip(&self.ids)
+            .map(|((uses, binding), &(scope, index))| (scope, binding.folded.as_str(), index, uses))
+    }
+
+    /// `usage`, by binding.
+    fn uses(&self) -> Vec<Uses> {
+        let mut marks: HashMap<(usize, &str, bool), Uses> = HashMap::new();
+        for reference in &self.references {
+            for named in [false, true] {
+                let mut block = Some(reference.block);
+                while let Some(index) = block {
+                    if self.by_block[index].iter().any(|&binding| {
+                        let binding = &self.bindings[binding];
+                        (binding.kind == BindingKind::Named) == named
+                            && binding.folded == reference.used
+                    }) {
+                        let uses = marks
+                            .entry((index, reference.used.as_str(), named))
+                            .or_default();
+                        uses.reads += 1;
+                        uses.nested += u32::from(index != reference.block);
+                        break;
+                    }
+                    block = self.blocks[index].parent;
+                }
+            }
+        }
+        self.bindings
+            .iter()
+            .map(|binding| {
+                let named = binding.kind == BindingKind::Named;
+                marks
+                    .get(&(binding.block, binding.folded.as_str(), named))
+                    .copied()
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     /// RF01's `_resolve_reference`: the binding of the reference's own block or an enclosing one
@@ -176,19 +337,20 @@ impl SqlScopes {
         let mut block = Some(reference.block);
         while let Some(index) = block {
             let visible = || {
-                self.bindings.iter().enumerate().filter(|(_, binding)| {
-                    binding.block == index && binding.visible_from <= reference.range.start
-                })
+                self.by_block[index]
+                    .iter()
+                    .copied()
+                    .filter(|&binding| self.bindings[binding].visible_from <= reference.range.start)
             };
-            let exact = visible().find(|(_, binding)| {
-                binding
+            let exact = visible().find(|&binding| {
+                self.bindings[binding]
                     .targets
                     .iter()
                     .any(|target| reference.possible.contains(target))
             });
-            if let Some((found, _)) = exact.or_else(|| {
-                visible().find(|(_, binding)| {
-                    binding.targets.iter().any(|target| {
+            if let Some(found) = exact.or_else(|| {
+                visible().find(|&binding| {
+                    self.bindings[binding].targets.iter().any(|target| {
                         reference
                             .possible
                             .iter()
@@ -249,18 +411,23 @@ struct Reader {
 
 impl Reader {
     /// Depth-first over the tree with an explicit stack, so a deeply nested expression cannot
-    /// overflow the call stack. Each node is read with the block it belongs to; a `select`,
-    /// `update`, `delete` or `insert` child opens a block, and the siblings after it (`from`,
-    /// `where`, `order_by`, ...) belong to that block, as the grammar writes them beside the
-    /// keyword node rather than inside it.
-    fn read<D: Doc>(&mut self, root: &Node<'_, D>) {
+    /// overflow the call stack; `charge` pays for each node. Each node is read with the block it
+    /// belongs to; a `select`, `update`, `delete` or `insert` child opens a block, and the siblings
+    /// after it (`from`, `where`, `order_by`, ...) belong to that block, as the grammar writes them
+    /// beside the keyword node rather than inside it.
+    fn read<D: Doc>(
+        &mut self,
+        root: &Node<'_, D>,
+        charge: &mut dyn FnMut() -> Result<(), BuildError>,
+    ) -> Result<(), BuildError> {
         let mut stack = vec![(root.clone(), None::<usize>)];
         while let Some((node, block)) = stack.pop() {
+            charge()?;
             let kind = node.kind();
             let children: Vec<_> = node.children().collect();
             let has_cte = children.iter().any(|child| child.kind() == "cte");
             let block = if has_cte {
-                Some(self.open(block, BlockKind::With))
+                Some(self.open(block, BlockKind::With, node.range()))
             } else {
                 block
             };
@@ -275,16 +442,22 @@ impl Reader {
                     _ => None,
                 };
                 if let Some(child_kind) = child_kind {
-                    current = Some(self.open(block, child_kind));
+                    let range = child.range().start..node.range().end;
+                    current = Some(self.open(block, child_kind, range));
                 }
                 pushed.push((child, current));
             }
             stack.extend(pushed.into_iter().rev());
         }
+        Ok(())
     }
 
-    fn open(&mut self, parent: Option<usize>, kind: BlockKind) -> usize {
-        self.scopes.blocks.push(Block { parent, kind });
+    fn open(&mut self, parent: Option<usize>, kind: BlockKind, range: Range<usize>) -> usize {
+        self.scopes.blocks.push(Block {
+            parent,
+            kind,
+            range,
+        });
         self.scopes.blocks.len() - 1
     }
 
@@ -304,7 +477,7 @@ impl Reader {
                 // directly, not as a relation.
                 if let Some(table) = children.iter().find(|c| c.kind() == "object_reference") {
                     let alias = children.iter().find(|c| node_is_alias(node, c));
-                    self.bind_table(table, alias, BindingKind::Named, block);
+                    self.bind_table(node, table, alias, BindingKind::Named, block);
                 }
             }
             "cte" => {
@@ -312,7 +485,9 @@ impl Reader {
                     let text = name.text();
                     self.scopes.bindings.push(Binding {
                         block,
-                        name: name.range(),
+                        name: NodeRef::of(name),
+                        site: NodeRef::of(node),
+                        form: Form::Cte,
                         kind: BindingKind::Named,
                         aliased: false,
                         folded: folded(&text),
@@ -335,7 +510,7 @@ impl Reader {
     ) {
         let alias = children.iter().find(|child| node_is_alias(node, child));
         if let Some(table) = children.iter().find(|c| c.kind() == "object_reference") {
-            self.bind_table(table, alias, BindingKind::Table, block);
+            self.bind_table(node, table, alias, BindingKind::Table, block);
             return;
         }
         let Some(alias) = alias else { return };
@@ -347,7 +522,9 @@ impl Reader {
         let text = alias.text();
         self.scopes.bindings.push(Binding {
             block,
-            name: alias.range(),
+            name: NodeRef::of(alias),
+            site: NodeRef::of(node),
+            form: Form::Relation,
             kind,
             aliased: true,
             folded: folded(&text),
@@ -357,10 +534,12 @@ impl Reader {
         });
     }
 
-    /// A table relation, with its alias if it has one: it binds the alias, else the last part of the
-    /// name, and always the qualified name (RF01's `_alias_info_as_tuples`).
+    /// A table relation (or a DML target, `kind` `Named`, at `site`), with its alias if it has
+    /// one: it binds the alias, else the last part of the name, and always the qualified name
+    /// (RF01's `_alias_info_as_tuples`).
     fn bind_table<'a, D: Doc>(
         &mut self,
+        site: &Node<'_, D>,
         table: &Node<'a, D>,
         alias: Option<&Node<'a, D>>,
         kind: BindingKind,
@@ -380,7 +559,13 @@ impl Reader {
         };
         self.scopes.bindings.push(Binding {
             block,
-            name: name.range(),
+            name: NodeRef::of(name),
+            site: NodeRef::of(site),
+            form: if kind == BindingKind::Named {
+                Form::Target
+            } else {
+                Form::Relation
+            },
             kind,
             aliased: alias.is_some(),
             folded: folded(&name.text()),
@@ -446,7 +631,8 @@ fn node_is_alias<D: Doc>(node: &Node<'_, D>, candidate: &Node<'_, D>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_rule_dsl::value::sql::test_grammar;
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use ast_grep_language::LanguageExt;
     use serde_json::Value as Json;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -582,7 +768,7 @@ mod tests {
     ];
 
     fn read_scopes(source: &str) -> SqlScopes {
-        SqlScopes::read(&test_grammar::parse(source).root())
+        SqlScopes::read(&GrammarDialect::Sql.ast_grep(source).root())
     }
 
     /// The `nth` whole-word occurrence of `needle` in `source`.
@@ -694,7 +880,7 @@ mod tests {
             let path = path.as_str().unwrap();
             let source = std::fs::read_to_string(sqlfluff_dir().join("fixtures").join(path))
                 .expect("fixture");
-            let grep = test_grammar::parse(&source);
+            let grep = GrammarDialect::Sql.ast_grep(&source);
             let scopes = SqlScopes::read(&grep.root());
             for (rule, ranges) in [
                 ("RF01", scopes.unresolved()),
