@@ -1,0 +1,1 @@
+foo.every((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })

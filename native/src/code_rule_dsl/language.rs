@@ -29,6 +29,7 @@
 
 pub(crate) mod adapter;
 
+use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::module_path::ModulePath;
 use ast_grep_core::{
     language::Language,
@@ -54,52 +55,45 @@ impl Language for GrammarDialect {
     }
 
     fn expando_char(&self) -> char {
-        self.support().map_or('µ', |lang| lang.expando_char())
+        match self.support() {
+            Some(lang) => lang.expando_char(),
+            None => BladeLang.expando_char(),
+        }
     }
 
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-        if let Some(language) = self.support() {
-            return language.pre_process_pattern(query);
+        match self.support() {
+            Some(language) => language.pre_process_pattern(query),
+            None => BladeLang.pre_process_pattern(query),
         }
-        let mut processed = String::with_capacity(query.len());
-        let mut dollars = 0;
-        for character in query.chars() {
-            if character == '$' {
-                dollars += 1;
-                continue;
-            }
-            let expando = matches!(character, 'A'..='Z' | '_') || dollars == 3;
-            processed.extend(std::iter::repeat_n(
-                if expando { 'µ' } else { '$' },
-                dollars,
-            ));
-            dollars = 0;
-            processed.push(character);
-        }
-        processed.extend(std::iter::repeat_n(
-            if dollars == 3 { 'µ' } else { '$' },
-            dollars,
-        ));
-        Cow::Owned(processed)
     }
 
+    /// Blade's patterns are Forte trees (`blade::forte::tree`), whose kinds are numbered as Blade's
+    /// tapes number them; every other dialect's are tree-sitter trees.
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        builder.build(|source| StrDoc::try_new(source, *self))
+        match self {
+            Self::Blade => BladeLang.build_pattern(builder),
+            _ => builder.build(|source| StrDoc::try_new(source, *self)),
+        }
     }
 }
 
 impl LanguageExt for GrammarDialect {
-    /// The grammar the registry names: one `build.rs` generates from a vendored grammar (Blade;
-    /// Python, TypeScript and TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/
+    /// The grammar the registry names: one `build.rs` generates from a vendored grammar (Python,
+    /// TypeScript and TSX, which carry patches: `grammars/tree-sitter-{python,typescript}/
     /// PATCHES.md`), else ast-grep's. ast-grep is built without its Python and TypeScript parsers,
     /// so `SupportLang` only lends these dialects its pattern syntax. Test-only dialects are
-    /// ast-grep's.
+    /// ast-grep's. Blade has none: Rerail's port of Forte parses it (`blade::forte`).
     fn get_ts_language(&self) -> TSLanguage {
-        registry_grammar(*self).unwrap_or_else(|| {
-            self.support()
-                .expect("a dialect without a registry grammar is ast-grep's")
-                .get_ts_language()
-        })
+        self.ts_language()
+            .unwrap_or_else(|| panic!("{self} is not parsed with tree-sitter"))
+    }
+}
+
+impl GrammarDialect {
+    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade).
+    fn ts_language(self) -> Option<TSLanguage> {
+        registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
     }
 }
 
@@ -141,16 +135,22 @@ impl Embedded {
     }
 }
 
-/// The embedded grammars of a dialect whose own grammar is `own`, numbered after it in order:
-/// each grammar's kinds after the previous ones' (tree-sitter numbers a grammar's kinds from 0),
-/// its fields likewise (from 1, 0 being none).
-fn number_embedded(own: &'static TSLanguage, dialects: &[GrammarDialect]) -> Vec<Embedded> {
-    let mut kinds = own.node_kind_count();
-    let mut fields = own.field_count();
+/// The embedded grammars of a dialect with `own_kinds` kinds and `own_fields` fields of its own,
+/// numbered after them in order: each grammar's kinds after the previous ones' (tree-sitter
+/// numbers a grammar's kinds from 0), its fields likewise (from 1, 0 being none).
+fn number_embedded(
+    own_kinds: usize,
+    own_fields: usize,
+    dialects: &[GrammarDialect],
+) -> Vec<Embedded> {
+    let mut kinds = own_kinds;
+    let mut fields = own_fields;
     dialects
         .iter()
         .map(|&dialect| {
-            let grammar = dialect.grammar();
+            let grammar = dialect
+                .grammar()
+                .expect("an embedded dialect is parsed with tree-sitter");
             let embedded = Embedded {
                 dialect,
                 grammar,
@@ -164,24 +164,80 @@ fn number_embedded(own: &'static TSLanguage, dialects: &[GrammarDialect]) -> Vec
         .collect()
 }
 
-/// The node kinds and fields a dialect's tapes carry and its rules name: its grammar's, then
-/// those of each grammar it embeds (`GrammarDialect::embeds`, in registry order). A Blade tape
-/// also holds the PHP its template embeds (`blade::view`), so Blade numbers its own kinds first
-/// and PHP's after them (PHP's id plus Blade's kind count); fields likewise (Blade's grammar has
-/// none, so its fields are PHP's). A name the dialect's own grammar gives a named kind is its own
-/// (Blade's `attribute`, `comment`, `php_tag`, `php_end_tag`); any other is the first embedded
-/// grammar's that has it. Rules and tapes read kinds and fields only here.
+/// Blade's fields its embedded PHP has none of, numbered after PHP's (`KindCatalog`).
+static BLADE_OWN_FIELDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let php = GrammarDialect::Php
+        .grammar()
+        .expect("PHP is parsed with tree-sitter");
+    blade_tree::FIELD_NAMES[1..]
+        .iter()
+        .copied()
+        .filter(|name| php.field_id_for_name(name).is_none())
+        .collect()
+});
+
+/// Where a dialect's own kinds come from: a tree-sitter grammar's symbol table, or the kinds of
+/// Blade's tree (`blade::forte::tree`, Rerail's port of Forte).
+#[derive(Clone, Copy)]
+enum OwnKinds {
+    Grammar(&'static TSLanguage),
+    Blade,
+}
+
+impl OwnKinds {
+    fn kind_count(self) -> usize {
+        match self {
+            Self::Grammar(grammar) => grammar.node_kind_count(),
+            Self::Blade => blade_tree::KIND_NAMES.len(),
+        }
+    }
+
+    /// Fields numbered before the embedded grammars': a tree-sitter grammar's own. Blade's come
+    /// after its embedded PHP's (`KindCatalog`).
+    fn leading_field_count(self) -> usize {
+        match self {
+            Self::Grammar(grammar) => grammar.field_count(),
+            Self::Blade => 0,
+        }
+    }
+
+    /// The id of its named kind called `kind` (0 where there is none).
+    fn kind_id(self, kind: &str) -> u16 {
+        match self {
+            Self::Grammar(grammar) => grammar.id_for_node_kind(kind, true),
+            Self::Blade => blade_tree::KIND_NAMES[..usize::from(blade_tree::FIRST_ANONYMOUS)]
+                .iter()
+                .skip(1)
+                .position(|name| *name == kind)
+                .map_or(0, |index| index as u16 + 1),
+        }
+    }
+}
+
+/// The node kinds and fields a dialect's tapes carry and its rules name: its own, then those of
+/// each grammar it embeds (`GrammarDialect::embeds`, in registry order), each grammar's kinds and
+/// fields after the previous ones'. A dialect's own kinds are its tree-sitter grammar's, or for
+/// Blade its tree's (`blade::forte::tree::KIND_NAMES`, ids from 1, ERROR aside). A Blade tape also
+/// holds the PHP its template embeds (`blade::view`), so Blade numbers its own kinds first and
+/// PHP's after them (PHP's id plus Blade's kind count). A name the dialect's own kinds give a named
+/// kind is its own (Blade's `attribute`, `comment`, `php_tag`, `text`); any other is the first
+/// embedded grammar's that has it. A tree-sitter dialect's fields come first; Blade's are PHP's,
+/// then those of its tree PHP has none of (`closing_name`, `expression`, ...): a field both name
+/// (`name`, `value`, `arguments`) has one id. Rules and tapes read kinds and fields only here.
 #[derive(Clone, Copy)]
 pub(crate) struct KindCatalog {
     dialect: GrammarDialect,
-    own: &'static TSLanguage,
+    own: OwnKinds,
     embedded: &'static [Embedded],
 }
 
 impl KindCatalog {
-    /// The grammar the dialect's files are parsed with.
-    pub(crate) fn grammar(self) -> &'static TSLanguage {
-        self.own
+    /// The tree-sitter grammar the dialect's files are parsed with; `None` for Blade's.
+    pub(crate) fn grammar(self) -> Option<&'static TSLanguage> {
+        match self.own {
+            OwnKinds::Grammar(grammar) => Some(grammar),
+            OwnKinds::Blade => None,
+        }
     }
 
     /// The embedded grammar `dialect` is read with, if the dialect's tapes embed it.
@@ -201,13 +257,6 @@ impl KindCatalog {
         self.embedded.iter().find(|embedded| embedded.owns(id))
     }
 
-    /// The grammar a kind id belongs to, and the id in it.
-    fn kind_home(self, id: u16) -> (&'static TSLanguage, u16) {
-        self.embedded_home(id).map_or((self.own, id), |embedded| {
-            (embedded.grammar, id - embedded.kind_offset)
-        })
-    }
-
     /// Whether a kind id is an embedded program's (a Blade tape's PHP), not the dialect's own.
     pub(crate) fn is_embedded_kind(self, id: u16) -> bool {
         self.embedded_home(id).is_some()
@@ -220,10 +269,24 @@ impl KindCatalog {
             .map_or(self.dialect, |embedded| embedded.dialect)
     }
 
+    /// The tree-sitter grammar a kind id is a symbol of, and its id there; `None` for one of
+    /// Blade's own kinds.
+    fn kind_home(self, id: u16) -> Option<(&'static TSLanguage, u16)> {
+        if let Some(embedded) = self.embedded_home(id) {
+            return Some((embedded.grammar, id - embedded.kind_offset));
+        }
+        match (self.own, self.embedded.first()) {
+            (OwnKinds::Grammar(grammar), _) => Some((grammar, id)),
+            // ERROR is every grammar's: in a Blade tape, only the embedded PHP's.
+            (OwnKinds::Blade, Some(embedded)) if id == u16::MAX => Some((embedded.grammar, id)),
+            (OwnKinds::Blade, _) => None,
+        }
+    }
+
     pub(crate) fn kind_count(self) -> usize {
         self.embedded
             .last()
-            .map_or(self.own.node_kind_count(), |embedded| {
+            .map_or(self.own.kind_count(), |embedded| {
                 usize::from(embedded.kind_offset) + embedded.grammar.node_kind_count()
             })
     }
@@ -231,7 +294,7 @@ impl KindCatalog {
     /// The id of the named kind called `kind` (0 where there is none): the dialect's own, else
     /// the first embedded grammar's.
     pub(crate) fn kind_id(self, kind: &str) -> u16 {
-        match self.own.id_for_node_kind(kind, true) {
+        match self.own.kind_id(kind) {
             0 => self
                 .embedded
                 .iter()
@@ -242,75 +305,127 @@ impl KindCatalog {
     }
 
     /// Every id a rule's `kind: <kind>` names: the dialect's own, or else every embedded
-    /// grammar's of that name (a file's program is one of them). A `comment` is the dialect's
-    /// own and every embedded grammar's alike: a Blade template's comments and its PHP's.
+    /// grammar's of that name (a file's program is one of them). In a dialect that embeds code,
+    /// `comment` names its comments of every kind and the embedded grammars' alike: a Blade
+    /// template's `<!-- -->`, `{{-- --}}`, `<!--[if ...]>` and `<!...>` and its PHP's `comment`.
     pub(crate) fn kind_ids(self, kind: &str) -> Vec<u16> {
-        let own = self.own.id_for_node_kind(kind, true);
-        let embedded = (own == 0 || kind == "comment")
-            .then(|| {
-                self.embedded
-                    .iter()
-                    .filter_map(|embedded| embedded.kind_id(kind))
-            })
-            .into_iter()
-            .flatten();
-        (own != 0)
-            .then_some(own)
-            .into_iter()
-            .chain(embedded)
+        let own = self.own.kind_id(kind);
+        if kind == "comment" && self.has_embedded() {
+            let other_own = match self.own {
+                OwnKinds::Blade => &["blade_comment", "conditional_comment", "bogus_comment"][..],
+                OwnKinds::Grammar(_) => &[],
+            };
+            return (own != 0)
+                .then_some(own)
+                .into_iter()
+                .chain(
+                    other_own
+                        .iter()
+                        .map(|kind| self.own.kind_id(kind))
+                        .filter(|&id| id != 0),
+                )
+                .chain(
+                    self.embedded
+                        .iter()
+                        .filter_map(|embedded| embedded.kind_id(kind)),
+                )
+                .collect();
+        }
+        if own != 0 {
+            return vec![own];
+        }
+        self.embedded
+            .iter()
+            .filter_map(|embedded| embedded.kind_id(kind))
             .collect()
     }
 
     pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
-        let (grammar, id) = self.kind_home(id);
-        grammar.node_kind_for_id(id)
+        match self.kind_home(id) {
+            Some((grammar, id)) => grammar.node_kind_for_id(id),
+            None => blade_tree::KIND_NAMES
+                .get(usize::from(id))
+                .copied()
+                .filter(|name| !name.is_empty()),
+        }
     }
 
     pub(crate) fn kind_is_named(self, id: u16) -> bool {
-        let (grammar, id) = self.kind_home(id);
-        grammar.node_kind_is_named(id)
+        match self.kind_home(id) {
+            Some((grammar, id)) => grammar.node_kind_is_named(id),
+            None => id != 0 && id < blade_tree::FIRST_ANONYMOUS,
+        }
     }
 
     pub(crate) fn kind_is_visible(self, id: u16) -> bool {
-        let (grammar, id) = self.kind_home(id);
-        grammar.node_kind_is_visible(id)
+        match self.kind_home(id) {
+            Some((grammar, id)) => grammar.node_kind_is_visible(id),
+            None => id != 0 && usize::from(id) < blade_tree::KIND_NAMES.len(),
+        }
     }
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
-        let (grammar, id) = self.kind_home(id);
-        grammar.node_kind_is_supertype(id)
+        self.kind_home(id)
+            .is_some_and(|(grammar, id)| grammar.node_kind_is_supertype(id))
+    }
+
+    /// Fields of the dialect's own numbered after the embedded grammars' (Blade's), and where
+    /// they start.
+    fn trailing_fields(self) -> (usize, &'static [&'static str]) {
+        let embedded = self
+            .embedded
+            .last()
+            .map_or(self.own.leading_field_count(), |embedded| {
+                usize::from(embedded.field_offset) + embedded.grammar.field_count()
+            });
+        match self.own {
+            OwnKinds::Grammar(_) => (embedded, &[]),
+            OwnKinds::Blade => (embedded, BLADE_OWN_FIELDS.as_slice()),
+        }
     }
 
     pub(crate) fn field_count(self) -> usize {
-        self.embedded
-            .last()
-            .map_or(self.own.field_count(), |embedded| {
-                usize::from(embedded.field_offset) + embedded.grammar.field_count()
-            })
+        let (before, trailing) = self.trailing_fields();
+        before + trailing.len()
     }
 
-    /// The id of the field called `name`: the dialect's own, else the first embedded grammar's.
+    /// The id of the field called `name`: the dialect's grammar's, else the first embedded
+    /// grammar's, else one of Blade's own.
     pub(crate) fn field_id(self, name: &str) -> Option<u16> {
-        self.own
-            .field_id_for_name(name)
-            .map(|id| id.get())
-            .or_else(|| {
-                self.embedded.iter().find_map(|embedded| {
-                    embedded
-                        .grammar
-                        .field_id_for_name(name)
-                        .map(|id| id.get() + embedded.field_offset)
-                })
+        let own = match self.own {
+            OwnKinds::Grammar(grammar) => grammar.field_id_for_name(name).map(|id| id.get()),
+            OwnKinds::Blade => None,
+        };
+        own.or_else(|| {
+            self.embedded.iter().find_map(|embedded| {
+                embedded
+                    .grammar
+                    .field_id_for_name(name)
+                    .map(|id| id.get() + embedded.field_offset)
             })
+        })
+        .or_else(|| {
+            let (before, trailing) = self.trailing_fields();
+            trailing
+                .iter()
+                .position(|own| *own == name)
+                .map(|index| (before + index + 1) as u16)
+        })
     }
 
     pub(crate) fn field_name(self, id: u16) -> Option<&'static str> {
-        if usize::from(id) <= self.own.field_count() {
-            return self.own.field_name_for_id(id);
+        if let OwnKinds::Grammar(grammar) = self.own
+            && usize::from(id) <= grammar.field_count()
+        {
+            return grammar.field_name_for_id(id);
+        }
+        let (before, trailing) = self.trailing_fields();
+        if let Some(index) = usize::from(id).checked_sub(before + 1) {
+            return trailing.get(index).copied();
         }
         self.embedded.iter().find_map(|embedded| {
             let local = id.checked_sub(embedded.field_offset)?;
-            (usize::from(local) <= embedded.grammar.field_count())
+            (local != 0 && usize::from(local) <= embedded.grammar.field_count())
                 .then(|| embedded.grammar.field_name_for_id(local))
                 .flatten()
         })
@@ -322,24 +437,33 @@ impl KindCatalog {
     fn with_embedded(own: GrammarDialect, embedded: &'static [Embedded]) -> Self {
         Self {
             dialect: own,
-            own: own.grammar(),
+            own: OwnKinds::Grammar(own.grammar().expect("a tree-sitter dialect")),
             embedded,
         }
     }
 }
 
 impl GrammarDialect {
-    /// The dialect's grammar, loaded once.
-    fn grammar(self) -> &'static TSLanguage {
+    /// The dialect's tree-sitter grammar, loaded once; `None` for Blade's.
+    fn grammar(self) -> Option<&'static TSLanguage> {
         static GRAMMARS: std::sync::LazyLock<
             std::collections::HashMap<GrammarDialect, TSLanguage>,
         > = std::sync::LazyLock::new(|| {
             GrammarDialect::ALL
                 .iter()
-                .map(|&dialect| (dialect, dialect.get_ts_language()))
+                .filter_map(|&dialect| Some((dialect, dialect.ts_language()?)))
                 .collect()
         });
-        &GRAMMARS[&self]
+        GRAMMARS.get(&self)
+    }
+
+    /// Where the dialect's own kinds come from: Blade's tree (Forte, the registry's `parser`
+    /// `forte`), else its tree-sitter grammar.
+    fn own_kinds(self) -> OwnKinds {
+        match self.grammar() {
+            Some(grammar) => OwnKinds::Grammar(grammar),
+            None => OwnKinds::Blade,
+        }
     }
 
     /// The dialect's kinds and fields.
@@ -356,13 +480,16 @@ impl GrammarDialect {
                             embeds.push(embedded);
                         }
                     }
-                    (dialect, number_embedded(dialect.grammar(), &embeds))
+                    let own = dialect.own_kinds();
+                    let numbered =
+                        number_embedded(own.kind_count(), own.leading_field_count(), &embeds);
+                    (dialect, numbered)
                 })
                 .collect()
         });
         KindCatalog {
             dialect: self,
-            own: self.grammar(),
+            own: self.own_kinds(),
             embedded: &EMBEDDED[&self],
         }
     }
@@ -457,13 +584,16 @@ pub(crate) fn rule_pattern(
 /// Whether Blade reads `source` as text alone, with no directive, echo, `@php`, component, HTML
 /// element or comment: a rule's pattern that is PHP (`rule_pattern`).
 fn blade_text(source: &str) -> bool {
-    use ast_grep_core::Language;
-    use ast_grep_language::LanguageExt;
-    let blade = GrammarDialect::Blade;
-    let root = blade.ast_grep(blade.pre_process_pattern(source));
-    root.root()
-        .dfs()
-        .all(|node| !node.is_named() || matches!(&*node.kind(), "document" | "text" | "ERROR"))
+    use ast_grep_core::source::SgNode;
+    let doc = BladeLang.doc(BladeLang.pre_process_pattern(source).as_bytes());
+    let mut stack = vec![doc.tree.root()];
+    while let Some(node) = stack.pop() {
+        if node.is_named() && !matches!(&*node.kind(), "document" | "text") {
+            return false;
+        }
+        stack.extend(node.children());
+    }
+    true
 }
 
 /// Renumbers a PHP pattern's kinds as a Blade tape numbers PHP's.
@@ -795,19 +925,18 @@ mod tests {
         }
     }
 
-    /// Blade's tapes number PHP's kinds after Blade's own and keep PHP's field ids: the numbering
-    /// persisted Blade tapes were written in.
+    /// Blade's tapes number PHP's kinds after Blade's own (Forte's tree), PHP's fields first and
+    /// Blade's own after them: the numbering persisted Blade tapes were written in.
     #[test]
-    fn blade_numbers_php_after_its_own_kinds_and_keeps_php_fields() {
+    fn blade_numbers_php_after_its_own_kinds_and_its_own_fields_after_php() {
         let blade = GrammarDialect::Blade.kinds();
-        let php = GrammarDialect::Php.grammar();
-        let offset = u16::try_from(GrammarDialect::Blade.grammar().node_kind_count()).unwrap();
-        assert!(blade.has_embedded());
+        let php = GrammarDialect::Php.grammar().expect("PHP's grammar");
+        let offset = u16::try_from(blade_tree::KIND_NAMES.len()).unwrap();
+        assert!(blade.grammar().is_none());
         assert_eq!(
             blade.embedding(GrammarDialect::Php).unwrap().kind_offset,
             offset
         );
-        assert_eq!(GrammarDialect::Blade.grammar().field_count(), 0);
         for id in 0..u16::try_from(php.node_kind_count()).unwrap() {
             assert!(blade.is_embedded_kind(id + offset), "{id}");
             assert_eq!(blade.dialect_of_kind(id + offset), GrammarDialect::Php);
@@ -820,21 +949,30 @@ mod tests {
         for id in 1..=u16::try_from(php.field_count()).unwrap() {
             assert_eq!(blade.field_name(id), php.field_name_for_id(id), "{id}");
         }
+        for (index, name) in BLADE_OWN_FIELDS.iter().enumerate() {
+            let id = u16::try_from(php.field_count() + index + 1).unwrap();
+            assert_eq!(blade.field_id(name), Some(id));
+            assert_eq!(blade.field_name(id), Some(*name));
+        }
         assert_eq!(
-            blade.field_id("arguments"),
-            php.field_id_for_name("arguments").map(|id| id.get())
+            blade.field_count(),
+            php.field_count() + BLADE_OWN_FIELDS.len()
         );
         assert_eq!(
             blade.kind_id("variable_name"),
             php.id_for_node_kind("variable_name", true) + offset
         );
-        let comment = GrammarDialect::Blade
-            .grammar()
-            .id_for_node_kind("comment", true);
-        assert_eq!(blade.kind_id("comment"), comment);
+        let own = |kind| OwnKinds::Blade.kind_id(kind);
+        assert_eq!(blade.kind_id("comment"), own("comment"));
         assert_eq!(
             blade.kind_ids("comment"),
-            [comment, php.id_for_node_kind("comment", true) + offset]
+            [
+                own("comment"),
+                own("blade_comment"),
+                own("conditional_comment"),
+                own("bogus_comment"),
+                php.id_for_node_kind("comment", true) + offset,
+            ]
         );
         assert_eq!(
             blade.kind_count(),
@@ -850,16 +988,19 @@ mod tests {
     #[test]
     fn two_embedded_grammars_number_their_kinds_and_fields_in_turn() {
         static EMBEDDED: std::sync::LazyLock<Vec<Embedded>> = std::sync::LazyLock::new(|| {
+            let json = GrammarDialect::Json.grammar().expect("JSON's grammar");
             number_embedded(
-                GrammarDialect::Json.grammar(),
+                json.node_kind_count(),
+                json.field_count(),
                 &[GrammarDialect::Go, GrammarDialect::Scala],
             )
         });
         let catalog = KindCatalog::with_embedded(GrammarDialect::Json, &EMBEDDED);
+        let grammar = |dialect: GrammarDialect| dialect.grammar().expect("a tree-sitter grammar");
         let (json, go, scala) = (
-            GrammarDialect::Json.grammar(),
-            GrammarDialect::Go.grammar(),
-            GrammarDialect::Scala.grammar(),
+            grammar(GrammarDialect::Json),
+            grammar(GrammarDialect::Go),
+            grammar(GrammarDialect::Scala),
         );
         let [first, second] = [&EMBEDDED[0], &EMBEDDED[1]];
         assert_eq!(usize::from(first.kind_offset), json.node_kind_count());

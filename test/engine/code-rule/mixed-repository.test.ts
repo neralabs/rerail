@@ -34,7 +34,7 @@ const CODE_RULES = [
   { id: "mixed:php", clauses: [clause("reaches-escape", "php", { kind: "function_call_expression", calls: { has: escapes } })] },
   { id: "mixed:blade", clauses: [
     clause("reaches-escape", "blade", { kind: "function_call_expression", calls: { has: escapes } }),
-    clause("raw-echo", "blade", { kind: "php_statement", regex: "^\\{!!" }),
+    clause("raw-echo", "blade", { kind: "raw_echo" }),
   ] },
 ].map(({ id, clauses }) => codeRuleSchema.parse({ format: "rerail.policy/v1", id, revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] }, clauses }));
 

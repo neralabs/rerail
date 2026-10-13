@@ -12,10 +12,8 @@ use super::*;
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::content_store::{ContentStore, HashKey, StoredSourceObjects};
-use ast_grep_language::LanguageExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tree_sitter::Parser;
 
 /// One logical file's exact version: path, source content, file context and the grammar build and
 /// grammar a tape of it is parsed with.
@@ -209,7 +207,7 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
         state.documents.loads.resident += 1;
         let image = match &file.tape {
             Some((revision, image)) if *revision == file.source_revision => image.clone(),
-            _ => parse(&file.input.source, language, &grammar)?,
+            _ => parse(&file.input.source, &grammar)?,
         };
         (Arc::clone(&file.input.source), image)
     } else {
@@ -247,7 +245,7 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
             }
             None => {
                 state.documents.loads.parsed += 1;
-                parse(&source, language, &grammar)?
+                parse(&source, &grammar)?
             }
         };
         (source, image)
@@ -264,19 +262,10 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
     Ok((version, document))
 }
 
-fn parse(
-    source: &str,
-    language: GrammarDialect,
-    grammar: &Arc<tape::Grammar>,
-) -> Result<tape::TapeImage> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language.get_ts_language())
-        .map_err(|error| invalid(error.to_string()))?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| invalid("document could not be parsed"))?;
-    tape::TapeImage::encode(tree.root_node(), grammar, source, &|| false).map_err(invalid)
+fn parse(source: &str, grammar: &Arc<tape::Grammar>) -> Result<tape::TapeImage> {
+    tape::TapeImage::parse(grammar, source, &|| false)
+        .ok_or_else(|| invalid("document could not be parsed"))?
+        .map_err(invalid)
 }
 
 /// A snapshot-qualified reference to one node of one file version.

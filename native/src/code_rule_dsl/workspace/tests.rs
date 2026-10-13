@@ -599,7 +599,11 @@ fn tape_test_code_rule() -> CompiledCodeRuleDsl {
                 { "id": "typescript", "violation": { "anchor": "witness.span", "code": "TS",
                     "message": "typescript call" },
                   "forbid": { "ast": { "language": "typescript",
-                "rule": { "pattern": "print($ARG)" } } } }
+                "rule": { "pattern": "print($ARG)" } } } },
+                { "id": "blade", "violation": { "anchor": "witness.span", "code": "BLADE",
+                    "message": "blade echo" },
+                  "forbid": { "ast": { "language": "blade",
+                "rule": { "kind": "echo" } } } }
             ]
         })
         .to_string(),
@@ -607,7 +611,7 @@ fn tape_test_code_rule() -> CompiledCodeRuleDsl {
         json!({
             "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
                 "languages": { "python": "tree-sitter-python@0.23",
-                    "typescript": "tree-sitter-typescript@0.23" } },
+                    "typescript": "tree-sitter-typescript@0.23", "blade": "forte@1.1.0" } },
             "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
                 "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
                 "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
@@ -1073,12 +1077,20 @@ fn result_page_cursor_is_stale_after_an_apply() {
 fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
     let compiled = tape_test_code_rule();
-    for phase in ["native-tree", "restored-doc"] {
+    // A tree-sitter tree, Forte's tree, and a restored document.
+    let python = json!({
+        "path": "active.py", "language": "python", "source": "print('active')\n"
+    });
+    let blade = json!({
+        "path": "active.blade.php", "language": "blade", "source": "{{ $active }}\n"
+    });
+    for (phase, file) in [
+        ("native-tree", python.clone()),
+        ("native-tree", blade),
+        ("restored-doc", python),
+    ] {
         let mut workspace = CodeRuleDslWorkspace::new();
         workspace.add_code_rule(&compiled, None).unwrap();
-        let file = json!({
-            "path": "active.py", "language": "python", "source": "print('active')\n"
-        });
         if phase == "restored-doc" {
             let initial = tape_test_apply(&workspace, 1, vec![file.clone()]);
             assert_eq!(initial["evaluation"]["status"], "completed");

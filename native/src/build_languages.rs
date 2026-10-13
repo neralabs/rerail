@@ -13,11 +13,15 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
-/// The parser implementations a dialect may name.
-const PARSERS: &[&str] = &["tree-sitter"];
+/// The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port,
+/// `code_rule_dsl::blade::forte`).
+const PARSERS: &[&str] = &["tree-sitter", "forte"];
+/// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
+const NATIVE_GRAMMARS: &[&str] = &["forte"];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is
 /// one of them (Python, TypeScript and TSX, which Rerail vendors with patches) still lends that
-/// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar has none.
+/// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar, and a
+/// native one (Blade's Forte), has none.
 const AST_GREP_LANGUAGES: &[&str] = &[
     "Bash",
     "C",
@@ -114,10 +118,11 @@ struct Embed {
     via: String,
 }
 
-/// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, or one
-/// of ast-grep's.
+/// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, one
+/// Rerail implements itself (no tree-sitter grammar), or one of ast-grep's.
 enum Grammar<'a> {
     Vendored(&'a str),
+    Native(&'a str),
     AstGrep(&'a str),
 }
 
@@ -194,6 +199,9 @@ fn parse_grammar(grammar: &str) -> Option<Grammar<'_>> {
     if let Some(name) = grammar.strip_prefix("vendored:") {
         return is_name(name).then_some(Grammar::Vendored(name));
     }
+    if let Some(name) = grammar.strip_prefix("native:") {
+        return is_name(name).then_some(Grammar::Native(name));
+    }
     grammar
         .strip_prefix("ast-grep:")
         .filter(|variant| is_variant(variant))
@@ -206,9 +214,13 @@ fn check_grammar(name: &str, label: &str, grammar: &str, vendored: &[&str]) {
             vendored.contains(&vendored_name),
             "{name}: dialect {label} names vendored grammar `{vendored_name}`, which build.rs does not build (GRAMMARS)"
         ),
+        Some(Grammar::Native(native)) => assert!(
+            NATIVE_GRAMMARS.contains(&native),
+            "{name}: dialect {label} names native grammar `{native}`, which is not one of {NATIVE_GRAMMARS:?}"
+        ),
         Some(Grammar::AstGrep(_)) => {}
         None => panic!(
-            "{name}: dialect {label} grammar `{grammar}` is neither vendored:<name> nor ast-grep:<Language>"
+            "{name}: dialect {label} grammar `{grammar}` is neither vendored:<name>, native:<name> nor ast-grep:<Language>"
         ),
     }
 }
@@ -504,6 +516,7 @@ fn render(entries: &[Entry]) -> String {
         let support = match parse_grammar(dialect.grammar.as_deref().expect("validated")) {
             Some(Grammar::AstGrep(language)) => Some(language),
             Some(Grammar::Vendored(_)) => AST_GREP_LANGUAGES.contains(&name).then_some(name),
+            Some(Grammar::Native(_)) => None,
             None => unreachable!("validated grammar"),
         };
         let _ = match support {
@@ -588,7 +601,7 @@ fn render(entries: &[Entry]) -> String {
     }
     out.push_str("];\n\n");
 
-    out.push_str("/// A supported dialect's grammar, as the registry names it; `None` for a test-only grammar.\n");
+    out.push_str("/// A supported dialect's tree-sitter grammar, as the registry names it; `None` for one Rerail\n/// parses itself and for a test-only grammar.\n");
     out.push_str("fn registry_grammar(lang: GrammarDialect) -> Option<TSLanguage> {\n");
     out.push_str("    unsafe extern \"C\" {\n");
     let mut declared = BTreeSet::new();
@@ -601,15 +614,16 @@ fn render(entries: &[Entry]) -> String {
                 if declared.insert(symbol.clone()) {
                     let _ = writeln!(out, "        fn {symbol}() -> *const ();");
                 }
-                format!("unsafe {{ tree_sitter_language::LanguageFn::from_raw({symbol}) }}.into()")
+                format!(
+                    "Some(unsafe {{ tree_sitter_language::LanguageFn::from_raw({symbol}) }}.into())"
+                )
             }
-            Grammar::AstGrep(language) => format!("SupportLang::{language}.get_ts_language()"),
+            Grammar::Native(_) => "None".to_owned(),
+            Grammar::AstGrep(language) => {
+                format!("Some(SupportLang::{language}.get_ts_language())")
+            }
         };
-        let _ = writeln!(
-            arms,
-            "        {} => Some({language}),",
-            variant(&dialect.label)
-        );
+        let _ = writeln!(arms, "        {} => {language},", variant(&dialect.label));
     }
     out.push_str("    }\n    match lang {\n");
     out.push_str(&arms);
@@ -931,7 +945,7 @@ mod tests {
         let out = Registry::new("repository", &[]);
         generate(
             &root.join("../languages"),
-            &["blade", "python", "typescript", "tsx"],
+            &["python", "typescript", "tsx"],
             &out.0.join("out"),
         );
         let generated =
