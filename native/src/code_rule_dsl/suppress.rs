@@ -374,6 +374,7 @@ impl EslintDirectives {
 #[cfg(test)]
 mod eslint;
 mod noqa;
+mod sqlfluff;
 mod nosec;
 #[cfg(test)]
 mod php_corpus_tests;
