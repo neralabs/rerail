@@ -2699,6 +2699,5453 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-air001-airflow-variable-name-task-id-mismatch",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR001"
+      },
+      "policy": "candidates/rules/ruff-air001-airflow-variable-name-task-id-mismatch.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air002-airflow-dag-no-schedule-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR002"
+      },
+      "policy": "candidates/rules/ruff-air002-airflow-dag-no-schedule-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air301-airflow3-removal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR301"
+      },
+      "policy": "candidates/rules/ruff-air301-airflow3-removal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air302-airflow3-moved-to-provider",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR302"
+      },
+      "policy": "candidates/rules/ruff-air302-airflow3-moved-to-provider.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air303-airflow3-incompatible-function-signature",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR303"
+      },
+      "policy": "candidates/rules/ruff-air303-airflow3-incompatible-function-signature.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air311-airflow3-suggested-update",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR311"
+      },
+      "policy": "candidates/rules/ruff-air311-airflow3-suggested-update.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-air312-airflow3-suggested-to-move-to-provider",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "AIR312"
+      },
+      "policy": "candidates/rules/ruff-air312-airflow3-suggested-to-move-to-provider.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann001-missing-type-function-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN001"
+      },
+      "policy": "candidates/rules/ruff-ann001-missing-type-function-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann002-missing-type-args",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN002"
+      },
+      "policy": "candidates/rules/ruff-ann002-missing-type-args.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann003-missing-type-kwargs",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN003"
+      },
+      "policy": "candidates/rules/ruff-ann003-missing-type-kwargs.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann201-missing-return-type-undocumented-public-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN201"
+      },
+      "policy": "candidates/rules/ruff-ann201-missing-return-type-undocumented-public-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann202-missing-return-type-private-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN202"
+      },
+      "policy": "candidates/rules/ruff-ann202-missing-return-type-private-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann204-missing-return-type-special-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN204"
+      },
+      "policy": "candidates/rules/ruff-ann204-missing-return-type-special-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann205-missing-return-type-static-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN205"
+      },
+      "policy": "candidates/rules/ruff-ann205-missing-return-type-static-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann206-missing-return-type-class-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN206"
+      },
+      "policy": "candidates/rules/ruff-ann206-missing-return-type-class-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ann401-any-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ANN401"
+      },
+      "policy": "candidates/rules/ruff-ann401-any-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-arg001-unused-function-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ARG001"
+      },
+      "policy": "candidates/rules/ruff-arg001-unused-function-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-arg002-unused-method-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ARG002"
+      },
+      "policy": "candidates/rules/ruff-arg002-unused-method-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-arg003-unused-class-method-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ARG003"
+      },
+      "policy": "candidates/rules/ruff-arg003-unused-class-method-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-arg004-unused-static-method-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ARG004"
+      },
+      "policy": "candidates/rules/ruff-arg004-unused-static-method-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-arg005-unused-lambda-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ARG005"
+      },
+      "policy": "candidates/rules/ruff-arg005-unused-lambda-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c400-unnecessary-generator-list",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C400"
+      },
+      "policy": "candidates/rules/ruff-c400-unnecessary-generator-list.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c401-unnecessary-generator-set",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C401"
+      },
+      "policy": "candidates/rules/ruff-c401-unnecessary-generator-set.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c402-unnecessary-generator-dict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C402"
+      },
+      "policy": "candidates/rules/ruff-c402-unnecessary-generator-dict.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c403-unnecessary-list-comprehension-set",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C403"
+      },
+      "policy": "candidates/rules/ruff-c403-unnecessary-list-comprehension-set.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c404-unnecessary-list-comprehension-dict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C404"
+      },
+      "policy": "candidates/rules/ruff-c404-unnecessary-list-comprehension-dict.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c405-unnecessary-literal-set",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C405"
+      },
+      "policy": "candidates/rules/ruff-c405-unnecessary-literal-set.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c406-unnecessary-literal-dict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C406"
+      },
+      "policy": "candidates/rules/ruff-c406-unnecessary-literal-dict.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c408-unnecessary-collection-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C408"
+      },
+      "policy": "candidates/rules/ruff-c408-unnecessary-collection-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c409-unnecessary-literal-within-tuple-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C409"
+      },
+      "policy": "candidates/rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c410-unnecessary-literal-within-list-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C410"
+      },
+      "policy": "candidates/rules/ruff-c410-unnecessary-literal-within-list-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c411-unnecessary-list-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C411"
+      },
+      "policy": "candidates/rules/ruff-c411-unnecessary-list-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c413-unnecessary-call-around-sorted",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C413"
+      },
+      "policy": "candidates/rules/ruff-c413-unnecessary-call-around-sorted.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c414-unnecessary-double-cast-or-process",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C414"
+      },
+      "policy": "candidates/rules/ruff-c414-unnecessary-double-cast-or-process.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c415-unnecessary-subscript-reversal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C415"
+      },
+      "policy": "candidates/rules/ruff-c415-unnecessary-subscript-reversal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c416-unnecessary-comprehension",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C416"
+      },
+      "policy": "candidates/rules/ruff-c416-unnecessary-comprehension.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c417-unnecessary-map",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C417"
+      },
+      "policy": "candidates/rules/ruff-c417-unnecessary-map.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c418-unnecessary-literal-within-dict-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C418"
+      },
+      "policy": "candidates/rules/ruff-c418-unnecessary-literal-within-dict-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c419-unnecessary-comprehension-in-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C419"
+      },
+      "policy": "candidates/rules/ruff-c419-unnecessary-comprehension-in-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C420"
+      },
+      "policy": "candidates/rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-c901-complex-structure",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "C901"
+      },
+      "policy": "candidates/rules/ruff-c901-complex-structure.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-com818-trailing-comma-on-bare-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "COM818"
+      },
+      "policy": "candidates/rules/ruff-com818-trailing-comma-on-bare-tuple.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d100-undocumented-public-module",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D100"
+      },
+      "policy": "candidates/rules/ruff-d100-undocumented-public-module.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d101-undocumented-public-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D101"
+      },
+      "policy": "candidates/rules/ruff-d101-undocumented-public-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d102-undocumented-public-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D102"
+      },
+      "policy": "candidates/rules/ruff-d102-undocumented-public-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d103-undocumented-public-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D103"
+      },
+      "policy": "candidates/rules/ruff-d103-undocumented-public-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d104-undocumented-public-package",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D104"
+      },
+      "policy": "candidates/rules/ruff-d104-undocumented-public-package.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d105-undocumented-magic-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D105"
+      },
+      "policy": "candidates/rules/ruff-d105-undocumented-magic-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d106-undocumented-public-nested-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D106"
+      },
+      "policy": "candidates/rules/ruff-d106-undocumented-public-nested-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d107-undocumented-public-init",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D107"
+      },
+      "policy": "candidates/rules/ruff-d107-undocumented-public-init.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d300-triple-single-quotes",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D300"
+      },
+      "policy": "candidates/rules/ruff-d300-triple-single-quotes.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d301-escape-sequence-in-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D301"
+      },
+      "policy": "candidates/rules/ruff-d301-escape-sequence-in-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d400-missing-trailing-period",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D400"
+      },
+      "policy": "candidates/rules/ruff-d400-missing-trailing-period.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d401-non-imperative-mood",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D401"
+      },
+      "policy": "candidates/rules/ruff-d401-non-imperative-mood.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d402-signature-in-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D402"
+      },
+      "policy": "candidates/rules/ruff-d402-signature-in-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d403-first-word-uncapitalized",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D403"
+      },
+      "policy": "candidates/rules/ruff-d403-first-word-uncapitalized.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d404-docstring-starts-with-this",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D404"
+      },
+      "policy": "candidates/rules/ruff-d404-docstring-starts-with-this.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d405-non-capitalized-section-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D405"
+      },
+      "policy": "candidates/rules/ruff-d405-non-capitalized-section-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d406-missing-new-line-after-section-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D406"
+      },
+      "policy": "candidates/rules/ruff-d406-missing-new-line-after-section-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d407-missing-dashed-underline-after-section",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D407"
+      },
+      "policy": "candidates/rules/ruff-d407-missing-dashed-underline-after-section.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d408-missing-section-underline-after-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D408"
+      },
+      "policy": "candidates/rules/ruff-d408-missing-section-underline-after-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d409-mismatched-section-underline-length",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D409"
+      },
+      "policy": "candidates/rules/ruff-d409-mismatched-section-underline-length.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d410-no-blank-line-after-section",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D410"
+      },
+      "policy": "candidates/rules/ruff-d410-no-blank-line-after-section.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d411-no-blank-line-before-section",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D411"
+      },
+      "policy": "candidates/rules/ruff-d411-no-blank-line-before-section.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d412-blank-lines-between-header-and-content",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D412"
+      },
+      "policy": "candidates/rules/ruff-d412-blank-lines-between-header-and-content.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d413-missing-blank-line-after-last-section",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D413"
+      },
+      "policy": "candidates/rules/ruff-d413-missing-blank-line-after-last-section.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d414-empty-docstring-section",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D414"
+      },
+      "policy": "candidates/rules/ruff-d414-empty-docstring-section.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d415-missing-terminal-punctuation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D415"
+      },
+      "policy": "candidates/rules/ruff-d415-missing-terminal-punctuation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d416-missing-section-name-colon",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D416"
+      },
+      "policy": "candidates/rules/ruff-d416-missing-section-name-colon.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d417-undocumented-param",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D417"
+      },
+      "policy": "candidates/rules/ruff-d417-undocumented-param.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d418-overload-with-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D418"
+      },
+      "policy": "candidates/rules/ruff-d418-overload-with-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d419-empty-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D419"
+      },
+      "policy": "candidates/rules/ruff-d419-empty-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj001-django-nullable-model-string-field",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ001"
+      },
+      "policy": "candidates/rules/ruff-dj001-django-nullable-model-string-field.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj003-django-locals-in-render-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ003"
+      },
+      "policy": "candidates/rules/ruff-dj003-django-locals-in-render-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj006-django-exclude-with-model-form",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ006"
+      },
+      "policy": "candidates/rules/ruff-dj006-django-exclude-with-model-form.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj007-django-all-with-model-form",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ007"
+      },
+      "policy": "candidates/rules/ruff-dj007-django-all-with-model-form.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj008-django-model-without-dunder-str",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ008"
+      },
+      "policy": "candidates/rules/ruff-dj008-django-model-without-dunder-str.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj012-django-unordered-body-content-in-model",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ012"
+      },
+      "policy": "candidates/rules/ruff-dj012-django-unordered-body-content-in-model.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dj013-django-non-leading-receiver-decorator",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DJ013"
+      },
+      "policy": "candidates/rules/ruff-dj013-django-non-leading-receiver-decorator.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz001-call-datetime-without-tzinfo",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ001"
+      },
+      "policy": "candidates/rules/ruff-dtz001-call-datetime-without-tzinfo.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz002-call-datetime-today",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ002"
+      },
+      "policy": "candidates/rules/ruff-dtz002-call-datetime-today.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz003-call-datetime-utcnow",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ003"
+      },
+      "policy": "candidates/rules/ruff-dtz003-call-datetime-utcnow.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz004-call-datetime-utcfromtimestamp",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ004"
+      },
+      "policy": "candidates/rules/ruff-dtz004-call-datetime-utcfromtimestamp.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz005-call-datetime-now-without-tzinfo",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ005"
+      },
+      "policy": "candidates/rules/ruff-dtz005-call-datetime-now-without-tzinfo.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz006-call-datetime-fromtimestamp",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ006"
+      },
+      "policy": "candidates/rules/ruff-dtz006-call-datetime-fromtimestamp.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz007-call-datetime-strptime-without-zone",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ007"
+      },
+      "policy": "candidates/rules/ruff-dtz007-call-datetime-strptime-without-zone.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz011-call-date-today",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ011"
+      },
+      "policy": "candidates/rules/ruff-dtz011-call-date-today.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz012-call-date-fromtimestamp",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ012"
+      },
+      "policy": "candidates/rules/ruff-dtz012-call-date-fromtimestamp.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-dtz901-datetime-min-max",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "DTZ901"
+      },
+      "policy": "candidates/rules/ruff-dtz901-datetime-min-max.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e401-multiple-imports-on-one-line",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E401"
+      },
+      "policy": "candidates/rules/ruff-e401-multiple-imports-on-one-line.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-em101-raw-string-in-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EM101"
+      },
+      "policy": "candidates/rules/ruff-em101-raw-string-in-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-em102-f-string-in-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EM102"
+      },
+      "policy": "candidates/rules/ruff-em102-f-string-in-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-em103-dot-format-in-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EM103"
+      },
+      "policy": "candidates/rules/ruff-em103-dot-format-in-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-era001-commented-out-code",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ERA001"
+      },
+      "policy": "candidates/rules/ruff-era001-commented-out-code.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-exe001-shebang-not-executable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EXE001"
+      },
+      "policy": "candidates/rules/ruff-exe001-shebang-not-executable.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-exe002-shebang-missing-executable-file",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EXE002"
+      },
+      "policy": "candidates/rules/ruff-exe002-shebang-missing-executable-file.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-exe003-shebang-missing-python",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EXE003"
+      },
+      "policy": "candidates/rules/ruff-exe003-shebang-missing-python.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-exe004-shebang-leading-whitespace",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EXE004"
+      },
+      "policy": "candidates/rules/ruff-exe004-shebang-leading-whitespace.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-exe005-shebang-not-first-line",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "EXE005"
+      },
+      "policy": "candidates/rules/ruff-exe005-shebang-not-first-line.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fa100-future-rewritable-type-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FA100"
+      },
+      "policy": "candidates/rules/ruff-fa100-future-rewritable-type-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fa102-future-required-type-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FA102"
+      },
+      "policy": "candidates/rules/ruff-fa102-future-required-type-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fast001-fast-api-redundant-response-model",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FAST001"
+      },
+      "policy": "candidates/rules/ruff-fast001-fast-api-redundant-response-model.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fast002-fast-api-non-annotated-dependency",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FAST002"
+      },
+      "policy": "candidates/rules/ruff-fast002-fast-api-non-annotated-dependency.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fast003-fast-api-unused-path-parameter",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FAST003"
+      },
+      "policy": "candidates/rules/ruff-fast003-fast-api-unused-path-parameter.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fbt001-boolean-type-hint-positional-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FBT001"
+      },
+      "policy": "candidates/rules/ruff-fbt001-boolean-type-hint-positional-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fbt002-boolean-default-value-positional-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FBT002"
+      },
+      "policy": "candidates/rules/ruff-fbt002-boolean-default-value-positional-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fbt003-boolean-positional-value-in-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FBT003"
+      },
+      "policy": "candidates/rules/ruff-fbt003-boolean-positional-value-in-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fix001-line-contains-fixme",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FIX001"
+      },
+      "policy": "candidates/rules/ruff-fix001-line-contains-fixme.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fix002-line-contains-todo",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FIX002"
+      },
+      "policy": "candidates/rules/ruff-fix002-line-contains-todo.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fix003-line-contains-xxx",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FIX003"
+      },
+      "policy": "candidates/rules/ruff-fix003-line-contains-xxx.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fix004-line-contains-hack",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FIX004"
+      },
+      "policy": "candidates/rules/ruff-fix004-line-contains-hack.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-fly002-static-join-to-f-string",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "FLY002"
+      },
+      "policy": "candidates/rules/ruff-fly002-static-join-to-f-string.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g001-logging-string-format",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G001"
+      },
+      "policy": "candidates/rules/ruff-g001-logging-string-format.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g002-logging-percent-format",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G002"
+      },
+      "policy": "candidates/rules/ruff-g002-logging-percent-format.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g003-logging-string-concat",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G003"
+      },
+      "policy": "candidates/rules/ruff-g003-logging-string-concat.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g004-logging-f-string",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G004"
+      },
+      "policy": "candidates/rules/ruff-g004-logging-f-string.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g010-logging-warn",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G010"
+      },
+      "policy": "candidates/rules/ruff-g010-logging-warn.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g101-logging-extra-attr-clash",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G101"
+      },
+      "policy": "candidates/rules/ruff-g101-logging-extra-attr-clash.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g201-logging-exc-info",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G201"
+      },
+      "policy": "candidates/rules/ruff-g201-logging-exc-info.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-g202-logging-redundant-exc-info",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "G202"
+      },
+      "policy": "candidates/rules/ruff-g202-logging-redundant-exc-info.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-icn001-unconventional-import-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ICN001"
+      },
+      "policy": "candidates/rules/ruff-icn001-unconventional-import-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-icn002-banned-import-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ICN002"
+      },
+      "policy": "candidates/rules/ruff-icn002-banned-import-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-icn003-banned-import-from",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ICN003"
+      },
+      "policy": "candidates/rules/ruff-icn003-banned-import-from.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-inp001-implicit-namespace-package",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "INP001"
+      },
+      "policy": "candidates/rules/ruff-inp001-implicit-namespace-package.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-int001-f-string-in-get-text-func-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "INT001"
+      },
+      "policy": "candidates/rules/ruff-int001-f-string-in-get-text-func-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-int002-format-in-get-text-func-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "INT002"
+      },
+      "policy": "candidates/rules/ruff-int002-format-in-get-text-func-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-int003-printf-in-get-text-func-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "INT003"
+      },
+      "policy": "candidates/rules/ruff-int003-printf-in-get-text-func-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-isc003-explicit-string-concatenation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ISC003"
+      },
+      "policy": "candidates/rules/ruff-isc003-explicit-string-concatenation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-isc004-implicit-string-concatenation-in-collection-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ISC004"
+      },
+      "policy": "candidates/rules/ruff-isc004-implicit-string-concatenation-in-collection-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log001-direct-logger-instantiation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG001"
+      },
+      "policy": "candidates/rules/ruff-log001-direct-logger-instantiation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log002-invalid-get-logger-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG002"
+      },
+      "policy": "candidates/rules/ruff-log002-invalid-get-logger-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log004-log-exception-outside-except-handler",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG004"
+      },
+      "policy": "candidates/rules/ruff-log004-log-exception-outside-except-handler.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log007-exception-without-exc-info",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG007"
+      },
+      "policy": "candidates/rules/ruff-log007-exception-without-exc-info.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log009-undocumented-warn",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG009"
+      },
+      "policy": "candidates/rules/ruff-log009-undocumented-warn.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log014-exc-info-outside-except-handler",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG014"
+      },
+      "policy": "candidates/rules/ruff-log014-exc-info-outside-except-handler.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-log015-root-logger-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "LOG015"
+      },
+      "policy": "candidates/rules/ruff-log015-root-logger-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n801-invalid-class-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N801"
+      },
+      "policy": "candidates/rules/ruff-n801-invalid-class-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n802-invalid-function-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N802"
+      },
+      "policy": "candidates/rules/ruff-n802-invalid-function-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n803-invalid-argument-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N803"
+      },
+      "policy": "candidates/rules/ruff-n803-invalid-argument-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n804-invalid-first-argument-name-for-class-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N804"
+      },
+      "policy": "candidates/rules/ruff-n804-invalid-first-argument-name-for-class-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n805-invalid-first-argument-name-for-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N805"
+      },
+      "policy": "candidates/rules/ruff-n805-invalid-first-argument-name-for-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n806-non-lowercase-variable-in-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N806"
+      },
+      "policy": "candidates/rules/ruff-n806-non-lowercase-variable-in-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n807-dunder-function-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N807"
+      },
+      "policy": "candidates/rules/ruff-n807-dunder-function-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n811-constant-imported-as-non-constant",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N811"
+      },
+      "policy": "candidates/rules/ruff-n811-constant-imported-as-non-constant.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n812-lowercase-imported-as-non-lowercase",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N812"
+      },
+      "policy": "candidates/rules/ruff-n812-lowercase-imported-as-non-lowercase.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n813-camelcase-imported-as-lowercase",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N813"
+      },
+      "policy": "candidates/rules/ruff-n813-camelcase-imported-as-lowercase.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n814-camelcase-imported-as-constant",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N814"
+      },
+      "policy": "candidates/rules/ruff-n814-camelcase-imported-as-constant.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n815-mixed-case-variable-in-class-scope",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N815"
+      },
+      "policy": "candidates/rules/ruff-n815-mixed-case-variable-in-class-scope.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n816-mixed-case-variable-in-global-scope",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N816"
+      },
+      "policy": "candidates/rules/ruff-n816-mixed-case-variable-in-global-scope.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n817-camelcase-imported-as-acronym",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N817"
+      },
+      "policy": "candidates/rules/ruff-n817-camelcase-imported-as-acronym.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-n818-error-suffix-on-exception-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "N818"
+      },
+      "policy": "candidates/rules/ruff-n818-error-suffix-on-exception-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-npy001-numpy-deprecated-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "NPY001"
+      },
+      "policy": "candidates/rules/ruff-npy001-numpy-deprecated-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-npy002-numpy-legacy-random",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "NPY002"
+      },
+      "policy": "candidates/rules/ruff-npy002-numpy-legacy-random.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-npy003-numpy-deprecated-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "NPY003"
+      },
+      "policy": "candidates/rules/ruff-npy003-numpy-deprecated-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-npy201-numpy2-deprecation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "NPY201"
+      },
+      "policy": "candidates/rules/ruff-npy201-numpy2-deprecation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pd002-pandas-use-of-inplace-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PD002"
+      },
+      "policy": "candidates/rules/ruff-pd002-pandas-use-of-inplace-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pd012-pandas-use-of-dot-read-table",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PD012"
+      },
+      "policy": "candidates/rules/ruff-pd012-pandas-use-of-dot-read-table.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pd101-pandas-nunique-constant-series-check",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PD101"
+      },
+      "policy": "candidates/rules/ruff-pd101-pandas-nunique-constant-series-check.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf101-unnecessary-list-cast",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF101"
+      },
+      "policy": "candidates/rules/ruff-perf101-unnecessary-list-cast.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf102-incorrect-dict-iterator",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF102"
+      },
+      "policy": "candidates/rules/ruff-perf102-incorrect-dict-iterator.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf203-try-except-in-loop",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF203"
+      },
+      "policy": "candidates/rules/ruff-perf203-try-except-in-loop.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf401-manual-list-comprehension",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF401"
+      },
+      "policy": "candidates/rules/ruff-perf401-manual-list-comprehension.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf402-manual-list-copy",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF402"
+      },
+      "policy": "candidates/rules/ruff-perf402-manual-list-copy.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-perf403-manual-dict-comprehension",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PERF403"
+      },
+      "policy": "candidates/rules/ruff-perf403-manual-dict-comprehension.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pgh003-blanket-type-ignore",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PGH003"
+      },
+      "policy": "candidates/rules/ruff-pgh003-blanket-type-ignore.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pgh004-blanket-noqa",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PGH004"
+      },
+      "policy": "candidates/rules/ruff-pgh004-blanket-noqa.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pgh005-invalid-mock-access",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PGH005"
+      },
+      "policy": "candidates/rules/ruff-pgh005-invalid-mock-access.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt001-pytest-fixture-incorrect-parentheses-style",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT001"
+      },
+      "policy": "candidates/rules/ruff-pt001-pytest-fixture-incorrect-parentheses-style.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt002-pytest-fixture-positional-args",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT002"
+      },
+      "policy": "candidates/rules/ruff-pt002-pytest-fixture-positional-args.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt003-pytest-extraneous-scope-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT003"
+      },
+      "policy": "candidates/rules/ruff-pt003-pytest-extraneous-scope-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt006-pytest-parametrize-names-wrong-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT006"
+      },
+      "policy": "candidates/rules/ruff-pt006-pytest-parametrize-names-wrong-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt007-pytest-parametrize-values-wrong-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT007"
+      },
+      "policy": "candidates/rules/ruff-pt007-pytest-parametrize-values-wrong-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt008-pytest-patch-with-lambda",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT008"
+      },
+      "policy": "candidates/rules/ruff-pt008-pytest-patch-with-lambda.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt009-pytest-unittest-assertion",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT009"
+      },
+      "policy": "candidates/rules/ruff-pt009-pytest-unittest-assertion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt010-pytest-raises-without-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT010"
+      },
+      "policy": "candidates/rules/ruff-pt010-pytest-raises-without-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt011-pytest-raises-too-broad",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT011"
+      },
+      "policy": "candidates/rules/ruff-pt011-pytest-raises-too-broad.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt012-pytest-raises-with-multiple-statements",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT012"
+      },
+      "policy": "candidates/rules/ruff-pt012-pytest-raises-with-multiple-statements.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt013-pytest-incorrect-pytest-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT013"
+      },
+      "policy": "candidates/rules/ruff-pt013-pytest-incorrect-pytest-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt014-pytest-duplicate-parametrize-test-cases",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT014"
+      },
+      "policy": "candidates/rules/ruff-pt014-pytest-duplicate-parametrize-test-cases.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt015-pytest-assert-always-false",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT015"
+      },
+      "policy": "candidates/rules/ruff-pt015-pytest-assert-always-false.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt016-pytest-fail-without-message",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT016"
+      },
+      "policy": "candidates/rules/ruff-pt016-pytest-fail-without-message.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt017-pytest-assert-in-except",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT017"
+      },
+      "policy": "candidates/rules/ruff-pt017-pytest-assert-in-except.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt018-pytest-composite-assertion",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT018"
+      },
+      "policy": "candidates/rules/ruff-pt018-pytest-composite-assertion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt019-pytest-fixture-param-without-value",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT019"
+      },
+      "policy": "candidates/rules/ruff-pt019-pytest-fixture-param-without-value.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt020-pytest-deprecated-yield-fixture",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT020"
+      },
+      "policy": "candidates/rules/ruff-pt020-pytest-deprecated-yield-fixture.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt021-pytest-fixture-finalizer-callback",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT021"
+      },
+      "policy": "candidates/rules/ruff-pt021-pytest-fixture-finalizer-callback.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt022-pytest-useless-yield-fixture",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT022"
+      },
+      "policy": "candidates/rules/ruff-pt022-pytest-useless-yield-fixture.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt023-pytest-incorrect-mark-parentheses-style",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT023"
+      },
+      "policy": "candidates/rules/ruff-pt023-pytest-incorrect-mark-parentheses-style.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT024"
+      },
+      "policy": "candidates/rules/ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT025"
+      },
+      "policy": "candidates/rules/ruff-pt025-pytest-erroneous-use-fixtures-on-fixture.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt026-pytest-use-fixtures-without-parameters",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT026"
+      },
+      "policy": "candidates/rules/ruff-pt026-pytest-use-fixtures-without-parameters.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt027-pytest-unittest-raises-assertion",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT027"
+      },
+      "policy": "candidates/rules/ruff-pt027-pytest-unittest-raises-assertion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt028-pytest-parameter-with-default-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT028"
+      },
+      "policy": "candidates/rules/ruff-pt028-pytest-parameter-with-default-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt030-pytest-warns-too-broad",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT030"
+      },
+      "policy": "candidates/rules/ruff-pt030-pytest-warns-too-broad.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pt031-pytest-warns-with-multiple-statements",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PT031"
+      },
+      "policy": "candidates/rules/ruff-pt031-pytest-warns-with-multiple-statements.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth100-os-path-abspath",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH100"
+      },
+      "policy": "candidates/rules/ruff-pth100-os-path-abspath.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth101-os-chmod",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH101"
+      },
+      "policy": "candidates/rules/ruff-pth101-os-chmod.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth102-os-mkdir",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH102"
+      },
+      "policy": "candidates/rules/ruff-pth102-os-mkdir.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth103-os-makedirs",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH103"
+      },
+      "policy": "candidates/rules/ruff-pth103-os-makedirs.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth104-os-rename",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH104"
+      },
+      "policy": "candidates/rules/ruff-pth104-os-rename.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth105-os-replace",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH105"
+      },
+      "policy": "candidates/rules/ruff-pth105-os-replace.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth106-os-rmdir",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH106"
+      },
+      "policy": "candidates/rules/ruff-pth106-os-rmdir.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth107-os-remove",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH107"
+      },
+      "policy": "candidates/rules/ruff-pth107-os-remove.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth108-os-unlink",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH108"
+      },
+      "policy": "candidates/rules/ruff-pth108-os-unlink.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth109-os-getcwd",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH109"
+      },
+      "policy": "candidates/rules/ruff-pth109-os-getcwd.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth110-os-path-exists",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH110"
+      },
+      "policy": "candidates/rules/ruff-pth110-os-path-exists.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth111-os-path-expanduser",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH111"
+      },
+      "policy": "candidates/rules/ruff-pth111-os-path-expanduser.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth112-os-path-isdir",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH112"
+      },
+      "policy": "candidates/rules/ruff-pth112-os-path-isdir.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth113-os-path-isfile",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH113"
+      },
+      "policy": "candidates/rules/ruff-pth113-os-path-isfile.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth114-os-path-islink",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH114"
+      },
+      "policy": "candidates/rules/ruff-pth114-os-path-islink.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth115-os-readlink",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH115"
+      },
+      "policy": "candidates/rules/ruff-pth115-os-readlink.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth116-os-stat",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH116"
+      },
+      "policy": "candidates/rules/ruff-pth116-os-stat.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth117-os-path-isabs",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH117"
+      },
+      "policy": "candidates/rules/ruff-pth117-os-path-isabs.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth118-os-path-join",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH118"
+      },
+      "policy": "candidates/rules/ruff-pth118-os-path-join.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth119-os-path-basename",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH119"
+      },
+      "policy": "candidates/rules/ruff-pth119-os-path-basename.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth120-os-path-dirname",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH120"
+      },
+      "policy": "candidates/rules/ruff-pth120-os-path-dirname.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth121-os-path-samefile",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH121"
+      },
+      "policy": "candidates/rules/ruff-pth121-os-path-samefile.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth122-os-path-splitext",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH122"
+      },
+      "policy": "candidates/rules/ruff-pth122-os-path-splitext.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth123-builtin-open",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH123"
+      },
+      "policy": "candidates/rules/ruff-pth123-builtin-open.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth124-py-path",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH124"
+      },
+      "policy": "candidates/rules/ruff-pth124-py-path.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth201-path-constructor-current-directory",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH201"
+      },
+      "policy": "candidates/rules/ruff-pth201-path-constructor-current-directory.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth202-os-path-getsize",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH202"
+      },
+      "policy": "candidates/rules/ruff-pth202-os-path-getsize.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth203-os-path-getatime",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH203"
+      },
+      "policy": "candidates/rules/ruff-pth203-os-path-getatime.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth204-os-path-getmtime",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH204"
+      },
+      "policy": "candidates/rules/ruff-pth204-os-path-getmtime.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth205-os-path-getctime",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH205"
+      },
+      "policy": "candidates/rules/ruff-pth205-os-path-getctime.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth206-os-sep-split",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH206"
+      },
+      "policy": "candidates/rules/ruff-pth206-os-sep-split.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth207-glob",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH207"
+      },
+      "policy": "candidates/rules/ruff-pth207-glob.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth208-os-listdir",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH208"
+      },
+      "policy": "candidates/rules/ruff-pth208-os-listdir.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth210-invalid-pathlib-with-suffix",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH210"
+      },
+      "policy": "candidates/rules/ruff-pth210-invalid-pathlib-with-suffix.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pth211-os-symlink",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PTH211"
+      },
+      "policy": "candidates/rules/ruff-pth211-os-symlink.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi001-unprefixed-type-param",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI001"
+      },
+      "policy": "candidates/rules/ruff-pyi001-unprefixed-type-param.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi002-complex-if-statement-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI002"
+      },
+      "policy": "candidates/rules/ruff-pyi002-complex-if-statement-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi003-unrecognized-version-info-check",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI003"
+      },
+      "policy": "candidates/rules/ruff-pyi003-unrecognized-version-info-check.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi004-patch-version-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI004"
+      },
+      "policy": "candidates/rules/ruff-pyi004-patch-version-comparison.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi005-wrong-tuple-length-version-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI005"
+      },
+      "policy": "candidates/rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi006-bad-version-info-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI006"
+      },
+      "policy": "candidates/rules/ruff-pyi006-bad-version-info-comparison.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi007-unrecognized-platform-check",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI007"
+      },
+      "policy": "candidates/rules/ruff-pyi007-unrecognized-platform-check.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi008-unrecognized-platform-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI008"
+      },
+      "policy": "candidates/rules/ruff-pyi008-unrecognized-platform-name.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi009-pass-statement-stub-body",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI009"
+      },
+      "policy": "candidates/rules/ruff-pyi009-pass-statement-stub-body.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi010-non-empty-stub-body",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI010"
+      },
+      "policy": "candidates/rules/ruff-pyi010-non-empty-stub-body.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi011-typed-argument-default-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI011"
+      },
+      "policy": "candidates/rules/ruff-pyi011-typed-argument-default-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi012-pass-in-class-body",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI012"
+      },
+      "policy": "candidates/rules/ruff-pyi012-pass-in-class-body.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi013-ellipsis-in-non-empty-class-body",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI013"
+      },
+      "policy": "candidates/rules/ruff-pyi013-ellipsis-in-non-empty-class-body.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi014-argument-default-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI014"
+      },
+      "policy": "candidates/rules/ruff-pyi014-argument-default-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi015-assignment-default-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI015"
+      },
+      "policy": "candidates/rules/ruff-pyi015-assignment-default-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi016-duplicate-union-member",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI016"
+      },
+      "policy": "candidates/rules/ruff-pyi016-duplicate-union-member.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi017-complex-assignment-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI017"
+      },
+      "policy": "candidates/rules/ruff-pyi017-complex-assignment-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi018-unused-private-type-var",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI018"
+      },
+      "policy": "candidates/rules/ruff-pyi018-unused-private-type-var.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi019-custom-type-var-for-self",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI019"
+      },
+      "policy": "candidates/rules/ruff-pyi019-custom-type-var-for-self.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi020-quoted-annotation-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI020"
+      },
+      "policy": "candidates/rules/ruff-pyi020-quoted-annotation-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi021-docstring-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI021"
+      },
+      "policy": "candidates/rules/ruff-pyi021-docstring-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi024-collections-named-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI024"
+      },
+      "policy": "candidates/rules/ruff-pyi024-collections-named-tuple.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi025-unaliased-collections-abc-set-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI025"
+      },
+      "policy": "candidates/rules/ruff-pyi025-unaliased-collections-abc-set-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi026-type-alias-without-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI026"
+      },
+      "policy": "candidates/rules/ruff-pyi026-type-alias-without-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi029-str-or-repr-defined-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI029"
+      },
+      "policy": "candidates/rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi030-unnecessary-literal-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI030"
+      },
+      "policy": "candidates/rules/ruff-pyi030-unnecessary-literal-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi032-any-eq-ne-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI032"
+      },
+      "policy": "candidates/rules/ruff-pyi032-any-eq-ne-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi033-legacy-type-comment",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI033"
+      },
+      "policy": "candidates/rules/ruff-pyi033-legacy-type-comment.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi034-non-self-return-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI034"
+      },
+      "policy": "candidates/rules/ruff-pyi034-non-self-return-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi035-unassigned-special-variable-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI035"
+      },
+      "policy": "candidates/rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi036-bad-exit-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI036"
+      },
+      "policy": "candidates/rules/ruff-pyi036-bad-exit-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi041-redundant-numeric-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI041"
+      },
+      "policy": "candidates/rules/ruff-pyi041-redundant-numeric-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi042-snake-case-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI042"
+      },
+      "policy": "candidates/rules/ruff-pyi042-snake-case-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi043-t-suffixed-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI043"
+      },
+      "policy": "candidates/rules/ruff-pyi043-t-suffixed-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi044-future-annotations-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI044"
+      },
+      "policy": "candidates/rules/ruff-pyi044-future-annotations-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi045-iter-method-return-iterable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI045"
+      },
+      "policy": "candidates/rules/ruff-pyi045-iter-method-return-iterable.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi046-unused-private-protocol",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI046"
+      },
+      "policy": "candidates/rules/ruff-pyi046-unused-private-protocol.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi047-unused-private-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI047"
+      },
+      "policy": "candidates/rules/ruff-pyi047-unused-private-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi048-stub-body-multiple-statements",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI048"
+      },
+      "policy": "candidates/rules/ruff-pyi048-stub-body-multiple-statements.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi049-unused-private-typed-dict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI049"
+      },
+      "policy": "candidates/rules/ruff-pyi049-unused-private-typed-dict.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi050-no-return-argument-annotation-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI050"
+      },
+      "policy": "candidates/rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi051-redundant-literal-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI051"
+      },
+      "policy": "candidates/rules/ruff-pyi051-redundant-literal-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi052-unannotated-assignment-in-stub",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI052"
+      },
+      "policy": "candidates/rules/ruff-pyi052-unannotated-assignment-in-stub.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi053-string-or-bytes-too-long",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI053"
+      },
+      "policy": "candidates/rules/ruff-pyi053-string-or-bytes-too-long.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi054-numeric-literal-too-long",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI054"
+      },
+      "policy": "candidates/rules/ruff-pyi054-numeric-literal-too-long.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi055-unnecessary-type-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI055"
+      },
+      "policy": "candidates/rules/ruff-pyi055-unnecessary-type-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi056-unsupported-method-call-on-all",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI056"
+      },
+      "policy": "candidates/rules/ruff-pyi056-unsupported-method-call-on-all.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi057-byte-string-usage",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI057"
+      },
+      "policy": "candidates/rules/ruff-pyi057-byte-string-usage.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi058-generator-return-from-iter-method",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI058"
+      },
+      "policy": "candidates/rules/ruff-pyi058-generator-return-from-iter-method.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi059-generic-not-last-base-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI059"
+      },
+      "policy": "candidates/rules/ruff-pyi059-generic-not-last-base-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi061-redundant-none-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI061"
+      },
+      "policy": "candidates/rules/ruff-pyi061-redundant-none-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi062-duplicate-literal-member",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI062"
+      },
+      "policy": "candidates/rules/ruff-pyi062-duplicate-literal-member.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi063-pep484-style-positional-only-parameter",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI063"
+      },
+      "policy": "candidates/rules/ruff-pyi063-pep484-style-positional-only-parameter.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi064-redundant-final-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI064"
+      },
+      "policy": "candidates/rules/ruff-pyi064-redundant-final-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-pyi066-bad-version-info-order",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "PYI066"
+      },
+      "policy": "candidates/rules/ruff-pyi066-bad-version-info-order.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-rse102-unnecessary-paren-on-raise-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RSE102"
+      },
+      "policy": "candidates/rules/ruff-rse102-unnecessary-paren-on-raise-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf001-ambiguous-unicode-character-string",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF001"
+      },
+      "policy": "candidates/rules/ruff-ruf001-ambiguous-unicode-character-string.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf002-ambiguous-unicode-character-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF002"
+      },
+      "policy": "candidates/rules/ruff-ruf002-ambiguous-unicode-character-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf003-ambiguous-unicode-character-comment",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF003"
+      },
+      "policy": "candidates/rules/ruff-ruf003-ambiguous-unicode-character-comment.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf005-collection-literal-concatenation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF005"
+      },
+      "policy": "candidates/rules/ruff-ruf005-collection-literal-concatenation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf006-asyncio-dangling-task",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF006"
+      },
+      "policy": "candidates/rules/ruff-ruf006-asyncio-dangling-task.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf007-zip-instead-of-pairwise",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF007"
+      },
+      "policy": "candidates/rules/ruff-ruf007-zip-instead-of-pairwise.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf008-mutable-dataclass-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF008"
+      },
+      "policy": "candidates/rules/ruff-ruf008-mutable-dataclass-default.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf009-function-call-in-dataclass-default-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF009"
+      },
+      "policy": "candidates/rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf010-explicit-f-string-type-conversion",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF010"
+      },
+      "policy": "candidates/rules/ruff-ruf010-explicit-f-string-type-conversion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf012-mutable-class-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF012"
+      },
+      "policy": "candidates/rules/ruff-ruf012-mutable-class-default.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf013-implicit-optional",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF013"
+      },
+      "policy": "candidates/rules/ruff-ruf013-implicit-optional.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf015-unnecessary-iterable-allocation-for-first-element",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF015"
+      },
+      "policy": "candidates/rules/ruff-ruf015-unnecessary-iterable-allocation-for-first-element.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf016-invalid-index-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF016"
+      },
+      "policy": "candidates/rules/ruff-ruf016-invalid-index-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf017-quadratic-list-summation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF017"
+      },
+      "policy": "candidates/rules/ruff-ruf017-quadratic-list-summation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf018-assignment-in-assert",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF018"
+      },
+      "policy": "candidates/rules/ruff-ruf018-assignment-in-assert.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf019-unnecessary-key-check",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF019"
+      },
+      "policy": "candidates/rules/ruff-ruf019-unnecessary-key-check.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf020-never-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF020"
+      },
+      "policy": "candidates/rules/ruff-ruf020-never-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf021-parenthesize-chained-operators",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF021"
+      },
+      "policy": "candidates/rules/ruff-ruf021-parenthesize-chained-operators.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf022-unsorted-dunder-all",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF022"
+      },
+      "policy": "candidates/rules/ruff-ruf022-unsorted-dunder-all.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf023-unsorted-dunder-slots",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF023"
+      },
+      "policy": "candidates/rules/ruff-ruf023-unsorted-dunder-slots.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf024-mutable-fromkeys-value",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF024"
+      },
+      "policy": "candidates/rules/ruff-ruf024-mutable-fromkeys-value.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf026-default-factory-kwarg",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF026"
+      },
+      "policy": "candidates/rules/ruff-ruf026-default-factory-kwarg.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf028-invalid-formatter-suppression-comment",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF028"
+      },
+      "policy": "candidates/rules/ruff-ruf028-invalid-formatter-suppression-comment.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf030-assert-with-print-message",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF030"
+      },
+      "policy": "candidates/rules/ruff-ruf030-assert-with-print-message.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf032-decimal-from-float-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF032"
+      },
+      "policy": "candidates/rules/ruff-ruf032-decimal-from-float-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf033-post-init-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF033"
+      },
+      "policy": "candidates/rules/ruff-ruf033-post-init-default.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf034-useless-if-else",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF034"
+      },
+      "policy": "candidates/rules/ruff-ruf034-useless-if-else.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf036-none-not-at-end-of-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF036"
+      },
+      "policy": "candidates/rules/ruff-ruf036-none-not-at-end-of-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf037-unnecessary-empty-iterable-within-deque-call",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF037"
+      },
+      "policy": "candidates/rules/ruff-ruf037-unnecessary-empty-iterable-within-deque-call.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf040-invalid-assert-message-literal-argument",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF040"
+      },
+      "policy": "candidates/rules/ruff-ruf040-invalid-assert-message-literal-argument.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf041-unnecessary-nested-literal",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF041"
+      },
+      "policy": "candidates/rules/ruff-ruf041-unnecessary-nested-literal.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf043-pytest-raises-ambiguous-pattern",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF043"
+      },
+      "policy": "candidates/rules/ruff-ruf043-pytest-raises-ambiguous-pattern.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf046-unnecessary-cast-to-int",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF046"
+      },
+      "policy": "candidates/rules/ruff-ruf046-unnecessary-cast-to-int.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf048-map-int-version-parsing",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF048"
+      },
+      "policy": "candidates/rules/ruff-ruf048-map-int-version-parsing.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf049-dataclass-enum",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF049"
+      },
+      "policy": "candidates/rules/ruff-ruf049-dataclass-enum.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf051-if-key-in-dict-del",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF051"
+      },
+      "policy": "candidates/rules/ruff-ruf051-if-key-in-dict-del.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf053-class-with-mixed-type-vars",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF053"
+      },
+      "policy": "candidates/rules/ruff-ruf053-class-with-mixed-type-vars.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf057-unnecessary-round",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF057"
+      },
+      "policy": "candidates/rules/ruff-ruf057-unnecessary-round.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf058-starmap-zip",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF058"
+      },
+      "policy": "candidates/rules/ruff-ruf058-starmap-zip.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf059-unused-unpacked-variable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF059"
+      },
+      "policy": "candidates/rules/ruff-ruf059-unused-unpacked-variable.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf060-in-empty-collection",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF060"
+      },
+      "policy": "candidates/rules/ruff-ruf060-in-empty-collection.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf061-legacy-form-pytest-raises",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF061"
+      },
+      "policy": "candidates/rules/ruff-ruf061-legacy-form-pytest-raises.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf063-access-annotations-from-class-dict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF063"
+      },
+      "policy": "candidates/rules/ruff-ruf063-access-annotations-from-class-dict.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf064-non-octal-permissions",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF064"
+      },
+      "policy": "candidates/rules/ruff-ruf064-non-octal-permissions.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ruf068-duplicate-entry-in-dunder-all",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RUF068"
+      },
+      "policy": "candidates/rules/ruff-ruf068-duplicate-entry-in-dunder-all.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-slf001-private-member-access",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SLF001"
+      },
+      "policy": "candidates/rules/ruff-slf001-private-member-access.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-slot000-no-slots-in-str-subclass",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SLOT000"
+      },
+      "policy": "candidates/rules/ruff-slot000-no-slots-in-str-subclass.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-slot001-no-slots-in-tuple-subclass",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SLOT001"
+      },
+      "policy": "candidates/rules/ruff-slot001-no-slots-in-tuple-subclass.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-slot002-no-slots-in-namedtuple-subclass",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SLOT002"
+      },
+      "policy": "candidates/rules/ruff-slot002-no-slots-in-namedtuple-subclass.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-t201-print",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "T201"
+      },
+      "policy": "candidates/rules/ruff-t201-print.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-t203-p-print",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "T203"
+      },
+      "policy": "candidates/rules/ruff-t203-p-print.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc001-typing-only-first-party-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC001"
+      },
+      "policy": "candidates/rules/ruff-tc001-typing-only-first-party-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc002-typing-only-third-party-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC002"
+      },
+      "policy": "candidates/rules/ruff-tc002-typing-only-third-party-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc003-typing-only-standard-library-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC003"
+      },
+      "policy": "candidates/rules/ruff-tc003-typing-only-standard-library-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc004-runtime-import-in-type-checking-block",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC004"
+      },
+      "policy": "candidates/rules/ruff-tc004-runtime-import-in-type-checking-block.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc005-empty-type-checking-block",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC005"
+      },
+      "policy": "candidates/rules/ruff-tc005-empty-type-checking-block.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc006-runtime-cast-value",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC006"
+      },
+      "policy": "candidates/rules/ruff-tc006-runtime-cast-value.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc007-unquoted-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC007"
+      },
+      "policy": "candidates/rules/ruff-tc007-unquoted-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tc010-runtime-string-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TC010"
+      },
+      "policy": "candidates/rules/ruff-tc010-runtime-string-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td001-invalid-todo-tag",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD001"
+      },
+      "policy": "candidates/rules/ruff-td001-invalid-todo-tag.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td002-missing-todo-author",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD002"
+      },
+      "policy": "candidates/rules/ruff-td002-missing-todo-author.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td003-missing-todo-link",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD003"
+      },
+      "policy": "candidates/rules/ruff-td003-missing-todo-link.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td004-missing-todo-colon",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD004"
+      },
+      "policy": "candidates/rules/ruff-td004-missing-todo-colon.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td005-missing-todo-description",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD005"
+      },
+      "policy": "candidates/rules/ruff-td005-missing-todo-description.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td006-invalid-todo-capitalization",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD006"
+      },
+      "policy": "candidates/rules/ruff-td006-invalid-todo-capitalization.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-td007-missing-space-after-todo-colon",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TD007"
+      },
+      "policy": "candidates/rules/ruff-td007-missing-space-after-todo-colon.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tid251-banned-api",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TID251"
+      },
+      "policy": "candidates/rules/ruff-tid251-banned-api.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tid252-relative-imports",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TID252"
+      },
+      "policy": "candidates/rules/ruff-tid252-relative-imports.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-tid253-banned-module-level-imports",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TID253"
+      },
+      "policy": "candidates/rules/ruff-tid253-banned-module-level-imports.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try002-raise-vanilla-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY002"
+      },
+      "policy": "candidates/rules/ruff-try002-raise-vanilla-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try003-raise-vanilla-args",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY003"
+      },
+      "policy": "candidates/rules/ruff-try003-raise-vanilla-args.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try004-type-check-without-type-error",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY004"
+      },
+      "policy": "candidates/rules/ruff-try004-type-check-without-type-error.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try201-verbose-raise",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY201"
+      },
+      "policy": "candidates/rules/ruff-try201-verbose-raise.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try203-useless-try-except",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY203"
+      },
+      "policy": "candidates/rules/ruff-try203-useless-try-except.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try300-try-consider-else",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY300"
+      },
+      "policy": "candidates/rules/ruff-try300-try-consider-else.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try301-raise-within-try",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY301"
+      },
+      "policy": "candidates/rules/ruff-try301-raise-within-try.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try400-error-instead-of-exception",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY400"
+      },
+      "policy": "candidates/rules/ruff-try400-error-instead-of-exception.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-try401-verbose-log-message",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "TRY401"
+      },
+      "policy": "candidates/rules/ruff-try401-verbose-log-message.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up001-useless-metaclass-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP001"
+      },
+      "policy": "candidates/rules/ruff-up001-useless-metaclass-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up003-type-of-primitive",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP003"
+      },
+      "policy": "candidates/rules/ruff-up003-type-of-primitive.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up004-useless-object-inheritance",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP004"
+      },
+      "policy": "candidates/rules/ruff-up004-useless-object-inheritance.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up005-deprecated-unittest-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP005"
+      },
+      "policy": "candidates/rules/ruff-up005-deprecated-unittest-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up006-non-pep585-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP006"
+      },
+      "policy": "candidates/rules/ruff-up006-non-pep585-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up007-non-pep604-annotation-union",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP007"
+      },
+      "policy": "candidates/rules/ruff-up007-non-pep604-annotation-union.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up008-super-call-with-parameters",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP008"
+      },
+      "policy": "candidates/rules/ruff-up008-super-call-with-parameters.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up009-utf8-encoding-declaration",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP009"
+      },
+      "policy": "candidates/rules/ruff-up009-utf8-encoding-declaration.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up010-unnecessary-future-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP010"
+      },
+      "policy": "candidates/rules/ruff-up010-unnecessary-future-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up011-lru-cache-without-parameters",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP011"
+      },
+      "policy": "candidates/rules/ruff-up011-lru-cache-without-parameters.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up012-unnecessary-encode-utf8",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP012"
+      },
+      "policy": "candidates/rules/ruff-up012-unnecessary-encode-utf8.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up013-convert-typed-dict-functional-to-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP013"
+      },
+      "policy": "candidates/rules/ruff-up013-convert-typed-dict-functional-to-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up014-convert-named-tuple-functional-to-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP014"
+      },
+      "policy": "candidates/rules/ruff-up014-convert-named-tuple-functional-to-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up015-redundant-open-modes",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP015"
+      },
+      "policy": "candidates/rules/ruff-up015-redundant-open-modes.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up017-datetime-timezone-utc",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP017"
+      },
+      "policy": "candidates/rules/ruff-up017-datetime-timezone-utc.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up018-native-literals",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP018"
+      },
+      "policy": "candidates/rules/ruff-up018-native-literals.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up019-typing-text-str-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP019"
+      },
+      "policy": "candidates/rules/ruff-up019-typing-text-str-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up020-open-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP020"
+      },
+      "policy": "candidates/rules/ruff-up020-open-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up021-replace-universal-newlines",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP021"
+      },
+      "policy": "candidates/rules/ruff-up021-replace-universal-newlines.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up022-replace-stdout-stderr",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP022"
+      },
+      "policy": "candidates/rules/ruff-up022-replace-stdout-stderr.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up023-deprecated-c-element-tree",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP023"
+      },
+      "policy": "candidates/rules/ruff-up023-deprecated-c-element-tree.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up024-os-error-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP024"
+      },
+      "policy": "candidates/rules/ruff-up024-os-error-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up025-unicode-kind-prefix",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP025"
+      },
+      "policy": "candidates/rules/ruff-up025-unicode-kind-prefix.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up026-deprecated-mock-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP026"
+      },
+      "policy": "candidates/rules/ruff-up026-deprecated-mock-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up028-yield-in-for-loop",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP028"
+      },
+      "policy": "candidates/rules/ruff-up028-yield-in-for-loop.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up029-unnecessary-builtin-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP029"
+      },
+      "policy": "candidates/rules/ruff-up029-unnecessary-builtin-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up030-format-literals",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP030"
+      },
+      "policy": "candidates/rules/ruff-up030-format-literals.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up031-printf-string-formatting",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP031"
+      },
+      "policy": "candidates/rules/ruff-up031-printf-string-formatting.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up032-f-string",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP032"
+      },
+      "policy": "candidates/rules/ruff-up032-f-string.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up033-lru-cache-with-maxsize-none",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP033"
+      },
+      "policy": "candidates/rules/ruff-up033-lru-cache-with-maxsize-none.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up034-extraneous-parentheses",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP034"
+      },
+      "policy": "candidates/rules/ruff-up034-extraneous-parentheses.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up035-deprecated-import",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP035"
+      },
+      "policy": "candidates/rules/ruff-up035-deprecated-import.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up036-outdated-version-block",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP036"
+      },
+      "policy": "candidates/rules/ruff-up036-outdated-version-block.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up037-quoted-annotation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP037"
+      },
+      "policy": "candidates/rules/ruff-up037-quoted-annotation.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up039-unnecessary-class-parentheses",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP039"
+      },
+      "policy": "candidates/rules/ruff-up039-unnecessary-class-parentheses.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up040-non-pep695-type-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP040"
+      },
+      "policy": "candidates/rules/ruff-up040-non-pep695-type-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up041-timeout-error-alias",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP041"
+      },
+      "policy": "candidates/rules/ruff-up041-timeout-error-alias.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up042-replace-str-enum",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP042"
+      },
+      "policy": "candidates/rules/ruff-up042-replace-str-enum.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up043-unnecessary-default-type-args",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP043"
+      },
+      "policy": "candidates/rules/ruff-up043-unnecessary-default-type-args.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up044-non-pep646-unpack",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP044"
+      },
+      "policy": "candidates/rules/ruff-up044-non-pep646-unpack.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up045-non-pep604-annotation-optional",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP045"
+      },
+      "policy": "candidates/rules/ruff-up045-non-pep604-annotation-optional.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up046-non-pep695-generic-class",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP046"
+      },
+      "policy": "candidates/rules/ruff-up046-non-pep695-generic-class.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up047-non-pep695-generic-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP047"
+      },
+      "policy": "candidates/rules/ruff-up047-non-pep695-generic-function.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up049-private-type-parameter",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP049"
+      },
+      "policy": "candidates/rules/ruff-up049-private-type-parameter.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-up050-useless-class-metaclass-type",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "UP050"
+      },
+      "policy": "candidates/rules/ruff-up050-useless-class-metaclass-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt101-sys-version-slice3",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT101"
+      },
+      "policy": "candidates/rules/ruff-ytt101-sys-version-slice3.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt102-sys-version2",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT102"
+      },
+      "policy": "candidates/rules/ruff-ytt102-sys-version2.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt103-sys-version-cmp-str3",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT103"
+      },
+      "policy": "candidates/rules/ruff-ytt103-sys-version-cmp-str3.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt201-sys-version-info0-eq3",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT201"
+      },
+      "policy": "candidates/rules/ruff-ytt201-sys-version-info0-eq3.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt202-six-py3",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT202"
+      },
+      "policy": "candidates/rules/ruff-ytt202-six-py3.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt203-sys-version-info1-cmp-int",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT203"
+      },
+      "policy": "candidates/rules/ruff-ytt203-sys-version-info1-cmp-int.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt204-sys-version-info-minor-cmp-int",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT204"
+      },
+      "policy": "candidates/rules/ruff-ytt204-sys-version-info-minor-cmp-int.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt301-sys-version0",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT301"
+      },
+      "policy": "candidates/rules/ruff-ytt301-sys-version0.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt302-sys-version-cmp-str10",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT302"
+      },
+      "policy": "candidates/rules/ruff-ytt302-sys-version-cmp-str10.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ytt303-sys-version-slice1",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "YTT303"
+      },
+      "policy": "candidates/rules/ruff-ytt303-sys-version-slice1.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "bandit-b103-set-bad-file-permissions",
       "upstream": {
         "tool": "bandit",
