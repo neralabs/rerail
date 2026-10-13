@@ -19,7 +19,7 @@ fn upstream_literal_oracle() {
         let Some(source) = case["source"].as_str() else {
             continue;
         };
-        let root = GrammarDialect::Rust.ast_grep(&format!("fn f() {{ let _ = {source}; }}"));
+        let root = GrammarDialect::Rust.ast_grep(format!("fn f() {{ let _ = {source}; }}"));
         let node = root.root().dfs().find(|n| {
             matches!(
                 n.kind().as_ref(),
@@ -48,10 +48,10 @@ fn upstream_literal_oracle() {
         // in other contexts the same text is another type's value.
         let unsuffixed_overflow = !accepted
             && case["diagnostics"][0]["code"].as_str() == Some("overflowing_literals")
-            && !source
+            && source
                 .ends_with(|c: char| c.is_ascii_digit())
                 .then_some(())
-                .is_none()
+                .is_some()
             && source
                 .chars()
                 .all(|c| c.is_ascii_digit() || c == '_' || c == '.' || c == 'e');
@@ -183,8 +183,7 @@ fn upstream_value_oracle() {
         // `items` are module-level items the expression may name; the probe follows them.
         let items = case.get("items").and_then(serde_json::Value::as_str);
         let prefix = items.map_or_else(String::new, |items| format!("{items}\n"));
-        let root =
-            GrammarDialect::Rust.ast_grep(&format!("{prefix}fn f() {{ let _ = {source}; }}"));
+        let root = GrammarDialect::Rust.ast_grep(format!("{prefix}fn f() {{ let _ = {source}; }}"));
         if root.root().dfs().any(|node| node.is_error()) {
             continue;
         }
@@ -225,7 +224,7 @@ fn upstream_value_oracle() {
             match (expected[0].as_str(), &actual) {
                 (Some("int"), RustValue::Int { value, ty }) => {
                     value.to_string() == expected[2].as_str().unwrap_or("")
-                        && ty.map_or(true, |ty| Some(ty.name()) == case["type"].as_str())
+                        && ty.is_none_or(|ty| Some(ty.name()) == case["type"].as_str())
                 }
                 (Some("float"), RustValue::Float { value, ty }) => {
                     let bits = expected[3].as_str().unwrap_or("");
@@ -234,7 +233,7 @@ fn upstream_value_oracle() {
                     } else {
                         value.to_bits() == u64::from_str_radix(bits, 16).unwrap_or(0)
                     };
-                    matches && ty.map_or(true, |ty| Some(ty.name()) == case["type"].as_str())
+                    matches && ty.is_none_or(|ty| Some(ty.name()) == case["type"].as_str())
                 }
                 (Some("bool"), RustValue::Bool(value)) => Some(*value) == expected[1].as_bool(),
                 (Some("char"), RustValue::Char(value)) => {
@@ -253,7 +252,12 @@ fn upstream_value_oracle() {
         // one the case or EXEMPT says a reader of the expression alone cannot know.
         let exempt = EXEMPT.iter().any(|(src, _)| *src == source);
         let excused = case.get("unknown").is_some() || exempt;
-        if !good && ((known && !(exempt && expected_error)) || (!known && !excused)) {
+        let unexplained = if known {
+            !(exempt && expected_error)
+        } else {
+            !excused
+        };
+        if !good && unexplained {
             failures.push(format!("{source}: {actual:?} vs {expected}"));
         }
     }

@@ -783,10 +783,7 @@ fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
             // A line continuation skips the newline and the whitespace after it.
             b'\n' | b'\r' => {
                 let rest = &body[at + 1..];
-                let skipped = rest.len()
-                    - rest
-                        .trim_start_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r'))
-                        .len();
+                let skipped = rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
                 (None, at + 1 + skipped)
             }
             _ => return false,

@@ -212,10 +212,10 @@ fn int_suffix(text: &str) -> (&str, Option<IntTy>) {
         ("i8", IntTy::I8),
         ("u8", IntTy::U8),
     ] {
-        if let Some(body) = text.strip_suffix(suffix) {
-            if suffix.starts_with('i') || suffix.starts_with('u') || body.ends_with('_') {
-                return (body, Some(ty));
-            }
+        if let Some(body) = text.strip_suffix(suffix)
+            && (suffix.starts_with('i') || suffix.starts_with('u') || body.ends_with('_'))
+        {
+            return (body, Some(ty));
         }
     }
     (text, None)
@@ -231,7 +231,7 @@ fn float_suffix(text: &str) -> (&str, Option<FloatTy>) {
     (text, None)
 }
 
-fn quoted<'a>(text: &'a str, quote: char, prefix: bool) -> Option<&'a str> {
+fn quoted(text: &str, quote: char, prefix: bool) -> Option<&str> {
     let start = if prefix { 1 } else { 0 };
     text.get(start + 1..text.len().checked_sub(1)?).filter(|_| {
         text.as_bytes().get(start) == Some(&(quote as u8))
@@ -348,7 +348,7 @@ fn decode_escaped(s: &str, mode: EscapeMode) -> Option<Vec<u8>> {
     Some(o)
 }
 fn hex(b: &[u8]) -> Option<u8> {
-    Some(u8::from_str_radix(std::str::from_utf8(b).ok()?, 16).ok()?)
+    u8::from_str_radix(std::str::from_utf8(b).ok()?, 16).ok()
 }
 
 /// Most `const` names `evaluate_following` follows one into another (`A = B`, `B = C`, ...).
@@ -419,8 +419,7 @@ fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> Rus
         "identifier" => follow_const(node, ctx).unwrap_or(RustValue::Unknown),
         "parenthesized_expression" => node
             .children()
-            .filter(|n| n.is_named())
-            .next()
+            .find(|n| n.is_named())
             .map_or(RustValue::Unknown, |n| eval(&n, ctx, hint)),
         "unary_expression" => {
             let Some(op) = node.field("operator").or_else(|| node.children().next()) else {
@@ -428,7 +427,7 @@ fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> Rus
             };
             let Some(arg) = node
                 .field("argument")
-                .or_else(|| node.children().filter(|n| n.is_named()).next())
+                .or_else(|| node.children().find(|n| n.is_named()))
             else {
                 return RustValue::Unknown;
             };
@@ -624,16 +623,14 @@ impl Declared {
     /// the item) or an integer out of the type's range.
     fn convert(&self, value: RustValue) -> RustValue {
         match (self, value) {
-            (Self::Int(want), RustValue::Int { value, ty })
-                if ty.map_or(true, |ty| ty == *want) =>
-            {
+            (Self::Int(want), RustValue::Int { value, ty }) if ty.is_none_or(|ty| ty == *want) => {
                 in_range(value, *want).map_or(RustValue::Unknown, |value| RustValue::Int {
                     value,
                     ty: Some(*want),
                 })
             }
             (Self::Float(want), RustValue::Float { value, ty })
-                if ty.map_or(true, |ty| ty == *want) =>
+                if ty.is_none_or(|ty| ty == *want) =>
             {
                 RustValue::Float {
                     value: if *want == FloatTy::F32 {
@@ -648,7 +645,7 @@ impl Declared {
             (Self::Char, value @ RustValue::Char(_)) => value,
             (Self::Str, value @ RustValue::Str(_)) => value,
             (Self::Bytes(length), RustValue::Bytes(bytes))
-                if length.map_or(true, |length| length == bytes.len()) =>
+                if length.is_none_or(|length| length == bytes.len()) =>
             {
                 RustValue::Bytes(bytes)
             }
@@ -798,9 +795,9 @@ fn binary(op: &str, left: RustValue, right: RustValue) -> RustValue {
             "^" => RustValue::Bool(a ^ b),
             "==" => RustValue::Bool(a == b),
             "!=" => RustValue::Bool(a != b),
-            "<" => RustValue::Bool(a < b),
+            "<" => RustValue::Bool(!a & b),
             "<=" => RustValue::Bool(a <= b),
-            ">" => RustValue::Bool(a > b),
+            ">" => RustValue::Bool(a & !b),
             ">=" => RustValue::Bool(a >= b),
             _ => RustValue::Unknown,
         };
@@ -883,13 +880,13 @@ fn cast(value: RustValue, target: &str) -> RustValue {
             _ => RustValue::Unknown,
         };
     }
-    if target == "char" {
-        if let RustValue::Int { value, .. } = value {
-            return value
-                .to_u32()
-                .and_then(char::from_u32)
-                .map_or(RustValue::Unknown, RustValue::Char);
-        }
+    if target == "char"
+        && let RustValue::Int { value, .. } = value
+    {
+        return value
+            .to_u32()
+            .and_then(char::from_u32)
+            .map_or(RustValue::Unknown, RustValue::Char);
     }
     if let Some(ty) = [("f32", FloatTy::F32), ("f64", FloatTy::F64)]
         .iter()

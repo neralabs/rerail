@@ -518,10 +518,10 @@ fn visit_calls<D: Doc>(
         ) {
             continue;
         }
-        if child.kind() == "call_expression" {
-            if let Some(entry) = read_call(&child, module, table, known, items) {
-                found.push(entry);
-            }
+        if child.kind() == "call_expression"
+            && let Some(entry) = read_call(&child, module, table, known, items)
+        {
+            found.push(entry);
         }
         visit_calls(&child, module, table, known, items, found);
     }

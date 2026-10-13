@@ -28,21 +28,6 @@ fn source(path: &str) -> &'static str {
     }
 }
 
-/// The byte offset of 1-based `line` and `column` (in code points).
-fn offset(text: &str, line: usize, column: usize) -> usize {
-    let start: usize = text
-        .split_inclusive('\n')
-        .take(line - 1)
-        .map(str::len)
-        .sum();
-    start
-        + text[start..]
-            .chars()
-            .take(column - 1)
-            .map(char::len_utf8)
-            .sum::<usize>()
-}
-
 /// Each binding rustc's unused lints judge in the scope fixtures (`fixtures/rust/scope`): rustc
 /// 1.99.0 reports it unused (`unused_variables`, `unused_imports`, `dead_code`) exactly where no
 /// read reaches it. A binding rustc reports is never known used; one it does not report is never

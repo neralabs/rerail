@@ -90,7 +90,6 @@ fn definitions_are_recorded_definitions() {
                 row["column"].as_u64().expect("column"),
             )
         })
-        .map(|(path, line, column)| (path, line, column))
         .collect();
     let mut found = 0;
     for (name, path, offset) in &defined {

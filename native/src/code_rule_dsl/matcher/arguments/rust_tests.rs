@@ -57,7 +57,7 @@ fn rust_slots_follow_rustc() {
                 Passed::Unknown => Some("<unknown>".to_owned()),
                 Passed::Value(value) => {
                     let text = value.text().into_owned().replace(' ', "");
-                    match crate::code_rule_dsl::value::rust::evaluate(&value) {
+                    match crate::code_rule_dsl::value::rust::evaluate(value) {
                         crate::code_rule_dsl::value::rust::RustValue::Int { value, .. } => {
                             Some(value.to_string())
                         }
