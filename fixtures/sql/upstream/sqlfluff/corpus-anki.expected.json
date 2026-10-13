@@ -8,6 +8,7 @@
   "commit": "d52ca669f6deac5966b1c5035bc2dc77c78d3260",
   "rules": [
    "AL04",
+   "AL05",
    "AL08",
    "AL09",
    "AM01",
@@ -20,6 +21,7 @@
    "CV08",
    "PG01",
    "PG02",
+   "RF01",
    "RF04",
    "RF05",
    "RF06",
@@ -47,6 +49,12 @@
   ]
  },
  "findings": [
+  {
+   "rule": "AL05",
+   "path": "rslib/src/storage/notetype/existing_cards.sql",
+   "line": 26,
+   "column": 12
+  },
   {
    "rule": "AM05",
    "path": "rslib/src/search/note_decks_order.sql",

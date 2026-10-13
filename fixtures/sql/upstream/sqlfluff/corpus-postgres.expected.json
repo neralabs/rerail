@@ -8,6 +8,7 @@
   "commit": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
   "rules": [
    "AL04",
+   "AL05",
    "AL08",
    "AL09",
    "AM01",
@@ -20,6 +21,7 @@
    "CV08",
    "PG01",
    "PG02",
+   "RF01",
    "RF04",
    "RF05",
    "RF06",
@@ -391,6 +393,372 @@
    "path": "src/test/regress/sql/reloptions.sql",
    "line": 112,
    "column": 24
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/pg_buffercache/sql/pg_buffercache.sql",
+   "line": 19,
+   "column": 41
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 33,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 34,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 35,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 49,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 51,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 53,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 55,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 80,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 86,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 92,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 98,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 104,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 110,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 116,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 122,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 128,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 134,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 138,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 144,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 184,
+   "column": 87
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 187,
+   "column": 82
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 200,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 203,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 211,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 214,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 217,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 220,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 221,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 224,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 225,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 226,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 227,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 228,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 229,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 230,
+   "column": 89
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 234,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 236,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 238,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 240,
+   "column": 97
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 250,
+   "column": 84
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 25,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 27,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 33,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 35,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 46,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/explain.sql",
+   "line": 107,
+   "column": 46
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 19,
+   "column": 19
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 30,
+   "column": 21
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 55,
+   "column": 35
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 448,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 456,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 465,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 843,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 931,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 936,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1127,
+   "column": 17
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1152,
+   "column": 17
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1265,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1414,
+   "column": 31
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/sanity_check.sql",
+   "line": 13,
+   "column": 45
   },
   {
    "rule": "AL08",

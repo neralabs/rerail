@@ -6,6 +6,7 @@
   "origin": "https://github.com/sqlfluff/sqlfluff@0348222a3bcdb0226563f7349c5a39beb0641955",
   "rules": [
    "AL04",
+   "AL05",
    "AL08",
    "AL09",
    "AM01",
@@ -18,6 +19,7 @@
    "CV08",
    "PG01",
    "PG02",
+   "RF01",
    "RF04",
    "RF05",
    "RF06",
@@ -35,6 +37,53 @@
    "ansi/AL04/test_fail_subquery_alias_matches_base_table.sql",
    "ansi/AL04/test_fail_subquery_table_matches_base_table.sql",
    "ansi/AL04/test_fail_subquery_join_matches_base_table.sql",
+   "ansi/AL05/test_fail_table_alias_not_referenced_1.sql",
+   "ansi/AL05/test_fail_table_alias_not_referenced_1_subquery.sql",
+   "ansi/AL05/test_pass_table_alias_referenced_subquery.sql",
+   "ansi/AL05/test_pass_table_alias_referenced.sql",
+   "ansi/AL05/test_pass_unaliased_table_referenced.sql",
+   "postgres/AL05/test_ignore_postgres_value_table_functions.sql",
+   "postgres/AL05/test_ignore_postgres_value_table_functions_generate_series.sql",
+   "postgres/AL05/test_postgres_row_reference_in_function.sql",
+   "postgres/AL05/test_postgres_whole_row_reference.sql",
+   "postgres/AL05/test_postgres_row_reference_in_subquery.sql",
+   "ansi/AL05/test_fail_table_alias_not_referenced_2.sql",
+   "ansi/AL05/test_fail_table_alias_not_referenced_2_subquery.sql",
+   "ansi/AL05/test_pass_subquery_alias_not_referenced.sql",
+   "ansi/AL05/test_pass_subselect_uses_alias_1.sql",
+   "ansi/AL05/test_pass_subselect_uses_alias_2.sql",
+   "ansi/AL05/test_pass_subselect_uses_alias_3.sql",
+   "ansi/AL05/test_ansi_function_not_table_parameter.sql",
+   "ansi/AL05/test_pass_join_on_expression_in_parentheses.sql",
+   "ansi/AL05/test_pass_derived_query_requires_alias_1.sql",
+   "ansi/AL05/test_pass_derived_query_requires_alias_2.sql",
+   "ansi/AL05/test_pass_derived_query_requires_alias_3.sql",
+   "postgres/AL05/test_pass_postgres_values_clause.sql",
+   "ansi/AL05/test_pass_naked_select_single_quoted_table.sql",
+   "ansi/AL05/test_fail_naked_select_single_quoted_table_wrong_case.sql",
+   "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+   "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+   "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+   "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+   "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+   "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+   "postgres/AL05/test_pass_postgres_naked_select_double_quoted_table.sql",
+   "postgres/AL05/test_fail_postgres_naked_select_double_quoted_table.sql",
+   "postgres/AL05/test_pass_postgres_quoted_select_naked_table.sql",
+   "postgres/AL05/test_pass_postgres_quoted_select_single_quote_table.sql",
+   "sqlite/AL05/test_pass_sqlite_naked_select_quoted_table.sql",
+   "sqlite/AL05/test_pass_sqlite_quoted_select_naked_table.sql",
+   "sqlite/AL05/test_pass_sqlite_naked_select_quoted_table_subquery.sql",
+   "sqlite/AL05/test_pass_sqlite_quoted_select_naked_table_subquery.sql",
+   "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "ansi/AL05/test_pass_repeat_referenced_table.sql",
+   "ansi/AL05/test_pass_case_insensitive.sql",
+   "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+   "postgres/AL05/test_pass_postgres_different_quoted_case_insensitive.sql",
+   "postgres/AL05/test_pass_postgres_jsonb_array_elements_text.sql",
+   "postgres/AL05/test_pass_postgres_json_array_elements.sql",
+   "postgres/AL05/test_pass_postgres_wildcard_row_passed_to_function.sql",
    "ansi/AL08/test_fail_references.sql",
    "ansi/AL08/test_fail_aliases.sql",
    "ansi/AL08/test_fail_alias_refs.sql",
@@ -131,6 +180,39 @@
    "postgres/PG02/test_pass_add_foreign_key_not_valid_then_validate.sql",
    "postgres/PG02/test_fail_add_foreign_key_without_not_valid.sql",
    "postgres/PG02/test_pass_add_non_fk_constraint_without_not_valid.sql",
+   "ansi/RF01/test_fail_object_not_referenced_2.sql",
+   "ansi/RF01/test_pass_object_referenced_2.sql",
+   "ansi/RF01/test_pass_object_referenced_3.sql",
+   "ansi/RF01/test_pass_object_referenced_5b.sql",
+   "ansi/RF01/test_pass_object_referenced_6.sql",
+   "ansi/RF01/test_pass_object_referenced_7.sql",
+   "ansi/RF01/test_fail_object_referenced_7.sql",
+   "ansi/RF01/test_pass_object_referenced_8.sql",
+   "ansi/RF01/test_pass_two_part_reference_8.sql",
+   "ansi/RF01/test_pass_two_part_reference_9.sql",
+   "ansi/RF01/test_fail_two_part_reference_10.sql",
+   "ansi/RF01/test_fail_two_part_reference_11.sql",
+   "ansi/RF01/test_pass_two_part_reference_11.sql",
+   "ansi/RF01/test_pass_simple_delete.sql",
+   "mysql/RF01/test_mysql_select_no_from_should_not_except.sql",
+   "postgres/RF01/test_postgres_value_table_alias.sql",
+   "ansi/RF01/test_pass_update_with_alias.sql",
+   "sqlite/RF01/test_sqlite_create_trigger_after_insert_reference.sql",
+   "sqlite/RF01/test_sqlite_create_trigger_after_delete_reference.sql",
+   "sqlite/RF01/test_sqlite_create_trigger_after_update_reference.sql",
+   "sqlite/RF01/test_sqlite_outside_of_trigger.sql",
+   "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "postgres/RF01/test_postgres_pass_dot_inside_quotes.sql",
+   "postgres/RF01/test_pass_postgres_create_policy_using_target_table.sql",
+   "postgres/RF01/test_pass_postgres_create_policy_with_check_target_table.sql",
+   "postgres/RF01/test_pass_postgres_alter_policy_target_table.sql",
+   "postgres/RF01/test_fail_postgres_create_policy_unreferenced_table.sql",
+   "postgres/RF01/test_pass_postgres_create_policy_no_table_reference.sql",
+   "mysql/RF01/test_pass_mysql_update_alias_correlated_subquery.sql",
+   "mysql/RF01/test_pass_mysql_multi_table_update_alias_correlated_subquery.sql",
+   "mysql/RF01/test_pass_mysql_comma_multi_table_update_alias_correlated_subquery.sql",
+   "ansi/RF01/test_pass_redundantly_bracketed_join_target_alias.sql",
+   "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
    "ansi/RF04/test_pass_valid_identifier.sql",
    "ansi/RF04/test_fail_keyword_as_identifier_column.sql",
    "ansi/RF04/test_fail_keyword_as_identifier_column_alias.sql",
@@ -270,6 +352,78 @@
    "column": 17
   },
   {
+   "rule": "AL05",
+   "path": "ansi/AL04/test_fail_exactly_once_duplicated_aliases.sql",
+   "line": 1,
+   "column": 26
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL04/test_fail_exactly_once_duplicated_aliases.sql",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_ansi_function_not_table_parameter.sql",
+   "line": 2,
+   "column": 18
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_fail_naked_select_single_quoted_table_wrong_case.sql",
+   "line": 2,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_fail_table_alias_not_referenced_1.sql",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_fail_table_alias_not_referenced_1_subquery.sql",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_fail_table_alias_not_referenced_2.sql",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/AL05/test_fail_table_alias_not_referenced_2_subquery.sql",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/RF04/test_fail_keyword_as_identifier_table_alias.sql",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "ansi/ST08/test_pass_distinct_subquery_inside_count.sql",
+   "line": 5,
+   "column": 30
+  },
+  {
+   "rule": "AL05",
+   "path": "postgres/AL05/test_fail_postgres_naked_select_double_quoted_table.sql",
+   "line": 2,
+   "column": 17
+  },
+  {
+   "rule": "AL05",
+   "path": "postgres/RF06/test_fail_default_lowercase.sql",
+   "line": 5,
+   "column": 46
+  },
+  {
    "rule": "AL08",
    "path": "ansi/AL08/test_fail_alias_case.sql",
    "line": 3,
@@ -352,6 +506,12 @@
    "path": "ansi/AL09/test_fail_different_case.sql",
    "line": 14,
    "column": 13
+  },
+  {
+   "rule": "AL08",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 3,
+   "column": 9
   },
   {
    "rule": "AL09",
@@ -469,6 +629,12 @@
   },
   {
    "rule": "AM02",
+   "path": "ansi/AL05/test_pass_derived_query_requires_alias_2.sql",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "AM02",
    "path": "ansi/AM02/test_fail_bare_union.sql",
    "line": 5,
    "column": 1
@@ -541,6 +707,18 @@
   },
   {
    "rule": "AM05",
+   "path": "ansi/AL05/test_pass_table_alias_referenced.sql",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "AM05",
+   "path": "ansi/AL05/test_pass_unaliased_table_referenced.sql",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "AM05",
    "path": "ansi/AM05/test_fail_lone_join_default.sql",
    "line": 1,
    "column": 30
@@ -550,6 +728,12 @@
    "path": "ansi/AM05/test_fail_lone_join_lowercase_default.sql",
    "line": 1,
    "column": 30
+  },
+  {
+   "rule": "AM05",
+   "path": "postgres/AL05/test_pass_postgres_wildcard_row_passed_to_function.sql",
+   "line": 4,
+   "column": 1
   },
   {
    "rule": "AM09",
@@ -750,6 +934,174 @@
    "column": 1
   },
   {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_case_insensitive.sql",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_case_insensitive.sql",
+   "line": 6,
+   "column": 16
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+   "line": 3,
+   "column": 55
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_naked_select_single_quoted_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+   "line": 6,
+   "column": 16
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+   "line": 3,
+   "column": 55
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_fail_object_not_referenced_2.sql",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_fail_object_referenced_7.sql",
+   "line": 7,
+   "column": 28
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_fail_two_part_reference_10.sql",
+   "line": 3,
+   "column": 15
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_fail_two_part_reference_11.sql",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/RF01/test_pass_object_referenced_5b.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/ST02/test_fail_unnecessary_case_6.sql",
+   "line": 5,
+   "column": 14
+  },
+  {
+   "rule": "RF01",
+   "path": "ansi/ST02/test_fail_unnecessary_case_6.sql",
+   "line": 9,
+   "column": 5
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/AL05/test_fail_postgres_naked_select_double_quoted_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/AL05/test_pass_postgres_different_quoted_case_insensitive.sql",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/AL05/test_pass_postgres_different_quoted_case_insensitive.sql",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/AL05/test_pass_postgres_naked_select_double_quoted_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/RF01/test_fail_postgres_create_policy_unreferenced_table.sql",
+   "line": 8,
+   "column": 23
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/ST02/test_pass_case_cannot_be_reduced_13.sql",
+   "line": 3,
+   "column": 14
+  },
+  {
+   "rule": "RF01",
+   "path": "postgres/ST02/test_pass_case_cannot_be_reduced_13.sql",
+   "line": 4,
+   "column": 14
+  },
+  {
+   "rule": "RF01",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "RF01",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "RF01",
+   "path": "sqlite/RF01/test_sqlite_outside_of_trigger.sql",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "RF01",
+   "path": "sqlite/RF01/test_sqlite_outside_of_trigger.sql",
+   "line": 1,
+   "column": 38
+  },
+  {
    "rule": "RF04",
    "path": "ansi/RF04/test_fail_keyword_as_identifier_column.sql",
    "line": 1,
@@ -817,9 +1169,81 @@
   },
   {
    "rule": "RF05",
+   "path": "postgres/AL05/test_pass_postgres_quoted_select_single_quote_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF05",
+   "path": "postgres/AL05/test_pass_postgres_quoted_select_single_quote_table.sql",
+   "line": 2,
+   "column": 17
+  },
+  {
+   "rule": "RF05",
+   "path": "postgres/RF01/test_postgres_pass_dot_inside_quotes.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF05",
    "path": "postgres/RF05/test_pass_ignore_lists_unquoted_fail.sql",
    "line": 1,
    "column": 13
+  },
+  {
+   "rule": "RF05",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "RF05",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "RF05",
+   "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "line": 4,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+   "line": 2,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+   "line": 2,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_naked_select_single_quoted_table.sql",
+   "line": 2,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+   "line": 5,
+   "column": 20
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF06",
+   "path": "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+   "line": 3,
+   "column": 55
   },
   {
    "rule": "RF06",
@@ -889,6 +1313,66 @@
   },
   {
    "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+   "line": 2,
+   "column": 44
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+   "line": 1,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "line": 1,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "line": 2,
+   "column": 44
+  },
+  {
+   "rule": "RF06",
    "path": "mysql/AL09/test_pass_mysql_quoted_identifiers.sql",
    "line": 2,
    "column": 20
@@ -904,6 +1388,48 @@
    "path": "mysql/AL09/test_pass_mysql_quoted_identifiers.sql",
    "line": 5,
    "column": 20
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "RF06",
+   "path": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "RF06",
+   "path": "postgres/AL05/test_pass_postgres_different_quoted_case_insensitive.sql",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "postgres/AL05/test_pass_postgres_naked_select_double_quoted_table.sql",
+   "line": 2,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "postgres/AL05/test_pass_postgres_quoted_select_naked_table.sql",
+   "line": 1,
+   "column": 8
   },
   {
    "rule": "RF06",

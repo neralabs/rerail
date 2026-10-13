@@ -8,6 +8,7 @@
   "commit": "c19ea2c24eb2f116dae170f5f82054d325e94a42",
   "rules": [
    "AL04",
+   "AL05",
    "AL08",
    "AL09",
    "AM01",
@@ -20,6 +21,7 @@
    "CV08",
    "PG01",
    "PG02",
+   "RF01",
    "RF04",
    "RF05",
    "RF06",
@@ -70,6 +72,48 @@
    "path": "components/places/sql/create_sync_triggers.sql",
    "line": 56,
    "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 58,
+   "column": 47
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 65,
+   "column": 11
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 65,
+   "column": 36
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 36,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 38,
+   "column": 22
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 47,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 65,
+   "column": 28
   }
  ]
 }

@@ -51,6 +51,7 @@ T4_CORPORA = ("postgres", "mattermost", "anki", "application-services")
 # code -> the port's rule configuration (SQLFluff's `rules:` section). Empty: SQLFluff's defaults.
 RULES: dict[str, dict] = {
     "AL04": {},
+    "AL05": {},
     "AL08": {},
     "AL09": {},
     "AM01": {},
@@ -63,6 +64,7 @@ RULES: dict[str, dict] = {
     "CV08": {},
     "PG01": {"postgres.excessive_locks": {"force_enable": True}},  # opt-in upstream
     "PG02": {"postgres.not_valid_foreign_key": {"force_enable": True}},  # opt-in upstream
+    "RF01": {},
     "RF04": {},
     "RF05": {},
     "RF06": {},

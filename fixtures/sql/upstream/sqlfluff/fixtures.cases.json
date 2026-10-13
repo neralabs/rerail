@@ -4,6 +4,7 @@
  "origin": "https://github.com/sqlfluff/sqlfluff@0348222a3bcdb0226563f7349c5a39beb0641955",
  "portConfiguration": {
   "AL04": {},
+  "AL05": {},
   "AL08": {},
   "AL09": {},
   "AM01": {},
@@ -24,6 +25,7 @@
     "force_enable": true
    }
   },
+  "RF01": {},
   "RF04": {},
   "RF05": {},
   "RF06": {},
@@ -36,6 +38,24 @@
   "AL04": {
    "dialect bigquery": 1,
    "dialect tsql": 1
+  },
+  "AL05": {
+   "dialect bigquery": 14,
+   "dialect redshift": 10,
+   "dialect tsql": 8,
+   "dialect snowflake": 7,
+   "dialect exasol": 6,
+   "dialect sparksql": 4,
+   "rule configuration other than the port's": 16,
+   "dialect athena": 4,
+   "dialect clickhouse": 5,
+   "dialect db2": 2,
+   "dialect duckdb": 4,
+   "dialect hive": 2,
+   "dialect oracle": 2,
+   "dialect teradata": 2,
+   "dialect trino": 2,
+   "dialect vertica": 2
   },
   "AL08": {
    "dialect snowflake": 1
@@ -66,6 +86,22 @@
   "PG01": {},
   "PG02": {
    "dialect redshift": 1
+  },
+  "RF01": {
+   "dialect bigquery": 10,
+   "dialect duckdb": 2,
+   "dialect hive": 1,
+   "dialect redshift": 4,
+   "dialect exasol": 2,
+   "dialect oracle": 3,
+   "dialect tsql": 12,
+   "dialect soql": 1,
+   "dialect trino": 21,
+   "dialect vertica": 1,
+   "dialect athena": 4,
+   "dialect snowflake": 13,
+   "dialect sparksql": 3,
+   "dialect databricks": 4
   },
   "RF04": {
    "rule configuration other than the port's": 13,
@@ -241,6 +277,717 @@
    "postgresDialect": {
     "parses": true,
     "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_fail_table_alias_not_referenced_1.sql",
+   "rule": "AL05",
+   "case": "test_fail_table_alias_not_referenced_1",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_fail_table_alias_not_referenced_1_subquery.sql",
+   "rule": "AL05",
+   "case": "test_fail_table_alias_not_referenced_1_subquery",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_table_alias_referenced_subquery.sql",
+   "rule": "AL05",
+   "case": "test_pass_table_alias_referenced_subquery",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_table_alias_referenced.sql",
+   "rule": "AL05",
+   "case": "test_pass_table_alias_referenced",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_unaliased_table_referenced.sql",
+   "rule": "AL05",
+   "case": "test_pass_unaliased_table_referenced",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_ignore_postgres_value_table_functions.sql",
+   "rule": "AL05",
+   "case": "test_ignore_postgres_value_table_functions",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_ignore_postgres_value_table_functions_generate_series.sql",
+   "rule": "AL05",
+   "case": "test_ignore_postgres_value_table_functions_generate_series",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_postgres_row_reference_in_function.sql",
+   "rule": "AL05",
+   "case": "test_postgres_row_reference_in_function",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_postgres_whole_row_reference.sql",
+   "rule": "AL05",
+   "case": "test_postgres_whole_row_reference",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_postgres_row_reference_in_subquery.sql",
+   "rule": "AL05",
+   "case": "test_postgres_row_reference_in_subquery",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_fail_table_alias_not_referenced_2.sql",
+   "rule": "AL05",
+   "case": "test_fail_table_alias_not_referenced_2",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_fail_table_alias_not_referenced_2_subquery.sql",
+   "rule": "AL05",
+   "case": "test_fail_table_alias_not_referenced_2_subquery",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_subquery_alias_not_referenced.sql",
+   "rule": "AL05",
+   "case": "test_pass_subquery_alias_not_referenced",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_subselect_uses_alias_1.sql",
+   "rule": "AL05",
+   "case": "test_pass_subselect_uses_alias_1",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_subselect_uses_alias_2.sql",
+   "rule": "AL05",
+   "case": "test_pass_subselect_uses_alias_2",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_subselect_uses_alias_3.sql",
+   "rule": "AL05",
+   "case": "test_pass_subselect_uses_alias_3",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_ansi_function_not_table_parameter.sql",
+   "rule": "AL05",
+   "case": "test_ansi_function_not_table_parameter",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_join_on_expression_in_parentheses.sql",
+   "rule": "AL05",
+   "case": "test_pass_join_on_expression_in_parentheses",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_derived_query_requires_alias_1.sql",
+   "rule": "AL05",
+   "case": "test_pass_derived_query_requires_alias_1",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_derived_query_requires_alias_2.sql",
+   "rule": "AL05",
+   "case": "test_pass_derived_query_requires_alias_2",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_derived_query_requires_alias_3.sql",
+   "rule": "AL05",
+   "case": "test_pass_derived_query_requires_alias_3",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_values_clause.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_values_clause",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_naked_select_single_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_naked_select_single_quoted_table",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": false,
+    "error": "syntax error at or near \"'A'\", at index 27"
+   },
+   "postgresDialect": {
+    "parses": false,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_fail_naked_select_single_quoted_table_wrong_case.sql",
+   "rule": "AL05",
+   "case": "test_fail_naked_select_single_quoted_table_wrong_case",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": false,
+    "error": "syntax error at or near \"'a'\", at index 27"
+   },
+   "postgresDialect": {
+    "parses": false,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_naked_select_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_naked_select_quoted_table",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_quoted_select_naked_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_quoted_select_naked_table",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_naked_select_quoted_table_subquery.sql",
+   "rule": "AL05",
+   "case": "test_pass_naked_select_quoted_table_subquery",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_quoted_select_naked_table_subquery.sql",
+   "rule": "AL05",
+   "case": "test_pass_quoted_select_naked_table_subquery",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "mysql/AL05/test_pass_mysql_quoted_select_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_mysql_quoted_select_quoted_table",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "mysql/AL05/test_pass_mysql_naked_select_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_mysql_naked_select_quoted_table",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "mysql/AL05/test_pass_mysql_quoted_select_naked_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_mysql_quoted_select_naked_table",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_naked_select_double_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_naked_select_double_quoted_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_fail_postgres_naked_select_double_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_fail_postgres_naked_select_double_quoted_table",
+   "dialect": "postgres",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_quoted_select_naked_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_quoted_select_naked_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_quoted_select_single_quote_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_quoted_select_single_quote_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/AL05/test_pass_sqlite_naked_select_quoted_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_sqlite_naked_select_quoted_table",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/AL05/test_pass_sqlite_quoted_select_naked_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_sqlite_quoted_select_naked_table",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/AL05/test_pass_sqlite_naked_select_quoted_table_subquery.sql",
+   "rule": "AL05",
+   "case": "test_pass_sqlite_naked_select_quoted_table_subquery",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/AL05/test_pass_sqlite_quoted_select_naked_table_subquery.sql",
+   "rule": "AL05",
+   "case": "test_pass_sqlite_quoted_select_naked_table_subquery",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
+   "rule": "AL05",
+   "case": "test_pass_sqlite_different_escaped_quotes",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_repeat_referenced_table.sql",
+   "rule": "AL05",
+   "case": "test_pass_repeat_referenced_table",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_case_insensitive.sql",
+   "rule": "AL05",
+   "case": "test_pass_case_insensitive",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/AL05/test_pass_quoted_case_insensitive.sql",
+   "rule": "AL05",
+   "case": "test_pass_quoted_case_insensitive",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": false,
+    "error": "syntax error at or near \"'B'\", at index 59"
+   },
+   "postgresDialect": {
+    "parses": false,
+    "sameFindings": false
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_different_quoted_case_insensitive.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_different_quoted_case_insensitive",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_jsonb_array_elements_text.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_jsonb_array_elements_text",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_json_array_elements.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_json_array_elements",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/AL05/test_pass_postgres_wildcard_row_passed_to_function.sql",
+   "rule": "AL05",
+   "case": "test_pass_postgres_wildcard_row_passed_to_function",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
    }
   },
   {
@@ -1823,6 +2570,504 @@
    }
   },
   {
+   "file": "ansi/RF01/test_fail_object_not_referenced_2.sql",
+   "rule": "RF01",
+   "case": "test_fail_object_not_referenced_2",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_2.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_2",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_3.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_3",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_5b.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_5b",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_6.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_6",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_7.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_7",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_fail_object_referenced_7.sql",
+   "rule": "RF01",
+   "case": "test_fail_object_referenced_7",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_object_referenced_8.sql",
+   "rule": "RF01",
+   "case": "test_pass_object_referenced_8",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_two_part_reference_8.sql",
+   "rule": "RF01",
+   "case": "test_pass_two_part_reference_8",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_two_part_reference_9.sql",
+   "rule": "RF01",
+   "case": "test_pass_two_part_reference_9",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_fail_two_part_reference_10.sql",
+   "rule": "RF01",
+   "case": "test_fail_two_part_reference_10",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_fail_two_part_reference_11.sql",
+   "rule": "RF01",
+   "case": "test_fail_two_part_reference_11",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_two_part_reference_11.sql",
+   "rule": "RF01",
+   "case": "test_pass_two_part_reference_11",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_simple_delete.sql",
+   "rule": "RF01",
+   "case": "test_pass_simple_delete",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "mysql/RF01/test_mysql_select_no_from_should_not_except.sql",
+   "rule": "RF01",
+   "case": "test_mysql_select_no_from_should_not_except",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "postgres/RF01/test_postgres_value_table_alias.sql",
+   "rule": "RF01",
+   "case": "test_postgres_value_table_alias",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_update_with_alias.sql",
+   "rule": "RF01",
+   "case": "test_pass_update_with_alias",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "sqlite/RF01/test_sqlite_create_trigger_after_insert_reference.sql",
+   "rule": "RF01",
+   "case": "test_sqlite_create_trigger_after_insert_reference",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/RF01/test_sqlite_create_trigger_after_delete_reference.sql",
+   "rule": "RF01",
+   "case": "test_sqlite_create_trigger_after_delete_reference",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/RF01/test_sqlite_create_trigger_after_update_reference.sql",
+   "rule": "RF01",
+   "case": "test_sqlite_create_trigger_after_update_reference",
+   "dialect": "sqlite",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "sqlite/RF01/test_sqlite_outside_of_trigger.sql",
+   "rule": "RF01",
+   "case": "test_sqlite_outside_of_trigger",
+   "dialect": "sqlite",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "sqlite3 3.50.4",
+    "accepts": true
+   }
+  },
+  {
+   "file": "mysql/RF01/test_mysql_identifier_with_backticks_should_not_except.sql",
+   "rule": "RF01",
+   "case": "test_mysql_identifier_with_backticks_should_not_except",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "postgres/RF01/test_postgres_pass_dot_inside_quotes.sql",
+   "rule": "RF01",
+   "case": "test_postgres_pass_dot_inside_quotes",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": false,
+    "error": "syntax error at or near \"table\", at index 18"
+   }
+  },
+  {
+   "file": "postgres/RF01/test_pass_postgres_create_policy_using_target_table.sql",
+   "rule": "RF01",
+   "case": "test_pass_postgres_create_policy_using_target_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/RF01/test_pass_postgres_create_policy_with_check_target_table.sql",
+   "rule": "RF01",
+   "case": "test_pass_postgres_create_policy_with_check_target_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/RF01/test_pass_postgres_alter_policy_target_table.sql",
+   "rule": "RF01",
+   "case": "test_pass_postgres_alter_policy_target_table",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/RF01/test_fail_postgres_create_policy_unreferenced_table.sql",
+   "rule": "RF01",
+   "case": "test_fail_postgres_create_policy_unreferenced_table",
+   "dialect": "postgres",
+   "expect": "fail",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "postgres/RF01/test_pass_postgres_create_policy_no_table_reference.sql",
+   "rule": "RF01",
+   "case": "test_pass_postgres_create_policy_no_table_reference",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   }
+  },
+  {
+   "file": "mysql/RF01/test_pass_mysql_update_alias_correlated_subquery.sql",
+   "rule": "RF01",
+   "case": "test_pass_mysql_update_alias_correlated_subquery",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "mysql/RF01/test_pass_mysql_multi_table_update_alias_correlated_subquery.sql",
+   "rule": "RF01",
+   "case": "test_pass_mysql_multi_table_update_alias_correlated_subquery",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "mysql/RF01/test_pass_mysql_comma_multi_table_update_alias_correlated_subquery.sql",
+   "rule": "RF01",
+   "case": "test_pass_mysql_comma_multi_table_update_alias_correlated_subquery",
+   "dialect": "mysql",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "none"
+   }
+  },
+  {
+   "file": "ansi/RF01/test_pass_redundantly_bracketed_join_target_alias.sql",
+   "rule": "RF01",
+   "case": "test_pass_redundantly_bracketed_join_target_alias",
+   "dialect": "ansi",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
+   "file": "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
+   "rule": "RF01",
+   "case": "test_fail_redundantly_bracketed_join_target_unknown_table",
+   "dialect": "ansi",
+   "expect": "fail",
+   "upstreamViolations": [
+    [
+     1,
+     8
+    ]
+   ],
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "postgresDialect": {
+    "parses": true,
+    "sameFindings": true
+   }
+  },
+  {
    "file": "ansi/RF04/test_pass_valid_identifier.sql",
    "rule": "RF04",
    "case": "test_pass_valid_identifier",
@@ -2809,7 +4054,7 @@
    },
    "postgresDialect": {
     "parses": true,
-    "sameFindings": true
+    "sameFindings": false
    }
   },
   {
