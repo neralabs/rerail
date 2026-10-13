@@ -1,4 +1,4 @@
-"""Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (fixtures/rust/upstream/conformance.draft.json),
+"""Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (packs/rust/conformance.json),
 each one checked only by an `EarlyLintPass` (AST, no types). Run offline, never in CI, with the pinned toolchain
 (upstream/common.py pins it and refuses any other; Python 3.9 standard library only):
 
