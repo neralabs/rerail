@@ -1,0 +1,1 @@
+if (true) foo(); else if (true) faa(); else { bar(); baz(); }

@@ -111,7 +111,7 @@ pub(super) fn record_query(
     root_kinds: Option<BTreeSet<u16>>,
 ) {
     eprintln!(
-        "RERAIL_POLICY_ANCHOR {}",
+        "RERAIL_CODE_RULE_ANCHOR {}",
         json!({
             "ruleId": rule_id,
             "clauseId": check_id,
@@ -484,7 +484,7 @@ impl Drop for ApplyProfile {
                 + profile.other_ns;
             let named_worker_cpu_ns = total_worker_cpu_ns.saturating_sub(profile.other_ns);
             eprintln!(
-                "RERAIL_POLICY_PROFILE {}",
+                "RERAIL_CODE_RULE_PROFILE {}",
                 serde_json::json!({
                     "revision": profile.revision,
                     "applyNs": elapsed,

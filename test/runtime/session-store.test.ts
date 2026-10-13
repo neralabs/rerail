@@ -266,7 +266,7 @@ describe("SQLite session persistence", () => {
       cwd: root,
       sessionManager: { getSessionId: () => "omp-live", getBranch: () => [] },
     } as unknown as ExtensionContext;
-    // Only rules the repository adds run: one conversation rule now, a file rule added mid-session.
+    // Only rules the repository adds run: one conversation rule now, a code rule added mid-session.
     const repositoryKey = setUpTestRepository(root, {
       library: [{ kind: "conversation", rule: { ...MOCK_CONVERSATION_RULES[0]!, id: "host-only", mode: "log", action: { content: "Host rule" } } }],
     });
@@ -281,7 +281,7 @@ describe("SQLite session persistence", () => {
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
     const configuration = openRerailDatabase(databasePath);
-    upsertLibraryRule(configuration, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "file");
+    upsertLibraryRule(configuration, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code");
     addAttachment(configuration, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
     configuration.$client.close();
     expect(reader.hud("omp-live").activeRuleCount).toBeNull();
@@ -476,8 +476,8 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
   });
 
-  it("keeps legacy and reset totals unknown rather than counting only surviving receipts", async () => {
-    const { path, repositoryId, store, reader, session } = await hudFixture("legacy");
+  it("keeps untracked and reset totals unknown rather than counting only surviving receipts", async () => {
+    const { path, repositoryId, store, reader, session } = await hudFixture("untracked");
     store.openSession(session);
     store.recordSteer(session, "new-receipt");
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: null });

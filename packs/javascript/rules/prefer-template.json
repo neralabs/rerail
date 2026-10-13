@@ -1,0 +1,170 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint:prefer-template",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of ESLint's `prefer-template` rule (https://eslint.org/docs/latest/rules/prefer-template). Flags the outermost `+` concatenation chain that mixes a string literal with a non-string operand.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "string-concatenation",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "kind": "binary_expression",
+      "all": [
+       {
+        "matches": "plus"
+       },
+       {
+        "not": {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "matches": "plus"
+         }
+        }
+       },
+       {
+        "matches": "chain-has-str"
+       },
+       {
+        "matches": "chain-has-nonstr"
+       }
+      ]
+     },
+     "utils": {
+      "plus": {
+       "kind": "binary_expression",
+       "has": {
+        "stopBy": "neighbor",
+        "regex": "^\\+$"
+       }
+      },
+      "pplus": {
+       "any": [
+        {
+         "matches": "plus"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "pplus"
+         }
+        }
+       ]
+      },
+      "str": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "template_string"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "str"
+         }
+        }
+       ]
+      },
+      "chain-has-str": {
+       "any": [
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "chain-has-str"
+         }
+        },
+        {
+         "matches": "plus",
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "matches": "str"
+           },
+           {
+            "matches": "chain-has-str"
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "chain-has-nonstr": {
+       "any": [
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "chain-has-nonstr"
+         }
+        },
+        {
+         "matches": "plus",
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "all": [
+             {
+              "not": {
+               "any": [
+                {
+                 "kind": "comment"
+                },
+                {
+                 "regex": "^\\+$"
+                },
+                {
+                 "regex": "^[()]$"
+                }
+               ]
+              }
+             },
+             {
+              "not": {
+               "matches": "str"
+              }
+             },
+             {
+              "not": {
+               "matches": "pplus"
+              }
+             }
+            ]
+           },
+           {
+            "matches": "chain-has-nonstr"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "prefer-template",
+    "message": "Unexpected string concatenation."
+   }
+  }
+ ]
+}

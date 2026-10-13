@@ -1,0 +1,1 @@
+var a = <input maxLength={10} />;

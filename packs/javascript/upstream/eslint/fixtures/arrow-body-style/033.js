@@ -1,0 +1,1 @@
+do{let a = () => {return f in ff}}while(true){}

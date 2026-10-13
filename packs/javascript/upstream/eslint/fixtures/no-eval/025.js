@@ -1,0 +1,1 @@
+() => { this.eval('foo') }

@@ -3,7 +3,7 @@
   "id": "next",
   "name": "Next.js",
   "category": "framework",
-  "covers": "19 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
+  "covers": "17 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
   "reason": "matches Next.js",
   "match": {
     "any": [
@@ -30,12 +30,6 @@
           "text": "import Image from \"next/image\";\n\nexport default function Page() {\n  return <Image src=\"/hero.png\" alt=\"Hero\" width={640} height={320} />;\n}\n"
         }
       }
-    },
-    {
-      "id": "next-no-head-element",
-      "document": "rules/next-no-head-element.json",
-      "title": "No head element",
-      "group": "Next.js"
     },
     {
       "id": "next-no-sync-scripts",
@@ -141,12 +135,6 @@
       "id": "next-no-typos",
       "document": "rules/next-no-typos.json",
       "title": "No typos",
-      "group": "Next.js"
-    },
-    {
-      "id": "next-no-location-assign-relative-destination",
-      "document": "rules/next-no-location-assign-relative-destination.json",
-      "title": "No location assign relative destination",
       "group": "Next.js"
     }
   ]

@@ -1,0 +1,1 @@
+class C { static { let a, b; if (foo) ({ a, b } = foo); } }

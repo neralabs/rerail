@@ -1,0 +1,1 @@
+foo.call(undefined, 1, 2);

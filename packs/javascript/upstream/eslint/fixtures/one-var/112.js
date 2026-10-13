@@ -1,0 +1,1 @@
+class C { static { let a; const b = 0; let c; } }

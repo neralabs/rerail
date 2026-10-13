@@ -1,0 +1,1 @@
+A: while (a) { switch (b) { case 0: continue A; } }

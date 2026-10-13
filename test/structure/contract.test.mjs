@@ -95,7 +95,7 @@ describe("#10 fixture features map to engine modules", () => {
 });
 
 describe("#11 orphan families and packs", () => {
-  it("accepts families with a language, a pack or a shared declaration; flags the rest and rule-less packs", () => {
+  it("accepts families with a language, a pack or a shared declaration, and packs whose rules are all candidates; flags the rest and rule-less packs", () => {
     const result = orphans(
       memoryRepo({
         "languages/php.json": "{}",
@@ -105,8 +105,12 @@ describe("#11 orphan families and packs", () => {
         "fixtures/ecma/scope/c.json": "{}",
         "fixtures/cobol/scope/d.json": "{}",
         "packs/empty/pack.json": "{}",
+        "packs/vue/pack.json": "{}",
+        "packs/vue/candidates/rules/c.json": rule("vue:c"),
+        "packs/probes/pack.json": "{}",
+        "packs/probes/candidates/probes/rules/p.json": rule("probes:p"),
       }),
     );
-    expect(paths(result)).toEqual(["fixtures/cobol", "packs/empty"]);
+    expect(paths(result)).toEqual(["fixtures/cobol", "packs/empty", "packs/probes"]);
   });
 });

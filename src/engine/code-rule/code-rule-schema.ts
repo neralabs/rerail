@@ -54,7 +54,7 @@ export type { CodeRuleAstLanguage };
  * compiles and evaluates. The TypeScript types in `code-rule.ts` are
  * the contract; every schema here is declared against them so a drift between
  * the two is a compile error. This is the shape the `rules` table stores for
- * `kind = 'file'` rows; every top-level field maps to a column (`schema.ts`).
+ * `kind = 'code'` rows; every top-level field maps to a column (`schema.ts`).
  *
  * ast-grep patterns and fact relations are checked structurally only; the
  * engine remains the authority on whether a pattern parses for its grammar, a

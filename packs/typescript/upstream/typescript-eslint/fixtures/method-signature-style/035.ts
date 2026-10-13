@@ -1,0 +1,5 @@
+
+interface Test {
+  f(value: number): this | undefined;
+}
+      

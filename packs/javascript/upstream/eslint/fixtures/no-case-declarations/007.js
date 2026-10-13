@@ -1,0 +1,8 @@
+
+                switch (a) {
+                    case 1:
+                        {}
+                        function f() {}
+                        break;
+                }
+            

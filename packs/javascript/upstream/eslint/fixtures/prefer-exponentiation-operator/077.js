@@ -1,0 +1,1 @@
+function *f() { yield Math.pow(a, b) }

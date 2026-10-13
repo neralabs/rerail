@@ -1,0 +1,84 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-extra-non-null-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-extra-non-null-assertion` rule (https://typescript-eslint.io/rules/no-extra-non-null-assertion). Flags a non-null assertion that is itself asserted non-null again, or that is the object/callee of an optional chain (parentheses are transparent, as in ESTree).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "extra-non-null-assertion",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "non_null_expression"
+              },
+              {
+                "pattern": "$E!"
+              },
+              {
+                "matches": "redundant-position"
+              }
+            ]
+          },
+          "utils": {
+            "redundant-position": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "non_null_expression"
+                  }
+                },
+                {
+                  "precedes": {
+                    "any": [
+                      {
+                        "kind": "optional_chain"
+                      },
+                      {
+                        "regex": "^\\?\\.$"
+                      }
+                    ]
+                  },
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      },
+                      {
+                        "kind": "call_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "redundant-position"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-extra-non-null-assertion",
+        "message": "Forbidden extra non-null assertion.",
+        "fix": "$E"
+      }
+    }
+  ]
+}

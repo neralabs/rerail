@@ -53,7 +53,7 @@ const pack = (id: string): RulePack => packs.find(candidate => candidate.id === 
 const ids = (found: RulePack) => found.rules.map(rule => rule.id).sort();
 const complexity = pack("complexity");
 const complexityIds = ["complexity:cyclomatic-javascript", "complexity:cyclomatic-python", "complexity:cyclomatic-typescript"];
-/** A shipped file rule the synthetic packs below reuse under their own ids. */
+/** A shipped code rule the synthetic packs below reuse under their own ids. */
 const typescriptRule = bundled.find(document => document.rule.id === "complexity:cyclomatic-typescript")!;
 
 /**
@@ -99,7 +99,7 @@ async function withTestPacks(repository = false): Promise<readonly RulePack[]> {
 const capabilities = readFileSync(fileURLToPath(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url)), "utf8");
 const evaluationSchema = z.object({ violations: z.array(z.object({ ruleId: z.string() })).default([]), failures: z.array(z.unknown()).default([]) });
 
-/** Whether the file rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
+/** Whether the code rule `ruleId`, evaluated on `text` at `path`, reports a violation. */
 function fires(ruleId: string, path: string, text: string): boolean {
   const document = bundled.find(candidate => candidate.rule.id === ruleId)!;
   const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(JSON.stringify(document.rule), "json", capabilities);
@@ -124,7 +124,7 @@ describe("shipped rule packs", () => {
     }
   });
 
-  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "file");
+  const exampled = packs.flatMap(found => found.rules).filter(rule => rule.examples !== undefined && rule.kind === "code");
   it.each(exampled.map(rule => [rule.id, rule] as const))("%s catches its caught example and lets its passing example pass", (id, rule) => {
     const { caught, passes } = rule.examples!;
     expect(fires(id, caught.path!, caught.text)).toBe(true);
@@ -139,10 +139,10 @@ describe("shipped rule packs", () => {
 
 describe("rule pack definitions", () => {
   const conversation = { ...MOCK_CONVERSATION_RULES[0]!, id: "test:talk" };
-  const fileRule = { ...typescriptRule.rule, id: "test:cyclomatic" };
+  const codeRule = { ...typescriptRule.rule, id: "test:cyclomatic" };
   async function packFolder(definitions: readonly { id: string; rules: readonly { id: string; document: string }[] }[]): Promise<string[]> {
     const directory = await temporaryDirectory("rerail-rule-pack-def-");
-    const documents: Record<string, object> = { "test:cyclomatic": fileRule, "test:talk": conversation };
+    const documents: Record<string, object> = { "test:cyclomatic": codeRule, "test:talk": conversation };
     return definitions.map(definition =>
       writePack(directory, definition, Object.fromEntries(definition.rules.flatMap(rule => (documents[rule.id] === undefined ? [] : [[rule.document, documents[rule.id]!]])))),
     );
@@ -182,7 +182,7 @@ describe("rule pack definitions", () => {
     const directories = await packFolder([definition("one", "test:talk", { mode: "log", on: false }), definition("two", "test:cyclomatic")]);
     const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
-    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "file", mode: typescriptRule.rule.mode, on: true });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "code", mode: typescriptRule.rule.mode, on: true });
   });
 });
 
@@ -294,6 +294,21 @@ describe("recommendRulePacks", () => {
     expect(recommendRulePacks(root, withAcme).map(({ pack: found }) => found.id)).toEqual(["acme-api"]);
   });
 
+  it("never recommends a pack without rules, even where its match fits", async () => {
+    const root = await temporaryDirectory("rerail-empty-pack-");
+    writeFiles(root, { "web/src/App.jsx": "export const App = () => null;\n" });
+    const empty = writePack(await temporaryDirectory("rerail-empty-pack-def-"), {
+      format: "rerail.rule-pack/v1", id: "acme-jsx", name: "acme-jsx", category: "framework",
+      covers: "No rules yet: every port is a candidate.", reason: "matches JSX",
+      match: { any: [{ files: ["**/*.jsx"], label: "*.jsx files" }] },
+      rules: [],
+    }, {});
+    const loaded = readRulePacks([empty]);
+
+    expect(loaded.map(found => [found.id, found.rules.length])).toEqual([["acme-jsx", 0]]);
+    expect(recommendRulePacks(root, loaded)).toEqual([]);
+  });
+
   it("lets the daemon reuse a repository's recommendations for a minute, then scans it again", async () => {
     const root = await temporaryDirectory("rerail-recommend-cache-");
     writeFiles(root, { "app/main.py": "print(1)\n" });
@@ -355,7 +370,7 @@ describe("rule pack API", () => {
         .toEqual([["complexity", "language", complexityIds.length]]);
       const cyclomatic = complexity.rules.find(rule => rule.id === "complexity:cyclomatic-typescript")!;
       expect(listed.packs.find(found => found.id === "complexity")!.rules.find(rule => rule.id === "complexity:cyclomatic-typescript"))
-        .toEqual({ id: "complexity:cyclomatic-typescript", kind: "file", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
+        .toEqual({ id: "complexity:cyclomatic-typescript", kind: "code", title: cyclomatic.title, group: "Complexity", mode: "steer", on: true, examples: cyclomatic.examples });
       expect(cyclomatic.examples).toBeDefined();
 
       const recommended = await get(`/api/rule-packs/recommendations?checkout=${encodeURIComponent(checkout)}`, rulePackRecommendationsSchema);

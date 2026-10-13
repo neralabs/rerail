@@ -1,0 +1,1 @@
+const arrowGeneric2 = <T extends void = void>(arg: T) => {};

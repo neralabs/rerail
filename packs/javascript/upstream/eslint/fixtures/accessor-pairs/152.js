@@ -1,0 +1,1 @@
+var o = { get a() {}, set b(foo) {}, set c(foo) {}, get d() {} };

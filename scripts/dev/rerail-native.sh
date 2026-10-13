@@ -2,7 +2,7 @@
 #
 # `just rerail-native` — build Rerail's native rules engine for this checkout.
 #
-# The engine is a Rust cdylib loaded through napi; without native/rerail.<platform>.node every
+# The engine is a Rust cdylib loaded through napi; without native/rerail_engine.<platform>.node every
 # Rerail path that embeds or parses fails with "missing native addon". Published packages carry
 # prebuilt engines, but a checkout has to build its own. This installs rustup when absent, pins
 # the toolchain CI uses (the channel in rust-toolchain.toml; RERAIL_RUST_TOOLCHAIN overrides it),

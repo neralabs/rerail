@@ -1,0 +1,530 @@
+{
+ "tool": "eslint-plugin-vitest",
+ "version": "1.6.27",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/vitest-dev/eslint-plugin-vitest@aad57d121647efe764463c37414a8cd67ec9cf92",
+  "rules": [
+   "vitest/expect-expect",
+   "vitest/no-disabled-tests",
+   "vitest/no-focused-tests"
+  ],
+  "files": [
+   "expect-expect/001.test.ts",
+   "expect-expect/002.test.ts",
+   "expect-expect/003.test.ts",
+   "expect-expect/004.test.ts",
+   "expect-expect/005.test.ts",
+   "expect-expect/006.test.ts",
+   "expect-expect/007.test.ts",
+   "expect-expect/008.test.ts",
+   "expect-expect/009.test.ts",
+   "expect-expect/010.test.ts",
+   "expect-expect/011.test.ts",
+   "expect-expect/012.test.ts",
+   "expect-expect/013.test.ts",
+   "expect-expect/014.test.ts",
+   "expect-expect/015.test.ts",
+   "expect-expect/016.test.ts",
+   "expect-expect/017.test.ts",
+   "expect-expect/018.test.ts",
+   "expect-expect/019.test.ts",
+   "expect-expect/020.test.ts",
+   "expect-expect/021.test.ts",
+   "expect-expect/022.test.ts",
+   "expect-expect/023.test.ts",
+   "expect-expect/024.test.ts",
+   "expect-expect/025.test.ts",
+   "expect-expect/026.test.ts",
+   "expect-expect/027.test.ts",
+   "expect-expect/028.test.ts",
+   "expect-expect/029.test.ts",
+   "expect-expect/030.test.ts",
+   "expect-expect/031.test.ts",
+   "expect-expect/032.test.ts",
+   "expect-expect/033.test.ts",
+   "no-disabled-tests/001.test.ts",
+   "no-disabled-tests/002.test.ts",
+   "no-disabled-tests/003.test.ts",
+   "no-disabled-tests/004.test.ts",
+   "no-disabled-tests/005.test.ts",
+   "no-disabled-tests/006.test.ts",
+   "no-disabled-tests/007.test.ts",
+   "no-disabled-tests/008.test.ts",
+   "no-disabled-tests/009.test.ts",
+   "no-disabled-tests/010.test.ts",
+   "no-disabled-tests/011.test.ts",
+   "no-disabled-tests/012.test.ts",
+   "no-disabled-tests/013.test.ts",
+   "no-disabled-tests/014.test.ts",
+   "no-disabled-tests/015.test.ts",
+   "no-disabled-tests/016.test.ts",
+   "no-disabled-tests/017.test.ts",
+   "no-disabled-tests/018.test.ts",
+   "no-disabled-tests/019.test.ts",
+   "no-disabled-tests/020.test.ts",
+   "no-disabled-tests/021.test.ts",
+   "no-disabled-tests/022.test.ts",
+   "no-disabled-tests/023.test.ts",
+   "no-disabled-tests/024.test.ts",
+   "no-disabled-tests/025.test.ts",
+   "no-disabled-tests/026.test.ts",
+   "no-disabled-tests/027.test.ts",
+   "no-disabled-tests/028.test.ts",
+   "no-disabled-tests/029.test.ts",
+   "no-disabled-tests/030.test.ts",
+   "no-disabled-tests/031.test.ts",
+   "no-disabled-tests/032.test.ts",
+   "no-disabled-tests/033.test.ts",
+   "no-disabled-tests/034.test.ts",
+   "no-focused-tests/001.test.ts",
+   "no-focused-tests/002.test.ts",
+   "no-focused-tests/003.test.ts",
+   "no-focused-tests/004.test.ts",
+   "no-focused-tests/005.test.ts",
+   "no-focused-tests/006.test.ts",
+   "no-focused-tests/007.test.ts",
+   "no-focused-tests/008.test.ts",
+   "no-focused-tests/009.test.ts",
+   "no-focused-tests/010.test.ts",
+   "no-focused-tests/011.test.ts",
+   "no-focused-tests/012.test.ts",
+   "no-focused-tests/013.test.ts",
+   "no-focused-tests/014.test.ts",
+   "no-focused-tests/015.test.ts",
+   "no-focused-tests/016.test.ts",
+   "no-focused-tests/017.test.ts",
+   "no-focused-tests/018.test.ts",
+   "no-focused-tests/019.test.ts",
+   "no-focused-tests/020.test.ts"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/016.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/017.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/018.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/019.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/020.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/023.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/024.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/025.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/026.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/027.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/028.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/029.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/030.test.ts",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/031.test.ts",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/032.test.ts",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/033.test.ts",
+   "line": 14,
+   "column": 6
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/002.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/004.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/006.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/007.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/008.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/009.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/010.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/026.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/027.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/028.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/029.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/030.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/031.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/032.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/033.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/001.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/002.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/003.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/004.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/005.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/006.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/007.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/011.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/013.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/014.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/015.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/016.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/019.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/020.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "expect-expect/001.test.ts",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "expect-expect/002.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/024.test.ts",
+   "line": 1,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/025.test.ts",
+   "line": 1,
+   "column": 19
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/026.test.ts",
+   "line": 1,
+   "column": 15
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/027.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/028.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/029.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/030.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/031.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/032.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/033.test.ts",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/034.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/003.test.ts",
+   "line": 1,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/004.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/009.test.ts",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/011.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/012.test.ts",
+   "line": 1,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/013.test.ts",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/014.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/015.test.ts",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/016.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/017.test.ts",
+   "line": 1,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/018.test.ts",
+   "line": 1,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/019.test.ts",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/020.test.ts",
+   "line": 1,
+   "column": 4
+  }
+ ]
+}

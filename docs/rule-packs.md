@@ -18,7 +18,7 @@ The rule list is the pack file itself: `packs/complexity/pack.json`. A rule's ti
 
 A pack for a project's own conventions is added the same way: a `repository` pack directory with its rule documents in `rules/` and a `pack.json` that lists them, with a match definition naming the files or dependencies that identify the project. Linter packs for other languages and frameworks wait until core loads installed packs.
 
-Every rule is listed in the mode its own document has (all `steer` today), and every pack lists its rules as on.
+Every rule is listed in the mode its own document has (all `steer` today). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it; a rule or pack setting in the repository or a checkout overrides them.
 
@@ -58,11 +58,11 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
 - `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
-- `rules` lists the pack's rules; each rule belongs to exactly one pack.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended.
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
   - `on` (optional, default `true`) is whether the pack starts the rule on.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a file rule and none for a conversation rule. The complexity pack has one pair per rule.
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a code rule and none for a conversation rule. The complexity pack has one pair per rule.
   - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 

@@ -286,6 +286,18 @@ function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus:
   return recording;
 }
 
+/**
+ * Shipped ports and candidates, each evaluated in a workspace of their own: a file's AST work budget is shared by every
+ * code rule in a workspace, so candidates evaluated beside the shipped ports would spend the shipped ports' budget and
+ * change their verdicts, which a candidate must never do. Production never runs candidates beside shipped rules either.
+ */
+async function evaluateApart(rules: readonly CompiledRule[], files: readonly SourceFile[]): Promise<[CompiledRule[], Evaluation][]> {
+  const groups = [rules.filter(entry => !isCandidate(entry.rule)), rules.filter(entry => isCandidate(entry.rule))].filter(group => group.length > 0);
+  const evaluations: [CompiledRule[], Evaluation][] = [];
+  for (const group of groups) evaluations.push([group, await evaluateWorkspace(group.map(entry => entry.compiled), files)]);
+  return evaluations;
+}
+
 async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<SourceRun> {
   const languages = familyLanguages(loaded);
   const actual: SourceRun["actual"] = new Map();
@@ -313,16 +325,14 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       }
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-      const evaluation = await evaluateWorkspace(
-        unitRules.map(entry => entry.compiled),
-        files,
-      );
-      collectActual(unitRules, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+      for (const [group, evaluation] of await evaluateApart(unitRules, files)) {
+        collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+        summary.evaluationMs += evaluation.ms;
+      }
       for (const file of files) scored.add(`${tool}\0${file.path}`);
       summary.units += 1;
       summary.files += files.length;
       summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
-      summary.evaluationMs += evaluation.ms;
     }
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
@@ -371,7 +381,10 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
   const recordings: SourceRun["recordings"] = new Map();
   const skipped = new Set<string>();
   for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
-    const recording = pinnedRecording(loaded, tool, corpusRecordingPath(loaded, tool, corpus.name), corpus);
+    const path = corpusRecordingPath(loaded, tool, corpus.name);
+    // A corpus recording covers the shipped ports: a tool with only candidates may have none, and they skip the corpus.
+    if (!existsSync(path) && compiled.every(entry => entry.rule.upstream.tool !== tool || isCandidate(entry.rule))) continue;
+    const recording = pinnedRecording(loaded, tool, path, corpus);
     recordings.set(tool, recording);
     if (typeof recording !== "string") for (const path of (recording as CorpusRecording).source.skipped) skipped.add(path);
   }
@@ -387,12 +400,12 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
     files.push({ path, language, source: await readFile(join(directory, path), "utf8") });
   }
   const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-  const evaluation = await evaluateWorkspace(
-    compiled.map(entry => entry.compiled),
-    files,
-  );
   const actual: SourceRun["actual"] = new Map();
-  collectActual(compiled, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+  let evaluationMs = 0;
+  for (const [group, evaluation] of await evaluateApart(compiled, files)) {
+    collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+    evaluationMs += evaluation.ms;
+  }
   const scored = new Set<string>();
   for (const tool of recordings.keys()) for (const file of files) scored.add(`${tool}\0${file.path}`);
   return {
@@ -409,7 +422,7 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
       skipped: skipped.size,
       outsideScope: 0,
       syntaxErrorFiles: syntaxErrorSummary(actual),
-      evaluationMs: Math.round(evaluation.ms),
+      evaluationMs: Math.round(evaluationMs),
     },
   };
 }
@@ -425,7 +438,7 @@ export interface RunOptions {
 }
 
 function engineInfo(): { path: string; version: string } {
-  const path = process.env.RERAIL_NATIVE_KERNEL_PATH ?? join(RERAIL_ROOT, "native", `rerail.${nativePlatformSuffix()}.node`);
+  const path = process.env.RERAIL_ENGINE_PATH ?? join(RERAIL_ROOT, "native", `rerail_engine.${nativePlatformSuffix()}.node`);
   let built = "";
   try {
     built = `, built ${statSync(path).mtime.toISOString()}`;
@@ -444,6 +457,8 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
     return undefined;
   }
   if (!recording.source.rules.includes(rule.upstream.rule)) {
+    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them.
+    if (isCandidate(rule) && recording.source.kind === "corpus") return undefined;
     errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
     return undefined;
   }

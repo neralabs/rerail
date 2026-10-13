@@ -1,0 +1,1 @@
+var lib3 = load('not_an_import');

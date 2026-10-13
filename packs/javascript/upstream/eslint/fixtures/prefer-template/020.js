@@ -1,0 +1,1 @@
+var foo = '1 backslash: \${bar}' + baz;

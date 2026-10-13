@@ -1,0 +1,1 @@
+(function() { bar('use strict'); return; }());

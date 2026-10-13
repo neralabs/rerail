@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-caller",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-caller` rule (https://eslint.org/docs/latest/rules/no-caller). Reports `arguments.callee` and `arguments.caller` (object through parentheses).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "arguments-callee-caller",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "member_expression",
+            "all": [
+              {
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^arguments$",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^calle[er]$",
+                  "pattern": "$PROP"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-caller",
+        "message": "Avoid arguments.$PROP."
+      }
+    }
+  ]
+}

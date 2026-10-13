@@ -1,0 +1,1 @@
+using foo = object.foo;

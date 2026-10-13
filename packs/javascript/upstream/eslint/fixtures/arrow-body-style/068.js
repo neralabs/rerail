@@ -1,0 +1,1 @@
+const createMarker = (color) => ({ latitude, longitude }, index) => {};

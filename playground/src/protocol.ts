@@ -5,7 +5,7 @@ import { z } from "zod";
 export const ruleSnapshotSchema = z
   .object({
     id: z.string().min(1).max(128),
-    kind: z.enum(["conversation", "file"]),
+    kind: z.enum(["conversation", "code"]),
     definition: z.string().max(262_144),
     digest: z.string(),
     updatedAt: z.string(),
@@ -20,7 +20,7 @@ export const scenarioSchema = z
     expectation: z.enum(["match", "no-match"]),
     explanation: z.string().max(16_384),
     ruleDigest: z.string(),
-    ruleKind: z.enum(["conversation", "file"]),
+    ruleKind: z.enum(["conversation", "code"]),
     prompt: z.string().min(1).max(32_768),
     fixtures: z
       .array(z.object({ path: z.string().min(1).max(1_024), content: z.string().max(131_072) }).strict())

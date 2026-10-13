@@ -1,0 +1,1 @@
+switch((NaN, doStuff(), 1)) {}

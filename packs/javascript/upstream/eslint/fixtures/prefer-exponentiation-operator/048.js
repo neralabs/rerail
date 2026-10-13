@@ -1,0 +1,1 @@
+void Math.pow(a, b)

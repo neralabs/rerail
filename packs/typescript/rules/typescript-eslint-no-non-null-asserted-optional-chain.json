@@ -1,0 +1,173 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint:no-non-null-asserted-optional-chain",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-non-null-asserted-optional-chain` rule (https://typescript-eslint.io/rules/no-non-null-asserted-optional-chain). Flags a non-null assertion that ends an optional chain (`x?.y!`), and a parenthesized optional chain that is non-null asserted (`(x?.y)!`, reported at the chain).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "chain-end",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "non_null_expression",
+            "has": {
+              "matches": "optional-chain",
+              "stopBy": "neighbor"
+            },
+            "not": {
+              "all": [
+                {
+                  "not": {
+                    "follows": {
+                      "regex": "[\\s\\S]",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      },
+                      {
+                        "kind": "call_expression"
+                      },
+                      {
+                        "kind": "non_null_expression"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            }
+          },
+          "utils": {
+            "optional-chain": {
+              "any": [
+                {
+                  "kind": "member_expression"
+                },
+                {
+                  "kind": "subscript_expression"
+                },
+                {
+                  "kind": "call_expression"
+                },
+                {
+                  "kind": "non_null_expression"
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "regex": "^\\?\\.$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "optional-chain"
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "regex": "[\\s\\S]",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-non-null-asserted-optional-chain",
+        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong."
+      }
+    },
+    {
+      "id": "wrapped-chain",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "non_null_expression",
+            "has": {
+              "kind": "parenthesized_expression",
+              "stopBy": "neighbor",
+              "has": {
+                "matches": "optional-chain",
+                "pattern": "$CHAIN",
+                "stopBy": "neighbor"
+              }
+            }
+          },
+          "utils": {
+            "optional-chain": {
+              "any": [
+                {
+                  "kind": "member_expression"
+                },
+                {
+                  "kind": "subscript_expression"
+                },
+                {
+                  "kind": "call_expression"
+                },
+                {
+                  "kind": "non_null_expression"
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "regex": "^\\?\\.$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "optional-chain"
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "regex": "[\\s\\S]",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CHAIN",
+        "code": "@typescript-eslint/no-non-null-asserted-optional-chain",
+        "message": "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong."
+      }
+    }
+  ]
+}

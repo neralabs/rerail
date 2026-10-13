@@ -2,3 +2,9 @@
 # .github/actions/lfs.
 model/model.safetensors filter=lfs diff=lfs merge=lfs -text
 native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text
+
+# Packs' upstream recordings and the upstream test cases copied beside them: generated or vendored data that GitHub
+# collapses in reviews and leaves out of language statistics.
+packs/*/upstream/**/*.expected.json linguist-generated=true
+packs/*/upstream/*/fixtures/** linguist-vendored=true
+packs/*/upstream/*/tests/** linguist-vendored=true

@@ -3,7 +3,6 @@
   "family": "ecma",
   "capabilities": [
     "syntax",
-    "scope",
     "value",
     "suppression"
   ],
@@ -54,19 +53,6 @@
         "rule": "@next/next/no-img-element"
       },
       "policy": "rules/next-no-img-element.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-no-head-element",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-head-element"
-      },
-      "policy": "rules/next-no-head-element.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -289,21 +275,6 @@
       "policy": "rules/next-no-typos.json",
       "capabilities": [
         "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-no-location-assign-relative-destination",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-location-assign-relative-destination"
-      },
-      "policy": "rules/next-no-location-assign-relative-destination.json",
-      "capabilities": [
-        "syntax",
-        "scope",
-        "value",
         "suppression"
       ],
       "match": "line+column"

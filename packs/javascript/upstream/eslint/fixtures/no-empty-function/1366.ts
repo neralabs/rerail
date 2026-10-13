@@ -1,0 +1,1 @@
+const obj = {*foo(param: string) {}}; // allow: methods

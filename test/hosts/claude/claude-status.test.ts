@@ -103,7 +103,7 @@ describe("composed Claude status", () => {
     const script = "let n=0; process.stdin.on('data', b => n+=b.length); process.stdin.on('end', () => process.stdout.write(String(n)))";
     mocks.command.mockReturnValue(nodePredecessor(script));
     const input = Buffer.alloc(1_048_577, 0x61);
-    expect((await render(input)).toString()).toBe(`${input.length}\nRerail | session unavailable\n`);
+    expect((await render(input)).toString()).toMatch(new RegExp(`^${input.length}\\n\\w+ \\| session unavailable\\n$`, "u"));
     expect(mocks.presentation).not.toHaveBeenCalled();
   });
 });

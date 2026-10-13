@@ -141,25 +141,25 @@ describe("MCP callers and the agent guard", () => {
 
     // A rule the agent creates in the same call may be added; an existing one may not.
     const created = MOCK_CODE_RULES[0]!;
-    expect((await call("library_rules_upsert", { id: created.id, kind: "file", rule: created, attach: true, folder: "web" }, caller)).result)
+    expect((await call("library_rules_upsert", { id: created.id, kind: "code", rule: created, attach: true, folder: "web" }, caller)).result)
       .toMatchObject({ attached: { repositoryKey: parentKey, folders: ["web"] } });
-    expect((await call("library_rules_upsert", { id: created.id, kind: "file", rule: created, attach: true }, caller)).result)
+    expect((await call("library_rules_upsert", { id: created.id, kind: "code", rule: created, attach: true }, caller)).result)
       .toMatch(/^agent-not-permitted/u);
     // Editing an existing rule a set-up repository runs is refused too: it would change that repository's rules.
-    expect((await call("library_rules_upsert", { id: created.id, kind: "file", rule: created }, caller)).result)
+    expect((await call("library_rules_upsert", { id: created.id, kind: "code", rule: created }, caller)).result)
       .toMatch(/^agent-not-permitted/u);
     expect((await call("library_rules_remove", { id: created.id }, caller)).result).toMatch(/^agent-not-permitted/u);
 
     // Editing a By Rerail rule stores a copy, added where the original is, and switches the original off there.
     const bundle = loadBundledCatalog();
-    const [ruleId, packId] = [...bundle.packOf].find(([id]) => bundle.documents.get(id)?.kind === "file")!;
+    const [ruleId, packId] = [...bundle.packOf].find(([id]) => bundle.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
     const original = bundle.documents.get(ruleId)!.rule as CodeRule;
-    const copied = await call("library_rules_upsert", { id: ruleId, kind: "file", rule: { ...original, revision: original.revision + 1 } }, caller);
+    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, revision: original.revision + 1 } }, caller);
     expect(copied.result).toMatchObject({ copiedFromRuleId: ruleId, attached: { repositoryKey: parentKey, folders: ["web"] } });
     // Editing its own copy later is allowed, as making it was.
     const copy = (copied.result as { rule: { rule: CodeRule } }).rule.rule;
-    expect((await call("library_rules_upsert", { id: copy.id, kind: "file", rule: { ...copy, revision: copy.revision + 1 } }, caller)).result)
+    expect((await call("library_rules_upsert", { id: copy.id, kind: "code", rule: { ...copy, revision: copy.revision + 1 } }, caller)).result)
       .toMatchObject({ rule: { revision: copy.revision + 1 } });
   });
 
@@ -187,7 +187,7 @@ describe("MCP callers and the agent guard", () => {
     const response = await app.request(`/api/library-rules/${rule.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule, repository: parentKey, folder: "web", attach: true }),
+      body: JSON.stringify({ kind: "code", rule, repository: parentKey, folder: "web", attach: true }),
     });
     expect(response.status).toBe(200);
     const repository = listRepositories(stores.database()).find(candidate => candidate.repositoryKey === parentKey)!;
@@ -196,14 +196,14 @@ describe("MCP callers and the agent guard", () => {
 
   it("edits a library rule whose id a later release bundles, rather than copying the By Rerail rule", async () => {
     const bundle = loadBundledCatalog();
-    const [bundledId, document] = [...bundle.documents].find(([, candidate]) => candidate.kind === "file")!;
+    const [bundledId, document] = [...bundle.documents].find(([, candidate]) => candidate.kind === "code")!;
     // The library rule came first; this release then bundled the same id, and the library rule wins.
-    writeLibraryRule(stores.database(), { ...bundle, documents: new Map() }, { kind: "file", rule: { ...(document.rule as CodeRule), mode: "log" } });
+    writeLibraryRule(stores.database(), { ...bundle, documents: new Map() }, { kind: "code", rule: { ...(document.rule as CodeRule), mode: "log" } });
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const response = await app.request(`/api/library-rules/${bundledId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "file", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
+      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ copiedFromRuleId: null, rule: { rule: { id: bundledId, mode: "steer" } } });
@@ -211,7 +211,7 @@ describe("MCP callers and the agent guard", () => {
 
   it("lets a person through /api make the same changes an agent is refused", async () => {
     setUpRepository(stores.database(), parentKey, { packs: [] });
-    upsertLibraryRule(stores.database(), loadBundledCatalog(), MOCK_CODE_RULES[1]!, "file");
+    upsertLibraryRule(stores.database(), loadBundledCatalog(), MOCK_CODE_RULES[1]!, "code");
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const put = (path: string, body: unknown) => app.request(path, {
       method: "PUT",
@@ -252,8 +252,8 @@ describe("MCP callers and the agent guard", () => {
 
   it("reports where each rule's on and mode come from, for this worktree and for the repository (the worked example)", async () => {
     const bundle = loadBundledCatalog();
-    const pack = [...bundle.packs.values()].find(candidate => candidate.rules.some(rule => rule.on && bundle.documents.get(rule.id)?.kind === "file"))!;
-    const rule = pack.rules.find(candidate => candidate.on && bundle.documents.get(candidate.id)?.kind === "file")!;
+    const pack = [...bundle.packs.values()].find(candidate => candidate.rules.some(rule => rule.on && bundle.documents.get(rule.id)?.kind === "code"))!;
+    const rule = pack.rules.find(candidate => candidate.on && bundle.documents.get(candidate.id)?.kind === "code")!;
     setUpRepository(stores.database(), parentKey, { packs: [{ packId: pack.id, folder: "web" }] });
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const put = (body: unknown) => app.request("/api/repository/settings", {

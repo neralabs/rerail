@@ -1,0 +1,1 @@
+const fn = (a = 5, b = true, c = 'foo') => {};

@@ -1,0 +1,1 @@
+import { x as bar } from 'y';

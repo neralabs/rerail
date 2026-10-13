@@ -1,0 +1,1 @@
+async function* run() { yield * anotherAsyncGenerator() }

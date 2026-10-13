@@ -1,0 +1,19 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "empty",
+  "name": "Empty",
+  "category": "framework",
+  "covers": "A fixture pack with no rules yet: every port is still a candidate.",
+  "reason": "matches JSX",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.jsx"
+        ],
+        "label": "*.jsx files"
+      }
+    ]
+  },
+  "rules": []
+}

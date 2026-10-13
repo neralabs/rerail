@@ -1,0 +1,1 @@
+/*global b:true*/ var b = 1;

@@ -1,0 +1,3 @@
+class B { @decorator() async foo(param: string) {
+    // empty
+} }

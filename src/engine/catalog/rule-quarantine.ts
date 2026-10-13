@@ -1,6 +1,6 @@
 import { LANGUAGE_NOT_SUPPORTED } from "../code-rule/code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
-import type { RuleKind } from "../storage/schema.js";
+import { RULE_KINDS, type RuleKind } from "../storage/schema.js";
 import { ruleDocumentDigest } from "../stable-json.js";
 
 /** Digest of a stored rule body exactly as it sits in the row, valid or not. */
@@ -17,6 +17,20 @@ export function readStoredCodeRule(stored: unknown): StoredCodeRuleRead {
   if (parsed.success) return { ok: true, rule: parsed.data };
   const issue = parsed.error.issues[0];
   return { ok: false, reason: issue === undefined ? "invalid policy document" : `${issue.path.join("/") || "(root)"}: ${issue.message}` };
+}
+
+const isRuleKind = (value: unknown): value is RuleKind => (RULE_KINDS as readonly unknown[]).includes(value);
+
+/**
+ * Why a row whose kind is neither `code` nor `conversation` is skipped, and the kind it is reported under: the one
+ * its stored document records, else `code` (the only other kind a Rerail ever wrote is the code rule kind's old
+ * name). Undefined for a known kind. A database written before the kind checks can hold any kind, since the DDL
+ * does not add a check to a table that already exists.
+ */
+export function unknownRuleKind(kind: string, document: unknown): { kind: RuleKind; reason: string } | undefined {
+  if (isRuleKind(kind)) return undefined;
+  const recorded = typeof document === "object" && document !== null && "kind" in document ? document.kind : undefined;
+  return { kind: isRuleKind(recorded) ? recorded : "code", reason: `unknown rule kind ${kind}` };
 }
 
 /**

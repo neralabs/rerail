@@ -1,0 +1,3 @@
+const B = class extends C {static override set foo(value: string) {
+    // empty
+}};

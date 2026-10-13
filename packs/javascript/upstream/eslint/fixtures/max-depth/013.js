@@ -1,0 +1,1 @@
+function foo() { while (true) { if (true) {} } }

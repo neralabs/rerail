@@ -44,7 +44,23 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
-   Existing entries from other tools are preserved byte-for-byte; a backup
+   Existing entries from other tools are preserved byte-for-byte. Entries
+   another install of this package wrote (identified by the `package.json`
+   beside the script they run) are replaced, not duplicated; that includes a
+   Claude status line such an install composed, and because what it wrapped is
+   recorded only in that install's home, removing Rerail then leaves no status
+   line there. A hook, status line
+   or MCP bridge entry of the shape setup writes is also replaced when its
+   install is gone, with neither its script nor a `package.json` beside it on
+   disk, since it can never run again. So is an OMP extension link or Pi
+   package that names a gone root of the shape setup registers (a Rerail
+   home's `current`, such as `~/.rerail/current` or `$RERAIL_HOME/current`, or
+   `node_modules/@neralabs/rerail`) that no longer resolves; a path that still
+   resolves stays unless it holds this package, and so does a missing path of
+   any other shape, such as a gone checkout. Setup's report names the target of each link it removes. The retired `/rerail-session`, `/rerail-disable` and
+   `/rerail-enable` command files are removed when they run this install,
+   another install of this package or one that is gone; anyone else's stay, and
+   removing Rerail removes only this install's. A backup
    `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
    a no-op. `--harness <list>` limits it.
 
@@ -52,8 +68,6 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
    Adapters also autostart it on the first session, so this is a convenience.
 4. **Report** — prints what changed and reminds you to add `~/.rerail/bin` to
    `PATH` (the Windows launcher is `rerail.cmd`) and restart the harnesses.
-   An older install's generated `bin/rerail` launcher is deleted; there is no
-   `rerail` alias.
 
 Rerail stays off in every repository until you start it there (see "Starting
 and stopping Rerail" below).
@@ -206,6 +220,33 @@ until that process has exited and the OS has released its lock, then starts
 the new daemon, which takes the lock. `rerail setup` replaces a stale daemon
 the same way. A `rerail events` stream that outlives an update keeps sending to
 whichever daemon is running and never brings its own version back.
+
+### Database compatibility
+
+`rerail.sqlite` records the schema version it was written for: 1 in this
+release. A database file written by a newer Rerail, or by other software, is
+refused with an error and left untouched; Rerail never converts data. Move such
+a file aside (or point `RERAIL_HOME` elsewhere) and start again, then re-import
+rules with `rerail rules import`.
+
+Until this release the tables changed in place under version 1. A database
+from the `0.1.0-next.0` pre-release or from a development build before this
+release is stamped 1 but keeps its older tables, and Rerail cannot tell it
+apart. It opens the file, and:
+
+- from `0.1.0-next.0`, or from a development build before rules belonged to
+  repositories, the rules stored there are not shown: they are in a table this
+  release does not read;
+- from a later development build, which stores code rules as `file`, those
+  rules are quarantined with the reason `unknown rule kind file`.
+
+The old tables also keep the checks they were created with, not this
+release's. Move such a file aside before you start this release. An export
+from those builds names code rules `file` and is not imported.
+
+Some development builds before this release stamped their database 2. This
+release refuses such a file as written by a newer Rerail, but no update opens
+it: move it aside as well.
 
 ### Resetting session history
 
