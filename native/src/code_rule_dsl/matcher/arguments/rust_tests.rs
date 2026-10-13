@@ -13,11 +13,11 @@ const NOT_CONSTANT: &[(&str, &str, &str)] = &[
     ("S::m(&S(7), 1)", "&S(7)", "7"),
 ];
 
-/// Every call rustc 1.99.0 compiled in `fixtures/rust/arguments` (`generate.py`): each slot holds
-/// the argument rustc bound to that parameter, by the value the run printed for it.
+/// Every call rustc 1.99.0 compiled in `fixtures/rust/matcher/arguments` (`generate.py`): each slot
+/// holds the argument rustc bound to that parameter, by the value the run printed for it.
 #[test]
 fn rust_slots_follow_rustc() {
-    let oracle: Json = serde_json::from_str(oracle!("rust/arguments/rust.expected.json"))
+    let oracle: Json = serde_json::from_str(oracle!("rust/matcher/arguments/rust.expected.json"))
         .expect("Rust argument oracle JSON");
     let mut failures = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {

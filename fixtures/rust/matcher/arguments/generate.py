@@ -18,7 +18,7 @@ Usage: python3 generate.py
 
 import json, pathlib, re, shutil, subprocess
 HERE = pathlib.Path(__file__).resolve().parent
-REPO = HERE.parents[2]
+REPO = HERE.parents[3]
 OUT = REPO / ".rerail/tools/rust/arguments"
 TC = "1.99.0"
 

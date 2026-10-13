@@ -28,7 +28,7 @@ import pathlib
 import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
-REPO = HERE.parents[2]
+REPO = HERE.parents[3]
 TOOLCHAIN = "1.99.0"
 RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"
 EDITION = "2024"
@@ -143,7 +143,7 @@ def main() -> None:
         "tool": "rustc",
         "version": RUSTC_VERSION,
         "edition": EDITION,
-        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), fixtures/rust/format/rust.cases.json"},
+        "source": {"kind": "fixtures", "origin": "Rerail-authored (Apache-2.0), fixtures/rust/matcher/format_args/rust.cases.json"},
         "cases": results,
     }
     (HERE / "rust.expected.json").write_text(json.dumps(expected, indent=1, ensure_ascii=False) + "\n")

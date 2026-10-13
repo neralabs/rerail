@@ -242,13 +242,14 @@ fn unresolved_name(message: &str) -> String {
 #[test]
 fn format_call_matches_rustc_on_every_case() {
     let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::oracle!(
-        "rust/format/rust.expected.json"
+        "rust/matcher/format_args/rust.expected.json"
     ))
     .expect("oracle JSON");
     let cases = oracle["cases"].as_array().expect("cases");
-    let originals: serde_json::Value =
-        serde_json::from_str(crate::code_rule_dsl::oracle!("rust/format/rust.cases.json"))
-            .expect("cases JSON");
+    let originals: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::oracle!(
+        "rust/matcher/format_args/rust.cases.json"
+    ))
+    .expect("cases JSON");
     let items_of: BTreeMap<&str, &str> = originals["cases"]
         .as_array()
         .expect("cases")

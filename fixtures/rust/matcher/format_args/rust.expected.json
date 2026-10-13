@@ -4,7 +4,7 @@
  "edition": "2024",
  "source": {
   "kind": "fixtures",
-  "origin": "Rerail-authored (Apache-2.0), fixtures/rust/format/rust.cases.json"
+  "origin": "Rerail-authored (Apache-2.0), fixtures/rust/matcher/format_args/rust.cases.json"
  },
  "cases": [
   {
