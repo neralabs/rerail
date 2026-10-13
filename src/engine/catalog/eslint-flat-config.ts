@@ -77,8 +77,10 @@ export function readEslintFlatConfig(text: string, name: string): FlatConfigRead
 
 class FlatConfigReader {
   readonly #consts = new Map<string, t.Expression>();
-  /** Consts the file may change after setting them (`#findMutations`): their initializer is not their value. */
-  readonly #mutated = new Set<string>();
+  /** Consts code may reach (`#findEscapes`): their initializer is not their value, so they are not read. */
+  readonly #escaped = new Set<string>();
+  /** Config helper imports a reference may change (`#findEscapes`): their calls are not read. */
+  readonly #untrustedHelpers = new Set<string>();
   /** Local name → the module it is imported from and the name imported (`default`, `*` or the export). */
   readonly #imports = new Map<string, { readonly module: string; readonly imported: string }>();
   readonly #entries: Entry[] = [];
@@ -90,15 +92,15 @@ class FlatConfigReader {
   read(): FlatConfigRead {
     let exported: t.Expression | undefined;
     for (const statement of this.program.body) {
+      // An exported const is not read: another module may change it.
       if (statement.type === "ImportDeclaration") this.#import(statement);
       else if (statement.type === "VariableDeclaration") this.#declare(statement);
-      else if (statement.type === "ExportNamedDeclaration" && statement.declaration?.type === "VariableDeclaration") this.#declare(statement.declaration);
       else if (statement.type === "ExportDefaultDeclaration") exported = isExpression(statement.declaration) ? statement.declaration : undefined;
       else if (statement.type === "TSExportAssignment") exported = statement.expression;
       else if (statement.type === "ExpressionStatement") exported = moduleExports(statement.expression) ?? exported;
     }
     if (exported === undefined) throw new LintConfigFormatError("it exports no config Rerail can find (export default or module.exports)");
-    this.#findMutations();
+    this.#findEscapes();
     this.#elements(exported, { kind: "all" }, 0);
     if (this.#unread.length > 0) {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
@@ -107,48 +109,100 @@ class FlatConfigReader {
   }
 
   /**
-   * The `const`s whose value the file may change after it is set: assigned into, updated, deleted from, a method
-   * called on, or passed to a function other than a config helper, anywhere in the file (a function body included),
-   * through any other `const` that names it or that it holds. Their initializer is not their value, so they are not read.
+   * Which `const`s Rerail may read at their initializer, by an allow-list rather than by guessing every way a value can
+   * change: a const is read only when each reference to it is data the export is built from (an array element, an
+   * object property's value or computed key, a spread, a config helper's argument, the exported value, or another
+   * const's initializer, through TypeScript's type wrappers). Any other reference (a member access, a call argument, a
+   * destructuring source, a loop, a return, a named export, a function body) lets code reach its objects, so it is not
+   * read, nor is any const whose objects it holds. A config helper import is trusted only while every reference to it
+   * calls it or reads through it.
    */
-  #findMutations(): void {
-    const roots = new Set<string>();
-    const root = (node: t.Node): string | undefined => {
-      let current = node;
-      for (;;) {
-        if (current.type === "MemberExpression" || current.type === "OptionalMemberExpression") current = current.object;
-        else if (current.type === "TSAsExpression" || current.type === "TSSatisfiesExpression" || current.type === "TSNonNullExpression"
-          || current.type === "TSTypeAssertion" || current.type === "ParenthesizedExpression") current = current.expression;
-        else return current.type === "Identifier" ? current.name : undefined;
-      }
+  #findEscapes(): void {
+    const parents = parentsOf(this.program);
+    const helperModule = (name: string): boolean => {
+      const from = this.#imports.get(name);
+      return from !== undefined && ((DEFINE_CONFIG_MODULES.has(from.module) && from.imported === "defineConfig")
+        || (TYPESCRIPT_ESLINT_MODULES.has(from.module) && (from.imported === "default" || from.imported === "*")));
     };
-    const mark = (node: t.Node): void => {
-      const name = root(node);
-      if (name !== undefined) roots.add(name);
-    };
-    walk(this.program, node => {
-      if (node.type === "AssignmentExpression") mark(node.left);
-      else if (node.type === "UpdateExpression") mark(node.argument);
-      else if (node.type === "UnaryExpression" && node.operator === "delete") mark(node.argument);
-      else if (node.type === "CallExpression" || node.type === "OptionalCallExpression" || node.type === "NewExpression") {
-        if (node.callee.type === "MemberExpression" || node.callee.type === "OptionalMemberExpression") mark(node.callee.object);
-        if (!this.#isConfigHelper(node.callee)) for (const argument of node.arguments) mark(argument.type === "SpreadElement" ? argument.argument : argument);
+    // Helpers first: a const passed to an untrusted helper escapes.
+    for (const [node, { parent, key }] of parents) {
+      if (node.type !== "Identifier" || !helperModule(node.name) || !isReference(node, parents)) continue;
+      if (parent.type === "CallExpression" && key === "callee") continue;
+      if ((parent.type === "MemberExpression" || parent.type === "OptionalMemberExpression") && key === "object") {
+        let top: t.Node = parent;
+        while (parents.get(top)?.key === "object" && /MemberExpression$/u.test(parents.get(top)!.parent.type)) top = parents.get(top)!.parent;
+        const above = parents.get(top);
+        const write = above !== undefined && ((above.parent.type === "AssignmentExpression" && above.key === "left")
+          || above.parent.type === "UpdateExpression" || (above.parent.type === "UnaryExpression" && above.parent.operator === "delete"));
+        const call = above !== undefined && /CallExpression$/u.test(above.parent.type) && above.key === "callee";
+        if (!write && (!call || top === parent)) continue;
       }
-    });
-    // A const that names another, or is named by one, may share objects with it: changing one may change the other.
-    const linked = new Map<string, Set<string>>([...this.#consts.keys()].map(name => [name, new Set<string>()]));
-    for (const [name, init] of this.#consts) {
-      walk(init, inner => {
-        if (inner.type !== "Identifier" || !this.#consts.has(inner.name) || inner.name === name) return;
-        linked.get(name)!.add(inner.name);
-        linked.get(inner.name)!.add(name);
-      });
+      this.#untrustedHelpers.add(node.name);
     }
-    const queue = [...roots].filter(name => this.#consts.has(name));
+    const escaped = new Set<string>();
+    const holds = new Map<string, Set<string>>();
+    for (const [node] of parents) {
+      if (node.type !== "Identifier" || !this.#consts.has(node.name) || !isReference(node, parents)) continue;
+      const use = this.#dataUse(node, parents);
+      if (use === "escape") escaped.add(node.name);
+      else if (use !== "export") holds.set(use, (holds.get(use) ?? new Set()).add(node.name));
+    }
+    // A const that escapes lets code reach every const it holds.
+    const queue = [...escaped];
     for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
-      if (this.#mutated.has(name)) continue;
-      this.#mutated.add(name);
-      queue.push(...linked.get(name)!);
+      if (this.#escaped.has(name)) continue;
+      this.#escaped.add(name);
+      queue.push(...holds.get(name) ?? []);
+    }
+  }
+
+  /** Where a reference to a const ends up: the export, another top-level const's initializer, or anywhere else. */
+  #dataUse(reference: t.Node, parents: ParentMap): "export" | "escape" | string {
+    let node = reference;
+    for (;;) {
+      const up = parents.get(node);
+      if (up === undefined) return "escape";
+      const { parent, key } = up;
+      switch (parent.type) {
+        case "TSAsExpression":
+        case "TSSatisfiesExpression":
+        case "TSNonNullExpression":
+        case "TSTypeAssertion":
+        case "ParenthesizedExpression":
+          if (key !== "expression") return "escape";
+          node = parent;
+          continue;
+        case "ArrayExpression":
+        case "SpreadElement":
+          node = parent;
+          continue;
+        case "ObjectProperty": {
+          const object = parents.get(parent);
+          if ((key !== "value" && !(key === "key" && parent.computed)) || object?.parent.type !== "ObjectExpression") return "escape";
+          node = object.parent;
+          continue;
+        }
+        case "ObjectExpression":
+          node = parent;
+          continue;
+        case "CallExpression":
+          if (key !== "arguments" || !this.#isConfigHelper(parent.callee)) return "escape";
+          node = parent;
+          continue;
+        case "VariableDeclarator": {
+          const declaration = parents.get(parent);
+          const atTop = declaration !== undefined && declaration.parent.type === "VariableDeclaration" && declaration.parent.kind === "const"
+            && parents.get(declaration.parent)?.parent.type === "Program";
+          return key === "init" && parent.id.type === "Identifier" && atTop ? parent.id.name : "escape";
+        }
+        case "ExportDefaultDeclaration":
+        case "TSExportAssignment":
+          return "export";
+        case "AssignmentExpression":
+          return key === "right" && moduleExports(parent) !== undefined ? "export" : "escape";
+        default:
+          return "escape";
+      }
     }
   }
 
@@ -162,11 +216,14 @@ class FlatConfigReader {
   }
 
   #declare(declaration: t.VariableDeclaration): void {
+    // Only a const keeps its value; a `let` or `var` may be reassigned anywhere, so it is not read.
+    if (declaration.kind !== "const") return;
     for (const declarator of declaration.declarations) {
       if (declarator.id.type !== "Identifier" || declarator.init == null) continue;
-      if (declaration.kind === "const") this.#consts.set(declarator.id.name, declarator.init);
-      else if (declarator.init.type === "CallExpression" && isRequire(declarator.init)) {
+      if (declarator.init.type === "CallExpression" && isRequire(declarator.init)) {
         this.#imports.set(declarator.id.name, { module: requiredModule(declarator.init), imported: "default" });
+      } else {
+        this.#consts.set(declarator.id.name, declarator.init);
       }
     }
   }
@@ -183,7 +240,7 @@ class FlatConfigReader {
       if (current.type === "TSAsExpression" || current.type === "TSSatisfiesExpression" || current.type === "TSNonNullExpression"
         || current.type === "TSTypeAssertion" || current.type === "ParenthesizedExpression") {
         current = current.expression;
-      } else if (current.type === "Identifier" && this.#consts.has(current.name) && !this.#mutated.has(current.name)) {
+      } else if (current.type === "Identifier" && this.#consts.has(current.name) && !this.#escaped.has(current.name)) {
         current = this.#consts.get(current.name)!;
       } else {
         return current;
@@ -229,12 +286,12 @@ class FlatConfigReader {
   #isConfigHelper(callee: t.Node): boolean {
     if (callee.type === "Identifier") {
       const from = this.#imports.get(callee.name);
-      return from !== undefined && DEFINE_CONFIG_MODULES.has(from.module) && from.imported === "defineConfig";
+      return from !== undefined && !this.#untrustedHelpers.has(callee.name) && DEFINE_CONFIG_MODULES.has(from.module) && from.imported === "defineConfig";
     }
     if (callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier" && callee.property.type === "Identifier") {
       const from = this.#imports.get(callee.object.name);
-      return from !== undefined && TYPESCRIPT_ESLINT_MODULES.has(from.module) && callee.property.name === "config"
-        && (from.imported === "default" || from.imported === "*");
+      return from !== undefined && !this.#untrustedHelpers.has(callee.object.name) && TYPESCRIPT_ESLINT_MODULES.has(from.module)
+        && callee.property.name === "config" && (from.imported === "default" || from.imported === "*");
     }
     return false;
   }
@@ -394,24 +451,60 @@ class FlatConfigReader {
 }
 
 const NOT_CHILDREN = new Set(["loc", "extra", "leadingComments", "trailingComments", "innerComments", "comments", "tokens"]);
+/** Children that are types, which hold no value: `Linter.Config` in an annotation is not a reference to `Linter`. */
+const TYPE_CHILDREN = new Set(["typeAnnotation", "typeParameters", "returnType", "superTypeParameters", "implements", "typeArguments", "predicate"]);
+const TYPE_DECLARATIONS = new Set(["TSTypeAliasDeclaration", "TSInterfaceDeclaration", "TSDeclareFunction", "TSModuleDeclaration", "ImportDeclaration"]);
 
 const isNode = (value: unknown): value is t.Node =>
   typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
 
-/** Calls `visit` on `node` and every node under it, without Babel's runtime: by each property holding nodes. */
-function walk(node: t.Node, visit: (node: t.Node) => void): void {
-  const pending: t.Node[] = [node];
+type ParentMap = ReadonlyMap<t.Node, { readonly parent: t.Node; readonly key: string }>;
+
+/**
+ * Every value node under `program` with its parent and the property holding it, without Babel's runtime. Types and
+ * imports are left out: they hold no reference to a value.
+ */
+function parentsOf(program: t.Program): ParentMap {
+  const parents = new Map<t.Node, { parent: t.Node; key: string }>();
+  const seen = new Set<t.Node>([program]);
+  const pending: t.Node[] = [program];
   for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
-    visit(current);
     for (const [key, value] of Object.entries(current)) {
-      if (NOT_CHILDREN.has(key)) continue;
-      if (Array.isArray(value)) {
-        for (const item of value) if (isNode(item)) pending.push(item);
-      } else if (isNode(value)) {
-        pending.push(value);
+      if (NOT_CHILDREN.has(key) || TYPE_CHILDREN.has(key)) continue;
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (!isNode(child) || TYPE_DECLARATIONS.has(child.type)) continue;
+        // Should a shorthand property's key and value be one node, it is the value: a reference.
+        if (!parents.has(child) || key === "value") parents.set(child, { parent: current, key });
+        if (!seen.has(child)) {
+          seen.add(child);
+          pending.push(child);
+        }
       }
     }
   }
+  return parents;
+}
+
+const PATTERNS = new Set(["ObjectPattern", "ArrayPattern", "RestElement", "AssignmentPattern"]);
+
+/** Whether identifier `node` names a value it reads or writes, rather than a property name, a label or a new binding. */
+function isReference(node: t.Node, parents: ParentMap): boolean {
+  const up = parents.get(node);
+  if (up === undefined) return false;
+  const { parent, key } = up;
+  if (/MemberExpression$/u.test(parent.type) && key === "property" && !("computed" in parent && parent.computed)) return false;
+  if (key === "key" && "computed" in parent && !parent.computed) return false;
+  if (key === "label" || (parent.type === "ExportSpecifier" && key === "exported")) return false;
+  // A name in a declaration's pattern, a parameter, a function's or class's name, or a catch parameter is a new binding.
+  let above: { readonly parent: t.Node; readonly key: string } | undefined = up;
+  while (above !== undefined && (PATTERNS.has(above.parent.type)
+    || (above.parent.type === "ObjectProperty" && PATTERNS.has(parents.get(above.parent)?.parent.type ?? "")))) {
+    above = parents.get(above.parent);
+  }
+  if (above === undefined) return false;
+  const binding = (above.parent.type === "VariableDeclarator" && above.key === "id") || above.key === "params" || above.key === "param"
+    || (above.key === "id" && /Function|Class/u.test(above.parent.type));
+  return !binding;
 }
 
 function isExpression(node: t.Node | null | undefined): node is t.Expression {

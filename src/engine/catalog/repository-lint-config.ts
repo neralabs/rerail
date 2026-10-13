@@ -185,6 +185,11 @@ export interface LintConfigRules {
   readonly unresolved: ReadonlyMap<string, UnreadEntry>;
   /** Rule keys of `rules` that something after them Rerail does not read may replace, with what. */
   readonly shadowed: ReadonlyMap<string, string>;
+  /**
+   * Rule keys of `rules` whose severity is known but whose options something Rerail does not read may have set (a
+   * severity alone after it keeps them), with what.
+   */
+  readonly optionsUnknown: ReadonlyMap<string, string>;
 }
 
 /** A flat config entry Rerail cannot read: why, and what after it Rerail does not read either and may replace it. */
@@ -289,7 +294,7 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     notes.push({ linter, text: `${file} is not read: its rules are not an object.` });
     return undefined;
   }
-  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map(), shadowed: new Map() };
+  return { file, rules: rules.data, scoped: linter === "eslint" ? eslintrcOverrides(file, config, notes) : [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() };
 }
 
 const eslintrcOverride = z.looseObject({
@@ -367,6 +372,7 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
   const rules: Record<string, unknown> = {};
   const unresolved = new Map<string, UnreadEntry>();
   const shadowed = new Map<string, string>();
+  const optionsUnknown = new Map<string, string>();
   const scopedUnresolved = new Map<string, UnreadEntry>();
   const unread = (why: string, by: string | undefined): UnreadEntry => (by === undefined ? { why } : { why, shadowedBy: by });
   let scoped: ScopedRule[] = [];
@@ -381,26 +387,32 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
     }
     scoped = scoped.filter(entry => entry.key !== key);
     scopedUnresolved.delete(key);
-    // A severity alone keeps the earlier options; an "off" or a severity with options replaces them.
-    const alone = value.ok && severityAlone(value.value) && severityOf(value.value, "eslint")?.off !== true;
+    // A severity alone ("off" included, as ESLint's rulesSchema.merge does) keeps the earlier options; a severity with
+    // options replaces them.
+    const alone = value.ok && severityAlone(value.value);
+    const off = value.ok && severityOf(value.value, "eslint")?.off === true;
     const earlier = unresolved.get(key);
     if (!value.ok) {
       unresolved.set(key, unread(value.why, shadowedBy));
       delete rules[key];
       shadowed.delete(key);
-    } else if (earlier !== undefined && alone) {
-      // Rerail cannot tell the options a severity keeps.
+      optionsUnknown.delete(key);
+    } else if (earlier !== undefined && alone && !off) {
+      // On, with options Rerail cannot tell.
       unresolved.set(key, unread(earlier.why, shadowedBy ?? earlier.shadowedBy));
     } else {
       unresolved.delete(key);
-      const by = shadowedBy ?? (alone ? shadowed.get(key) : undefined);
+      // What an unread element after the earlier entry may have set: its severity is now this entry's, its options not.
+      const uncertain = alone ? shadowed.get(key) ?? optionsUnknown.get(key) ?? earlier?.why : undefined;
       Object.defineProperty(rules, key, { value: withEarlierOptions(rules[key], value.value), enumerable: true, writable: true, configurable: true });
-      if (by === undefined) shadowed.delete(key);
-      else shadowed.set(key, by);
+      if (shadowedBy === undefined) shadowed.delete(key);
+      else shadowed.set(key, shadowedBy);
+      if (uncertain === undefined) optionsUnknown.delete(key);
+      else optionsUnknown.set(key, uncertain);
     }
   }
   for (const [key, entry] of scopedUnresolved) if (!unresolved.has(key)) unresolved.set(key, entry);
-  return { file, rules, scoped, unresolved, shadowed };
+  return { file, rules, scoped, unresolved, shadowed, optionsUnknown };
 }
 
 function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
@@ -819,7 +831,9 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
           if (back !== undefined) {
             notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
           } else {
-            const config = severity.off || severity.options.length === 0 ? undefined : mappedOptions(ruleId, port.declared, severity.options);
+            const unknown = severity.off || severity.options.length === 0 ? undefined : eslint.optionsUnknown.get(key);
+            const config = severity.off || severity.options.length === 0 || unknown !== undefined ? undefined : mappedOptions(ruleId, port.declared, severity.options);
+            if (unknown !== undefined) notes.push(`${ruleId}: the options of ${because} are not used: ${unknown}, before it, is not read and may have set them.`);
             add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
           }
         }

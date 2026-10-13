@@ -159,7 +159,7 @@ describe("readLintConfigFiles", () => {
       ".eslintrc.json": "{ \"rules\": { \"no-debugger\": \"off\" } }",
     });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map() });
+    expect(files.eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json is not read: ESLint uses eslint.config.ts instead."]);
     expect(existsSync(join(root, "ran"))).toBe(false);
   });
@@ -179,7 +179,7 @@ describe("readLintConfigFiles", () => {
   it("reads .eslintrc.json as JSONC, noting what besides its top-level rules it does not read", async () => {
     const root = await repository({ ".eslintrc.json": "{\n  // ours\n  \"extends\": [\"airbnb\"],\n  \"rules\": { \"no-console\": \"off\", },\n}\n" });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map() });
+    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json: only its own rules are read, not extends."]);
   });
 
@@ -197,7 +197,7 @@ describe("readLintConfigFiles", () => {
 
   it("reads package.json eslintConfig where there is no config file", async () => {
     const root = await repository({ "package.json": JSON.stringify({ name: "acme", eslintConfig: { rules: { "no-console": 0 } } }) });
-    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map() });
+    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
   });
 
   it("does not follow a symlinked config", async () => {
@@ -618,5 +618,37 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     // A const nothing changes is read.
     expect((await flat("const rules = { \"no-console\": \"off\" };\nexport default [{ rules }];", ["javascript"], "eslint.config.js")).settings)
       .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
+  // Self-review round 3: a const is read only where every reference to it is data the export is built from.
+  it("does not read a const that code can reach through an alias, a loop, a destructuring target, a return or an export", async () => {
+    for (const text of [
+      "const config = { rules: { \"no-console\": \"off\" } };\nconst { rules } = config;\nrules[\"no-console\"] = \"error\";\nexport default [config];",
+      "const configs = [{ rules: { \"no-console\": \"off\" } }];\nfor (const config of configs) config.rules[\"no-console\"] = \"error\";\nexport default configs;",
+      "const rules = { \"no-console\": \"off\" };\n({ level: rules[\"no-console\"] } = { level: \"error\" });\nexport default [{ rules }];",
+      "const rules = { \"no-console\": \"off\" };\nfunction getRules() { return rules; }\nObject.assign(getRules(), { \"no-console\": \"error\" });\nexport default [{ rules }];",
+      "export const rules = { \"no-console\": \"off\" };\nexport default [{ rules }];",
+      "const rules = { \"no-console\": \"off\" };\nexport { rules };\nexport default [{ rules }];",
+    ]) {
+      expect((await flat(text, ["javascript"], "eslint.config.mjs")).settings).toEqual([]);
+    }
+  });
+
+  it("reads a const whose name is only a property key elsewhere", async () => {
+    const text = "const allow = [\"log\"];\nconst metadata = { allow: 0 };\nObject.freeze(metadata);\nexport default [{ rules: { \"no-console\": [\"error\", { allow }] } }];";
+    expect((await flat(text, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["log"] } }]);
+  });
+
+  it("does not trust a config helper the file changes", async () => {
+    const text = "import tseslint from \"typescript-eslint\";\ntseslint.config = () => [{ rules: { \"no-console\": \"error\" } }];\nexport default tseslint.config({ rules: { \"no-console\": \"off\" } });";
+    expect((await flat(text, ["javascript"])).settings).toEqual([]);
+  });
+
+  it("keeps options a later unread element may have set unknown through a severity alone, off included", async () => {
+    const shared = "import shared from \"./shared.js\";\n";
+    const start = `${shared}export default [{ rules: { "no-console": ["error", { allow: ["log"] }] } }, shared, { rules: { "no-console": "off" } }`;
+    expect((await flat(`${start}, { rules: { "no-console": "error" } }];`, ["javascript"])).settings).toEqual([]);
+    // An off after it is still an off.
+    expect((await flat(`${start}];`, ["javascript"])).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 });
