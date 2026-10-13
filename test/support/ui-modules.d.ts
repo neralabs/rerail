@@ -77,6 +77,8 @@ declare module "*/ui/poll.js" {
     suppressionsSource: object;
     config: Record<string, unknown> | null;
     configSource: Record<string, object>;
+    /** Why the configured options don't apply; the rule then runs nowhere. */
+    configError: string | null;
   }
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
@@ -86,6 +88,8 @@ declare module "*/ui/derive.js" {
   export function suppressionsText(stored: object, checkoutPath?: string): string;
   export function nextSuppressions(stored: object): "honour" | "ignore";
   export function optionsText(stored: object, checkoutPath?: string): string | null;
+  export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
+  export function onText(stored: object, checkoutPath?: string): string;
   export function packSuppressions(rules: readonly object[]): { text: string; next: "honour" | "ignore" };
 }
 
@@ -107,7 +111,9 @@ declare module "*/ui/state.js" {
   export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
-  export function summary(): { logged: number; triggers: number };
+  export function summary(): { logged: number; triggers: number; on: unknown[] };
+  export function runningCount(): number;
+  export function matches(stored: object): boolean;
   export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;

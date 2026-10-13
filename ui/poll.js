@@ -139,9 +139,11 @@ async function loadContext() {
 }
 
 /**
- * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
- * the first folder's mode, suppressions and options on the rule, and each folder's own on, mode and suppressions
- * (`folderStates`; `mixed` when on or mode differ). A change from the row is written at every folder.
+ * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
+ * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode and
+ * suppressions (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's options don't apply,
+ * from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is written at every
+ * folder.
  */
 export function toStoredRules(entries) {
   const rules = new Map();
@@ -153,6 +155,7 @@ export function toStoredRules(entries) {
         known.folders.push(entry.folder);
         known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions });
         known.enabled = known.enabled && entry.on;
+        known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
       }
       continue;
@@ -172,6 +175,7 @@ export function toStoredRules(entries) {
       suppressionsSource: entry.suppressionsSource,
       config: entry.config,
       configSource: entry.configSource,
+      configError: entry.configError ?? null,
       revision: entry.revision,
     });
   }

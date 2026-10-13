@@ -15,6 +15,24 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const folderText = folder => (folder === "" ? "Whole repository" : folder);
 
 /**
+ * Whether the rule runs: switched on, and its options apply to its document. A rule whose stored options no longer
+ * apply (`configError`) is left out of the compiled set, so it is not counted as on.
+ */
+export const isRunning = stored => stored.enabled && !stored.configError;
+
+/**
+ * The rule panel's On row: on or off with what decided it, each folder its own when they disagree; then, for a rule
+ * switched on somewhere whose options don't apply, that it runs nowhere and why.
+ */
+export function onText(stored, checkoutPath) {
+  const switched = stored.mixed
+    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  const stopped = stored.configError && stored.folderStates.some(state => state.on);
+  return stopped ? `${switched} · not running: ${stored.configError}` : switched;
+}
+
+/**
  * What decided a rule's on, mode, suppressions or an option, in words (`Decider` from the API). `checkoutPath` is the
  * page's own checkout, which reads as "this worktree".
  */
@@ -93,14 +111,18 @@ export function packSuppressions(rules) {
   return { text, next: rules.every(r => nextSuppressions(r) === "honour") ? "honour" : "ignore" };
 }
 
-/** The rule's configured options as `name: value`, each with what decided it; `null` when none is configured. */
+/**
+ * The rule's configured options as `name: value`, each with what decided it, and why they don't apply when they
+ * don't; `null` when none is configured.
+ */
 export function optionsText(stored, checkoutPath) {
   const options = Object.entries(stored.config ?? {});
   if (options.length === 0) return null;
-  return options.map(([name, value]) => {
+  const text = options.map(([name, value]) => {
     const decider = stored.configSource?.[name];
     return `${name}: ${JSON.stringify(value)}${decider === undefined ? "" : ` · ${deciderText(decider, checkoutPath)}`}`;
   }).join(", ");
+  return stored.configError ? `${text} · does not apply: ${stored.configError}` : text;
 }
 
 export const kindLabel = stored => (stored.kind === "conversation" ? "Conversation rule" : "File rule");

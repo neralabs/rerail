@@ -7,7 +7,7 @@
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
+import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, onText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { CREATE_COMMAND } from "./rules.js";
@@ -148,10 +148,8 @@ function renderOrigin(stored) {
   const id = stored.rule.id, pack = packOfRule(stored), group = packRuleOf(id)?.rule.group;
   const checkoutPath = data.checkout?.checkoutPath;
   const folders = stored.folders.map(folderText).join(", ");
-  // Folders that disagree each show their own on and mode; switching the rule then sets it in every folder.
-  const on = stored.mixed
-    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
-    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  // Folders that disagree each show their own on; switching the rule then sets it in every folder.
+  const on = onText(stored, checkoutPath);
   const mode = stored.mixed
     ? stored.folderStates.map(state => `${MODE_LABEL[state.mode] ?? state.mode} in ${folderText(state.folder)}`).join(", ")
     : `${modeLabel(stored)} · ${deciderText(stored.modeSource, checkoutPath)}`;
