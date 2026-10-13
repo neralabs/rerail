@@ -8,9 +8,9 @@
  * breaks one check of a copy of it, `vue`, for a language core plans, passes with its rule not supported yet, and
  * `empty`, whose ports are all candidates, passes with no rules.
  */
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test } from "vitest";
 import { z } from "zod";
@@ -56,6 +56,28 @@ describe.each(packs)("pack %s", id => {
   });
 });
 
+/** Every rule document in `packs/<id>/`, shipped or candidate (any `rules/` directory outside `upstream/`), by pack-relative path. */
+function ruleDocuments(id: string): string[] {
+  const directory = join(PACKS, id);
+  return readdirSync(directory, { recursive: true, encoding: "utf8" })
+    .map(file => file.split(sep).join("/"))
+    .filter(file => file.endsWith(".json") && !file.startsWith("upstream/") && file.split("/").at(-2) === "rules")
+    .sort(compareDeterministicStrings);
+}
+
+describe("rule ids across packs", () => {
+  it("gives every rule, shipped or candidate, an id no other document in any pack has", () => {
+    const owners = new Map<string, string[]>();
+    for (const id of packs) {
+      for (const file of ruleDocuments(id)) {
+        const ruleId = z.object({ id: z.string() }).parse(JSON.parse(readFileSync(join(PACKS, id, file), "utf8"))).id;
+        owners.set(ruleId, [...(owners.get(ruleId) ?? []), `packs/${id}/${file}`]);
+      }
+    }
+    expect([...owners].filter(([, files]) => files.length > 1)).toEqual([]);
+  });
+});
+
 describe("validatePack", () => {
   const temporary: string[] = [];
   afterEach(() => {
@@ -83,7 +105,7 @@ describe("validatePack", () => {
       rules: z
         .array(z.record(z.string(), z.unknown()))
         .parse(pack.rules)
-        .map(rule => (rule.id === "valid:pass-statement" ? edit(rule) : rule)),
+        .map(rule => (rule.id === "pass-statement" ? edit(rule) : rule)),
     }));
 
   const failing = (validation: PackValidation): Partial<Record<PackCheckName, string[]>> =>
@@ -94,8 +116,8 @@ describe("validatePack", () => {
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules).toEqual([
-      { id: "valid:assert-used", document: "rules/assert-used.json", status: "ok" },
-      { id: "valid:pass-statement", document: "rules/pass-statement.json", status: "ok" },
+      { id: "assert-used", document: "rules/assert-used.json", status: "ok" },
+      { id: "pass-statement", document: "rules/pass-statement.json", status: "ok" },
     ]);
   });
 
@@ -103,7 +125,7 @@ describe("validatePack", () => {
     const validation = await validatePack(join(FIXTURES, "vue"), { corpora: false });
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
-      { id: "vue:no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
+      { id: "no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
     ]);
   });
 
@@ -123,27 +145,72 @@ describe("validatePack", () => {
     [
       "a missing document",
       directory => rmSync(join(directory, "rules", "pass-statement.json")),
-      { rules: ["valid:pass-statement: rules/pass-statement.json does not exist"] },
+      { rules: ["pass-statement: rules/pass-statement.json does not exist"] },
     ],
     [
       "a document whose id differs from the listing",
-      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, id: "valid:pass" })),
-      { rules: ["valid:pass-statement: rules/pass-statement.json has id valid:pass"] },
+      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, id: "pass" })),
+      { rules: ["pass-statement: rules/pass-statement.json has id pass"] },
+    ],
+    [
+      "a rule id that is not lowercase letters, digits and dashes",
+      directory => {
+        editPassStatement(directory, rule => ({ ...rule, id: "valid:pass-statement" }));
+        editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, id: "valid:pass-statement" }));
+      },
+      {
+        rules: ["pack.json: ✖ must be lowercase letters, digits and dashes\n  → at rules[1].id"],
+        proof: ["pack.json does not parse; see check 1"],
+        examples: ["pack.json does not parse; see check 1"],
+      },
+    ],
+    [
+      "a document not named for its id",
+      directory => {
+        renameSync(join(directory, "rules", "pass-statement.json"), join(directory, "rules", "pass.json"));
+        editPassStatement(directory, rule => ({ ...rule, document: "rules/pass.json" }));
+      },
+      { rules: ["pass-statement: its document is rules/pass.json; name it rules/pass-statement.json"] },
+    ],
+    [
+      "a candidate not named for its id",
+      directory => {
+        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+        writeFileSync(join(directory, "candidates", "rules", "pass.json"), readFileSync(join(directory, "rules", "pass-statement.json")));
+      },
+      { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
+    ],
+    [
+      "a candidate in an older document format",
+      directory => {
+        mkdirSync(join(directory, "candidates"));
+        writeJson(join(directory, "candidates", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
+      },
+      { rules: ["candidates/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
+    ],
+    [
+      "a port whose id is not its document's",
+      directory => {
+        for (const file of ["conformance.json", "divergences.json"]) {
+          writeFileSync(join(directory, file), readFileSync(join(directory, file), "utf8").replaceAll('"assert-used"', '"examplelint-assert-used"'));
+        }
+      },
+      { rules: ["conformance.json: port examplelint-assert-used scores rules/assert-used.json, whose id is assert-used"] },
     ],
     [
       "a rule with neither examples nor a port entry",
       directory => editPassStatement(directory, ({ examples: _examples, ...rule }) => rule),
-      { proof: ["valid:pass-statement: no examples and no port entry in conformance.json"] },
+      { proof: ["pass-statement: no examples and no port entry in conformance.json"] },
     ],
     [
       "a caught example that does not fire",
       directory => editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "x = 1\n" }, passes: { path: "src/a.py", text: "x = 2\n" } } })),
-      { examples: ["valid:pass-statement: the caught example (src/a.py) produces no PASS violation"] },
+      { examples: ["pass-statement: the caught example (src/a.py) produces no PASS violation"] },
     ],
     [
       "a passes example that fires",
       directory => editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "pass\n" }, passes: { path: "src/a.py", text: "pass\n" } } })),
-      { examples: ["valid:pass-statement: the passes example (src/a.py) produces PASS"] },
+      { examples: ["pass-statement: the passes example (src/a.py) produces PASS"] },
     ],
     [
       "a ported rule's violation the recording lacks, outside divergences.json",
@@ -205,8 +272,8 @@ describe("validatePack", () => {
       { corpora: false },
     );
     expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([
-      { id: "valid:assert-used", status: "failed" },
-      { id: "valid:pass-statement", status: "ok" },
+      { id: "assert-used", status: "failed" },
+      { id: "pass-statement", status: "ok" },
     ]);
   });
 });

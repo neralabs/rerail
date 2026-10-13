@@ -1,5 +1,5 @@
 // Builds packs/next/candidates/probes, a runnable pack of the Next fact model's probes: probes/conformance.json,
-// probes/rules/<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures are a
+// probes/rules/next-probe-<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures are a
 // small Next.js project (both routers) at the workspace root; every label below is chosen by hand from Next.js 16's
 // documented semantics, located by a unique substring of its fixture. Run offline by a maintainer, never in CI; the
 // output is deterministic.
@@ -314,7 +314,7 @@ mkdirSync(join(ROOT, "rules"), { recursive: true });
 for (const probe of PROBES) {
   const code = `next/${probe.name}`;
   writeFileSync(
-    join(ROOT, "rules", `${probe.name}.json`),
+    join(ROOT, "rules", `next-probe-${probe.name}.json`),
     `${JSON.stringify(
       {
         format: "rerail.policy/v1",
@@ -347,7 +347,7 @@ writeFileSync(
       corpora: [],
       tools: [{ name: "labels", version: "1" }],
       oracles: ".",
-      rules: PROBES.map(probe => ({ id: `next-probe-${probe.name}`, upstream: { tool: "labels", rule: `next/${probe.name}` }, policy: `rules/${probe.name}.json`, capabilities: capabilities(probe), match: "line+column" })),
+      rules: PROBES.map(probe => ({ id: `next-probe-${probe.name}`, upstream: { tool: "labels", rule: `next/${probe.name}` }, policy: `rules/next-probe-${probe.name}.json`, capabilities: capabilities(probe), match: "line+column" })),
     },
     null,
     2,

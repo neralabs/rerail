@@ -58,12 +58,13 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
 - `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
-- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended; neither is a pack whose rules all start off.
+  - `id` is lowercase letters, digits and dashes, the upstream tool's name then its rule (`eslint-eqeqeq`, `ruff-b011-assert-false`); every pack uses this one style. It names the rule's document and its port in `conformance.json`, and people turn the rule on and off by it, so it does not change once the pack is published.
   - `title` and `group` are what the dashboard shows.
   - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
   - `on` (optional, default `true`) is whether the pack starts the rule on.
   - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a code rule and none for a conversation rule. The complexity pack has one pair per rule.
-  - `document` is the rule's document, `rules/<name>.json`, relative to the pack; it must carry the rule's id
+  - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
 `test/engine/catalog/rule-packs.test.ts` holds the shipped packs to this: complexity is the only one and lists exactly its three rules, every rule starts in its document's mode, and every example is caught or passes as it says.
@@ -74,7 +75,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
 - Under Git it uses `git ls-files --cached --others --exclude-standard`, less files deleted from the worktree and files a sparse checkout leaves off disk (skip-worktree entries). Outside Git it walks at most 200,000 files.
 - Dependency and build-output folders (`node_modules`, `dist`, `.venv`, `vendor`, …) and test-data folders (`fixtures`, `__fixtures__`, `testdata`, `test-fixtures`) are left out.
 
-It then reads every `package.json` that is left and is a regular file inside the repository of at most 1 MiB; a symlinked manifest (which Git lists like any tracked file) or a larger one is skipped unread. It returns each fitting pack with its rule count, reason and folder. No source text is read. On a repository of about 4,700 source files a match takes about 90 ms; on cal.com (6,700) about 500 ms.
+It then reads every `package.json` that is left and is a regular file inside the repository of at most 1 MiB; a symlinked manifest (which Git lists like any tracked file) or a larger one is skipped unread. It returns each fitting pack with its rule count (the rules that start on), reason and folder. No source text is read. On a repository of about 4,700 source files a match takes about 90 ms; on cal.com (6,700) about 500 ms.
 
 The folder is where set-up adds the pack. A language or framework pack goes in the folder that holds everything it matched (`web` when only `web/` has TypeScript; the whole repository when matches are spread across it). A repository pack goes in the whole repository.
 
@@ -97,7 +98,7 @@ It differs from the study in when and how often the agent hears about it:
 
 The daemon serves the packs, and each call is also an MCP tool:
 - `GET /api/rule-packs` (`rule_packs_list`): every pack with its rules.
-- `GET /api/rule-packs/recommendations` (`rule_packs_recommend`): the packs that fit a target checkout (`repository` or `checkout`; an MCP call defaults to the calling agent's checkout), each with its rule count, reason and folder. When the checkout is not on disk the repository's main checkout is scanned, else its most recently seen one. The scan runs synchronously in the daemon (about 0.3 to 0.5 s on a large repository), so a checkout is rescanned at most once a minute.
+- `GET /api/rule-packs/recommendations` (`rule_packs_recommend`): the packs that fit a target checkout (`repository` or `checkout`; an MCP call defaults to the calling agent's checkout), each with its rule count (the rules that start on), reason and folder. When the checkout is not on disk the repository's main checkout is scanned, else its most recently seen one. The scan runs synchronously in the daemon (about 0.3 to 0.5 s on a large repository), so a checkout is rescanned at most once a minute.
 - `GET /api/rerail-rules` (`rerail_rules_list`) gives each By Rerail rule its `packId`: the pack that lists it, or `null`.
 
 Packs are added to a repository with `PUT /api/repository/attachments` (`repository_attachments_set`), in a folder or for the whole repository; the first addition sets the repository up.

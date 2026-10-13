@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "python-conformance:ruff-e711-none-comparison",
+  "id": "ruff-e711-none-comparison",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Ruff's E711 (none-comparison) with default settings: `None` compared with `==` or `!=`, reported on the `None` literal (inside any parentheses). The first operand is checked when the second is not a non-singleton constant; each later `None` when the operand before its operator is not one (Ruff's `is_constant_non_singleton`: string, bytes and number literals, and tuples of constants). Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/E711.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",

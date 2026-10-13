@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "unicorn:no-array-for-each",
+  "id": "unicorn-no-array-for-each",
   "revision": 1,
   "mode": "log",
   "description": "A `.forEach()` call; a `for\u2026of` loop reads better and can `break`, `return` and `await`.",

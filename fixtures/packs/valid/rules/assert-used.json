@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "valid:assert-used",
+  "id": "assert-used",
   "revision": 1,
   "mode": "steer",
   "description": "Port of examplelint's EX101: every assert statement.",

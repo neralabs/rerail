@@ -2,15 +2,15 @@
 
 Cyclomatic complexity rules for Python, TypeScript and JavaScript, with the decision points of
 [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. One document per language, rule id
-`complexity:cyclomatic-<language>`. They form the `complexity` rule pack, which is never recommended and runs only in
+`complexity-cyclomatic-<language>`. They form the `complexity` rule pack, which is never recommended and runs only in
 repositories that add it (`repository_attachments_set`; see `docs/rule-packs.md`).
 Every document has `mode: "steer"`: a rule that runs steers the agent and never blocks.
 
 | Rule | Files |
 |---|---|
-| `complexity:cyclomatic-python` | `.py` |
-| `complexity:cyclomatic-typescript` | `.ts`, `.tsx`, `.mts`, `.cts` |
-| `complexity:cyclomatic-javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| `complexity-cyclomatic-python` | `.py` |
+| `complexity-cyclomatic-typescript` | `.ts`, `.tsx`, `.mts`, `.cts` |
+| `complexity-cyclomatic-javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported, and

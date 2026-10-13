@@ -30,7 +30,7 @@ packs/<id>/
 ├── README.md           what the pack covers, for people
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
-│   └── <name>.json     code-rule documents (rerail.policy/v1)
+│   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
 │
@@ -73,16 +73,25 @@ packs/<id>/
 
 Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
-`examples: { caught, passes }`. One change: a rule now names its document, `rules/<name>.json`, so a pack is
+`examples: { caught, passes }`. One change: a rule now names its document, `rules/<id>.json`, so a pack is
 self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
 recommended. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
 from the pack:
 
 ```json
-{ "id": "complexity:cyclomatic-python", "document": "rules/cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
+{ "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
 ```
 
 An example's `path` is required in a pack: it decides the file's language and must be inside the rule's scope.
+
+**Rule ids.** Every pack uses one id style, because people turn rules on and off by id and an id must not change once
+its pack is published: lowercase letters, digits and dashes (`RULE_PACK_RULE_ID` in `src/engine/catalog/rule-packs.ts`),
+the upstream tool's name then its rule for a port (`eslint-no-empty`, `typescript-eslint-no-explicit-any`,
+`ruff-b011-assert-false`, `n-no-sync`), and the pack's name then the rule for a rule of Rerail's own
+(`complexity-cyclomatic-python`). The id is the same string everywhere: the rule's `id` in `pack.json`, its document's
+`id`, its document's file name (`rules/<id>.json`, or `candidates/rules/<id>.json` while it is a candidate, so it keeps
+its id when it ships), and its port's `id` in `conformance.json`. Check 1 enforces this, and the pack tests reject an id
+that two documents in any packs share.
 
 ### conformance.json, divergences.json, upstream/
 
@@ -130,7 +139,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, its `id` differs from the listing, or it does not compile against core's capabilities |
+| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1` or not named for its id; a port's `id` differs from its document's |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
@@ -139,9 +148,13 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 Precisely:
 
-1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each document must
-   be a valid code rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
-   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it.
+1. `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name. Each rule's `id` is
+   lowercase letters, digits and dashes, and its `document` is `rules/<id>.json`. Each document must be a valid code
+   rule (`rerail.policy/v1`, the host's schema) and compile in the engine with core's
+   `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it. Every rule document under `candidates/`
+   (each JSON file in a `rules/` directory there, and any file there whose `format` names a policy, such as the older
+   `tempo.policy/v1`) must be `rerail.policy/v1` and named `<id>.json`; candidates need not compile. Every port in the
+   pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its document's `id`.
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A

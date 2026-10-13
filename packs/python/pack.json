@@ -18,31 +18,31 @@
   },
   "rules": [
     {
-      "id": "python-conformance:ruff-b011-assert-false",
+      "id": "ruff-b011-assert-false",
       "document": "rules/ruff-b011-assert-false.json",
       "title": "Ruff B011: Assert false",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-b028-no-explicit-stacklevel",
+      "id": "ruff-b028-no-explicit-stacklevel",
       "document": "rules/ruff-b028-no-explicit-stacklevel.json",
       "title": "Ruff B028: No explicit stacklevel",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-b905-zip-without-explicit-strict",
+      "id": "ruff-b905-zip-without-explicit-strict",
       "document": "rules/ruff-b905-zip-without-explicit-strict.json",
       "title": "Ruff B905: Zip without explicit strict",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-e711-none-comparison",
+      "id": "ruff-e711-none-comparison",
       "document": "rules/ruff-e711-none-comparison.json",
       "title": "Ruff E711: None comparison",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-e722-bare-except",
+      "id": "ruff-e722-bare-except",
       "document": "rules/ruff-e722-bare-except.json",
       "title": "Ruff E722: Bare except",
       "group": "Ruff",
@@ -58,79 +58,79 @@
       }
     },
     {
-      "id": "python-conformance:ruff-f507-percent-format-positional-count-mismatch",
+      "id": "ruff-f507-percent-format-positional-count-mismatch",
       "document": "rules/ruff-f507-percent-format-positional-count-mismatch.json",
       "title": "Ruff F507: Percent format positional count mismatch",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f523-string-dot-format-extra-positional-arguments",
+      "id": "ruff-f523-string-dot-format-extra-positional-arguments",
       "document": "rules/ruff-f523-string-dot-format-extra-positional-arguments.json",
       "title": "Ruff F523: String dot format extra positional arguments",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f524-string-dot-format-missing-arguments",
+      "id": "ruff-f524-string-dot-format-missing-arguments",
       "document": "rules/ruff-f524-string-dot-format-missing-arguments.json",
       "title": "Ruff F524: String dot format missing arguments",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f601-multi-value-repeated-key-literal",
+      "id": "ruff-f601-multi-value-repeated-key-literal",
       "document": "rules/ruff-f601-multi-value-repeated-key-literal.json",
       "title": "Ruff F601: Multi value repeated key literal",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f632-is-literal",
+      "id": "ruff-f632-is-literal",
       "document": "rules/ruff-f632-is-literal.json",
       "title": "Ruff F632: Is literal",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f722-forward-annotation-syntax-error",
+      "id": "ruff-f722-forward-annotation-syntax-error",
       "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
       "title": "Ruff F722: Forward annotation syntax error",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f811-redefined-while-unused",
+      "id": "ruff-f811-redefined-while-unused",
       "document": "rules/ruff-f811-redefined-while-unused.json",
       "title": "Ruff F811: Redefined while unused",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f821-undefined-name",
+      "id": "ruff-f821-undefined-name",
       "document": "rules/ruff-f821-undefined-name.json",
       "title": "Ruff F821: Undefined name",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f823-undefined-local",
+      "id": "ruff-f823-undefined-local",
       "document": "rules/ruff-f823-undefined-local.json",
       "title": "Ruff F823: Undefined local",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-f841-unused-variable",
+      "id": "ruff-f841-unused-variable",
       "document": "rules/ruff-f841-unused-variable.json",
       "title": "Ruff F841: Unused variable",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-pie796-non-unique-enums",
+      "id": "ruff-pie796-non-unique-enums",
       "document": "rules/ruff-pie796-non-unique-enums.json",
       "title": "Ruff PIE796: Non unique enums",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:ruff-sim222-expr-or-true",
+      "id": "ruff-sim222-expr-or-true",
       "document": "rules/ruff-sim222-expr-or-true.json",
       "title": "Ruff SIM222: Expr or true",
       "group": "Ruff"
     },
     {
-      "id": "python-conformance:bandit-b101-assert-used",
+      "id": "bandit-b101-assert-used",
       "document": "rules/bandit-b101-assert-used.json",
       "title": "Bandit B101: Assert used",
       "group": "Bandit",
@@ -146,25 +146,25 @@
       }
     },
     {
-      "id": "python-conformance:bandit-b113-request-without-timeout",
+      "id": "bandit-b113-request-without-timeout",
       "document": "rules/bandit-b113-request-without-timeout.json",
       "title": "Bandit B113: Request without timeout",
       "group": "Bandit"
     },
     {
-      "id": "python-conformance:bandit-b506-yaml-load",
+      "id": "bandit-b506-yaml-load",
       "document": "rules/bandit-b506-yaml-load.json",
       "title": "Bandit B506: Yaml load",
       "group": "Bandit"
     },
     {
-      "id": "python-conformance:bandit-b505-weak-cryptographic-key",
+      "id": "bandit-b505-weak-cryptographic-key",
       "document": "rules/bandit-b505-weak-cryptographic-key.json",
       "title": "Bandit B505: Weak cryptographic key",
       "group": "Bandit"
     },
     {
-      "id": "python-conformance:bandit-b610-django-extra-used",
+      "id": "bandit-b610-django-extra-used",
       "document": "rules/bandit-b610-django-extra-used.json",
       "title": "Bandit B610: Django extra used",
       "group": "Bandit"

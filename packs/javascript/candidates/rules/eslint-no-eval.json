@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "eslint:no-eval",
+  "id": "eslint-no-eval",
   "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-eval` rule (https://eslint.org/docs/latest/rules/no-eval). Flags `eval(...)` calls and, by default, indirect uses: references to the global eval, `eval` read from a global object (global/window/globalThis, when declared by the configured languageOptions or declared at the top level of a script), and `this.eval` where `this` is the global object: the top level of a script or CommonJS file, or a non-strict function (`resolves.this` with `sloppyFunctions`, strictness from the case's languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing is resolved with `resolves`. Default options: allowIndirect false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
