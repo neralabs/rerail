@@ -96,7 +96,7 @@ log: { type: stdout, level: warn }
   $status = (& $launcher status) -join "`n"
   Write-Host $status
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
-  if ($status -notmatch "Native kernel: ok") { throw "the daemon has no working native kernel" }
+  if ($status -notmatch "Engine: ok") { throw "the daemon has no working native engine" }
 
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
