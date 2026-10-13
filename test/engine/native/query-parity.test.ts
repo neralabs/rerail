@@ -146,7 +146,7 @@ describe("query parity command", () => {
     expect(stderr).toContain("rerail-query-parity: equal across 2 sides");
 
     const report: unknown = JSON.parse(await readFile(join(output, "report.json"), "utf8"));
-    const complexityFinding = expect.objectContaining({ ruleId: "complexity:cyclomatic-typescript", path: "src/app.ts" });
+    const complexityFinding = expect.objectContaining({ ruleId: "complexity-cyclomatic-typescript", path: "src/app.ts" });
     const workloads = {
       corpus: { files: 2, findings: { value: expect.arrayContaining([complexityFinding]) } },
       // The initial apply, then one per scripted edit.

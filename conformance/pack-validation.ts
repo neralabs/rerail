@@ -4,7 +4,7 @@
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join, matchesGlob, relative, sep } from "node:path";
+import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
 import {
   languageFor,
@@ -16,10 +16,11 @@ import {
   rulePackFileSchema,
   rulePackPackageName,
   rulePackPackageSchema,
+  RULE_PACK_RULE_ID,
   type RulePackFile,
   compareDeterministicStrings,
 } from "../src/engine/index.js";
-import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
 
@@ -100,14 +101,83 @@ type Compiled =
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/** The `id` a code-rule document's text carries, if it is JSON with one. */
-function documentIdOf(text: string): string | undefined {
+const headerSchema = z.object({ format: z.string().optional(), id: z.string().optional() });
+
+/** The `format` and `id` a document's text carries, where it is a JSON object with them. */
+function headerOf(text: string): z.infer<typeof headerSchema> {
   try {
-    const parsed = z.object({ id: z.string() }).safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data.id : undefined;
+    const parsed = headerSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : {};
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+/** The `id` a code-rule document's text carries, if it is JSON with one. */
+const documentIdOf = (text: string): string | undefined => headerOf(text).id;
+
+const CODE_RULE_FORMAT = "rerail.policy/v1";
+/** A rule document in some format: `rerail.policy/v1`, or an older one such as `tempo.policy/v1`. */
+const POLICY_FORMAT = /\.policy\/v\d+$/u;
+
+const inRulesDirectory = (file: string): boolean => posix.basename(posix.dirname(file)) === "rules";
+
+/**
+ * The rule documents among `candidates`, the pack-relative files under `candidates/` (ports under evaluation and
+ * probes): every JSON file in a `rules/` directory there, and any other JSON file there whose `format` names a rule
+ * document (which check 1 fails, since a candidate is in a `rules/` directory).
+ */
+function candidateDocuments(directory: string, candidates: readonly string[]): string[] {
+  return candidates.filter(file => file.endsWith(".json") && (inRulesDirectory(file) || POLICY_FORMAT.test(headerOf(readFileSync(join(directory, file), "utf8")).format ?? "")));
+}
+
+/**
+ * The id rule (docs/pack-format.md, check 1): one id style in every pack. A rule's id is lowercase letters, digits and
+ * dashes and names its document, shipped (`rules/<id>.json`) or candidate (`candidates/…/rules/<id>.json`); a candidate
+ * is a `rerail.policy/v1` document like a shipped rule; and a port in any `conformance.json` of the pack has its
+ * document's id. So the id users turn a rule on and off by is the one its file, its listing and its scores carry, and a
+ * candidate keeps it when it ships.
+ */
+function idFailures(directory: string): string[] {
+  const failures: string[] = [];
+  const candidates = filesUnder(directory, join(directory, "candidates"));
+  for (const file of candidateDocuments(directory, candidates)) {
+    const { format, id } = headerOf(readFileSync(join(directory, file), "utf8"));
+    if (format !== CODE_RULE_FORMAT) failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT}`);
+    if (!inRulesDirectory(file))
+      failures.push(`${file}: a candidate is in a rules/ directory; move it to ${posix.join(posix.dirname(file), "rules", `${id ?? posix.basename(file, ".json")}.json`)}`);
+    if (id === undefined) failures.push(`${file}: has no id`);
+    else if (!RULE_PACK_RULE_ID.test(id)) failures.push(`${file}: id ${id} is not lowercase letters, digits and dashes`);
+    else if (posix.basename(file, ".json") !== id) failures.push(`${file}: has id ${id}; name it ${posix.join(posix.dirname(file), `${id}.json`)}`);
+  }
+  // The root manifest is the conformance runner's pack: check 4 loads it, and reports one that does not parse or a port
+  // whose policy is missing. Nothing else reads the manifests under candidates/ (probes), so check 1 reports those.
+  const manifests = [CONFORMANCE_FILE, ...candidates.filter(file => posix.basename(file) === CONFORMANCE_FILE)];
+  for (const manifest of manifests.filter(file => existsSync(join(directory, file)))) {
+    const nested = manifest !== CONFORMANCE_FILE;
+    let parsed: z.infer<typeof packSchema>;
+    try {
+      const result = packSchema.safeParse(JSON.parse(readFileSync(join(directory, manifest), "utf8")));
+      if (!result.success) {
+        if (nested) failures.push(`${manifest}: ${z.prettifyError(result.error)}`);
+        continue;
+      }
+      parsed = result.data;
+    } catch (error) {
+      if (nested) failures.push(`${manifest}: is not JSON: ${message(error)}`);
+      continue;
+    }
+    for (const port of parsed.rules) {
+      const policy = posix.join(posix.dirname(manifest), port.policy);
+      if (!existsSync(join(directory, policy))) {
+        if (nested) failures.push(`${manifest}: port ${port.id} scores ${policy}, which does not exist`);
+        continue;
+      }
+      const id = documentIdOf(readFileSync(join(directory, policy), "utf8"));
+      if (id !== undefined && id !== port.id) failures.push(`${manifest}: port ${port.id} scores ${policy}, whose id is ${id}`);
+    }
+  }
+  return failures;
 }
 
 /**
@@ -233,8 +303,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (rule !== undefined) ruleFailures.set(rule, [...(ruleFailures.get(rule) ?? []), text]);
   };
 
-  // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document exists, carries the listed
-  // id and compiles against core's capabilities.
+  // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
+  // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
@@ -263,6 +333,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       if (!byDocument.has(file)) fail("rules", `${file} is not listed in pack.json`);
     }
     for (const rule of pack.rules) {
+      if (basename(rule.document, ".json") !== rule.id) fail("rules", `${rule.id}: its document is ${rule.document}; name it rules/${rule.id}.json`, rule.id);
       const path = join(directory, rule.document);
       if (!existsSync(path)) {
         fail("rules", `${rule.id}: ${rule.document} does not exist`, rule.id);
@@ -276,6 +347,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
     }
   }
+
+  for (const failure of idFailures(directory)) fail("rules", failure);
 
   // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
   // (conformance/languages/pack.ts).

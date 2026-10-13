@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "sample-php:forbidden-functions-resolved",
+  "id": "forbidden-functions-resolved",
   "revision": 1,
   "mode": "steer",
   "description": "Sample port of PHP_CodeSniffer's Generic.PHP.ForbiddenFunctions through name resolution: a call PHP resolves to sizeof or delete. Unsound under syntax errors (an error region could hide a declaration), so it skips such files.",

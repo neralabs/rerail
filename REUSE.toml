@@ -741,7 +741,7 @@ SPDX-License-Identifier = "MIT"
 # the licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json", "packs/typescript/candidates/typescript-eslint-no-explicit-any.json"]
+path = ["packs/typescript/rules/**", "packs/typescript/candidates/rules/typescript-eslint-*.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "unicorn:filename-case",
+  "id": "unicorn-filename-case",
   "revision": 1,
   "mode": "steer",
   "description": "A JavaScript file name that is not kebab-case (leading `_` and `.` are ignored).",

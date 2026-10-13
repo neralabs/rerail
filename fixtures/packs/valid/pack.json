@@ -17,13 +17,13 @@
   },
   "rules": [
     {
-      "id": "valid:assert-used",
+      "id": "assert-used",
       "document": "rules/assert-used.json",
       "title": "examplelint EX101: Assert used",
       "group": "examplelint"
     },
     {
-      "id": "valid:pass-statement",
+      "id": "pass-statement",
       "document": "rules/pass-statement.json",
       "title": "No pass statements",
       "group": "Valid",
