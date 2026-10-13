@@ -669,8 +669,9 @@ pub(super) fn encode_tape(
         parser
             .set_language(&language.get_ts_language())
             .map_err(|error| invalid(error.to_string()))?;
-        // A PHP file parses as its view (`php_view`); the tape reads the source.
-        let parsed = crate::code_rule_dsl::php_view::parse_input(language, &file.input.source);
+        // The family's parse input (a PHP file's view, `php_view`); the tape reads the source.
+        let parsed =
+            crate::code_rule_dsl::language::adapter::parse_input(language, &file.input.source);
         let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {

@@ -1207,7 +1207,7 @@ fn a_lookup_from_a_nearby_node_finds_what_a_lookup_from_the_root_finds() {
 /// span reads the template, and inline text holds no node.
 #[test]
 fn a_php_template_tapes_its_php_view() {
-    let cases: [(&str, &[&str], &[&str]); 6] = [
+    let cases: [(&str, &[&str], &[&str]); 7] = [
         (
             "<?php\nprint(1);\n?>\n<script>\nx = eval('document.getElementById (option)');\n</script>\n",
             &["<script>\nx = eval('document.getElementById (option)');\n</script>"],
@@ -1233,6 +1233,11 @@ fn a_php_template_tapes_its_php_view() {
             "<p><?php $s = '?>'; $t = <<<EOT\n?>\nEOT;\nf($t) // c ?></p>\r\n<?php if ($a) { ?>é<?php } ?>\n",
             &["</p>", "é"],
             &["f($t)"],
+        ),
+        (
+            "<?php $s = \"{$o->{\"?>\"}}\"; $x = function() {} ?>html<?php eval(1);\n",
+            &["html"],
+            &["eval(1)"],
         ),
     ];
     for (source, inline, calls) in cases {

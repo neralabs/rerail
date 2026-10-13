@@ -397,7 +397,8 @@ fn benchmark_php_names_corpus() {
                 unreadable.push(relative);
                 continue;
             };
-            let root = GrammarDialect::Php.ast_grep(&source);
+            let root =
+                crate::code_rule_dsl::language::adapter::ast_grep(GrammarDialect::Php, &source);
             // A file the grammar reads with errors is outside what the names table decides, as
             // tape parity reports it.
             if root

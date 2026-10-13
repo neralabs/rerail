@@ -359,7 +359,7 @@ fn stateless_calls(
                 None,
             )
         } else {
-            let root = crate::code_rule_dsl::php_view::ast_grep(language, &file.source);
+            let root = crate::code_rule_dsl::language::adapter::ast_grep(language, &file.source);
             let has_errors = root.root().get_doc().tree.root_node().has_error();
             let bytes = file.source.len();
             calls::summarize(

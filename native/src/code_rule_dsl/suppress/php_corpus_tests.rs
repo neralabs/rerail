@@ -310,7 +310,8 @@ fn benchmark_php_suppression_corpus() {
                 );
                 continue;
             };
-            let tree = GrammarDialect::Php.ast_grep(&source);
+            let tree =
+                crate::code_rule_dsl::language::adapter::ast_grep(GrammarDialect::Php, &source);
             let errors = tree
                 .root()
                 .dfs()
