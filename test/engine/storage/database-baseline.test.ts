@@ -14,6 +14,7 @@ import {
   type Migration,
 } from "../../../src/engine/storage/migrations.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
+import { listRepositoryRules, loadBundledCatalog } from "../../../src/engine/index.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql.generated.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
@@ -451,6 +452,29 @@ describe("the migration path", () => {
     expect(migrationState(path).recorded).toEqual(WITHOUT_NOTE);
   });
 
+  // Review 1, finding 4: a database the migration path's baseline wrote (before rule_settings had suppressions and
+  // config_json) read by this build's read-only consumers, such as set-up's summary and the status line's rule count,
+  // before any writer of this build opened it.
+  it("lets a read-only consumer list a baseline database's rules before any writer of this build has run", async () => {
+    const path = await baselineFile(`
+      INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0);
+      INSERT INTO rule_attachments (repository_key, folder, source_kind, source_id, created_at) VALUES ('repo', '', 'pack', 'complexity', 0);
+      INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at) VALUES ('repository', 'repo', '', 'rule', 'complexity-cyclomatic-python', 0, 0)`);
+    const reader = openRerailDatabase(path, { readonly: true });
+    try {
+      const python = listRepositoryRules(reader, loadBundledCatalog(), "repo").rules.find(rule => rule.document.rule.id === "complexity-cyclomatic-python");
+      expect(python).toMatchObject({ on: false, suppressions: "honour", config: null });
+    } finally {
+      reader.$client.close();
+    }
+    expect(stampOf(path).version).toBe(RERAIL_BASELINE_SCHEMA_VERSION);
+    expect(shapeOf(path)).toEqual(shapeOf(await (async () => {
+      const fresh = await temporaryDatabase();
+      openRerailDatabase(fresh).$client.close();
+      return fresh;
+    })()));
+  });
+
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {
     const path = await temporaryDatabase();
     stampedFile(path, SETTING_ROW);
@@ -550,7 +574,7 @@ describe("the migration path", () => {
     }
     openRerailDatabase(path, { readonly: true, migrations: [noteStep(runs)] }).$client.close();
     expect(runs.count).toBe(1);
-    expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITH_NOTE, note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 
   // Self-review: a reader that cannot write the file used to get it in its old shape, which this build's readers would
@@ -569,7 +593,7 @@ describe("the migration path", () => {
         `${raising} needs this Rerail's schema steps (${ids}) before it can be read, and ${migrations.filter(migration => migration.floor !== undefined).map(migration => migration.id).join(", ")} `
           + "raise its schema floor, which a read-only open does not do. Start Rerail first (rerail daemon start), which runs them.",
       ));
-      expect(migrationState(raising)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+      expect(migrationState(raising)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
     }
 
     const locked = await temporaryDatabase();
@@ -586,7 +610,7 @@ describe("the migration path", () => {
     } finally {
       chmodSync(locked, 0o600);
     }
-    expect(migrationState(locked)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(locked)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 
   // Review of #49 (F6): only a reader that may not write the file is told to fix permissions; any other failure of the
@@ -596,6 +620,6 @@ describe("the migration path", () => {
     stampedFile(path, SETTING_ROW);
     const failing: Migration = { id: "fails", up: () => { throw new Error("step failed"); } };
     expect(() => openRerailDatabase(path, { readonly: true, migrations: [failing] })).toThrow(new Error("step failed"));
-    expect(migrationState(path)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 });
