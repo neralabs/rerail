@@ -380,6 +380,22 @@ fn validate_registry(entries: &[(String, Entry)]) {
         .iter()
         .filter(|(_, entry)| entry.status == Status::Supported)
     {
+        for embed in &entry.embeds {
+            let (_, embedded) = entries
+                .iter()
+                .find(|(_, candidate)| candidate.id == embed.language)
+                .expect("validated embedded language");
+            assert!(
+                embedded.status == Status::Supported,
+                "{name}: embeds planned language {}; a supported language embeds only supported ones",
+                embed.language
+            );
+        }
+    }
+    for (name, entry) in entries
+        .iter()
+        .filter(|(_, entry)| entry.status == Status::Supported)
+    {
         let own = entry
             .dialects
             .iter()
@@ -499,6 +515,63 @@ fn render(entries: &[Entry]) -> String {
         };
     }
     out.push_str("                    $(#[cfg(test)] Self::$test => Some($support),)*\n                }\n            }\n        }\n    };\n}\n\n");
+    let vias = supported
+        .iter()
+        .flat_map(|entry| &entry.embeds)
+        .map(|embed| embed.via.as_str())
+        .collect::<Vec<_>>();
+    let mut unique_vias = Vec::new();
+    for via in vias {
+        if !unique_vias.contains(&via) {
+            unique_vias.push(via);
+        }
+    }
+    out.push_str("/// How a supported language embeds another (the registry's `embeds` `via`): each names the\n/// embedder that builds the embedded program from a file's tree (`embed`).\n");
+    out.push_str("#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]\n");
+    out.push_str("pub(crate) enum Via {\n");
+    for via in &unique_vias {
+        let _ = writeln!(out, "    {},", pascal(via));
+    }
+    out.push_str("}\n\nimpl GrammarDialect {\n");
+    out.push_str("    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n");
+    out.push_str("    pub(crate) const fn embeds(self) -> &'static [(Via, GrammarDialect)] {\n        match self {\n");
+    for entry in &supported {
+        for dialect in &entry.dialects {
+            let host = dialect.variant.as_deref().expect("validated");
+            let embeds = entry
+                .embeds
+                .iter()
+                .flat_map(|embed| {
+                    entries
+                        .iter()
+                        .find(|candidate| candidate.id == embed.language)
+                        .expect("validated embedded language")
+                        .dialects
+                        .iter()
+                        .map(move |dialect| {
+                            format!(
+                                "(Via::{}, GrammarDialect::{})",
+                                pascal(&embed.via),
+                                dialect.variant.as_deref().expect("validated")
+                            )
+                        })
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "            Self::{host} => &[{embeds}],");
+        }
+    }
+    out.push_str("            #[cfg(test)]\n            _ => &[],\n        }\n    }\n}\n\n");
+    out.push_str("/// Evaluates `$body` with `$e` the embedder of `$via` (`embed::<Via>`): one arm per `Via`.\n");
+    out.push_str("macro_rules! with_embedder {\n    ($via:expr, $e:ident => $body:expr) => {\n        match $via {\n");
+    for via in &unique_vias {
+        let via = pascal(via);
+        let _ = writeln!(
+            out,
+            "            $crate::code_rule_dsl::language::Via::{via} => {{\n                type $e = $crate::code_rule_dsl::embed::{via};\n                $body\n            }}"
+        );
+    }
+    out.push_str("        }\n    };\n}\n\npub(crate) use with_embedder;\n\n");
 
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
     for entry in &supported {
@@ -814,7 +887,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "tape tag 2 is also languages/two.json's; a tape tag is never reused"
+        expected = "languages/two.json: tape tag 2 is also languages/three.json's; a tape tag is never reused"
     )]
     fn planned_dialects_cannot_share_tags() {
         Registry::new(
@@ -826,6 +899,30 @@ mod tests {
             ],
         )
         .generate();
+    }
+
+    #[test]
+    fn embeddings_generate_via_dialects_and_dispatch() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "compiled-view" }]);
+        let mut two = supported("two", ".two", 2);
+        two["dialects"][0]["variant"] = json!("Two");
+        let generated = Registry::new("embeds", &[one, two]).generate();
+        assert!(generated.contains("pub(crate) enum Via {\n    CompiledView,\n"));
+        assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
+        assert!(generated.contains("type $e = $crate::code_rule_dsl::embed::CompiledView;"));
+    }
+
+    #[test]
+    fn planned_embeddings_and_empty_via_are_not_generated() {
+        let generated = Registry::new(
+            "empty-embeds",
+            &[supported("one", ".one", 1), planned("two", ".two")],
+        )
+        .generate();
+        assert!(generated.contains("pub(crate) enum Via {\n}\n"));
+        assert!(generated.contains("match $via {\n        }\n"));
+        assert!(!generated.contains("GrammarDialect::Two"));
     }
 
     #[test]
@@ -952,5 +1049,14 @@ mod tests {
         let mut entry = planned("two", ".two");
         entry["capabilities"]["scope"] = json!("supported");
         Registry::new("capability", &[entry]).generate();
+    }
+    #[test]
+    #[should_panic(
+        expected = "languages/one.json: embeds planned language two; a supported language embeds only supported ones"
+    )]
+    fn supported_languages_cannot_embed_planned_languages() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "compiled-view" }]);
+        Registry::new("planned-embed", &[one, planned("two", ".two")]).generate();
     }
 }

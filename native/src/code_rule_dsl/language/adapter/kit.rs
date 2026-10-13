@@ -89,7 +89,7 @@ fn kit<A: Adapter>(expect: &Expect) {
     for (source, regions) in expect.regions {
         let doc = tape(source, expect.dialect);
         let root = doc.root();
-        let read = A::regions(&root)
+        let read = A::regions(&root, expect.dialect)
             .map(|region| (region.root.kind().into_owned(), region.root.range()))
             .collect::<Vec<_>>();
         let expected = regions

@@ -9,7 +9,7 @@ use noqa::Noqa;
 pub(crate) use noqa::{NoqaIndex, parent_statement};
 pub(crate) use nosec::NosecIndex;
 use phpcs::Phpcs;
-pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
+pub(crate) use phpcs::PhpcsIndex;
 pub(crate) use phpstan::PhpstanIndex;
 use psalm::Psalm;
 pub(crate) use psalm::PsalmIndex;

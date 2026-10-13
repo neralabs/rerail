@@ -24,7 +24,7 @@ pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 
-use super::{Family, language_not_supported};
+use super::{Family, GrammarDialect, language_not_supported};
 use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -54,13 +54,12 @@ pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
 
-/// A part of a document a family's semantics read: the root of its tree.
+/// A part of a document a family's semantics read: the root of its tree, and the dialect that
+/// tree is read as (the file's own, or an embedded program's: `KindCatalog::dialect_of_kind`).
 pub(crate) struct Region<'r, D: Doc> {
     pub(crate) root: Node<'r, D>,
+    pub(crate) dialect: GrammarDialect,
 }
-
-/// A document's regions: one, or none for a template without embedded PHP.
-pub(crate) type Regions<'r, D> = std::option::IntoIter<Region<'r, D>>;
 
 /// A registry family's semantics.
 pub(crate) trait Adapter: 'static {
@@ -84,9 +83,15 @@ pub(crate) trait Adapter: 'static {
     type FormatArgs: FormatArgRules;
     /// An identifier's text as the family compares names (Python: NFKC; others: as written).
     fn name(text: Cow<'_, str>) -> Cow<'_, str>;
-    /// The parts of a document this family's semantics read: the root itself, but for an
-    /// embedding family; Blade's is its compiled view's `program` (`blade::program`).
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D>;
+    /// The parts of a document of `dialect` this family's semantics read: the root itself, but
+    /// for an embedding family, whose regions are the programs its tapes embed (`embed`), each
+    /// read as its own dialect; Blade's is its compiled view's `program` (`blade::program`), PHP.
+    /// None where the template embeds nothing. Consumers read every region; call summaries read
+    /// one (`calls::summarize`), so a family with several regions refuses calls.
+    fn regions<'r, D: Doc>(
+        root: &Node<'r, D>,
+        dialect: GrammarDialect,
+    ) -> impl Iterator<Item = Region<'r, D>>;
     /// A file's module, from package markers on disk, in the shape hosts send as `module`
     /// (Python only).
     fn module_path(file: &Path) -> Option<serde_json::Value>;
@@ -120,8 +125,14 @@ impl Adapter for Python {
         python_name(text)
     }
 
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
+    fn regions<'r, D: Doc>(
+        root: &Node<'r, D>,
+        dialect: GrammarDialect,
+    ) -> impl Iterator<Item = Region<'r, D>> {
+        std::iter::once(Region {
+            root: root.clone(),
+            dialect,
+        })
     }
 
     fn module_path(file: &Path) -> Option<serde_json::Value> {
@@ -167,8 +178,14 @@ impl Adapter for Ecma {
         text
     }
 
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
+    fn regions<'r, D: Doc>(
+        root: &Node<'r, D>,
+        dialect: GrammarDialect,
+    ) -> impl Iterator<Item = Region<'r, D>> {
+        std::iter::once(Region {
+            root: root.clone(),
+            dialect,
+        })
     }
 
     fn module_path(_: &Path) -> Option<serde_json::Value> {
@@ -207,8 +224,14 @@ impl Adapter for Php {
         text
     }
 
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
+    fn regions<'r, D: Doc>(
+        root: &Node<'r, D>,
+        dialect: GrammarDialect,
+    ) -> impl Iterator<Item = Region<'r, D>> {
+        std::iter::once(Region {
+            root: root.clone(),
+            dialect,
+        })
     }
 
     fn module_path(_: &Path) -> Option<serde_json::Value> {
@@ -256,9 +279,15 @@ impl Adapter for Blade {
         text
     }
 
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
+    fn regions<'r, D: Doc>(
+        root: &Node<'r, D>,
+        dialect: GrammarDialect,
+    ) -> impl Iterator<Item = Region<'r, D>> {
         crate::code_rule_dsl::blade::program(root)
-            .map(|root| Region { root })
+            .map(|program| Region {
+                dialect: dialect.kinds().dialect_of_kind(program.kind_id()),
+                root: program,
+            })
             .into_iter()
     }
 
