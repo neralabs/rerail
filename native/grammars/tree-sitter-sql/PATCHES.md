@@ -29,14 +29,15 @@ cd tree-sitter-sql
 git checkout 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8
 git apply <rerail>/native/grammars/tree-sitter-sql/rerail.patch
 tree-sitter generate   # tree-sitter-cli 0.27.0
-tree-sitter test       # 427 of 427 (3 error-recovery cases skipped, below)
+tree-sitter test       # 428 of 428 (3 error-recovery cases skipped, below)
 ```
 
 then copy `src/grammar.json`, `src/scanner.c` and `src/tree_sitter/*.h` here.
 
 ## Patches
 
-Each patch has a case in `test/corpus/rerail.txt`; `rerail.patch` holds them all.
+Each patch has a case in `test/corpus/rerail.txt`, a file `rerail.patch` adds; `rerail.patch` holds
+them all.
 
 1. **One comment kind.** Block comments were `marginalia`; they are `comment`, as `--` comments are, so
    the engine's comment handling (`kind: "comment"`, the SQLFluff `noqa` index) reads both. Upstream's
@@ -80,6 +81,10 @@ Each patch has a case in `test/corpus/rerail.txt`; `rerail.patch` holds them all
     their operands are `parameter`s. MySQL's `EXTRACT(unit FROM x)` form keeps priority.
 20. **`ALTER TABLE ... VALIDATE CONSTRAINT name`** (`validate_constraint`):
     `postgres/PG02/test_pass_add_foreign_key_not_valid_then_validate.sql`.
+21. **Any non-ASCII character in an identifier**, as PostgreSQL's scanner reads them (`scan.l`'s
+    `ident_start` and `ident_cont` take every byte from `\200` to `\377`, so every UTF-8 encoded
+    non-ASCII character); upstream took `U+00C0` to `U+017F` only. A code rule's pattern metavariable
+    (`$A`, read as `µA`, the expando ast-grep and Rerail's patterns share) is then an identifier.
 
 Three upstream error-recovery cases (`errors.txt`: `Function body with a $$ string literal with the same
 name`, `... a unbalanced $$`, `... a tag name contains whitespace`) are marked `:skip`: they assert the

@@ -21450,7 +21450,8 @@
     },
     "_identifier": {
       "type": "PATTERN",
-      "value": "[A-Za-z_\\u00C0-\\u017F][0-9A-Za-z_$\\u00C0-\\u017F]*"
+      "value": "[A-Za-z_\\u{80}-\\u{10FFFF}][0-9A-Za-z_$\\u{80}-\\u{10FFFF}]*",
+      "flags": "u"
     },
     "_backtick_identifier": {
       "type": "PATTERN",

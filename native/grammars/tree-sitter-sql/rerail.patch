@@ -1,5 +1,5 @@
 diff --git a/grammar.js b/grammar.js
-index 485bc3a..4ce5dbf 100644
+index 485bc3a..6e712a0 100644
 --- a/grammar.js
 +++ b/grammar.js
 @@ -5,7 +5,6 @@ module.exports = grammar({
@@ -365,9 +365,10 @@ index 485bc3a..4ce5dbf 100644
 +      seq("`", $._backtick_identifier, "`"),
      ),
      _tsql_parameter: $ => seq('@', $._identifier),
-     // support nordic chars and umlaue
+-    // support nordic chars and umlaue
 -    _identifier: _ => /[A-Za-z_\u00C0-\u017F][0-9A-Za-z_\u00C0-\u017F]*/,
-+    _identifier: _ => /[A-Za-z_\u00C0-\u017F][0-9A-Za-z_$\u00C0-\u017F]*/,
++    // PostgreSQL's ident_start and ident_cont (scan.l): any non-ASCII character too
++    _identifier: _ => /[A-Za-z_\u{80}-\u{10FFFF}][0-9A-Za-z_$\u{80}-\u{10FFFF}]*/u,
 +    _backtick_identifier: _ => /([^`]|``)+/,
    }
  
@@ -778,6 +779,604 @@ index b819a21..e079cf8 100644
              operator: (op_other)
              right: (literal))
            (keyword_as)
+diff --git a/test/corpus/rerail.txt b/test/corpus/rerail.txt
+new file mode 100644
+index 0000000..578a3c0
+--- /dev/null
++++ b/test/corpus/rerail.txt
+@@ -0,0 +1,592 @@
++================================================================================
++Rerail patch 1: block comments are comments
++================================================================================
++
++SELECT 1 /* block */ -- line
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (literal)))))
++  (comment)
++  (comment))
++
++================================================================================
++Rerail patch 2: a join without ON or USING
++================================================================================
++
++SELECT foo.a FROM foo JOIN bar;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (object_reference
++              (identifier))
++            (identifier)))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier)))
++      (join
++        (keyword_join)
++        (relation
++          (object_reference
++            (identifier)))))))
++
++================================================================================
++Rerail patch 3: UNION DISTINCT
++================================================================================
++
++SELECT a FROM t UNION DISTINCT SELECT b FROM u;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (set_operation
++      (select
++        (keyword_select)
++        (select_expression
++          (term
++            (field
++              (identifier)))))
++      (from
++        (keyword_from)
++        (relation
++          (object_reference
++            (identifier))))
++      (keyword_union)
++      (keyword_distinct)
++      (select
++        (keyword_select)
++        (select_expression
++          (term
++            (field
++              (identifier)))))
++      (from
++        (keyword_from)
++        (relation
++          (object_reference
++            (identifier)))))))
++
++================================================================================
++Rerail patch 4: REINDEX and REFRESH MATERIALIZED VIEW
++================================================================================
++
++REINDEX INDEX CONCURRENTLY idx_foo;
++REFRESH MATERIALIZED VIEW CONCURRENTLY my_view WITH NO DATA;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (reindex_statement
++      (keyword_reindex)
++      (keyword_index)
++      (keyword_concurrently)
++      (object_reference
++        (identifier))))
++  (statement
++    (refresh_statement
++      (keyword_refresh)
++      (keyword_materialized)
++      (keyword_view)
++      (keyword_concurrently)
++      (object_reference
++        (identifier))
++      (keyword_with)
++      (keyword_no)
++      (keyword_data))))
++
++================================================================================
++Rerail patch 5 and 20: NOT VALID and VALIDATE CONSTRAINT
++================================================================================
++
++ALTER TABLE foo ADD CONSTRAINT fk_bar FOREIGN KEY (bar_id) REFERENCES bar (id) NOT VALID;
++ALTER TABLE foo VALIDATE CONSTRAINT fk_bar;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (alter_table
++      (keyword_alter)
++      (keyword_table)
++      (object_reference
++        (identifier))
++      (add_constraint
++        (keyword_add)
++        (keyword_constraint)
++        (identifier)
++        (constraint
++          (keyword_foreign)
++          (keyword_key)
++          (ordered_columns
++            (column
++              (identifier)))
++          (keyword_references)
++          (object_reference
++            (identifier))
++          (identifier))
++        (keyword_not)
++        (keyword_valid))))
++  (statement
++    (alter_table
++      (keyword_alter)
++      (keyword_table)
++      (object_reference
++        (identifier))
++      (validate_constraint
++        (keyword_validate)
++        (keyword_constraint)
++        (identifier)))))
++
++================================================================================
++Rerail patch 6: doubled quotes inside quoted identifiers
++================================================================================
++
++SELECT a AS "x""y", b AS `p``q` FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (identifier))
++          (keyword_as)
++          (identifier))
++        (term
++          (field
++            (identifier))
++          (keyword_as)
++          (identifier))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 7: $ inside an identifier
++================================================================================
++
++SELECT a AS alias$ FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (identifier))
++          (keyword_as)
++          (identifier))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 8: a string alias after AS
++================================================================================
++
++SELECT a AS 'alias' FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (identifier))
++          (keyword_as)
++          (literal))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 9: EXCLUDE constraint
++================================================================================
++
++ALTER TABLE abc ADD CONSTRAINT xyz EXCLUDE USING gist (during WITH &&);
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (alter_table
++      (keyword_alter)
++      (keyword_table)
++      (object_reference
++        (identifier))
++      (add_constraint
++        (keyword_add)
++        (keyword_constraint)
++        (identifier)
++        (constraint
++          (exclude_constraint
++            (keyword_exclude)
++            (keyword_using)
++            (identifier)
++            (field
++              (identifier))
++            (keyword_with)))))))
++
++================================================================================
++Rerail patch 10: MySQL system variables in SET
++================================================================================
++
++SET @old = @@unique_checks, unique_checks = 0;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (set_statement
++      (keyword_set)
++      (object_reference
++        (identifier))
++      (system_variable
++        (identifier))
++      (object_reference
++        (identifier))
++      (literal))))
++
++================================================================================
++Rerail patch 11: nested block comments
++================================================================================
++
++/* outer /* nested */ -- still comment */ SELECT 1;
++
++--------------------------------------------------------------------------------
++
++(program
++  (comment)
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (literal))))))
++
++================================================================================
++Rerail patch 12: named arguments
++================================================================================
++
++SELECT f(x => 1, y := 2) FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (invocation
++            (object_reference
++              (identifier))
++            (named_argument
++              (identifier)
++              (literal))
++            (named_argument
++              (identifier)
++              (literal))))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 13: a double-quoted token in an expression is an identifier
++================================================================================
++
++SELECT "A", "x""y" FROM t WHERE "B" = 'b';
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (identifier)))
++        (term
++          (field
++            (identifier)))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier)))
++      (where
++        (keyword_where)
++        (binary_expression
++          (field
++            (identifier))
++          (literal))))))
++
++================================================================================
++Rerail patch 14: exponents in either case
++================================================================================
++
++SELECT 1E3, 4664.E+5, 1.5e-3;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (literal))
++        (term
++          (literal))
++        (term
++          (literal))))))
++
++================================================================================
++Rerail patch 15: ON CONFLICT target
++================================================================================
++
++INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET b = excluded.b;
++INSERT INTO t (a) VALUES (1) ON CONFLICT ON CONSTRAINT t_pkey DO NOTHING;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (insert
++      (keyword_insert)
++      (keyword_into)
++      (object_reference
++        (identifier))
++      (list
++        (column
++          (identifier)))
++      (keyword_values)
++      (list
++        (literal))
++      (keyword_on)
++      (keyword_conflict)
++      (field
++        (identifier))
++      (keyword_do)
++      (keyword_update)
++      (keyword_set)
++      (assignment
++        (field
++          (identifier))
++        (field
++          (object_reference
++            (identifier))
++          (identifier)))))
++  (statement
++    (insert
++      (keyword_insert)
++      (keyword_into)
++      (object_reference
++        (identifier))
++      (list
++        (column
++          (identifier)))
++      (keyword_values)
++      (list
++        (literal))
++      (keyword_on)
++      (keyword_conflict)
++      (keyword_on)
++      (keyword_constraint)
++      (identifier)
++      (keyword_do)
++      (keyword_nothing))))
++
++================================================================================
++Rerail patch 16: DELETE ... USING
++================================================================================
++
++DELETE FROM ONLY t USING u WHERE t.id = u.id;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (delete
++      (keyword_delete))
++    (from
++      (keyword_from)
++      (keyword_only)
++      (object_reference
++        (identifier))
++      (keyword_using)
++      (relation
++        (object_reference
++          (identifier)))
++      (where
++        (keyword_where)
++        (binary_expression
++          (field
++            (object_reference
++              (identifier))
++            (identifier))
++          (field
++            (object_reference
++              (identifier))
++            (identifier)))))))
++
++================================================================================
++Rerail patch 18: escape strings and UESCAPE
++================================================================================
++
++SELECT E'a\'b\\', U&'d!0061t' UESCAPE '!', U&"d!0061t" UESCAPE '!' FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (literal))
++        (term
++          (literal
++            (keyword_uescape)))
++        (term
++          (field
++            (identifier
++              (keyword_uescape))))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 19: SQL-syntax calls
++================================================================================
++
++SELECT substring(s FROM 1 FOR 2), position('a' IN s), trim(both 'x' from s), overlay(s PLACING 'x' FROM 2 FOR 1) FROM t;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (invocation
++            (object_reference
++              (identifier))
++            (term
++              (field
++                (identifier)))
++            (keyword_from)
++            (term
++              (literal))
++            (keyword_for)
++            (term
++              (literal))))
++        (term
++          (invocation
++            (object_reference
++              (identifier))
++            (term
++              (literal))
++            (keyword_in)
++            (term
++              (field
++                (identifier)))))
++        (term
++          (invocation
++            (object_reference
++              (identifier))
++            (keyword_both)
++            (term
++              (literal))
++            (keyword_from)
++            (term
++              (field
++                (identifier)))))
++        (term
++          (invocation
++            (object_reference
++              (identifier))
++            (term
++              (field
++                (identifier)))
++            (keyword_placing)
++            (term
++              (literal))
++            (keyword_from)
++            (term
++              (literal))
++            (keyword_for)
++            (term
++              (literal))))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))))))
++
++================================================================================
++Rerail patch 21: any non-ASCII character in an identifier
++================================================================================
++
++SELECT µa, naïve, 東京 FROM t$1 AS ŝ;
++
++--------------------------------------------------------------------------------
++
++(program
++  (statement
++    (select
++      (keyword_select)
++      (select_expression
++        (term
++          (field
++            (identifier)))
++        (term
++          (field
++            (identifier)))
++        (term
++          (field
++            (identifier)))))
++    (from
++      (keyword_from)
++      (relation
++        (object_reference
++          (identifier))
++        (keyword_as)
++        (identifier)))))
 diff --git a/test/corpus/select.txt b/test/corpus/select.txt
 index acfd5a4..c1b05cf 100644
 --- a/test/corpus/select.txt
