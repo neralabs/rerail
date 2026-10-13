@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "python-conformance:ruff-f632-is-literal",
+  "id": "ruff-f632-is-literal",
   "revision": 1,
   "mode": "steer",
   "description": "Port of Ruff's F632 (is-literal) with default settings: `is` or `is not` with an operand that is a non-singleton constant (string, bytes or number literal, tuple of constants) or a list, set or dict display or comprehension, one finding per offending operator reported on the whole comparison, as in Ruff; also a comparison inside a string Ruff parses as a type definition (a string annotation, `cast`/`TypeVar` arguments, `List[\"...\"]`), reported on the comparison inside the string, once per offending operator; strings nested in one (`List['1 is x']` inside a string annotation) are read too. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F632.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",

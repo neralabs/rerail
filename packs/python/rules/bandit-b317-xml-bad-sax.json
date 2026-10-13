@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b317-xml-bad-sax",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect vulnerable xml.sax parsing calls",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B317",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "expression_statement"
+              },
+              {
+                "has": {
+                  "pattern": "$F($$$ARGS)"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "xml.sax.parse",
+                  "xml.sax.parseString",
+                  "xml.sax.make_parser"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B317",
+        "anchor": "witness.span",
+        "message": "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B317"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f406-undefined-local-with-nested-import-star-usage",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's F406 (undefined-local-with-nested-import-star-usage): a `from <module> import *` outside module scope, i.e. anywhere inside a function or class body, reported on the whole statement.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "undefined-local-with-nested-import-star-usage",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_from_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "wildcard_import",
+              "follows": { "stopBy": "end", "any": [{ "kind": "dotted_name" }, { "kind": "relative_import" }], "pattern": "$MODULE" }
+            },
+            "inside": { "stopBy": "end", "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F406",
+        "message": "`from $MODULE import *` only allowed at module level",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F406"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

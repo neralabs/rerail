@@ -1,0 +1,112 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b103-set-bad-file-permissions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect literal chmod modes that grant group or world write or execute permissions. World-write findings are higher severity.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "world-writable-chmod",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($PATH, $MODE)"
+              },
+              {
+                "pattern": "$F($PATH, mode=$MODE)"
+              },
+              {
+                "pattern": "$F(path=$PATH, mode=$MODE)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "regex": ".*chmod.*"
+            },
+            "MODE": {
+              "value": {
+                "bitsAny": 2
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B103",
+        "anchor": "witness.span",
+        "message": "chmod mode grants world-write permission",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "group-or-world-executable-chmod",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($PATH, $MODE)"
+              },
+              {
+                "pattern": "$F($PATH, mode=$MODE)"
+              },
+              {
+                "pattern": "$F(path=$PATH, mode=$MODE)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "regex": ".*chmod.*"
+            },
+            "MODE": {
+              "all": [
+                {
+                  "value": {
+                    "bitsAny": 25
+                  }
+                },
+                {
+                  "not": {
+                    "value": {
+                      "bitsAny": 2
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B103",
+        "anchor": "witness.span",
+        "message": "chmod mode grants group-write, group-execute, or world-execute permission",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,462 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e402-module-import-not-at-top-of-file",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's E402 (module-import-not-at-top-of-file): an `import` or `from ... import` statement directly at module level after an import boundary, reported on the statement. A boundary is any earlier module-level statement other than an import, the module docstring (a plain string literal as the first statement), a single-target assignment to a dunder name, and the allowed path/environment setup calls (`sys.path` mutation, `os.environ` edits, `os.putenv`/`unsetenv`, `matplotlib.use`, `pytest.importorskip`, `site.addsitedir`); `if`, `try`, `with` and `match` blocks and everything inside them are never boundaries. Qualified names are resolved through the file's imports as Ruff resolves them at that point of the module.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "module-import-not-at-top-of-file",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "sys-path": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.path"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sys-path"
+                  }
+                }
+              ]
+            },
+            "os-environ": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "os.environ"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "os-environ"
+                  }
+                }
+              ]
+            },
+            "exempt-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.path.append",
+                      "sys.path.insert",
+                      "sys.path.extend",
+                      "sys.path.remove",
+                      "sys.path.pop",
+                      "sys.path.clear",
+                      "sys.path.reverse",
+                      "sys.path.sort",
+                      "os.putenv",
+                      "os.unsetenv",
+                      "os.environ.update",
+                      "os.environ.pop",
+                      "os.environ.clear",
+                      "os.environ.setdefault",
+                      "os.environ.popitem",
+                      "matplotlib.use",
+                      "pytest.importorskip",
+                      "site.addsitedir"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exempt-callee"
+                  }
+                }
+              ]
+            },
+            "exempt-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "exempt-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exempt-call"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[fFbBtT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "plain-string"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-string"
+                  }
+                }
+              ]
+            },
+            "module-docstring": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "plain-string"
+              },
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              }
+            },
+            "dunder-assignment": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "regex": "^(?:___?|__.*__)$",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  }
+                }
+              }
+            },
+            "import-exempt": {
+              "any": [
+                {
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exempt-call"
+                  }
+                },
+                {
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "augmented_assignment"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "any": [
+                        {
+                          "matches": "sys-path"
+                        },
+                        {
+                          "kind": "subscript",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "(?s)."
+                              }
+                            },
+                            "matches": "sys-path"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "any": [
+                        {
+                          "matches": "os-environ"
+                        },
+                        {
+                          "kind": "subscript",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "(?s)."
+                              }
+                            },
+                            "matches": "os-environ"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "delete_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "os-environ"
+                      },
+                      {
+                        "kind": "subscript",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "(?s)."
+                            }
+                          },
+                          "matches": "os-environ"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "delete_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "os-environ"
+                        },
+                        {
+                          "kind": "subscript",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "follows": {
+                                "stopBy": "neighbor",
+                                "regex": "(?s)."
+                              }
+                            },
+                            "matches": "os-environ"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "import-boundary": {
+              "any": [
+                {
+                  "kind": "expression_statement"
+                },
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "delete_statement"
+                },
+                {
+                  "kind": "raise_statement"
+                },
+                {
+                  "kind": "pass_statement"
+                },
+                {
+                  "kind": "break_statement"
+                },
+                {
+                  "kind": "continue_statement"
+                },
+                {
+                  "kind": "global_statement"
+                },
+                {
+                  "kind": "nonlocal_statement"
+                },
+                {
+                  "kind": "assert_statement"
+                },
+                {
+                  "kind": "print_statement"
+                },
+                {
+                  "kind": "exec_statement"
+                },
+                {
+                  "kind": "type_alias_statement"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "matches": "module-docstring"
+                  },
+                  {
+                    "matches": "dunder-assignment"
+                  },
+                  {
+                    "matches": "import-exempt"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "kind": "import_from_statement"
+              },
+              {
+                "kind": "future_import_statement"
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "module"
+            },
+            "follows": {
+              "stopBy": "end",
+              "matches": "import-boundary"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E402",
+        "message": "Module level import not at top of file",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E402"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

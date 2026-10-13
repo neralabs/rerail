@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b306-mktemp-q",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect use of insecure tempfile.mktemp",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B306",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "any": [
+                {
+                  "resolves": {
+                    "import": [
+                      "tempfile.mktemp"
+                    ]
+                  }
+                },
+                {
+                  "pattern": "tempfile.mktemp"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B306",
+        "anchor": "witness.span",
+        "message": "Use of insecure and deprecated function mktemp.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B306"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

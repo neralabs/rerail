@@ -1,0 +1,124 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e714-not-is-test",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's E714 (not-is-test): `not` applied to a comparison whose only operator is `is` (the comparison may be parenthesized), reported on the comparison inside any parentheses; also inside a string Ruff parses as a type definition (M11a `parse` with `annotation`, nested strings included), reported on each such comparison inside the string.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "not-is-test",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "negated": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "not_operator"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "negated"
+                  }
+                }
+              ]
+            },
+            "test": {
+              "kind": "comparison_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^is$"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(?:<|<=|==|!=|>=|>|<>|in|not[\\s\\\\]+in|is[\\s\\\\]+not)$"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^is$"
+                      },
+                      "min": 2
+                    }
+                  }
+                },
+                {
+                  "matches": "negated"
+                }
+              ]
+            },
+            "test-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "test",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "test-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "test",
+                "pattern": "$C"
+              },
+              {
+                "matches": "test-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "E714",
+        "message": "Test for object identity should be `is not`",
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E714"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

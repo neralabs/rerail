@@ -2,6 +2,11 @@
   "name": "@neralabs/rerail-pack-exemplar",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/exemplar"
+  },
   "files": [
     "pack.json",
     "rules",

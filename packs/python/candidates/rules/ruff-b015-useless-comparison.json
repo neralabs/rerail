@@ -1,0 +1,131 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b015-useless-comparison",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B015 (useless-comparison): an expression statement whose value is a comparison (parentheses transparent). When the statement is the last one of a function body the message asks whether the result was meant to be returned. Reported on the comparison.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "end-of-function": {
+            "any": [
+              {
+                "kind": "expression_statement",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "end-of-function"
+                }
+              }
+            ]
+          },
+          "statement-value": {
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "expression_statement",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "matches": "statement-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "useless-comparison-end-of-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "matches": "statement-value",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "end-of-function"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B015",
+        "message": "Pointless comparison at end of function scope. Did you mean to return the expression result?",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B015"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "useless-comparison",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "matches": "statement-value",
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "end-of-function"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B015",
+        "message": "Pointless comparison. Did you mean to assign a value? Otherwise, prepend `assert` or remove it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B015"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

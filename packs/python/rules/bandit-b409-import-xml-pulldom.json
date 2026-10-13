@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b409-import-xml-pulldom",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect direct imports of xml.dom.pulldom.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B409",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import xml.dom.pulldom"
+              },
+              {
+                "pattern": "import xml.dom.pulldom as $ALIAS"
+              },
+              {
+                "pattern": "from xml.dom.pulldom import $$$NAMES"
+              },
+              {
+                "pattern": "from xml.dom import pulldom"
+              },
+              {
+                "pattern": "from xml.dom import pulldom as $ALIAS"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B409",
+        "anchor": "witness.span",
+        "message": "xml.dom.pulldom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B409"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -21,7 +21,7 @@
         "tool": "labels",
         "rule": "next/app-route-file"
       },
-      "policy": "rules/app-route-file.json",
+      "policy": "rules/next-probe-app-route-file.json",
       "capabilities": [
         "syntax"
       ],
@@ -33,7 +33,7 @@
         "tool": "labels",
         "rule": "next/pages-special-file"
       },
-      "policy": "rules/pages-special-file.json",
+      "policy": "rules/next-probe-pages-special-file.json",
       "capabilities": [
         "syntax"
       ],
@@ -45,7 +45,7 @@
         "tool": "labels",
         "rule": "next/middleware-file"
       },
-      "policy": "rules/middleware-file.json",
+      "policy": "rules/next-probe-middleware-file.json",
       "capabilities": [
         "syntax"
       ],
@@ -57,7 +57,7 @@
         "tool": "labels",
         "rule": "next/use-client-directive"
       },
-      "policy": "rules/use-client-directive.json",
+      "policy": "rules/next-probe-use-client-directive.json",
       "capabilities": [
         "syntax",
         "value"
@@ -70,7 +70,7 @@
         "tool": "labels",
         "rule": "next/inline-server-action"
       },
-      "policy": "rules/inline-server-action.json",
+      "policy": "rules/next-probe-inline-server-action.json",
       "capabilities": [
         "syntax",
         "value"
@@ -83,7 +83,7 @@
         "tool": "labels",
         "rule": "next/route-handler"
       },
-      "policy": "rules/route-handler.json",
+      "policy": "rules/next-probe-route-handler.json",
       "capabilities": [
         "syntax"
       ],
@@ -95,7 +95,7 @@
         "tool": "labels",
         "rule": "next/metadata-in-client-component"
       },
-      "policy": "rules/metadata-in-client-component.json",
+      "policy": "rules/next-probe-metadata-in-client-component.json",
       "capabilities": [
         "syntax",
         "value"
@@ -108,7 +108,7 @@
         "tool": "labels",
         "rule": "next/invalid-segment-config"
       },
-      "policy": "rules/invalid-segment-config.json",
+      "policy": "rules/next-probe-invalid-segment-config.json",
       "capabilities": [
         "syntax",
         "value"
@@ -121,7 +121,7 @@
         "tool": "labels",
         "rule": "next/server-import-in-client"
       },
-      "policy": "rules/server-import-in-client.json",
+      "policy": "rules/next-probe-server-import-in-client.json",
       "capabilities": [
         "syntax",
         "value"
@@ -134,7 +134,7 @@
         "tool": "labels",
         "rule": "next/client-hook-in-server-component"
       },
-      "policy": "rules/client-hook-in-server-component.json",
+      "policy": "rules/next-probe-client-hook-in-server-component.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -148,7 +148,7 @@
         "tool": "labels",
         "rule": "next/use-server-sync-export"
       },
-      "policy": "rules/use-server-sync-export.json",
+      "policy": "rules/next-probe-use-server-sync-export.json",
       "capabilities": [
         "syntax",
         "value"

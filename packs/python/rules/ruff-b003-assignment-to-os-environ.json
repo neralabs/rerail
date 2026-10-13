@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b003-assignment-to-os-environ",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's B003 (assignment-to-os-environ): a plain assignment statement with exactly one target, that target being the attribute `os.environ` (the name `os`, not resolved; parentheses around the target are transparent). Chained assignments (several targets), annotated and augmented assignments are not checked, as in Ruff. Reported on the attribute.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "assignment-to-os-environ",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "single-target-assignment": {
+              "kind": "assignment",
+              "not": {
+                "any": [
+                  { "has": { "stopBy": "neighbor", "regex": "^:$" } },
+                  { "has": { "stopBy": "neighbor", "kind": "assignment" } },
+                  { "inside": { "stopBy": "neighbor", "kind": "assignment" } }
+                ]
+              }
+            },
+            "sole-target": {
+              "any": [
+                {
+                  "precedes": { "stopBy": "neighbor", "regex": "^=$" },
+                  "inside": { "stopBy": "neighbor", "matches": "single-target-assignment" }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      { "kind": "parenthesized_expression" },
+                      { "kind": "tuple_pattern", "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } }
+                    ],
+                    "matches": "sole-target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "pattern": "os.environ",
+            "matches": "sole-target"
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B003", "message": "Assigning to `os.environ` doesn't clear the environment", "suppress": { "noqa": { "codes": ["B003"] } } }
+    }
+  ]
+}

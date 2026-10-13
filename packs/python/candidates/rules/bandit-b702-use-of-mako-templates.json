@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b702-use-of-mako-templates",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect use of Mako templates without environment-wide escaping",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B702",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "mako.template.Template"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B702",
+        "anchor": "witness.span",
+        "message": "Mako templates do not provide environment-wide escaping; sanitize variables with the n, h, or x filters.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B702"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

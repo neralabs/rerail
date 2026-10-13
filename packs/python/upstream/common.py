@@ -99,3 +99,48 @@ def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: l
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": tool, "version": version, "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
+
+
+def shipped(tool: str) -> set[str]:
+    """The upstream rules of the pack's shipped ports (conformance.json policies under rules/) for `tool`."""
+    return {rule["upstream"]["rule"] for rule in json.loads(PACK.read_text())["rules"]
+            if rule["upstream"]["tool"] == tool and rule["policy"].startswith("rules/")}
+
+
+def suppression_cases(cases: dict[str, str], comments: list[str], tool: str,
+                      names: dict[str, str] | None = None) -> dict[str, str]:
+    """One file per rule: its case (`{c}` where the reported line ends) written once per comment, the first being none.
+    `{code}`, `{name}` and `{other}` in a comment are the rule's code, its name in `names` and another rule's code."""
+    missing = sorted(shipped(tool) - set(cases))
+    if missing:
+        raise SystemExit(f"no suppression case for the shipped {tool} rules {', '.join(missing)}")
+    files = {}
+    for code, case in sorted(cases.items()):
+        blocks = []
+        for comment in comments:
+            other = "B102" if code == "B101" else "B101"
+            text = comment.format(code=code, name=(names or {}).get(code, ""), other=other)
+            blocks.append(case.replace("{c}", text).replace("{{", "{").replace("}}", "}"))
+        files[f"{code}.py"] = "\n".join(blocks)
+    return files
+
+
+def write_authored(target: pathlib.Path, cases: dict[str, str]) -> list[str]:
+    """Writes Rerail's own cases under `target` (paths relative to it) and returns their paths."""
+    for path, text in cases.items():
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_text(text)
+    return sorted(cases)
+
+
+def write_record(tool: str, title: str, files: list[str], holders: str) -> None:
+    """upstream/<tool>/UPSTREAM.md: the fixtures Rerail wrote, which the tool's recording scores."""
+    rows = "".join(f"| `upstream/{tool}/fixtures/{file}` | written by Rerail |\n" for file in files)
+    (HERE / tool / "UPSTREAM.md").write_text(
+        f"# {title}: cases Rerail wrote\n\n"
+        f"The fixtures listed below were written by Rerail for the pinned tool to score, beside the tests copied from "
+        f"upstream (`licenses/{tool}/UPSTREAM.md`): a case per shipped rule on lines carrying the tool's suppression "
+        f"comments, and inputs the ports once misread. `{tool}/generate.py` holds them ({holders}) and records the "
+        f"tool's findings on them in `fixtures.expected.json`. They are Rerail's (Apache-2.0, the pack's licence), so "
+        f"nothing goes under `licenses/`. Paths are relative to the pack directory.\n\n"
+        f"| File | Origin |\n|---|---|\n{rows}")

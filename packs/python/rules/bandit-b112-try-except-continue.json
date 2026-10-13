@@ -1,0 +1,109 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b112-try-except-continue",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect exception handlers whose only action is continue, silently discarding errors while retrying a loop. Handle or log the exception, or catch a specific expected exception before continuing.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "try-except-continue",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "except_clause",
+            "all": [
+              {
+                "any": [
+                  {
+                    "pattern": {
+                      "context": "try:\n    work()\nexcept:\n    continue",
+                      "selector": "except_clause"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "exception-type",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "exception-alias",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "kind": "block",
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "continue_statement",
+                        "stopBy": "neighbor"
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "pattern": "$_",
+                          "stopBy": "neighbor"
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "exception-type": {
+              "any": [
+                {
+                  "pattern": "Exception"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "exception-type",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "exception-alias": {
+              "kind": "as_pattern",
+              "has": {
+                "matches": "exception-type",
+                "stopBy": "neighbor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B112",
+        "anchor": "witness.span",
+        "message": "This exception is silently discarded by continuing the loop. Handle or log it, or catch a specific expected exception before continuing.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B112"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

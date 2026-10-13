@@ -1,0 +1,78 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b704-markupsafe-markup-xss",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Detect dynamic content passed directly to Markup",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-B704",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$MARKUP($CONTENT)"
+              },
+              {
+                "pattern": "$MARKUP(object=$CONTENT)"
+              }
+            ]
+          },
+          "constraints": {
+            "MARKUP": {
+              "resolves": {
+                "import": [
+                  "markupsafe.Markup",
+                  "flask.Markup"
+                ]
+              }
+            },
+            "SANITIZER": {
+              "resolves": {
+                "import": [
+                  "markupsafe.escape",
+                  "flask.escape"
+                ]
+              }
+            },
+            "CONTENT": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "pattern": "$SANITIZER($$$SANITIZER_ARGS)"
+                  },
+                  {
+                    "pattern": "$MARKUP($$$INNER_ARGS)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B704",
+        "anchor": "capture.CONTENT",
+        "message": "Dynamic content is marked safe without sanitization; interpolate into a Markup object or use markupsafe.escape().",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B704"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
