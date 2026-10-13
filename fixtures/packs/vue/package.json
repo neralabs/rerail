@@ -2,6 +2,11 @@
   "name": "@neralabs/rerail-pack-vue",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/vue"
+  },
   "files": [
     "pack.json",
     "rules",

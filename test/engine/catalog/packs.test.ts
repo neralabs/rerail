@@ -14,7 +14,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -301,6 +301,30 @@ describe("validatePack", () => {
       { package: ["package.json: has dependencies (left-pad); a pack has none"] },
     ],
     [
+      "a package.json with no repository",
+      directory => editJson(join(directory, "package.json"), ({ repository: _repository, ...manifest }) => manifest),
+      { package: ['package.json: repository is missing, not {"type":"git","url":"git+https://github.com/neralabs/rerail.git","directory":"packs/valid"}'] },
+    ],
+    [
+      "a repository directory that is not packs/<id>",
+      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, repository: { type: "git", url: "git+https://github.com/neralabs/rerail.git", directory: "packs/other" } })),
+      {
+        package: [
+          'package.json: repository is {"type":"git","url":"git+https://github.com/neralabs/rerail.git","directory":"packs/other"}, not {"type":"git","url":"git+https://github.com/neralabs/rerail.git","directory":"packs/valid"}',
+        ],
+      },
+    ],
+    [
+      "a public package",
+      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "public" } })),
+      { package: ["package.json: publishConfig.access is public; packs stay restricted until launch"] },
+    ],
+    [
+      "a package.json with no publishConfig",
+      directory => editJson(join(directory, "package.json"), ({ publishConfig: _publishConfig, ...manifest }) => manifest),
+      { package: ["package.json: publishConfig.access is missing; packs stay restricted until launch"] },
+    ],
+    [
       "upstream/ in package.json files",
       directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, files: [...z.array(z.string()).parse(manifest.files), "upstream"] })),
       { package: ["package.json: files entry upstream publishes upstream, which is validation material"] },
@@ -336,6 +360,34 @@ describe("validatePack", () => {
     expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "assert-used", status: "failed" },
       { id: "pass-statement", status: "ok" },
+    ]);
+  });
+});
+
+describe("packedFileFailures", () => {
+  const files = ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"];
+
+  it("passes package.json and everything files publishes, nested directories included", () => {
+    expect(packedFileFailures(files, ["package.json", "pack.json", "rules/a.json", "licenses/tool/UPSTREAM.md", "LICENSE", "NOTICE", "README.md"])).toEqual([]);
+  });
+
+  it("fails an entry files does not publish", () => {
+    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "checks/match.mjs"])).toEqual([
+      "CHANGELOG.md: package.json files does not publish it",
+      "checks/match.mjs: package.json files does not publish it",
+    ]);
+  });
+
+  it("passes a directory a pack adds to files, such as checks/", () => {
+    expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
+  });
+
+  it("fails validation material even when files publishes it", () => {
+    expect(packedFileFailures(["*", "upstream", "candidates"], ["conformance.json", "divergences.json", "upstream/tool/fixtures/a.py", "candidates/rules/x.json", "pack.json"])).toEqual([
+      "candidates/rules/x.json: validation material, never published",
+      "conformance.json: validation material, never published",
+      "divergences.json: validation material, never published",
+      "upstream/tool/fixtures/a.py: validation material, never published",
     ]);
   });
 });
