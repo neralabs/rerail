@@ -1,5 +1,6 @@
 //! Source-revision-bound rec6 preorder tape and transient ast-grep document.
 //! No Tree-sitter tree survives encoding; restoration never invokes a parser.
+use crate::code_rule_dsl::embed::Program;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::lines::LineTable;
 #[cfg(test)]
@@ -317,13 +318,15 @@ fn overflow_value(entries: &[(u32, u32)], index: u32, sentinel: u16) -> Result<u
 /// and `offset` what its kind codes are shifted by in the tape's grammar. A Blade view's nodes take
 /// the template span they stand for (`View::span`), kept inside their parent's, and its
 /// placeholders are left out.
-fn encode_tree(
+#[allow(clippy::too_many_arguments)]
+fn encode_tree<P: Program>(
     nodes: &mut Vec<Pending>,
     root: TsNode<'_>,
     parent: Option<u32>,
     language: &Language,
     offset: u16,
-    view: Option<&crate::code_rule_dsl::blade::view::View>,
+    field_offset: u16,
+    program: Option<&P>,
     budget: &impl Fn() -> bool,
 ) -> Result<(), String> {
     // Per kind id, the grammar's name for it and whether it is named, read once: a node whose
@@ -342,11 +345,13 @@ fn encode_tree(
         }
         visited += 1;
         let node = cursor.node();
-        let index = if view.is_some_and(|view| view.omitted(node)) {
+        let index = if program.is_some_and(|program| program.omitted(node)) {
             None
         } else {
             // The cursor's root is `root` itself, which has no field.
-            let field = cursor.field_id().map_or(0, |id| id.get());
+            let field = cursor
+                .field_id()
+                .map_or(0, |id| id.get().saturating_add(field_offset));
             Some(encode_node(
                 nodes,
                 node,
@@ -354,7 +359,7 @@ fn encode_tree(
                 field,
                 language,
                 offset,
-                view,
+                program,
                 &mut catalog,
             )?)
         };
@@ -382,14 +387,14 @@ fn encode_tree(
 
 /// Appends `node` under `parent` as the child in `field`; its tape index.
 #[allow(clippy::too_many_arguments)]
-fn encode_node<'l>(
+fn encode_node<'l, P: Program>(
     nodes: &mut Vec<Pending>,
     node: TsNode<'_>,
     parent: Option<u32>,
     field: u16,
     language: &'l Language,
     offset: u16,
-    view: Option<&crate::code_rule_dsl::blade::view::View>,
+    program: Option<&P>,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
 ) -> Result<u32, String> {
     let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
@@ -418,9 +423,9 @@ fn encode_node<'l>(
     } else if node.is_missing() && !node.byte_range().is_empty() {
         return Err("missing grammar symbol has a non-empty source span".into());
     }
-    let span = match view {
-        Some(view) => {
-            let span = view.span(node);
+    let span = match program {
+        Some(program) => {
+            let span = program.span(node);
             // A placeholder's anchor or a recovered node may reach past its parent's span.
             let (low, high) = parent.map_or((span.start, span.end), |parent| {
                 let parent = &nodes[parent as usize];
@@ -695,22 +700,38 @@ impl TapeImage {
             None,
             grammar.kinds.grammar(),
             0,
-            None,
+            0,
+            None::<&crate::code_rule_dsl::blade::view::View>,
             budget,
         )?;
-        // A Blade tape holds the PHP its template embeds as the root's last child.
-        if let Some(embedded) = grammar.kinds.embedded()
-            && let Some(view) = crate::code_rule_dsl::blade::view::View::build(root, source)
-        {
-            encode_tree(
-                &mut nodes,
-                view.root(),
-                Some(0),
-                embedded.php,
-                embedded.offset,
-                Some(&view),
-                budget,
-            )?;
+        // An embedding dialect's tape holds each program its embedders build from the tree as the
+        // root's next child (Blade's compiled view, `blade::view`), numbered as `KindCatalog`
+        // numbers the program's grammar.
+        let embeds = grammar.lang.embeds();
+        for (index, &(via, _)) in embeds.iter().enumerate() {
+            if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
+                continue;
+            }
+            crate::code_rule_dsl::language::with_embedder!(via, E => {
+                if let Some(program) = <E as crate::code_rule_dsl::embed::Embedder>::build(root, source) {
+                    let dialect = crate::code_rule_dsl::embed::Program::dialect(&program);
+                    let embedded = embeds
+                        .contains(&(via, dialect))
+                        .then(|| grammar.kinds.embedding(dialect))
+                        .flatten()
+                        .ok_or("an embedder built a program in a dialect its host does not embed")?;
+                    encode_tree(
+                        &mut nodes,
+                        crate::code_rule_dsl::embed::Program::root(&program),
+                        Some(0),
+                        embedded.grammar,
+                        embedded.kind_offset,
+                        embedded.field_offset,
+                        Some(&program),
+                        budget,
+                    )?;
+                }
+            });
         }
         checked(budget)?;
         for index in (1..nodes.len()).rev() {
@@ -1098,7 +1119,7 @@ impl TapeDoc {
             // from a node on that). A Blade tape's embedded program overlaps the template's
             // nodes (`blade::view`): its siblings may not, and `walk_anchor` scans them.
             if prev != NONE
-                && grammar.kinds.embedded().is_none()
+                && !grammar.kinds.has_embedded()
                 && nodes[prev as usize].end > nodes[index].end
             {
                 return Err("tape siblings out of byte order".into());
@@ -1307,7 +1328,7 @@ impl<'a> TapeNode<'a> {
     /// parent's first child. A Blade tape's siblings may overlap (its embedded program sits among
     /// the template's nodes), so its walk scans the parent's children from the first.
     fn walk_anchor(&self) -> Option<Self> {
-        if self.grammar.kinds.embedded().is_some() {
+        if self.grammar.kinds.has_embedded() {
             let container = self.parent().unwrap_or(*self);
             let start = self.rec().start;
             return container.children().find(|child| child.rec().end > start);

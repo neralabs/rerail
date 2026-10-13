@@ -119,7 +119,7 @@ impl NodeRef {
                 Some(doc) => Some(*doc.get_lang()),
                 None => doc.downcast_ref::<TapeDoc>().map(|doc| *doc.get_lang()),
             };
-            dialect.is_some_and(|dialect| dialect.kinds().embedded().is_none())
+            dialect.is_some_and(|dialect| !dialect.kinds().has_embedded())
         };
         if start >= end || root.parent().is_some() || !disjoint() {
             return self.find(root);

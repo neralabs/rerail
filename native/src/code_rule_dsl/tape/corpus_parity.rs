@@ -416,9 +416,9 @@ fn blade_tree_parity(
     if let Some(view) = &view {
         let offset = GrammarDialect::Blade
             .kinds()
-            .embedded()
+            .embedding(GrammarDialect::Php)
             .expect("Blade embeds PHP")
-            .offset;
+            .kind_offset;
         let program = view_records(
             view,
             view.root(),

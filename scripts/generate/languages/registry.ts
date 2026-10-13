@@ -84,6 +84,16 @@ export function languageRegistryProblems(entries: readonly { file: string; entry
       if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
     }
     for (const embed of entry.embeds ?? []) if (!ids.has(embed.language)) problems.push(`${file}: embeds unknown language ${embed.language}`);
+    if (entry.status === "supported") {
+      for (const embed of entry.embeds ?? []) {
+        const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
+        if (embedded && embedded.status !== "supported") {
+          problems.push(
+            `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,
+          );
+        }
+      }
+    }
     if (entry.status !== "supported") continue;
     const own = entry.dialects.map(dialect => dialect.label);
     const runsOn = entry.runsOn ?? own;

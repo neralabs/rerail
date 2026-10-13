@@ -1,7 +1,7 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
-use crate::code_rule_dsl::language::SourceType;
+use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
@@ -805,7 +805,7 @@ impl ScopeRules for Blade {
         root: &Node<'_, D>,
         _: Reading,
     ) -> Result<(), BuildError> {
-        for region in <Self as Adapter>::regions(root) {
+        for region in <Self as Adapter>::regions(root, GrammarDialect::Blade) {
             php::visit_blade_program(builder, &region.root)?;
         }
         Ok(())

@@ -49,27 +49,15 @@
 //! and components); echoes in an attribute's name or value, or in text the grammar's error
 //! recovery left unread, are found as Blade's compiler finds them.
 
+use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use tree_sitter::{Node as TsNode, Parser, Tree};
 
-/// One stretch of the program's text and the template bytes it stands for.
-#[derive(Clone, Debug)]
-struct Segment {
-    /// Where it starts in the program.
-    at: usize,
-    end: usize,
-    anchor: Range<usize>,
-    /// Copied from the template: each byte maps to the byte at the same offset of `anchor`.
-    copied: bool,
-    /// A placeholder the grammar needs and the view does not keep (`Emitter::placeholder`).
-    omit: bool,
-}
-
 /// The embedded PHP program and its map back to the template.
 pub(crate) struct View {
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     tree: Tree,
 }
 
@@ -277,7 +265,7 @@ impl View {
         let mut emitter = Emitter {
             template,
             out: String::new(),
-            segments: Vec::new(),
+            segments: SegmentMap::new(),
             loosened: 0,
         };
         emitter.children(root);
@@ -299,69 +287,27 @@ impl View {
         self.tree.root_node()
     }
 
-    /// The segment holding program byte `at` (the last one at the end of the program).
-    fn segment(&self, at: usize) -> &Segment {
-        let index = self
-            .segments
-            .partition_point(|segment| segment.end <= at)
-            .min(self.segments.len() - 1);
-        &self.segments[index]
-    }
-
-    /// The template position a node starting at program byte `at` starts at.
-    fn start(&self, at: usize) -> usize {
-        let segment = self.segment(at);
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.start
-        }
-    }
-
-    /// The template position a node ending at program byte `at` ends at.
-    fn end(&self, at: usize) -> usize {
-        let segment = self.segment(at.saturating_sub(1));
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.end
-        }
-    }
-
     /// The template bytes a node of the program stands for.
     pub(crate) fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        let range = node.byte_range();
-        if range.is_empty() {
-            let at = self.start(range.start);
-            return at..at;
-        }
-        let start = self.start(range.start);
-        start..self.end(range.end).max(start)
+        self.segments.span(node)
     }
 
     /// Whether a node is part of a placeholder the view does not keep.
     pub(crate) fn omitted(&self, node: TsNode<'_>) -> bool {
-        let range = node.byte_range();
-        !range.is_empty() && {
-            let segment = self.segment(range.start);
-            segment.omit && range.end <= segment.end
-        }
+        self.segments.omitted(node)
     }
 
     /// The template ranges the program copies byte for byte, in program order.
     #[cfg(test)]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.segments
-            .iter()
-            .filter(|segment| segment.copied)
-            .map(|segment| segment.anchor.clone())
+        self.segments.copied()
     }
 }
 
 struct Emitter<'t> {
     template: &'t str,
     out: String,
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     /// Where the text `loose` has read ends: a run of attributes is read once, from its first.
     loosened: usize,
 }
@@ -454,13 +400,7 @@ impl<'t> Emitter<'t> {
     fn push(&mut self, text: &str, anchor: Range<usize>, copied: bool, omit: bool) {
         let at = self.out.len();
         self.out.push_str(text);
-        self.segments.push(Segment {
-            at,
-            end: self.out.len(),
-            anchor,
-            copied,
-            omit,
-        });
+        self.segments.push(at, self.out.len(), anchor, copied, omit);
     }
 
     /// Writes PHP Blade wraps the template's PHP in, standing for the template bytes `anchor`.

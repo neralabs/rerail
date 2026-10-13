@@ -88,6 +88,16 @@ describe("the language registry", () => {
       "languages/two.json: embeds unknown language three",
     ]);
   });
+  it("refuses supported languages embedding planned languages", () => {
+    expect(
+      problems(
+        { ...supported("one", ".one", 1), embeds: [{ language: "two", via: "script-block" }] },
+        planned("two", ".two"),
+      ),
+    ).toEqual([
+      "languages/one.json: embeds planned language two; a supported language embeds only supported ones",
+    ]);
+  });
 
   it("routes a planned language's files to no dialect, reading them as text", () => {
     for (const entry of LANGUAGE_REGISTRY.filter(entry => entry.status === "planned")) {
