@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import type { UpdateResult, UpdateStatus } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory, rollbackRestoringPath } from "../engine/storage/database.js";
 import { RERAIL_SCHEMA_VERSION } from "../engine/storage/migrations.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
@@ -115,38 +115,61 @@ function snapshotTransition(databasePath: string): SnapshotTransition | undefine
   }
 }
 
+/** Why `restoreInPlace` left the database as it was. */
+type RestoreRefusal = "open" | "restoring";
+
 /**
  * Puts copy `snapshot` back into the database at `path`, in place and through SQLite, after saving what the database
- * holds as `kept`. Writing the same file, rather than renaming another over it, keeps every connection, open or opening,
- * on the restored database: none goes on writing to a file that has been moved aside. False, with nothing changed, while
- * another connection has the database in WAL mode (a coding agent session): SQLite leaves WAL mode only for its last
- * connection, and that session would go on with the database it already read.
+ * holds as `kept` (mode 0600). Writing the same file, rather than renaming another over it, keeps every connection, open
+ * or opening, on the restored database: none goes on writing to a file that has been moved aside. `rerail.sqlite.restoring`
+ * is held from before the check through the copy, and every Rerail opener refuses the database while it exists
+ * (`connectSqlite`), so no session commits between the save and the copy, where its change would be in neither file.
+ * Refused, with nothing changed, while that file exists (another rollback runs, or one was interrupted) or another
+ * connection has the database in WAL mode (a coding agent session, opened before the file existed): SQLite leaves WAL
+ * mode only for its last connection, and that session would go on with the database it already read. Throws when the
+ * copy did not reach the file (`floor`, the copy's schema floor, is not what the file now records).
  */
-async function restoreInPlace(path: string, snapshot: string, kept: string): Promise<boolean> {
-  const database = new Database(path, { fileMustExist: true });
+async function restoreInPlace(path: string, snapshot: string, kept: string, floor: number): Promise<RestoreRefusal | undefined> {
+  const restoring = rollbackRestoringPath(path);
   try {
-    database.pragma("busy_timeout = 0");
-    let mode: unknown;
+    closeSync(openSync(restoring, "wx", 0o600));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "restoring";
+    throw error;
+  }
+  try {
+    const database = new Database(path, { fileMustExist: true });
     try {
-      mode = database.pragma("journal_mode = DELETE", { simple: true });
-    } catch {
-      // SQLITE_BUSY: another connection holds the database.
-      return false;
+      database.pragma("busy_timeout = 0");
+      let mode: unknown;
+      try {
+        mode = database.pragma("journal_mode = DELETE", { simple: true });
+      } catch {
+        // SQLITE_BUSY: another connection holds the database.
+        return "open";
+      }
+      if (mode !== "delete") return "open";
+      for (const suffix of ["", "-wal", "-shm", "-journal"]) rmSync(`${kept}${suffix}`, { force: true });
+      // VACUUM INTO fills an empty file, keeping the mode it was created with.
+      closeSync(openSync(kept, "wx", 0o600));
+      database.prepare("VACUUM INTO ?").run(kept);
+    } finally {
+      database.close();
     }
-    if (mode !== "delete") return false;
-    for (const suffix of ["", "-wal", "-shm", "-journal"]) rmSync(`${kept}${suffix}`, { force: true });
-    database.prepare("VACUUM INTO ?").run(kept);
+    const source = new Database(snapshot, { readonly: true, fileMustExist: true });
+    try {
+      await source.backup(path);
+    } finally {
+      source.close();
+    }
+    chmodSync(path, 0o600);
+    // better-sqlite3 resolves a backup whose first step found the file busy without copying anything.
+    const written = schemaFloor(path);
+    if (written !== floor) throw new Error(`the copy did not reach the database, which is still at schema v${String(written)}`);
+    return undefined;
   } finally {
-    database.close();
+    rmSync(restoring, { force: true });
   }
-  const source = new Database(snapshot, { readonly: true, fileMustExist: true });
-  try {
-    await source.backup(path);
-  } finally {
-    source.close();
-  }
-  chmodSync(path, 0o600);
-  return true;
 }
 
 /**
@@ -157,7 +180,8 @@ async function restoreInPlace(path: string, snapshot: string, kept: string): Pro
  * a floor it already supported) keeps the database as it is, and a copy taken for another change is never used. A
  * record from before `fromReads` was kept is judged by the copy's own floor. `stopDaemon` runs first: the daemon holds
  * the database open. The copy is written into the database file itself (`restoreInPlace`), and not while a coding agent
- * session has it open in WAL mode; the person is then told how to finish. A restore that fails is reported, never
+ * session has it open in WAL mode or `rerail.sqlite.restoring` exists (another rollback runs, or one was interrupted);
+ * the person is then told how to finish. A restore that fails, or whose copy did not reach the file, is reported, never
  * fatal: the version has rolled back already.
  */
 export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
@@ -172,11 +196,15 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
-    if (!await restoreInPlace(databasePath, snapshot, kept)) {
+    const refusal = await restoreInPlace(databasePath, snapshot, kept, before);
+    if (refusal !== undefined) {
+      const restoring = rollbackRestoringPath(databasePath);
+      const why = refusal === "open"
+        ? "coding agent sessions still have it open. Close them"
+        : `${restoring} exists: another rollback is running, or one was interrupted. Once no rollback runs, delete ${restoring}`;
       process.stderr.write(
-        `rerail: ${databasePath} is at schema v${current}, which the version rolled back to cannot read, and coding agent `
-        + `sessions still have it open. Close them, then copy ${snapshot} to ${databasePath} (keep the current file if you need what `
-        + "changed since the update).\n",
+        `rerail: ${databasePath} is at schema v${current}, which the version rolled back to cannot read, and ${why}, then `
+        + `copy ${snapshot} to ${databasePath} (keep the current file if you need what changed since the update).\n`,
       );
       return result;
     }
