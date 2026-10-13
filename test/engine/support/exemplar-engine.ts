@@ -8,11 +8,11 @@
  *
  * ```ts
  * vi.mock("../../../src/engine/native/native.js", async importOriginal =>
- *   (await import("../../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
+ *   (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
  * ```
  */
-import { codeRuleLanguageNotSupported } from "../../src/engine/code-rule/code-rule-language-support.js";
-import type * as NativeModule from "../../src/engine/native/native.js";
+import { codeRuleLanguageNotSupported } from "../../../src/engine/code-rule/code-rule-language-support.js";
+import type * as NativeModule from "../../../src/engine/native/native.js";
 
 /**
  * `native` with a compile that refuses a rule of the exemplar, or one using a capability its language has

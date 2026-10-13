@@ -19,11 +19,11 @@ import { compareDeterministicStrings } from "../../../src/engine/stable-json.js"
 import { fixturesPath } from "../../support/oracles.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
-// planned language (test/support/exemplar-registry.ts, exemplar-engine.ts).
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
 vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
-  (await import("../../support/exemplar-registry.js")).exemplarRegistryModule());
+  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
 vi.mock("../../../src/engine/native/native.js", async importOriginal =>
-  (await import("../../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
+  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
