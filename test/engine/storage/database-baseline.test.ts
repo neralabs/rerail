@@ -475,6 +475,24 @@ describe("the migration path", () => {
     })()));
   });
 
+  // Self-review: a reader that cannot write the baseline file used to get it in its old shape, and this build's rules
+  // readers then failed on rule_settings columns it lacks. It is refused with the reason instead, and left untouched.
+  it("refuses a read-only open of a baseline database this process cannot upgrade, naming the steps and why", async () => {
+    const path = await baselineFile(`
+      INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0);
+      INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at) VALUES ('repository', 'repo', '', 'rule', 'complexity-cyclomatic-python', 0, 0)`);
+    settledBytes(path);
+    const before = readFileSync(path);
+    chmodSync(path, 0o400);
+    try {
+      expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadBundledCatalog(), "repo"))
+        .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+    } finally {
+      chmodSync(path, 0o600);
+    }
+    expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {
     const path = await temporaryDatabase();
     stampedFile(path, SETTING_ROW);
