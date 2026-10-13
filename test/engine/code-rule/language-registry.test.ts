@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  LANGUAGES_DIRECTORY,
   LANGUAGE_REGISTRY_MODULE_PATH,
   languageEntrySchema,
   languageRegistryProblems,
@@ -10,7 +13,15 @@ import {
 } from "../../../scripts/generate/languages/registry.js";
 import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { generatedEditPaths } from "../../../src/engine/code-rule/code-rule-bridge.js";
-import { LANGUAGE_REGISTRY, CODE_RULE_DIALECTS, codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import {
+  LANGUAGE_REGISTRY,
+  CODE_RULE_AST_LANGUAGES,
+  CODE_RULE_DIALECTS,
+  CODE_RULE_LANGUAGE_IDS,
+  CODE_RULE_PLANNED_LANGUAGES,
+  codeRuleDialectForPath,
+} from "../../../src/engine/code-rule/code-rule-languages.js";
+import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../../support/exemplar-registry.js";
 
 const capabilities = (support: "supported" | "refused" | "not-supported-yet") => ({ scope: support, value: support, arguments: support, calls: support, formatArgs: support });
 
@@ -37,10 +48,54 @@ describe("the language registry", () => {
   it("validates, and the host's generated module is current", () => {
     const entries = readLanguageRegistry();
     expect(readFileSync(LANGUAGE_REGISTRY_MODULE_PATH, "utf8")).toBe(renderLanguageRegistryModule(entries));
-    expect(entries.map(entry => [entry.id, entry.status])).toEqual([
+    expect(entries.slice(0, 5).map(entry => [entry.id, entry.status])).toEqual([
       ["python", "supported"], ["typescript", "supported"], ["javascript", "supported"], ["php", "supported"], ["blade", "supported"],
-      ["rust", "planned"], ["sql", "planned"], ["vue", "planned"],
     ]);
+    // Supported languages come first, in the order they were added; planned ones follow.
+    const firstPlanned = entries.findIndex(entry => entry.status === "planned");
+    expect(entries.slice(firstPlanned).every(entry => entry.status === "planned")).toBe(true);
+  });
+
+  it("keeps the test-only exemplar out of the product registry and the host module", () => {
+    expect(readLanguageRegistry().map(entry => entry.id)).not.toContain(EXEMPLAR);
+    expect(readdirSync(LANGUAGES_DIRECTORY)).not.toContain(`${EXEMPLAR}.json`);
+    expect(readFileSync(LANGUAGE_REGISTRY_MODULE_PATH, "utf8")).not.toContain(EXEMPLAR);
+    expect(CODE_RULE_LANGUAGE_IDS).not.toContain(EXEMPLAR);
+    expect(CODE_RULE_PLANNED_LANGUAGES).not.toContain(EXEMPLAR);
+  });
+
+  it("reads the exemplar beside the product registry for tests: planned, with every capability not supported yet", () => {
+    const product = readLanguageRegistry();
+    const entries = exemplarLanguageRegistry();
+    expect(entries.map(entry => entry.id).toSorted()).toEqual([...product.map(entry => entry.id), EXEMPLAR].toSorted());
+    expect(entries.filter(entry => entry.status === "supported")).toEqual(product.filter(entry => entry.status === "supported"));
+    const exemplar = entries.find(entry => entry.id === EXEMPLAR)!;
+    expect(exemplar).toMatchObject({ status: "planned", family: EXEMPLAR, suppressions: [], dialects: [{ label: EXEMPLAR, suffixes: [".exemplar"] }] });
+    expect(exemplar.dialects[0]).not.toHaveProperty("tapeTag");
+    expect(Object.values(exemplar.capabilities).every(support => support === "not-supported-yet")).toBe(true);
+    expect(exemplarRegistryModule().CODE_RULE_PLANNED_LANGUAGES).toContain(EXEMPLAR);
+    expect(exemplarRegistryModule().CODE_RULE_AST_LANGUAGES).toEqual(CODE_RULE_AST_LANGUAGES);
+  });
+
+  it("checks test-only languages like any entry, and refuses one that collides with the product registry or is supported", () => {
+    const product = mkdtempSync(join(tmpdir(), "rerail-product-languages-"));
+    const directory = mkdtempSync(join(tmpdir(), "rerail-test-languages-"));
+    try {
+      const write = (where: string, entry: LanguageEntry) => writeFileSync(join(where, `${entry.id}.json`), JSON.stringify(entry));
+      write(product, supported("one", ".one", 1));
+      write(directory, planned("two", ".one"));
+      expect(() => readLanguageRegistry(product, directory)).toThrow("native/test-languages/two.json: suffix .one is also languages/one.json's");
+      rmSync(join(directory, "two.json"));
+      write(directory, supported("three", ".three", 3));
+      expect(() => readLanguageRegistry(product, directory)).toThrow("native/test-languages/three.json: a test-only language is planned");
+      rmSync(join(directory, "three.json"));
+      write(directory, planned("four", ".four"));
+      expect(readLanguageRegistry(product, directory).map(entry => entry.id)).toEqual(["one", "four"]);
+      expect(readLanguageRegistry(product).map(entry => entry.id)).toEqual(["one"]);
+    } finally {
+      rmSync(product, { recursive: true, force: true });
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("refuses repeated ids, labels, suffixes and tape tags", () => {

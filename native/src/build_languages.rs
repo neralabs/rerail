@@ -126,9 +126,13 @@ enum Grammar<'a> {
     AstGrep(&'a str),
 }
 
-/// Reads and validates every registry file in `directory`, writes `language_registry.rs` to
-/// `out`, and returns each file read with its bytes (they are part of the engine's identity).
-pub(crate) fn generate(directory: &Path, vendored: &[&str], out: &Path) -> Vec<(String, Vec<u8>)> {
+/// A registry directory's entries, each with the name it is reported by (`label/<file>`) and
+/// its bytes, in file-name order. Every entry is validated on its own.
+fn read_directory(
+    directory: &Path,
+    label: &str,
+    vendored: &[&str],
+) -> Vec<(String, Entry, Vec<u8>)> {
     let mut files = std::fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("{} is unreadable: {error}", directory.display()))
         .map(|entry| entry.expect("registry entry").path())
@@ -139,10 +143,9 @@ pub(crate) fn generate(directory: &Path, vendored: &[&str], out: &Path) -> Vec<(
         .collect::<Vec<PathBuf>>();
     files.sort();
     let mut read = Vec::new();
-    let mut entries = Vec::new();
     for path in &files {
         let name = format!(
-            "languages/{}",
+            "{label}/{}",
             path.file_name().expect("file name").to_string_lossy()
         );
         let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{name}: {error}"));
@@ -150,17 +153,58 @@ pub(crate) fn generate(directory: &Path, vendored: &[&str], out: &Path) -> Vec<(
             .unwrap_or_else(|error| panic!("{name} is not a language registry entry: {error}"));
         let stem = path.file_stem().expect("file stem").to_string_lossy();
         validate_entry(&name, &stem, &entry, vendored);
+        read.push((name, entry, bytes));
+    }
+    read
+}
+
+/// Reads and validates every registry file in `directory`, writes `language_registry.rs` to
+/// `out`, and returns each file read with its bytes (they are part of the engine's identity).
+///
+/// `test_directory` holds the languages only tests see (`native/test-languages/`): planned entries,
+/// checked by the same rules and against the registry for repeated ids, labels, suffixes and
+/// tape tags. They reach the generated code only as `#[cfg(test)]` items (the planned list, and
+/// `TEST_PLANNED_LANGUAGES`), and are not among the files returned, so they never change the
+/// engine's identity.
+pub(crate) fn generate(
+    directory: &Path,
+    test_directory: Option<&Path>,
+    vendored: &[&str],
+    out: &Path,
+) -> Vec<(String, Vec<u8>)> {
+    let mut read = Vec::new();
+    let mut entries = Vec::new();
+    for (name, entry, bytes) in read_directory(directory, "languages", vendored) {
         read.push((name.clone(), bytes));
         entries.push((name, entry));
     }
     validate_registry(&entries);
+    if let Some(test_directory) = test_directory {
+        for (name, entry, _) in read_directory(test_directory, "native/test-languages", vendored) {
+            assert!(
+                entry.status == Status::Planned,
+                "{name}: a test-only language is planned: it must not need an engine variant"
+            );
+            entries.push((name, entry));
+        }
+    }
+    validate_registry(&entries);
+    let mut test_only = entries
+        .split_off(read.len())
+        .into_iter()
+        .map(|(_, entry)| entry.id)
+        .collect::<Vec<_>>();
+    test_only.sort();
     entries.sort_by_key(|(_, entry)| order(entry));
     let entries = entries
         .into_iter()
         .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
-    std::fs::write(out.join("language_registry.rs"), render(&entries))
-        .expect("generated language registry is writable");
+    std::fs::write(
+        out.join("language_registry.rs"),
+        render(&entries, &test_only),
+    )
+    .expect("generated language registry is writable");
     read
 }
 
@@ -356,7 +400,11 @@ fn validate_registry(entries: &[(String, Entry)]) {
     let mut labels = BTreeMap::new();
     let mut suffixes = BTreeMap::new();
     let mut tags = BTreeMap::new();
+    let mut owners = BTreeMap::new();
     for (name, entry) in entries {
+        if let Some(other) = owners.insert(entry.id.as_str(), name) {
+            panic!("{name}: id {} is also {other}'s", entry.id);
+        }
         assert!(
             entry.capabilities.keys().collect::<Vec<_>>() == capabilities,
             "{name}: capabilities must name the same capabilities as {}",
@@ -466,7 +514,7 @@ fn pascal(name: &str) -> String {
         .collect()
 }
 
-fn render(entries: &[Entry]) -> String {
+fn render(entries: &[Entry], test_planned: &[String]) -> String {
     let supported = entries
         .iter()
         .filter(|entry| entry.status == Status::Supported)
@@ -708,11 +756,38 @@ fn render(entries: &[Entry]) -> String {
         .filter(|entry| entry.status == Status::Planned)
         .map(|entry| format!("{:?}", entry.id))
         .collect::<Vec<_>>();
-    let _ = writeln!(
-        out,
-        "pub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
-        planned.join(", ")
-    );
+    if test_planned.is_empty() {
+        let _ = writeln!(
+            out,
+            "pub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            planned.join(", ")
+        );
+    } else {
+        let test_planned = test_planned
+            .iter()
+            .map(|id| format!("{id:?}"))
+            .collect::<Vec<_>>();
+        let with_test = planned
+            .iter()
+            .chain(&test_planned)
+            .cloned()
+            .collect::<Vec<_>>();
+        let _ = writeln!(
+            out,
+            "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            planned.join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "/// Tests also see the languages only tests plan (`native/test-languages/`), so a test of a\n/// planned language never names one the product may flip to supported.\n#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            with_test.join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "/// The languages only tests plan: `PLANNED_LANGUAGES` less the registry's own.\n#[cfg(test)]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            test_planned.join(", ")
+        );
+    }
 
     let mut families: Vec<(&str, Vec<String>, Vec<&str>)> = Vec::new();
     for entry in &supported {
@@ -812,8 +887,9 @@ mod tests {
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
 
-    /// A registry directory and an output directory, removed when dropped.
-    struct Registry(PathBuf);
+    /// A registry directory, optionally a directory of test-only languages, and an output
+    /// directory, removed when dropped.
+    struct Registry(PathBuf, bool);
 
     impl Registry {
         fn new(name: &str, entries: &[Value]) -> Self {
@@ -830,11 +906,32 @@ mod tests {
                 )
                 .expect("registry file");
             }
-            Self(root)
+            Self(root, false)
+        }
+
+        /// Adds the languages only tests see.
+        fn with_test_languages(mut self, entries: &[Value]) -> Self {
+            std::fs::create_dir_all(self.0.join("test-languages")).expect("test directory");
+            for entry in entries {
+                let id = entry["id"].as_str().expect("id");
+                std::fs::write(
+                    self.0.join("test-languages").join(format!("{id}.json")),
+                    entry.to_string(),
+                )
+                .expect("test-only registry file");
+            }
+            self.1 = true;
+            self
         }
 
         fn generate(&self) -> String {
-            generate(&self.0.join("languages"), &["one"], &self.0.join("out"));
+            let test_directory = self.0.join("test-languages");
+            generate(
+                &self.0.join("languages"),
+                self.1.then_some(test_directory.as_path()),
+                &["one"],
+                &self.0.join("out"),
+            );
             std::fs::read_to_string(self.0.join("out/language_registry.rs")).expect("generated")
         }
     }
@@ -939,20 +1036,170 @@ mod tests {
         assert!(!generated.contains("GrammarDialect::Two"));
     }
 
+    /// The ids of the registry files whose status is `planned`, in id order.
+    fn planned_ids(directory: &Path) -> Vec<String> {
+        let mut ids = std::fs::read_dir(directory)
+            .expect("registry directory")
+            .map(|file| file.expect("registry file").path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .map(|path| {
+                serde_json::from_slice::<Value>(&std::fs::read(path).expect("registry file"))
+                    .expect("registry entry")
+            })
+            .filter(|entry| entry["status"] == "planned")
+            .map(|entry| entry["id"].as_str().expect("id").to_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
+    fn quoted(ids: &[String]) -> String {
+        ids.iter()
+            .map(|id| format!("{id:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let vendored = ["python", "typescript", "tsx"];
+        let planned = quoted(&planned_ids(&root.join("../languages")));
         let out = Registry::new("repository", &[]);
         generate(
             &root.join("../languages"),
-            &["python", "typescript", "tsx"],
+            None,
+            &vendored,
             &out.0.join("out"),
         );
-        let generated =
+        let product =
             std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
-        assert!(generated.contains(
-            "pub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"rust\", \"sql\", \"vue\"];"
+        assert!(product.contains(&format!(
+            "pub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
+        )));
+        assert!(!product.contains("exemplar"));
+
+        generate(
+            &root.join("../languages"),
+            Some(&root.join("test-languages")),
+            &vendored,
+            &out.0.join("out"),
+        );
+        let tested =
+            std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
+        assert!(tested.contains(&format!(
+            "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
+        )));
+        assert!(tested.contains(&format!(
+            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}, \"exemplar\"];"
+        )));
+        assert!(tested.contains(
+            "#[cfg(test)]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[\"exemplar\"];"
         ));
+    }
+
+    #[test]
+    fn the_test_only_registry_holds_the_exemplar_and_changes_no_identity() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let out = Registry::new("exemplar", &[]);
+        let read = |test_directory: Option<&Path>| {
+            generate(
+                &root.join("../languages"),
+                test_directory,
+                &["python", "typescript", "tsx"],
+                &out.0.join("out"),
+            )
+        };
+        let with_test = read(Some(&root.join("test-languages")));
+        let without = read(None);
+        assert_eq!(with_test, without);
+        assert!(
+            with_test
+                .iter()
+                .all(|(name, _)| name.starts_with("languages/"))
+        );
+        let exemplar: Value = serde_json::from_slice(
+            &std::fs::read(root.join("test-languages/exemplar.json")).expect("exemplar"),
+        )
+        .expect("exemplar entry");
+        assert_eq!(exemplar["status"], "planned");
+        assert_eq!(exemplar["dialects"][0]["suffixes"], json!([".exemplar"]));
+        assert!(exemplar["dialects"][0].get("tapeTag").is_none());
+        assert_eq!(exemplar["suppressions"], json!([]));
+        assert!(
+            exemplar["capabilities"]
+                .as_object()
+                .expect("capabilities")
+                .values()
+                .all(|support| support == "not-supported-yet")
+        );
+    }
+
+    #[test]
+    fn a_test_only_language_is_listed_for_tests_alone() {
+        let generated = Registry::new(
+            "test-only",
+            &[supported("one", ".one", 1), planned("two", ".two")],
+        )
+        .with_test_languages(&[planned("three", ".three")])
+        .generate();
+        assert!(generated.contains(
+            "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"two\"];"
+        ));
+        assert!(generated.contains(
+            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"two\", \"three\"];"
+        ));
+        assert!(generated.contains("&[\"three\"];"));
+        assert!(!generated.contains("label: \"three\""));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "native/test-languages/two.json: suffix .one is also languages/one.json's"
+    )]
+    fn a_test_only_language_cannot_reuse_a_suffix() {
+        Registry::new("test-only-suffix", &[supported("one", ".one", 1)])
+            .with_test_languages(&[planned("two", ".one")])
+            .generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "native/test-languages/one.json: id one is also")]
+    fn a_test_only_language_cannot_reuse_an_id() {
+        Registry::new("test-only-id", &[supported("one", ".one", 1)])
+            .with_test_languages(&[planned("one", ".two")])
+            .generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "native/test-languages/two.json: dialect label one is also")]
+    fn a_test_only_language_cannot_reuse_a_label() {
+        let mut two = planned("two", ".two");
+        two["dialects"][0]["label"] = json!("one");
+        Registry::new("test-only-label", &[supported("one", ".one", 1)])
+            .with_test_languages(&[two])
+            .generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "a planned language supports no capability yet")]
+    fn a_test_only_language_is_validated_like_any_entry() {
+        let mut two = planned("two", ".two");
+        two["capabilities"]["scope"] = json!("supported");
+        Registry::new("test-only-invalid", &[supported("one", ".one", 1)])
+            .with_test_languages(&[two])
+            .generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "a test-only language is planned")]
+    fn a_test_only_language_is_never_supported() {
+        Registry::new("test-only-supported", &[supported("one", ".one", 1)])
+            .with_test_languages(&[supported("two", ".two", 2)])
+            .generate();
     }
 
     #[test]

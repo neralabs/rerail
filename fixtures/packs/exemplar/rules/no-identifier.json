@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
-  "id": "vue:no-v-html",
+  "id": "exemplar:no-identifier",
   "revision": 1,
   "mode": "steer",
-  "description": "A v-html directive, which renders raw HTML.",
+  "description": "An identifier, which the exemplar language never has a reader for.",
   "scope": {
     "include": [
       "**/*"
@@ -12,20 +12,19 @@
   },
   "clauses": [
     {
-      "id": "v-html",
+      "id": "identifier",
       "forbid": {
         "ast": {
-          "language": "vue",
+          "language": "exemplar",
           "rule": {
-            "kind": "directive_attribute",
-            "regex": "^v-html"
+            "kind": "identifier"
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
-        "code": "VUE-V-HTML",
-        "message": "v-html renders raw HTML"
+        "code": "EXEMPLAR-IDENTIFIER",
+        "message": "an identifier"
       }
     }
   ]
