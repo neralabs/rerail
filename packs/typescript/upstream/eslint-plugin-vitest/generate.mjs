@@ -15,7 +15,8 @@
 // (@typescript-eslint/rule-tester) parses every case, plus the case's own parserOptions; its globals and settings are
 // left out. A case with another parser is left out. A case's code is written to a test file, fixtures/<rule>/<n>.test.ts
 // (.test.tsx with JSX, or the TypeScript-family extension of its filename after `.test`). Code that does not parse is left out. Each kept file is
-// one analysis unit.
+// one analysis unit. Rerail's own cases (AUTHORED, below) are written beside them as fixtures/<rule>/rerail-<name>.test.ts,
+// linted the same way, and listed as Rerail's in UPSTREAM.md beside this recorder.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +31,125 @@ const CHECKOUT = { repository: "https://github.com/vitest-dev/eslint-plugin-vite
 const PREFIX = "vitest/";
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
+
+/**
+ * Cases Rerail wrote for the plugin to score: inputs the ports once misread. Each is linted with every pack rule, like
+ * the plugin's own cases. Upstream classifies a call as Vitest's only when its head is a global or bound by `vitest`
+ * (`resolveVitestFn` in src/utils/parse-vitest-fn-call.ts), so the node:test, bun:test, AVA and local bindings
+ * report nothing, and the `vitest` bindings (named import, `require`, `await import`, `.extend`) report as globals do.
+ */
+const AUTHORED = [
+  {
+    rule: "no-focused-tests",
+    name: "node-test",
+    code: `import { describe, it } from 'node:test';
+
+describe.only('suite', () => {
+  it.only('focused', t => {
+    t.assert.ok(true);
+  });
+  it.skip('skipped', () => {});
+  it('todo');
+});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "node-test-default",
+    code: `import test from 'node:test';
+
+test.only('focused', t => {
+  t.assert.ok(true);
+});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "bun-test",
+    code: `import { describe, it } from 'bun:test';
+
+describe.only('suite', () => {
+  it.skip('skipped', () => {});
+  it('todo');
+});
+`,
+  },
+  {
+    rule: "expect-expect",
+    name: "ava",
+    code: `import test from 'ava';
+
+test('filters', t => {
+  t.deepEqual([1, 0].filter(Boolean), [1]);
+});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "local-binding",
+    code: `const test = { only() {}, skip() {} };
+
+test.only();
+test.skip();
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "parameter",
+    code: `export function suite(it: any) {
+  it.only('focused', () => {});
+  it('todo');
+}
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "global-extend",
+    code: `const it = test.extend({});
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-import",
+    code: `import { describe, it, test as check } from 'vitest';
+
+describe.only('suite', () => {
+  it.skip('skipped', () => {});
+  check('asserts nothing', () => {});
+  it('todo');
+});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-require",
+    code: `const { it } = require('vitest');
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-dynamic-import",
+    code: `const { it } = await import('vitest');
+
+it.skip('skipped', () => {});
+`,
+  },
+  {
+    rule: "expect-expect",
+    name: "vitest-extend",
+    code: `import { test as base } from 'vitest';
+
+const it = base.extend({});
+
+it.only('focused', () => {});
+it('asserts nothing', () => {});
+`,
+  },
+];
 
 function parseArguments(argv) {
   const options = {};
@@ -193,21 +313,46 @@ function extractFixtures() {
       }
     }
   }
-  return { fixtures, files, languages: [...languages].map(([group, members]) => ({ files: members, languageOptions: { parserOptions: JSON.parse(group) } })), counts };
+  const authored = [];
+  for (const { rule, name, code } of AUTHORED) {
+    if (!RULES.includes(`${PREFIX}${rule}`)) throw new Error(`AUTHORED ${name}: ${rule} is not a pack rule`);
+    const file = `${rule}/rerail-${name}.test.ts`;
+    mkdirSync(join(fixtures, rule), { recursive: true });
+    writeFileSync(join(fixtures, file), code);
+    files.push(file);
+    authored.push(file);
+  }
+  return { fixtures, files, authored, languages: [...languages].map(([group, members]) => ({ files: members, languageOptions: { parserOptions: JSON.parse(group) } })), counts };
+}
+
+/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
+function writeAuthoredRecord(authored) {
+  const rows = authored.map(file => `| \`upstream/${TOOL}/fixtures/${file}\` | written by Rerail |`);
+  const text = `# ${TOOL} ${VERSION}: cases Rerail wrote
+
+The fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\`licenses/${TOOL}/UPSTREAM.md\`). Each is an input the ports once misread; \`generate.mjs\` holds them (\`AUTHORED\`) and records the plugin's findings on them in \`fixtures.expected.json\`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under \`licenses/\`. Paths are relative to the pack directory.
+
+| File | Origin |
+|---|---|
+${rows.join("\n")}
+`;
+  writeFileSync(join(HERE, "UPSTREAM.md"), text);
 }
 
 async function recordFixtures() {
-  const { fixtures, files, languages, counts } = extractFixtures();
+  const { fixtures, files, authored, languages, counts } = extractFixtures();
   const { findings, skipped } = await lint(ESLint, fixtures, config(languages), files, RULES);
-  for (const { path } of skipped) {
+  for (const { path, reason } of skipped) {
+    if (authored.includes(path)) throw new Error(`AUTHORED ${path} does not parse: ${reason}`);
     rmSync(join(fixtures, path));
     const count = counts[`${PREFIX}${path.split("/")[0]}`];
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
   const unparsed = new Set(skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
+  writeAuthoredRecord([...authored].sort());
   writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept }, findings);
-  console.log(`${TOOL} fixtures: ${kept.length} files, ${findings.length} findings`);
+  console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }
 

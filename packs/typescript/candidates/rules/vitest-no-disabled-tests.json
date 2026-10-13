@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-no-disabled-tests",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
   "scope": {
@@ -34,6 +34,172 @@
   },
   "clauses": [
     {
+      "id": "vitest-function",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "vitest-import": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "import_specifier",
+                  "not": {
+                    "regex": "^type\\b"
+                  },
+                  "has": {
+                    "field": "name",
+                    "regex": "^(?:describe|it|test|suite|bench|xit|xtest|xdescribe)$"
+                  },
+                  "inside": {
+                    "kind": "import_statement",
+                    "stopBy": "end",
+                    "not": {
+                      "regex": "^import\\s+type\\b"
+                    },
+                    "has": {
+                      "field": "source",
+                      "regex": "^[\"']vitest[\"']$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "vitest-import-chain": {
+            "any": [
+              {
+                "matches": "vitest-import"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-import-chain"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-import-chain"
+                }
+              }
+            ]
+          },
+          "vitest-fn": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "describe",
+                    "it",
+                    "test",
+                    "suite",
+                    "bench",
+                    "xit",
+                    "xtest",
+                    "xdescribe"
+                  ]
+                }
+              },
+              {
+                "matches": "vitest-import"
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "value",
+                            "any": [
+                              {
+                                "kind": "call_expression",
+                                "regex": "^require\\s*\\(\\s*[\"']vitest[\"']\\s*\\)$"
+                              },
+                              {
+                                "kind": "await_expression",
+                                "has": {
+                                  "kind": "call_expression",
+                                  "regex": "^import\\s*\\(\\s*[\"']vitest[\"']\\s*\\)$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "property",
+                                "regex": "^extend$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "object",
+                                "matches": "vitest-import-chain"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vitest-chain": {
+            "any": [
+              {
+                "matches": "vitest-fn"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-chain"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-chain"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "skip",
       "forbid": {
         "ast": {
@@ -45,11 +211,28 @@
               "any": [
                 {
                   "kind": "member_expression",
-                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b"
+                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b",
+                  "has": {
+                    "field": "object",
+                    "matches": "vitest-chain"
+                  }
                 },
                 {
                   "kind": "identifier",
-                  "regex": "^(?:xit|xtest|xdescribe|pending)$"
+                  "any": [
+                    {
+                      "regex": "^(?:xit|xtest|xdescribe)$",
+                      "matches": "vitest-fn"
+                    },
+                    {
+                      "regex": "^pending$",
+                      "resolves": {
+                        "global": [
+                          "pending"
+                        ]
+                      }
+                    }
+                  ]
                 }
               ]
             }
@@ -81,7 +264,8 @@
                 "has": {
                   "field": "function",
                   "kind": "identifier",
-                  "regex": "^(?:it|test)$"
+                  "regex": "^(?:it|test)$",
+                  "matches": "vitest-fn"
                 }
               },
               {
