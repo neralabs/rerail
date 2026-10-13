@@ -1,28 +1,63 @@
-//! Rustc and Clippy lint-level attributes (`allow`, `expect`, `warn`, `deny`, `forbid`).
+//! Rustc and Clippy lint-level attributes (`allow`, `expect`, `warn`, `deny`, `forbid`), and
+//! Clippy's `#[clippy::msrv]`.
 //!
 //! This is deliberately a syntax-level reader. Lint names are compared textually (after removing
 //! whitespace), and are not resolved against the compiler's renamed or removed lint catalogue.
 
 use super::names;
-use crate::code_rule_dsl::json::{object, reject_unknown};
+use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 
-/// `suppress.clippy`: the lint names whose `allow` or `expect` silences the violation, as an
-/// attribute spells them (`clippy::double_parens`, a group such as `clippy::complexity` or
-/// `clippy::all`, or `warnings`). A port lists its lint and every group it belongs to.
-pub(crate) type Clippy = Vec<String>;
+/// `suppress.clippy`: what silences the violation as Clippy silences its lint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Clippy {
+    /// The lint names whose `allow` or `expect` silences it, as an attribute spells them
+    /// (`clippy::double_parens`, a group such as `clippy::complexity` or `clippy::all`, or
+    /// `warnings`). A port lists its lint and every group it belongs to.
+    pub(crate) lints: Vec<String>,
+    /// The Rust version the lint needs (Clippy's `msrvs::*`): the lint is off where the
+    /// `#[clippy::msrv = ".."]` in force names an older one.
+    pub(crate) msrv: Option<RustVersion>,
+}
 
-/// Parses `suppress.clippy`: `{ "lints": [Name]+ }`.
+/// A Rust version, `major.minor.patch`; `1.53` is `1.53.0`.
+pub(crate) type RustVersion = (u32, u32, u32);
+
+/// Parses `suppress.clippy`: `{ "lints": [Name]+, "msrv"?: "1.53" }`.
 pub(super) fn spec(clippy: &Value, at: &str) -> napi::Result<Clippy> {
-    reject_unknown(object(clippy, at)?, &["lints"], at)?;
-    names(
+    reject_unknown(object(clippy, at)?, &["lints", "msrv"], at)?;
+    let lints = names(
         clippy.get("lints"),
         &format!("{at}/lints"),
         lint_name,
         "lint names",
         "a lint name (`clippy::name`, `warnings`, or a rustc lint or group)",
-    )
+    )?;
+    let msrv = clippy
+        .get("msrv")
+        .map(|msrv| {
+            msrv.as_str().and_then(rust_version).ok_or_else(|| {
+                invalid(format!(
+                    "{at}/msrv must be a Rust version, `major.minor` or `major.minor.patch`"
+                ))
+            })
+        })
+        .transpose()?;
+    Ok(Clippy { lints, msrv })
+}
+
+/// `1.53` or `1.53.0`, as `#[clippy::msrv]` and Clippy's `msrv` option spell a version.
+fn rust_version(text: &str) -> Option<RustVersion> {
+    let mut parts = text.split('.').map(|part| {
+        (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
+    });
+    let major = parts.next()??;
+    let minor = parts.next()??;
+    let patch = parts.next().unwrap_or(Some(0))?;
+    parts.next().is_none().then_some((major, minor, patch))
 }
 
 /// A lint path rustc reads in a lint attribute: one or two `::`-joined snake-case identifiers.
@@ -50,22 +85,37 @@ enum Level {
     Forbid,
 }
 
+/// What one attribute sets: a lint level for some lints, or Clippy's msrv.
+#[derive(Clone, Debug)]
+enum Setting {
+    Level(Level, Vec<String>),
+    Msrv(RustVersion),
+}
+
 #[derive(Clone, Debug)]
 struct Attribute {
     start: usize,
     end: usize,
-    level: Level,
-    names: Vec<String>,
+    setting: Setting,
     order: usize,
 }
 
-/// Lint-level attributes of one Rust file.
+impl Attribute {
+    /// Whether `self` is in force over `other` where both cover a byte: the narrower one, or the
+    /// later of two on the same item.
+    fn overrides(&self, other: &Self) -> bool {
+        let (width, other_width) = (self.end - self.start, other.end - other.start);
+        width < other_width || (width == other_width && self.order > other.order)
+    }
+}
+
+/// Lint-level and `#[clippy::msrv]` attributes of one Rust file.
 pub(crate) struct ClippyIndex {
     attributes: Vec<Attribute>,
 }
 
 impl ClippyIndex {
-    /// Reads active Rust lint-level attributes from `root`.
+    /// Reads active Rust lint-level and `#[clippy::msrv]` attributes from `root`.
     pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let mut attributes = Vec::new();
         let mut order = 0;
@@ -132,12 +182,11 @@ impl ClippyIndex {
                     })
                     .unwrap_or_else(|| node.range())
             };
-            for (level, names) in parsed {
+            for setting in parsed {
                 attributes.push(Attribute {
                     start: span.start,
                     end: span.end,
-                    level,
-                    names,
+                    setting,
                     order,
                 });
                 order += 1;
@@ -146,37 +195,57 @@ impl ClippyIndex {
         Self { attributes }
     }
 
+    /// Whether Clippy is silent at byte `at`: an `allow`/`expect` naming one of `clippy.lints` is
+    /// the level in force there, or the `#[clippy::msrv]` in force names a Rust older than
+    /// `clippy.msrv`.
+    pub(crate) fn suppresses(&self, clippy: &Clippy, at: usize) -> bool {
+        self.allowed(&clippy.lints, at)
+            || clippy
+                .msrv
+                .is_some_and(|needed| self.msrv(at).is_some_and(|msrv| msrv < needed))
+    }
+
     /// Whether an `allow`/`expect` naming one of `lints` is the level in force at byte `at`.
-    pub(crate) fn suppresses(&self, lints: &[String], at: usize) -> bool {
-        let matching = self.attributes.iter().filter(|attribute| {
-            attribute.start <= at
-                && at < attribute.end
-                && attribute
-                    .names
-                    .iter()
-                    .any(|name| lints.iter().any(|lint| lint == name))
-        });
-        let mut selected: Option<&Attribute> = None;
-        for attribute in matching {
-            if attribute.level == Level::Forbid {
+    fn allowed(&self, lints: &[String], at: usize) -> bool {
+        let mut selected: Option<(&Attribute, Level)> = None;
+        for attribute in self.covering(at) {
+            let Setting::Level(level, names) = &attribute.setting else {
+                continue;
+            };
+            if !names.iter().any(|name| lints.contains(name)) {
+                continue;
+            }
+            if *level == Level::Forbid {
                 return false;
             }
-            if selected.is_none_or(|old| {
-                let old_width = old.end - old.start;
-                let width = attribute.end - attribute.start;
-                width < old_width || (width == old_width && attribute.order > old.order)
-            }) {
-                selected = Some(attribute);
+            if selected.is_none_or(|(old, _)| attribute.overrides(old)) {
+                selected = Some((attribute, *level));
             }
         }
-        matches!(
-            selected.map(|attribute| attribute.level),
-            Some(Level::Allow | Level::Expect)
-        )
+        matches!(selected, Some((_, Level::Allow | Level::Expect)))
+    }
+
+    /// The version the `#[clippy::msrv]` in force at byte `at` names, if any.
+    fn msrv(&self, at: usize) -> Option<RustVersion> {
+        let mut selected: Option<(&Attribute, RustVersion)> = None;
+        for attribute in self.covering(at) {
+            if let Setting::Msrv(version) = attribute.setting
+                && selected.is_none_or(|(old, _)| attribute.overrides(old))
+            {
+                selected = Some((attribute, version));
+            }
+        }
+        selected.map(|(_, version)| version)
+    }
+
+    fn covering(&self, at: usize) -> impl Iterator<Item = &Attribute> {
+        self.attributes
+            .iter()
+            .filter(move |attribute| attribute.start <= at && at < attribute.end)
     }
 }
 
-fn parse_attribute(text: &str, source: &str) -> Vec<(Level, Vec<String>)> {
+fn parse_attribute(text: &str, source: &str) -> Vec<Setting> {
     let text = text.trim();
     let inner = text.starts_with("#!");
     let Some(body) = text
@@ -189,10 +258,10 @@ fn parse_attribute(text: &str, source: &str) -> Vec<(Level, Vec<String>)> {
     if body.starts_with("cfg_attr(") {
         return parse_cfg_attr(body, source);
     }
-    parse_level(body).into_iter().collect()
+    parse_setting(body).into_iter().collect()
 }
 
-fn parse_cfg_attr(body: &str, source: &str) -> Vec<(Level, Vec<String>)> {
+fn parse_cfg_attr(body: &str, source: &str) -> Vec<Setting> {
     let Some(inside) = body
         .strip_prefix("cfg_attr(")
         .and_then(|v| v.strip_suffix(')'))
@@ -209,7 +278,7 @@ fn parse_cfg_attr(body: &str, source: &str) -> Vec<(Level, Vec<String>)> {
     let mut result = Vec::new();
     for part in parts {
         let part = part.trim();
-        if let Some(value) = parse_level(part) {
+        if let Some(value) = parse_setting(part) {
             result.push(value);
         } else if part.starts_with("cfg_attr(") {
             result.extend(parse_cfg_attr(part, source));
@@ -218,7 +287,18 @@ fn parse_cfg_attr(body: &str, source: &str) -> Vec<(Level, Vec<String>)> {
     result
 }
 
-fn parse_level(body: &str) -> Option<(Level, Vec<String>)> {
+/// A lint level (`allow(..)`) or `clippy::msrv = ".."`; Clippy ignores an msrv it cannot parse.
+fn parse_setting(body: &str) -> Option<Setting> {
+    if let Some((path, value)) = body.split_once('=')
+        && path.chars().filter(|c| !c.is_whitespace()).eq("clippy::msrv".chars())
+    {
+        return value
+            .trim()
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .and_then(rust_version)
+            .map(Setting::Msrv);
+    }
     let (name, rest) = body.split_once('(')?;
     let level = match name.trim() {
         "allow" => Level::Allow,
@@ -243,7 +323,7 @@ fn parse_level(body: &str) -> Option<(Level, Vec<String>)> {
             _ => name,
         })
         .collect();
-    Some((level, names))
+    Some(Setting::Level(level, names))
 }
 
 fn split_top_level(text: &str) -> impl Iterator<Item = &str> {
@@ -299,16 +379,42 @@ fn cfg_enabled(predicate: &str, source: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::ClippyIndex;
+    use super::{Clippy, ClippyIndex, RustVersion, rust_version};
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;
     use serde::Deserialize;
 
-    fn suppressed(source: &str, lint: &str, needle: &str) -> bool {
+    fn silenced(source: &str, clippy: &Clippy, needle: &str) -> bool {
         let at = source.find(needle).expect("needle");
         let root = GrammarDialect::Rust.ast_grep(source);
-        let index = ClippyIndex::read(&root.root(), source);
-        index.suppresses(&[lint.to_owned()], at)
+        ClippyIndex::read(&root.root(), source).suppresses(clippy, at)
+    }
+
+    fn suppressed(source: &str, lint: &str, needle: &str) -> bool {
+        let lints = vec![lint.to_owned()];
+        silenced(source, &Clippy { lints, msrv: None }, needle)
+    }
+
+    #[test]
+    fn an_older_msrv_in_force_silences_a_lint_that_needs_a_newer_rust() {
+        let source = "#[clippy::msrv = \"1.52\"]\nfn a() { ((1)); }\n#[clippy::msrv = \"1.53.0\"]\nfn b() { ((2)); }\nfn c() { ((3)); }\n#[cfg_attr(all(), clippy::msrv = \"1.1\")]\nfn d() { ((4)); }\n#[clippy :: msrv = \"x\"]\nfn e() { ((5)); }\nmod m {\n    #![clippy::msrv = \"1.40\"]\n    fn f() { ((6)); }\n}\n";
+        let needs = |msrv: Option<RustVersion>| Clippy {
+            lints: vec!["clippy::double_parens".to_owned()],
+            msrv,
+        };
+        assert!(silenced(source, &needs(Some((1, 53, 0))), "((1))"));
+        assert!(!silenced(source, &needs(None), "((1))"));
+        assert!(!silenced(source, &needs(Some((1, 52, 0))), "((1))"));
+        assert!(!silenced(source, &needs(Some((1, 53, 0))), "((2))"));
+        assert!(!silenced(source, &needs(Some((1, 53, 0))), "((3))"));
+        assert!(silenced(source, &needs(Some((1, 2, 0))), "((4))"));
+        assert!(!silenced(source, &needs(Some((1, 53, 0))), "((5))"));
+        assert!(silenced(source, &needs(Some((1, 53, 0))), "((6))"));
+        assert_eq!(rust_version("1.53"), Some((1, 53, 0)));
+        assert_eq!(rust_version("1.53.2"), Some((1, 53, 2)));
+        for bad in ["1", "1.", "1.x", "1.2.3.4", " 1.2", "+1.2"] {
+            assert_eq!(rust_version(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -488,7 +594,11 @@ mod tests {
             let root = GrammarDialect::Rust.ast_grep(source);
             let index = ClippyIndex::read(&root.root(), source);
             let at = byte_offset(source, case.line, case.column);
-            let got = index.suppresses(&lints_of(&case.rule), at);
+            let clippy = Clippy {
+                lints: lints_of(&case.rule),
+                msrv: None,
+            };
+            let got = index.suppresses(&clippy, at);
             let expected = case.level == "allow";
             if got != expected {
                 mismatches.push(format!(

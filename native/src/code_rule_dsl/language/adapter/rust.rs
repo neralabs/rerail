@@ -76,7 +76,8 @@ impl Adapter for Rust {
     }
 
     /// Clippy's and rustc's `#[allow]` and `#[expect]` of a lint the violation lists, on an item
-    /// around it or the file (`suppress/clippy.rs`).
+    /// around it or the file, or a `#[clippy::msrv]` there older than the lint needs
+    /// (`suppress/clippy.rs`).
     fn suppresses<D: Doc>(
         _: &ViolationSpec,
         suppress: &Suppress,
@@ -86,9 +87,9 @@ impl Adapter for Rust {
         at: usize,
         _: (usize, usize),
     ) -> bool {
-        suppress.clippy.as_ref().is_some_and(|lints| {
+        suppress.clippy.as_ref().is_some_and(|clippy| {
             let index = file_clippy(|| ClippyIndex::read(&root(node), source));
-            index.suppresses(lints, at)
+            index.suppresses(clippy, at)
         })
     }
 }

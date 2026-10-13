@@ -377,6 +377,13 @@ mod tests {
                 format!("{at}/phpcs/version must be 3 or 4"),
             ),
             (
+                "rust",
+                json!({ "clippy": { "lints": ["clippy::all"], "msrv": "1" } }),
+                format!(
+                    "{at}/clippy/msrv must be a Rust version, `major.minor` or `major.minor.patch`"
+                ),
+            ),
+            (
                 "python",
                 json!({ "psalm": { "issues": ["UndefinedVariable"] } }),
                 format!("{at}/psalm: @psalm-suppress tags are Psalm's; a python query has none"),
