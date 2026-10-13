@@ -46,8 +46,8 @@ constructor and generator function:
 Each function is scored on its own: decisions inside a nested function do not count for the function around it. A
 class is not scored itself.
 
-Tree-sitter node kinds, from the grammars' `node-types.json` (tree-sitter-python and tree-sitter-typescript as vendored
-under `native/grammars/`, tree-sitter-javascript 0.25.0):
+Tree-sitter node kinds, from the grammars' `node-types.json` (tree-sitter-python, tree-sitter-typescript and
+tree-sitter-javascript as vendored under `native/grammars/`):
 
 | Language | Function boundary | Decision |
 |---|---|---|

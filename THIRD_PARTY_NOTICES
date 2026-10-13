@@ -381,6 +381,20 @@ each parser.c from its grammar.json with tree-sitter-generate 0.27.0.
 
 ----------------------------------------------------------------------
 
+Bundled grammar: tree-sitter/tree-sitter-javascript 0.25.0, patched
+Files: native/grammars/tree-sitter-javascript/ (LICENSE byte-identical to upstream;
+  src/scanner.c patched; src/grammar.json regenerated from the patched grammar;
+  src/tree_sitter/{alloc,array,parser}.h written by tree-sitter-cli 0.27.0)
+Revision: 44c892e0be055ac465d5eeddae6d3e194424e7de
+Source: https://github.com/tree-sitter/tree-sitter-javascript
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+The patches, why each is carried and how grammar.json is regenerated are in
+native/grammars/tree-sitter-javascript/PATCHES.md. native/build.rs generates
+its parser.c from its grammar.json with tree-sitter-generate 0.27.0.
+
+----------------------------------------------------------------------
+
 Adapted components: shadcn-ui/ui (development tool only, not in the published package)
 Files: playground/ui/src/components/ui/{badge,button,card,checkbox,select,tabs,textarea}.tsx,
   playground/ui/src/lib/utils.ts

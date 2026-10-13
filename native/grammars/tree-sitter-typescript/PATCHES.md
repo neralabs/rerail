@@ -10,7 +10,7 @@ fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `common/scanner.h` | upstream with Patch 6 |
+| `common/scanner.h` | upstream with Patches 6, 7, 12 and 13 |
 | `typescript/src/scanner.c`, `tsx/src/scanner.c` | upstream, verbatim |
 | `common/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 (one copy for both grammars) |
 | `typescript/src/grammar.json`, `tsx/src/grammar.json` | regenerated from the patched `common/define-grammar.js` |
@@ -184,7 +184,7 @@ admits an `&` followed by neither `#` nor a letter, and so fixes `class="a & b"`
 tree-sitter/tree-sitter-javascript#304 (closed with it). Present at tag `v0.23.2` and at tree-sitter-javascript HEAD
 `58404d8`. The open tree-sitter-javascript#388 and tree-sitter-typescript#371 make a bare `&` text in JSX children
 (`<p>Shipping & Handling</p>`, tree-sitter-javascript#366), through the external scanner; neither touches attribute
-strings, and Rerail does not carry them.
+strings, and Rerail carries the typescript one as Patch 7.
 
 Why: a JSX attribute string may hold `&` as text. TypeScript and Babel decode a complete character reference (`&amp;`,
 `&#38;`, `&#x26;`) and read any other `&` literally. Upstream's string fragment stops at an `&` before `#` or a letter,
@@ -246,8 +246,8 @@ Node kinds and field names are unchanged. A bare `&` is its own `string_fragment
 of three fragments, `/a?w=8`, `&` and `h=8`, as `"a&amp;b"` was already three children. The TypeScript dialect's
 parser is byte-identical (it has no JSX); the TSX parser has the same 5,580 states and one more token. Upstream's
 corpus parses as before (111 of 112, the one failure patch 1's `foo++!`), and so does tree-sitter-javascript 0.23.1's
-under TSX. A bare `&` in JSX children (`<p>Terms & Conditions</p>`) is still a parse error: the other 82 of
-shadcn-ui's syntax-error files.
+under TSX. A bare `&` in JSX children (`<p>Terms & Conditions</p>`) was still a parse error, the other 82 of
+shadcn-ui's syntax-error files, until Patch 7.
 
 ## Patch 4: variance annotations on type parameters
 
@@ -417,8 +417,7 @@ A semicolon goes in only where the keyword is followed, on its line, by `:` or `
 expression allows, and only where no binary operator could continue the line (the `||` token is not valid, as the
 scanner already tests before `(` and `[`). So `a⏎instanceof B` and `a⏎instanceof (B)` stay binary expressions, and
 the class field `a = b⏎  in: number` stays a parse error, as in TypeScript, which reads `b in` there. A method
-signature named `instanceof` with no `?` (`a: number⏎  instanceof(): void`) is still a parse error: a `(` after the
-keyword does not tell a call signature from `a⏎instanceof (B)`.
+signature named `instanceof` with no `?` (`a: number⏎  instanceof(): void`) stayed a parse error until Patch 12.
 
 Node kinds and field names are unchanged, and so are both grammars' `grammar.json`.
 
@@ -427,3 +426,534 @@ failure patch 1's `foo++!`). Over 22,898 TypeScript and TSX files of vscode@729f
 (shadcn-ui, excalidraw, prettier, fastify, Next.js examples and commerce, and two private applications), 2 files
 that had syntax errors parse (prettier's variance tests), none gains an error, and every other tree is unchanged but
 for the error recovery in two prettier files that have syntax errors before and after.
+
+## Patch 7: a bare `&` in JSX text is text
+
+Upstream issue: tree-sitter/tree-sitter-javascript#366 (open; present at tag `v0.23.2`, at upstream HEAD, and in
+tree-sitter-javascript's `src/scanner.c`). Mirrors: tree-sitter/tree-sitter-typescript#371 (open, `f8637eb`), with
+its corpus case; tree-sitter/tree-sitter-javascript#388 (open) is the same change there.
+
+Why: JSX text may hold `&` as text. TypeScript and Babel decode a complete character reference (`&amp;`, `&#38;`,
+`&#x26;`) and read any other `&` literally, as React renders it. Upstream's `jsx_text` is an external token that stops
+at every `&`, and the only other token there, `html_character_reference`, needs the closing `;`. So
+`<span>Help & Support</span>`, `<h2>{a} & {b}</h2>`, `<p>a&b</p>` and `<p>&nbsp</p>` are parse errors, and the
+element around them is lost (NER-1764; resume-matcher's settings page writes
+`{t('settings.uiLanguage')} & {t('settings.contentLanguage')}`). These were the 82 syntax-error files Patch 3 left on
+shadcn-ui@0e3abd6.
+
+```diff
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -284,6 +284,34 @@ static bool scan_closing_comment(TSLexer *lexer) {
+     return true;
+ }
+ 
++// After an `&`: whether the rest of a character reference follows, as html_character_reference reads one (`&amp;`,
++// `&#38;`, `&#x26;`). Consumes the name or number either way.
++static bool scan_character_reference_tail(TSLexer *lexer) {
++    unsigned length = 0;
++    if (lexer->lookahead == '#') {
++        advance(lexer);
++        if (lexer->lookahead == 'x' || lexer->lookahead == 'X') {
++            advance(lexer);
++            while (length < 6 && iswxdigit(lexer->lookahead)) {
++                advance(lexer);
++                length++;
++            }
++        } else {
++            while (length < 5 && iswdigit(lexer->lookahead)) {
++                advance(lexer);
++                length++;
++            }
++        }
++    } else {
++        while (length < 30 && ((lexer->lookahead >= 'a' && lexer->lookahead <= 'z') ||
++                               (lexer->lookahead >= 'A' && lexer->lookahead <= 'Z'))) {
++            advance(lexer);
++            length++;
++        }
++    }
++    return length > 0 && lexer->lookahead == ';';
++}
++
+ static bool scan_jsx_text(TSLexer *lexer) {
+     // saw_text will be true if we see any non-whitespace content, or any whitespace content that is not a newline and
+     // does not immediately follow a newline.
+@@ -292,8 +320,22 @@ static bool scan_jsx_text(TSLexer *lexer) {
+     // immediately follows a newline.
+     bool at_newline = false;
+ 
++    lexer->result_symbol = JSX_TEXT;
++
+     while (lexer->lookahead != 0 && lexer->lookahead != '<' && lexer->lookahead != '>' && lexer->lookahead != '{' &&
+-           lexer->lookahead != '}' && lexer->lookahead != '&') {
++           lexer->lookahead != '}') {
++        if (lexer->lookahead == '&') {
++            // A character reference is its own token, so the text ends before it. Any other `&` is text, as
++            // TypeScript and Babel read it: `Help & Support`, `&nbsp` without its `;`.
++            lexer->mark_end(lexer);
++            advance(lexer);
++            if (scan_character_reference_tail(lexer)) {
++                return saw_text;
++            }
++            saw_text = true;
++            at_newline = false;
++            continue;
++        }
+         bool is_wspace = iswspace(lexer->lookahead);
+         if (lexer->lookahead == '\n') {
+             at_newline = true;
+@@ -321,7 +363,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
+         advance(lexer);
+     }
+ 
+-    lexer->result_symbol = JSX_TEXT;
++    lexer->mark_end(lexer);
+     return saw_text;
+ }
+ 
+```
+
+At an `&` the scanner marks the end of the text and reads on with the bounds of `html_character_reference`'s pattern
+(1 to 30 letters, `#` and 1 to 5 digits, or `#x` and 1 to 6 hex digits, then `;`). A complete reference ends the
+text before it and is lexed as before; any other `&` and what the scanner read after it stay in the text. The code is
+#371's but for its comments. Whitespace and newlines count as before, so a text that is only layout whitespace before a
+reference is still no `jsx_text`.
+
+Node kinds and field names are unchanged, and so are both grammars' `grammar.json`. A bare `&` is part of the
+`jsx_text` around it: `<span>Help & Support</span>` has one `jsx_text`, `Help & Support`, and `<p>a &amp; b</p>` keeps
+`a `, `&amp;` and ` b`. The TypeScript dialect cannot reach the change: its only external lex state with `jsx_text`
+valid is the error-recovery state, where every external token is valid and the scanner returns at the template-chars
+test before it scans JSX text, as it does in TSX.
+
+Upstream's corpus parses as before (115 of 116 with #371's case; the one failure patch 1's `foo++!`), and
+tree-sitter-javascript 0.23.1's corpus builds the same trees under TSX as before. Over 22,173 TypeScript and TSX files
+of the Next.js examples@6194d64, commerce@3761e52, shadcn-ui@0e3abd6, excalidraw@ed10ac7, vscode@729f257 and two
+private applications, 103 TSX files that had syntax errors parse (82 in shadcn-ui, 16 in vscode, 3 in the Next.js
+examples, 2 in the private applications), none gains an error, and every other tree is unchanged. No TSX file in them
+has a syntax error left.
+
+## Patch 8: a re-export takes import attributes
+
+Upstream: none open at tree-sitter/tree-sitter-typescript; tree-sitter/tree-sitter-javascript#363 (closed unmerged)
+proposed the same for JavaScript. Present at tag `v0.23.2` and at upstream HEAD `75b3874`. The same change as Patch 3
+in `grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: ECMAScript 2025 and TypeScript allow import attributes on `export … from`, as on `import`:
+`export { default as x } from './x.json' with { type: 'json' }`, `export * from 'y' with { type: 'json' }`. Upstream
+takes them only on `import`, so a re-export with them is a parse error whose remainder reads as a label `export:`, and
+`no-labels` reports a false positive at the `with {` (NER-1764, NER-1777).
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -358,6 +358,17 @@ module.exports = function defineGrammar(dialect) {
+ 
+       export_statement: ($, previous) => choice(
+         previous,
++        // A re-export takes import attributes, as an import does: `export * from './x.json' with { type: 'json' }`.
++        seq(
++          'export',
++          choice(
++            seq('*', $._from_clause),
++            seq($.namespace_export, $._from_clause),
++            seq(optional('type'), $.export_clause, $._from_clause),
++          ),
++          $.import_attribute,
++          $._semicolon,
++        ),
+         seq(
+           'export',
+           'type',
+```
+
+The JavaScript rule this grammar extends stays as it is; the added alternative is a re-export followed by its
+attributes. As in TypeScript's parser, `export type { A } from 'x'` takes them too, and so does the deprecated
+`assert`, which this grammar's `import_attribute` already reads.
+
+Node kinds and field names are unchanged. The attribute is an `import_attribute` child of the `export_statement`, as it
+is of an `import_statement`. Each generated parser has 24 more states (5,368 for TypeScript, 5,617 for TSX).
+
+## Patch 9: a `{` at the start of a statement opens a block
+
+Upstream issue: tree-sitter/tree-sitter-javascript#259 (open), whose `labeled_statement` this grammar inherits.
+Present at tag `v0.23.2` and at upstream HEAD. The same change as Patch 4 in
+`grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: ECMAScript forbids an expression statement and an arrow function's expression body to start with `{`, so there
+`{` always opens a block: `if (foo) { bar: 'baz' }`, `() => { bar: 1 }` and `{ bar: 1 }` hold a labeled statement, in
+TypeScript as in JavaScript. Upstream reads each as an object literal, with no error, because GLR keeps both readings
+and the labeled statement's dynamic precedence of -1 makes the object win. The tree is silently wrong: `curly`,
+`no-labels`, `no-unused-labels` and `arrow-body-style` see an object where ESLint sees a label.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -172,6 +172,15 @@ module.exports = function defineGrammar(dialect) {
+         field('body', $.statement_block),
+       ),
+ 
++      // A `{` that starts a statement or an arrow function's body opens a block, never an object (ECMAScript's
++      // ExpressionStatement and ConciseBody lookahead restrictions): `if (a) { b: 1 }` and `() => { b: 1 }` hold a
++      // labeled statement. Where only an object parses, as in `{ a: 1, b: 2 }`, GLR keeps the object.
++      labeled_statement: $ => prec.dynamic(1, seq(
++        field('label', alias(choice($.identifier, $._reserved_identifier), $.statement_identifier)),
++        ':',
++        field('body', $.statement),
++      )),
++
+       call_expression: $ => choice(
+         prec('call', seq(
+           field('function', choice($.expression, $.import)),
+```
+
+The rule is tree-sitter-javascript 0.23.1's but for the dynamic precedence, which now outweighs the object. GLR still
+keeps the object where the block does not parse, as in `{ a: 1, b: 2 }`, and a `{` in an expression or a type never had
+the block reading: `x = { a: 1 }`, `() => ({ a: 1 })`, `{ a: 1 } satisfies T` after `=`, and an arrow function's
+return type `(): { a: string } => x` are as before.
+
+Node kinds and field names are unchanged. `{ a: 1 }` at the start of a statement or as an arrow function's body is a
+`statement_block` holding a `labeled_statement`, no longer an `object` holding a `pair`. tree-sitter-javascript
+0.23.1's corpus case `Objects`, which asserts the object for `{ a: "b" };` at statement level, now reads the block,
+as this patch intends. The state counts are unchanged.
+
+## Patch 10: `yield` may label a statement
+
+Upstream issue: tree-sitter/tree-sitter-javascript#303 (open: `await` and `yield` are not read by context). Present at
+tag `v0.23.2` and at upstream HEAD. The same change as Patch 7 in `grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: outside generators and strict code `yield` is a name, so `yield: while (foo) { … break yield }` is a labeled
+statement. Upstream reads `yield` at the start of a statement as the keyword, so the label is a parse error.
+`var yield = 5` and `break yield` already parsed, since the keyword is not valid there.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -176,7 +176,8 @@ module.exports = function defineGrammar(dialect) {
+       // ExpressionStatement and ConciseBody lookahead restrictions): `if (a) { b: 1 }` and `() => { b: 1 }` hold a
+       // labeled statement. Where only an object parses, as in `{ a: 1, b: 2 }`, GLR keeps the object.
+       labeled_statement: $ => prec.dynamic(1, seq(
+-        field('label', alias(choice($.identifier, $._reserved_identifier), $.statement_identifier)),
++        // Outside generators and strict code `yield` is a name, so it may label a statement: `yield: while (a) {}`.
++        field('label', alias(choice($.identifier, $._reserved_identifier, 'yield'), $.statement_identifier)),
+         ':',
+         field('body', $.statement),
+       )),
+```
+
+Node kinds and field names are unchanged: the label is a `statement_identifier`, as any other is. The generated
+parsers have 2 (TypeScript) and 3 (TSX) more states. `yield` as a name inside an expression (`yield + 1`, `f(yield)`)
+still reads as a `yield_expression`: telling the name from the keyword needs to know whether the enclosing function is
+a generator, which the grammar does not track (#303).
+
+## Patch 11: a destructuring assignment's target may be parenthesized
+
+Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD. The same change as Patch 6 in
+`grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: in a destructuring assignment, ECMAScript and TypeScript allow a parenthesized target, as on the left of a plain
+assignment: `({foo: (foo)} = obj)`, `({foo: (/**/foo)} = {})`, `[(a), (b.c) = 1, ...(d)] = e`, and in TypeScript
+`({a: (b as any)} = c)`. Upstream's patterns take no parentheses, so each is a parse error.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -224,6 +224,19 @@ module.exports = function defineGrammar(dialect) {
+ 
+       _lhs_expression: ($, previous) => choice(previous, $.non_null_expression),
+ 
++      pattern: $ => prec.dynamic(-1, choice(
++        $._lhs_expression,
++        $.rest_pattern,
++        // A destructuring assignment's target may be parenthesized, as an assignment's is: `({a: (b)} = c)`,
++        // `[(a), (b.c) = 1, ...(d)] = e`.
++        $.parenthesized_expression,
++      )),
++
++      rest_pattern: $ => prec.right(seq(
++        '...',
++        choice($._lhs_expression, $.parenthesized_expression),
++      )),
++
+       primary_expression: ($, previous) => choice(
+         previous,
+         $.non_null_expression,
+```
+
+Both rules are tree-sitter-javascript 0.23.1's but for the added `parenthesized_expression`.
+
+Node kinds and field names are unchanged. A pattern (a `pair_pattern`'s value, an `array_pattern`'s element, an
+`assignment_pattern`'s left side, a `rest_pattern`'s target) may be a `parenthesized_expression`, as an
+`assignment_expression`'s left side already may. The grammar has one `pattern` for binding and assignment patterns,
+so parenthesized binding patterns, which TypeScript rejects (`let {a: (b)} = c`, `function f((a)) {}`), now parse too;
+the parameter is then a `required_parameter` whose pattern is a `parenthesized_expression`. The state counts are
+unchanged.
+
+## Patch 12: a semicolon is inserted before a token that cannot continue the statement
+
+Upstream issue: none open for these. Present at tag `v0.23.2` and at upstream HEAD `75b3874`. Patch 8 in
+`grammars/tree-sitter-javascript/PATCHES.md` fixes the same gaps in JavaScript's scanner with five never-returned
+external tokens; this scanner already tells a type or a name from an expression by whether a binary operator (the
+`||` token) can come next, as it does before `(` and `[`, so the patch extends that test instead.
+
+Why: ECMAScript and TypeScript insert a semicolon at a line break before a token the grammar cannot accept there. The
+scanner never inserted one before a line starting with `*` or a binary `+` or `-`, nor before `instanceof` unless a
+`:` or `?` followed it (Patch 6). That is right after an expression, which the line continues (`a⏎*b`), and wrong where
+no expression precedes: `var a⏎+b > 0 ? c : d` after a declarator, `let a: T⏎-1` after a type, and a class field
+before a generator method or a member named `instanceof` (`j⏎*k() {}`, `a: string⏎*gen() {}`, `#l⏎instanceof() {}`,
+and in an interface `a: number⏎instanceof(): void`). Each is a parse error.
+
+```diff
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -131,7 +131,6 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+         case ',':
+         case '.':
+         case ';':
+-        case '*':
+         case '%':
+         case '>':
+         case '<':
+@@ -150,23 +149,25 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             }
+             break;
+ 
+-            // Don't insert a semicolon before a '[' or '(', unless we're parsing
+-            // a type. Detect whether we're parsing a type or an expression using
+-            // the validity of a binary operator token.
++            // Don't insert a semicolon before a '[', '(' or '*', unless we're parsing
++            // a type, or no binary operator can come next, as after a declarator's or a class field's name
++            // (`var a⏎[b] = c`, `a⏎*g() {}`). Detect it using the validity of a binary operator token.
+         case '(':
+         case '[':
++        case '*':
+             if (valid_symbols[LOGICAL_OR]) {
+                 return false;
+             }
+             break;
+ 
+-            // Insert a semicolon before `--` and `++`, but not before binary `+` or `-`.
++            // Insert a semicolon before `--` and `++`, and before a `+` or `-` where no binary operator can come
++            // next (`var a⏎+b`), but not before binary `+` or `-`.
+         case '+':
+             skip(lexer);
+-            return lexer->lookahead == '+';
++            return lexer->lookahead == '+' || !valid_symbols[LOGICAL_OR];
+         case '-':
+             skip(lexer);
+-            return lexer->lookahead == '-';
++            return lexer->lookahead == '-' || !valid_symbols[LOGICAL_OR];
+ 
+             // Don't insert a semicolon before `!=`, but do insert one before a unary `!`.
+         case '!':
+@@ -174,7 +175,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             return lexer->lookahead != '=';
+ 
+             // Don't insert a semicolon before `in` or `instanceof`, but do insert one
+-            // before an identifier, such as `in_point`, or before a member named `in` or `instanceof` after a type.
++            // before an identifier, such as `in_point`, before a member named `in` after a type, or before an
++            // `instanceof` that no binary operator can take here: a member's name (`#a⏎instanceof() {}`).
+         case 'i':
+             skip(lexer);
+ 
+@@ -195,7 +197,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             }
+ 
+             if (!is_identifier_char(lexer->lookahead)) {
+-                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
++                return !valid_symbols[LOGICAL_OR];
+             }
+             break;
+     }
+```
+
+Where a binary operator can come next, the line continues the statement as before: `a⏎*b`, `a⏎+b`, `a⏎instanceof B`
+and `a⏎instanceof (B)` stay binary expressions. `in` keeps Patch 6's test: after `for (const k`, `in` continues the
+head and no binary operator can come next there either. A `return` followed by a line break and a `+` or `-` operand
+now ends the statement, as ECMAScript's restricted production does and as this scanner already did before `(` and
+`[` (`return⏎-1` is `return;` and `-1;`); after `yield`, a `*` still continues the statement.
+
+Node kinds and field names are unchanged, and so are both grammars' `grammar.json`. The statements around such a line
+break split as ECMAScript and TypeScript split them.
+
+## Patch 13: an arrow function's block body ends the statement at a line break
+
+Upstream issue: tree-sitter/tree-sitter-javascript#354 (open), for a line starting with `(`. Present at tag `v0.23.2`
+and at upstream HEAD. The same change as Patch 9 in `grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: an arrow function is no operand in ECMAScript or TypeScript: it cannot be called, indexed, tagged or the left
+side of a binary expression, so after its block body a line break ends the statement unless the next line goes on
+with a list's `,`, a ternary's `:` or a `;`. Upstream's `arrow_function` is a `primary_expression`, so the next line
+continues it: `const f = () => {}⏎[1, 2].forEach(g)` indexes the function with a sequence expression, with no error
+(`no-sequences` reports a false positive), `const f = (): void => {}⏎(g)()` calls it, and `y = () => {}⏎() => {}`
+and a class field `a = () => {}⏎*gen() {}` are parse errors.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -7,6 +7,8 @@ module.exports = function defineGrammar(dialect) {
+     externals: ($, previous) => previous.concat([
+       $._function_signature_automatic_semicolon,
+       $.__error_recovery,
++      // Never returned: valid only after an arrow function's block body (see arrow_function).
++      $._arrow_body_end,
+     ]),
+ 
+     supertypes: ($, previous) => previous.concat([
+@@ -182,6 +184,25 @@ module.exports = function defineGrammar(dialect) {
+         field('body', $.statement),
+       )),
+ 
++      arrow_function: $ => seq(
++        optional('async'),
++        choice(
++          field('parameter', choice(
++            alias($._reserved_identifier, $.identifier),
++            $.identifier,
++          )),
++          $._call_signature,
++        ),
++        '=>',
++        choice(
++          field('body', $.expression),
++          // An arrow function is no operand, so a line break after its block body ends the statement where the next
++          // line cannot continue an assignment: `f = () => {}⏎[1, 2].map(f)` is two statements, as in ECMAScript.
++          // `_arrow_body_end` marks this place for the scanner.
++          seq(field('body', $.statement_block), optional($._arrow_body_end)),
++        ),
++      ),
++
+       call_expression: $ => choice(
+         prec('call', seq(
+           field('function', choice($.expression, $.import)),
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -13,6 +13,8 @@ enum TokenType {
+     JSX_TEXT,
+     FUNCTION_SIGNATURE_AUTOMATIC_SEMICOLON,
+     ERROR_RECOVERY,
++    // Never returned: valid only after an arrow function's block body.
++    ARROW_BODY_END,
+ };
+ 
+ static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+@@ -126,6 +128,13 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+         return false;
+     }
+ 
++    // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
++    // `:` or a `;` starts a new statement (`f = () => {}⏎[1, 2].map(f)`), where after any other expression it
++    // would continue it.
++    if (valid_symbols[ARROW_BODY_END]) {
++        return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
++    }
++
+     switch (lexer->lookahead) {
+         case '`':
+         case ',':
+```
+
+The rule is tree-sitter-javascript 0.23.1's but for the marker `_arrow_body_end`, which follows an arrow function's
+block body and is never returned, so the scanner is told when it scans after one. The marker is the last external
+token, after this grammar's own two, so the scanner's numbering of the others is unchanged. A function expression's
+body is not marked: `e = function () {}⏎[1]` stays a subscript, as in ECMAScript.
+
+Node kinds and field names are unchanged: the `body` field holds the same `statement_block`. The statements around it
+split as ECMAScript splits them. Each generated parser has 37 more states (5,407 for TypeScript, 5,657 for TSX).
+
+## Patch 14: `yield` is a name where a yield expression cannot parse
+
+Upstream issue: tree-sitter/tree-sitter-javascript#303 (open: `await` and `yield` are not read by context). Present at
+tag `v0.23.2` and at upstream HEAD. The same change as Patch 10 in `grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: outside generators and strict code `yield` is a name, so `yield = 2`, `yield += 1`, `yield++`, `[yield] = a`,
+`for (yield of xs);` and `yield.x` are valid scripts, and TypeScript parses them. Upstream reads `yield` in an
+expression only as the keyword. So the assignments, the update and the `for` head are parse errors. `yield.x` silently
+reads as a member of an empty `yield_expression`, which ECMAScript never allows.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -115,6 +115,8 @@ module.exports = function defineGrammar(dialect) {
+       [$.array_pattern, $.tuple_type],
+ 
+       [$.template_literal_type, $.template_string],
++
++      [$.yield_expression, $._yield_identifier],
+     ]).concat(
+       dialect === 'typescript' ? [
+         [$.primary_type, $.type_parameter],
+@@ -241,9 +243,17 @@ module.exports = function defineGrammar(dialect) {
+         field('right', $.expression),
+       )),
+ 
+-      _augmented_assignment_lhs: ($, previous) => choice(previous, $.non_null_expression),
++      _augmented_assignment_lhs: ($, previous) => choice(
++        previous,
++        $.non_null_expression,
++        alias($._yield_identifier, $.identifier),
++      ),
+ 
+-      _lhs_expression: ($, previous) => choice(previous, $.non_null_expression),
++      _lhs_expression: ($, previous) => choice(
++        previous,
++        $.non_null_expression,
++        alias($._yield_identifier, $.identifier),
++      ),
+ 
+       pattern: $ => prec.dynamic(-1, choice(
+         $._lhs_expression,
+@@ -258,6 +268,33 @@ module.exports = function defineGrammar(dialect) {
+         choice($._lhs_expression, $.parenthesized_expression),
+       )),
+ 
++      member_expression: $ => prec('member', seq(
++        field('object', choice($.expression, $.primary_expression, $.import, $._yield_operand)),
++        choice('.', field('optional_chain', $.optional_chain)),
++        field('property', choice(
++          $.private_property_identifier,
++          alias($.identifier, $.property_identifier))),
++      )),
++
++      update_expression: $ => prec.left(choice(
++        seq(
++          field('argument', choice($.expression, $._yield_operand)),
++          field('operator', choice('++', '--')),
++        ),
++        seq(
++          field('operator', choice('++', '--')),
++          field('argument', $.expression),
++        ),
++      )),
++
++      // Outside generators and strict code `yield` is a name. The grammar does not know whether a function is a
++      // generator, so `yield` is a name where a yield_expression cannot parse (`yield = 2`, `[yield] = a`,
++      // `for (yield of a)`), and where one would be an operand, which ECMAScript forbids (`yield.x`, `yield++`).
++      // Where both read (`f(yield)`, `yield + 1`, `yield [0]`, `yield (a)`), the yield_expression stays.
++      _yield_identifier: _ => prec.dynamic(-1, 'yield'),
++
++      _yield_operand: $ => prec.dynamic(2, alias($._yield_identifier, $.identifier)),
++
+       primary_expression: ($, previous) => choice(
+         previous,
+         $.non_null_expression,
+```
+
+`member_expression` and `update_expression` are tree-sitter-javascript 0.23.1's but for the added `_yield_operand`;
+the two assignment targets extend this grammar's. As in JavaScript, `yield` is an `identifier` only where the keyword's
+reading fails: an assignment target (also in patterns and `for … of` heads), an augmented assignment target, and the
+operand of a member access or postfix update, where the identifier's dynamic precedence of 2 outweighs the
+`yield_expression` ECMAScript forbids there. Elsewhere its dynamic precedence of -1 keeps the generator reading
+wherever both parse: `f(yield)`, `yield + 1`, `yield;`, `yield [0]` and `yield (a)` stay `yield_expression`s, as in a
+generator. `yield()` stays a parse error. In strict code, such as a module, TypeScript rejects `yield` as a name
+(TS1214); the grammar does not tell scripts from modules, so it reads the name there too.
+
+Node kinds and field names are unchanged. A `yield` that is a name is an `identifier`, as `var yield` already gave.
+Each generated parser has 27 more states (5,434 for TypeScript, 5,684 for TSX).
+
+With Patches 8 to 14, upstream's corpus parses as before (122 of 123 with seven added cases, one per patch; the one
+failure patch 1's `foo++!`). Under either dialect, tree-sitter-javascript 0.23.1's corpus builds the same trees as
+before but for its `Objects` case (Patch 9). Over the 22,173 TypeScript and TSX files above, no tree changes: none of
+them holds these constructs. tree-sitter-javascript's Patch 5 (`using` declarations in a `for` head) has no
+counterpart here: this grammar has no `using_declaration`, and reads `using r = f()` as an `assignment_expression`
+with a leading `using`, so `for (await using r = f(); ;) {}` already parsed without an error.
