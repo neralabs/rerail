@@ -220,10 +220,16 @@ function filesUnder(root: string, directory: string): string[] {
   return files.sort(compareDeterministicStrings);
 }
 
-/** Whether a `files` entry of package.json publishes `path` (npm publishes a listed directory whole). */
+/**
+ * Whether a `files` entry of package.json publishes `path`. npm publishes a matched directory whole, so the entry
+ * covers `path` when it names or matches `path` or any folder above it (`rules/*` publishes `rules/group/a.json`), or
+ * when it matches something under `path` (`upstream/**` publishes part of `upstream`).
+ */
 function publishes(entry: string, path: string): boolean {
   const pattern = entry.replace(/^\.\//u, "").replace(/\/+$/u, "");
-  return pattern === path || path.startsWith(`${pattern}/`) || matchesGlob(path, pattern) || matchesGlob(`${path}/x`, pattern);
+  const segments = path.split("/");
+  const self = segments.map((_, index) => segments.slice(0, index + 1).join("/")).some(prefix => prefix === pattern || matchesGlob(prefix, pattern));
+  return self || matchesGlob(`${path}/x`, pattern);
 }
 
 /**
