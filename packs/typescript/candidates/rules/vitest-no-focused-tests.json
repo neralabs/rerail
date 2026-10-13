@@ -150,7 +150,7 @@
                             "kind": "import_statement",
                             "stopBy": "end",
                             "not": {
-                              "regex": "^import\\s+type\\b"
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
                             },
                             "has": {
                               "field": "source",
@@ -188,7 +188,51 @@
                                 "field": "value",
                                 "has": {
                                   "field": "key",
-                                  "regex": "^[\"']?(?:it|test)[\"']?$"
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:it|test)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:it|test)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:it|test)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:it|test)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:it|test)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:it|test)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
                                 },
                                 "inside": {
                                   "kind": "object_pattern",
@@ -242,7 +286,7 @@
                             "kind": "import_statement",
                             "stopBy": "end",
                             "not": {
-                              "regex": "^import\\s+type\\b"
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
                             },
                             "has": {
                               "field": "source",
@@ -280,7 +324,51 @@
                                 "field": "value",
                                 "has": {
                                   "field": "key",
-                                  "regex": "^[\"']?(?:describe|it|test)[\"']?$"
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:describe|it|test)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:describe|it|test)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:describe|it|test)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:describe|it|test)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:describe|it|test)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:describe|it|test)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
                                 },
                                 "inside": {
                                   "kind": "object_pattern",
@@ -376,18 +464,105 @@
                       "field": "key",
                       "any": [
                         {
-                          "kind": "property_identifier"
+                          "kind": "property_identifier",
+                          "regex": "^(?:only)$"
                         },
                         {
-                          "kind": "string"
+                          "any": [
+                            {
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:only)$"
+                              }
+                            },
+                            {
+                              "kind": "template_string",
+                              "regex": "^`(?:only)`$"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "^(?:only)$"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string",
+                                    "value": {
+                                      "regex": "^(?:only)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "regex": "^`(?:only)`$"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
                         }
-                      ],
-                      "regex": "^[\"']?only[\"']?$"
+                      ]
                     }
                   },
                   {
                     "kind": "shorthand_property_identifier",
                     "regex": "^only$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^(?:only)$"
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:only)$"
+                              }
+                            },
+                            {
+                              "kind": "template_string",
+                              "regex": "^`(?:only)`$"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "^(?:only)$"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string",
+                                    "value": {
+                                      "regex": "^(?:only)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "regex": "^`(?:only)`$"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
                   }
                 ],
                 "nthChild": {
@@ -401,18 +576,105 @@
                           "field": "key",
                           "any": [
                             {
-                              "kind": "property_identifier"
+                              "kind": "property_identifier",
+                              "regex": "^(?:only)$"
                             },
                             {
-                              "kind": "string"
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:only)$"
+                                  }
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "regex": "^`(?:only)`$"
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "computed_property_name",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:only)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string",
+                                        "value": {
+                                          "regex": "^(?:only)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "regex": "^`(?:only)`$"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
                             }
-                          ],
-                          "regex": "^[\"']?only[\"']?$"
+                          ]
                         }
                       },
                       {
                         "kind": "shorthand_property_identifier",
                         "regex": "^only$"
+                      },
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "field": "name",
+                          "any": [
+                            {
+                              "kind": "property_identifier",
+                              "regex": "^(?:only)$"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:only)$"
+                                  }
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "regex": "^`(?:only)`$"
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "computed_property_name",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:only)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string",
+                                        "value": {
+                                          "regex": "^(?:only)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "regex": "^`(?:only)`$"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
                       }
                     ]
                   }
@@ -430,7 +692,31 @@
                   {
                     "has": {
                       "field": "key",
-                      "pattern": "$MODIFIER"
+                      "any": [
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string"
+                              }
+                            ],
+                            "pattern": "$MODIFIER"
+                          }
+                        },
+                        {
+                          "not": {
+                            "kind": "computed_property_name"
+                          },
+                          "pattern": "$MODIFIER"
+                        }
+                      ]
                     }
                   }
                 ]
@@ -776,21 +1062,32 @@
                     }
                   }
                 }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "scope": "functionName",
+                    "site": {
+                      "matches": "vitest-test-callback"
+                    }
+                  }
+                }
               }
             ]
           },
           "vitest-source": {
             "any": [
               {
-                "kind": "string"
+                "kind": "string",
+                "value": {
+                  "eq": "vitest"
+                }
               },
               {
-                "kind": "template_string"
+                "kind": "template_string",
+                "regex": "^`vitest`$"
               }
-            ],
-            "value": {
-              "eq": "vitest"
-            }
+            ]
           },
           "vitest-module-argument": {
             "kind": "arguments",
@@ -882,7 +1179,7 @@
                 "has": {
                   "field": "function",
                   "kind": "member_expression",
-                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.only\\b",
+                  "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.fails(?:\\.only)|\\.only(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.fails(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.only(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.sequential(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.sequential(?:\\.only)|\\.todo(?:\\.only))|\\.skipIf(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)))|(?:describe|suite)(?:\\.concurrent(?:\\.only(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.only(?:\\.concurrent(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.sequential(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.shuffle(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.todo(?:\\.only))|\\.skipIf(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)))|(?:bench)(?:\\.only(?:\\.skip(?:\\.todo)?|\\.todo(?:\\.skip)?)?|\\.runIf(?:\\.only(?:\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.only(?:\\.todo)?|\\.todo(?:\\.only))|\\.skipIf(?:\\.only(?:\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.only(?:\\.skip)?|\\.skip(?:\\.only))))$",
                   "has": {
                     "field": "object",
                     "matches": "vitest-focusable-chain"
@@ -895,7 +1192,7 @@
                   {
                     "has": {
                       "field": "function",
-                      "regex": "^(?:describe|it|test)(?:\\.\\w+)*$",
+                      "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.each|\\.fails(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.each|\\.extend|\\.fails(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.for|\\.only(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.scoped|\\.sequential(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip)?)?|\\.skip(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential)?)?|\\.skipIf(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.todo(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential)?)?)?|(?:describe)(?:\\.concurrent(?:\\.each|\\.for|\\.only(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.each|\\.for|\\.only(?:\\.concurrent(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.sequential(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip)?)?|\\.shuffle(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.skip(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle)?)?|\\.skipIf(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.todo(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle)?)?)?)$",
                       "matches": "vitest-focusable-chain"
                     }
                   },

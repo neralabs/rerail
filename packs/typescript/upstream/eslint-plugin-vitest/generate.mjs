@@ -381,6 +381,65 @@ test('focused', { only: true }, t => {
 describe('skipped', { skip: true }, () => {});
 `,
   },
+  // Self-review of NER-1869: key and module-name literals as upstream reads them, valid chains only, the last mode
+  // option property, and a test callback's own name.
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-computed-key",
+    code: `const { ["it"]: it } = require('vitest');
+
+it.only('focused', () => {});
+it.skip('skipped', () => {});
+`,
+    reports: { "expect-expect": 1, "no-disabled-tests": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-require-template-escape",
+    code: `const { it } = require(\`vit\\u0065st\`);
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-default-import-named-type",
+    code: `import type, { it } from 'vitest';
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "mode-option-overridden",
+    code: `test('a', { only: true, only() {} }, () => {
+  expect(1).toBe(1);
+});
+test('b', { skip: true, get skip() { return false; } }, () => {
+  expect(1).toBe(1);
+});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "invalid-chains",
+    code: `describe.notVitest.only('suite', () => {});
+test.notVitest('focused', { only: true }, () => {
+  expect(1).toBe(1);
+});
+it.only.only('twice', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context-named-callback",
+    code: `test('suite', function it(context) {
+  it.only('focused', () => {});
+});
+`,
+    reports: { "expect-expect": 2, "no-focused-tests": 1 },
+  },
 ];
 
 function parseArguments(argv) {
