@@ -38,7 +38,7 @@
       "define": {
         "language": "typescript",
         "utils": {
-          "vitest-focusable-test-extended": {
+          "vitest-it-test-extended": {
             "resolves": {
               "binding": {
                 "site": {
@@ -53,7 +53,7 @@
                     {
                       "has": {
                         "field": "value",
-                        "matches": "vitest-focusable-test-extend-call"
+                        "matches": "vitest-it-test-extend-call"
                       }
                     }
                   ]
@@ -61,24 +61,24 @@
               }
             }
           },
-          "vitest-focusable-test-extend-call": {
+          "vitest-it-test-extend-call": {
             "any": [
               {
                 "kind": "call_expression",
                 "has": {
                   "field": "function",
-                  "matches": "vitest-focusable-test-extend-member"
+                  "matches": "vitest-it-test-extend-member"
                 }
               },
               {
                 "kind": "parenthesized_expression",
                 "has": {
-                  "matches": "vitest-focusable-test-extend-call"
+                  "matches": "vitest-it-test-extend-call"
                 }
               }
             ]
           },
-          "vitest-focusable-test-extend-member": {
+          "vitest-it-test-extend-member": {
             "any": [
               {
                 "kind": "member_expression",
@@ -92,7 +92,7 @@
                   {
                     "has": {
                       "field": "object",
-                      "matches": "vitest-focusable-test-root"
+                      "matches": "vitest-it-test-root"
                     }
                   }
                 ]
@@ -100,39 +100,39 @@
               {
                 "kind": "parenthesized_expression",
                 "has": {
-                  "matches": "vitest-focusable-test-extend-member"
+                  "matches": "vitest-it-test-extend-member"
                 }
               }
             ]
           },
-          "vitest-focusable-test-root": {
+          "vitest-it-test-root": {
             "any": [
               {
-                "matches": "vitest-focusable-test-bound"
+                "matches": "vitest-it-test-bound"
               },
               {
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-focusable-test-root"
+                  "matches": "vitest-it-test-root"
                 }
               },
               {
                 "kind": "call_expression",
                 "has": {
                   "field": "function",
-                  "matches": "vitest-focusable-test-root"
+                  "matches": "vitest-it-test-root"
                 }
               },
               {
                 "kind": "parenthesized_expression",
                 "has": {
-                  "matches": "vitest-focusable-test-root"
+                  "matches": "vitest-it-test-root"
                 }
               }
             ]
           },
-          "vitest-focusable-test-bound": {
+          "vitest-it-test-bound": {
             "kind": "identifier",
             "any": [
               {
@@ -164,6 +164,13 @@
                   {
                     "resolves": {
                       "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
                         "occurrence": {
                           "any": [
                             {
@@ -255,17 +262,16 @@
                 ]
               },
               {
-                "matches": "vitest-focusable-test-extended"
+                "matches": "vitest-it-test-extended"
               }
             ]
           },
-          "vitest-focusable-head": {
+          "vitest-it-test-named": {
             "kind": "identifier",
             "any": [
               {
                 "resolves": {
                   "global": [
-                    "describe",
                     "it",
                     "test"
                   ]
@@ -280,7 +286,7 @@
                           "kind": "import_specifier",
                           "has": {
                             "field": "name",
-                            "regex": "^(?:describe|it|test)$"
+                            "regex": "^(?:it|test)$"
                           },
                           "inside": {
                             "kind": "import_statement",
@@ -300,11 +306,18 @@
                   {
                     "resolves": {
                       "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
                         "occurrence": {
                           "any": [
                             {
                               "kind": "shorthand_property_identifier_pattern",
-                              "regex": "^(?:describe|it|test)$",
+                              "regex": "^(?:it|test)$",
                               "inside": {
                                 "kind": "object_pattern",
                                 "inside": {
@@ -327,19 +340,19 @@
                                   "any": [
                                     {
                                       "kind": "property_identifier",
-                                      "regex": "^(?:describe|it|test)$"
+                                      "regex": "^(?:it|test)$"
                                     },
                                     {
                                       "any": [
                                         {
                                           "kind": "string",
                                           "value": {
-                                            "regex": "^(?:describe|it|test)$"
+                                            "regex": "^(?:it|test)$"
                                           }
                                         },
                                         {
                                           "kind": "template_string",
-                                          "regex": "^`(?:describe|it|test)`$"
+                                          "regex": "^`(?:it|test)`$"
                                         }
                                       ]
                                     },
@@ -349,19 +362,19 @@
                                         "any": [
                                           {
                                             "kind": "identifier",
-                                            "regex": "^(?:describe|it|test)$"
+                                            "regex": "^(?:it|test)$"
                                           },
                                           {
                                             "any": [
                                               {
                                                 "kind": "string",
                                                 "value": {
-                                                  "regex": "^(?:describe|it|test)$"
+                                                  "regex": "^(?:it|test)$"
                                                 }
                                               },
                                               {
                                                 "kind": "template_string",
-                                                "regex": "^`(?:describe|it|test)`$"
+                                                "regex": "^`(?:it|test)`$"
                                               }
                                             ]
                                           }
@@ -391,37 +404,230 @@
                 ]
               },
               {
-                "matches": "vitest-focusable-test-extended"
-              },
-              {
-                "regex": "^(?:describe|it|test)$",
-                "matches": "vitest-test-context"
+                "matches": "vitest-it-test-extended"
               }
             ]
           },
-          "vitest-focusable-chain": {
+          "vitest-it-test-callee": {
             "any": [
               {
-                "matches": "vitest-focusable-head"
+                "matches": "vitest-it-test-named"
               },
               {
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-focusable-chain"
+                  "matches": "vitest-it-test-callee"
                 }
               },
               {
                 "kind": "call_expression",
                 "has": {
                   "field": "function",
-                  "matches": "vitest-focusable-chain"
+                  "matches": "vitest-it-test-callee"
                 }
               },
               {
                 "kind": "parenthesized_expression",
                 "has": {
-                  "matches": "vitest-focusable-chain"
+                  "matches": "vitest-it-test-callee"
+                }
+              }
+            ]
+          },
+          "vitest-describe-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "describe"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:describe)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:describe)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:describe)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:describe)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:describe)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:describe)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:describe)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:describe)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-describe-callee": {
+            "any": [
+              {
+                "matches": "vitest-describe-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-describe-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-describe-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-describe-callee"
+                }
+              }
+            ]
+          },
+          "vitest-describe-it-test-context": {
+            "kind": "identifier",
+            "regex": "^(?:describe|it|test)$",
+            "matches": "vitest-test-context"
+          },
+          "vitest-describe-it-test-context-callee": {
+            "any": [
+              {
+                "matches": "vitest-describe-it-test-context"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-describe-it-test-context-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-describe-it-test-context-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-describe-it-test-context-callee"
                 }
               }
             ]
@@ -1179,11 +1385,20 @@
                 "has": {
                   "field": "function",
                   "kind": "member_expression",
-                  "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.fails(?:\\.only)|\\.only(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.fails(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.only(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.sequential(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.sequential(?:\\.only)|\\.todo(?:\\.only))|\\.skipIf(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.concurrent(?:\\.only)|\\.fails(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)))|(?:describe|suite)(?:\\.concurrent(?:\\.only(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.only(?:\\.concurrent(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.sequential(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.shuffle(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.todo(?:\\.only))|\\.skipIf(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.concurrent(?:\\.only)|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?|\\.sequential(?:\\.only)|\\.shuffle(?:\\.only)|\\.skip(?:\\.only)))|(?:bench)(?:\\.only(?:\\.skip(?:\\.todo)?|\\.todo(?:\\.skip)?)?|\\.runIf(?:\\.only(?:\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.skip(?:\\.only(?:\\.todo)?|\\.todo(?:\\.only))|\\.skipIf(?:\\.only(?:\\.skip|\\.todo)?|\\.skip(?:\\.only)|\\.todo(?:\\.only))|\\.todo(?:\\.only(?:\\.skip)?|\\.skip(?:\\.only))))$",
-                  "has": {
-                    "field": "object",
-                    "matches": "vitest-focusable-chain"
-                  },
+                  "any": [
+                    {
+                      "regex": "^[\\w$]+(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*runIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*skipIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*fails(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)))$",
+                      "matches": "vitest-it-test-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*runIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*skipIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)|\\s*\\.\\s*todo(?:\\s*\\.\\s*only))|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*only)|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*only)|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*only)|\\s*\\.\\s*skip(?:\\s*\\.\\s*only)))$",
+                      "matches": "vitest-describe-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+(?:\\s*\\.\\s*[\\w$]+)*\\s*\\.\\s*only(?:\\s*\\.\\s*[\\w$]+)*$",
+                      "matches": "vitest-describe-it-test-context-callee"
+                    }
+                  ],
                   "matches": "vitest-only-modifier"
                 }
               },
@@ -1192,8 +1407,20 @@
                   {
                     "has": {
                       "field": "function",
-                      "regex": "^(?:(?:it|test)(?:\\.concurrent(?:\\.each|\\.fails(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.each|\\.extend|\\.fails(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.for|\\.only(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.scoped|\\.sequential(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip)?)?|\\.skip(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential)?)?|\\.skipIf(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.todo(?:\\.concurrent(?:\\.each|\\.fails|\\.for|\\.only|\\.sequential|\\.skip)?|\\.each|\\.fails(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?|\\.for|\\.only(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.sequential|\\.skip)?|\\.sequential(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.skip)?|\\.skip(?:\\.concurrent|\\.each|\\.fails|\\.for|\\.only|\\.sequential)?)?)?|(?:describe)(?:\\.concurrent(?:\\.each|\\.for|\\.only(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.each|\\.for|\\.only(?:\\.concurrent(?:\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?)?|\\.runIf(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.sequential(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip)?)?|\\.shuffle(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?)?|\\.skip(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle)?)?|\\.skipIf(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip|\\.todo)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip|\\.todo)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip|\\.todo)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.todo)?|\\.todo(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?)?|\\.todo(?:\\.concurrent(?:\\.each|\\.for|\\.only|\\.sequential|\\.shuffle|\\.skip)?|\\.each|\\.for|\\.only(?:\\.concurrent|\\.each|\\.for|\\.sequential|\\.shuffle|\\.skip)?|\\.sequential(?:\\.concurrent|\\.each|\\.for|\\.only|\\.shuffle|\\.skip)?|\\.shuffle(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.skip)?|\\.skip(?:\\.concurrent|\\.each|\\.for|\\.only|\\.sequential|\\.shuffle)?)?)?)$",
-                      "matches": "vitest-focusable-chain"
+                      "any": [
+                        {
+                          "regex": "^[\\w$]+(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*each|\\s*\\.\\s*extend|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*runIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*scoped|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential)?)?|\\s*\\.\\s*skipIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?|\\s*\\.\\s*each|\\s*\\.\\s*fails(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*fails|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential)?)?)?$",
+                          "matches": "vitest-it-test-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*runIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle)?)?|\\s*\\.\\s*skipIf(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip|\\s*\\.\\s*todo)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*todo)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?)?|\\s*\\.\\s*todo(?:\\s*\\.\\s*concurrent(?:\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?|\\s*\\.\\s*sequential(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*shuffle|\\s*\\.\\s*skip)?|\\s*\\.\\s*shuffle(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*skip)?|\\s*\\.\\s*skip(?:\\s*\\.\\s*concurrent|\\s*\\.\\s*each|\\s*\\.\\s*for|\\s*\\.\\s*only|\\s*\\.\\s*sequential|\\s*\\.\\s*shuffle)?)?)?$",
+                          "matches": "vitest-describe-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:\\s*\\.\\s*[\\w$]+)*$",
+                          "matches": "vitest-describe-it-test-context-callee"
+                        }
+                      ]
                     }
                   },
                   {

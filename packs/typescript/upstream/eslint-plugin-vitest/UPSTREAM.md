@@ -5,7 +5,10 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | File | Origin |
 |---|---|
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-ava.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-test-without-callback.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-vitest-extend.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-vitest-table-calls.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-unchecked-heads.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-dynamic-import.test.ts` | written by Rerail |
@@ -19,6 +22,7 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-invalid-chains.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-local-binding.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-mode-option-overridden.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-multiline-chain.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test-default.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test-mode-options.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-node-test.test.ts` | written by Rerail |
@@ -28,7 +32,9 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context-named-callback.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context-property.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context-renamed-property.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context-unchecked-chain.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-test-context.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-alias-across-grammars.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-default-import-named-type.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-default-import.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts` | written by Rerail |
