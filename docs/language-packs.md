@@ -29,7 +29,7 @@ family's grammar) is the engine's answer alone. The host's schema checks a rule'
 
 ## The engine adapter
 
-Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
+Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`, `Vue`) implementing `Adapter`. The
 `with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family, and the
 registry also generates `Family`, `GrammarDialect`, `Family::of` and `honours`, so no enum is edited by hand. Every
 other call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
@@ -39,19 +39,38 @@ semantics (`truthy`, `type_name`, `equals`, `order`, `relation`, `numeric`, `int
 
 | Part | Holds |
 |---|---|
-| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`), module paths from package markers (Python), and inline suppression comments |
+| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`; Vue's script-block `program`), module paths from package markers (Python), and inline suppression comments |
 | `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, and refusals of binding and resolution features |
 | `ValueRules` (`adapter/value.rs`) | Value decoding, kinds, structures, names, keys and references for comparisons, type names, and refusals of compare modes |
 | `ArgumentRules` (`adapter/arguments.rs`) | Call kinds, the arguments a call passes, and refusals of signature markers and modes |
 | `CallRules` (`adapter/calls.rs`) | Call and function kinds, per-file call summaries, call-graph links and labels |
 | `FormatArgRules` (`adapter/format_args.rs`) | The format styles a family reads |
-| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's text-only patterns |
+| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's and Vue's text-only patterns |
 
-A concern the registry does not mark `supported` for a family is `Refused` (Ecma's `calls` and `formatArgs`). An
-embedding family reuses the embedded language's concerns (Blade's delegate to PHP's) and overrides only what reads
-the template itself. Refusals go through one gate (`gate`), which reports a refused feature as invalid and a planned
-one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite over every adapter, and
-checks that each family's adapter reads exactly the capabilities its registry entries support.
+A concern the registry does not mark `supported` for a family is `Refused` (Ecma's and Vue's `calls` and
+`formatArgs`). An embedding family reuses the embedded language's concerns (Blade's delegate to PHP's, Vue's to
+Ecma's) and overrides only what reads the template itself. Refusals go through one gate (`gate`), which reports a
+refused feature as invalid and a planned one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs
+one generic suite over every adapter, and checks that each family's adapter reads exactly the capabilities its
+registry entries support.
+
+### Vue
+
+Vue's adapter is `adapter/vue.rs`. A `.vue` file's tape holds its tree-sitter-vue tree and, as the root's last
+child, the one program its `<script>` blocks and template expressions make (`vue::view`, embedded through
+`script-block`, `embed/script_block.rs`): TypeScript for `lang="ts"`, TSX for `lang="tsx"`, JavaScript otherwise;
+a script in another language (`coffee`) embeds none. The three grammars share one numbering on a Vue tape
+(`KindCatalog`): TypeScript's kinds and fields follow Vue's own, and TSX's and JavaScript's take TypeScript's codes
+wherever their names agree, so a rule's `kind`, `field` and `pattern` read every program alike.
+
+| Concern | Vue |
+|---|---|
+| Regions | The embedded `program`, read as the dialect its script's `lang` names (`vue::tape_script_dialect`: the shared kind codes do not tell the three apart) |
+| Scope, value, arguments | Ecma's, over the program: template references resolve in the scopes Vue's compiler gives them; a token the view writes (an interpolation's `(` and `);`) is not spelled (`embed::rewritten`) |
+| Calls, format arguments | Refused, as ECMAScript's are: vue-eslint-parser hands the scripts to ESLint, which has neither |
+| Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
+| Patterns | A pattern holding a Vue construct (an element, a directive, an interpolation, a comment) is Vue's; any other is TypeScript and matches the program in any of its grammars (JSX, TSX's alone, matches none) |
+| `languageOptions`, `when` | Ecma's keys |
 
 ## The registry entry
 

@@ -8,6 +8,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 
 - Two rule kinds: `code` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.
 - One required `mode` on every rule: `log` records only, `steer` delivers guidance, and `block` is stored, shown, and carried on violations but delivered exactly like `steer` until block enforcement lands; no shipped rule uses `block`. The rules and diagnostics filters take `mode=log|steer|block`.
+- Vue single-file components (`.vue`) are a supported code-rule language: rules name tree-sitter-vue's kinds and the ECMAScript kinds of the program a component's `<script>` blocks and template expressions make, and read scope, values and arguments with ECMAScript's semantics; `calls` and `formatArgs` are refused, as for ECMAScript; `suppress.eslint` honours ESLint directives in scripts and eslint-plugin-vue's template comment directives.
 
 ### Semantic monitor
 
