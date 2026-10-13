@@ -7,6 +7,10 @@ Successful values use tagged arrays: integers, floats (debug and IEEE bits),
 booleans, chars, strings, and byte arrays. `warnings` contains non-error
 rustc diagnostics. Cases marked `unknown` retain the author's reason.
 
+A case may carry `items`: Rust items (`const A: u8 = 1;`) written at module
+level before `fn main`, where the probe expression `src` can name them; the case's
+entry then repeats `items`. Cases without `items` compile exactly as before.
+
 Reads rust.cases.json and writes rust.expected.json. The pinned compiler is
 rustc 1.99.0 (b940084d7 2026-09-28), edition 2024; run with Python 3.9+.
 Build products are written under <checkout>/.rerail/tools/rust/value/. The
@@ -40,10 +44,11 @@ def diag(stderr):
         out.append(['error' if d.get('level')=='error' else d.get('level',''), code, d.get('message','')])
     return out
 
-def rust_src(typ, expr, const):
+def rust_src(typ, expr, const, items=''):
     # The emitter is deliberately dependency-free and keeps the oracle's tagged shape.
     binding = f'const C: {typ} = {expr};' if const and typ else (f'let v: {typ} = {expr};' if typ else f'let v = {expr};')
     use = 'C' if const and typ else 'v'
+    items_block = items + '\n' if items else ''
     return f'''#![allow(unused, unused_comparisons)]
 use std::fmt::Debug;
 fn hx(b:&[u8])->String{{b.iter().map(|x|format!("{{:02x}}",x)).collect()}}
@@ -56,13 +61,13 @@ impl E for f32{{fn e(&self)->String{{format!("[\\\"float\\\",\\\"f32\\\",\\\"{{:
 impl E for f64{{fn e(&self)->String{{format!("[\\\"float\\\",\\\"f64\\\",\\\"{{:?}}\\\",\\\"{{:016x}}\\\"]",self,self.to_bits())}}}}
 impl E for &str{{fn e(&self)->String{{format!("[\\\"str\\\",\\\"{{}}\\\",\\\"{{}}\\\"]",self,hx(self.as_bytes()))}}}}
 impl<const N:usize> E for &[u8;N]{{fn e(&self)->String{{format!("[\\\"bytes\\\",\\\"[u8; {{}}]\\\",\\\"{{}}\\\"]",N,hx(&self[..]))}}}}
-fn main(){{ {binding} println!("{{}}",E::e(&{use})); }}
+{items_block}fn main(){{ {binding} println!("{{}}",E::e(&{use})); }}
 '''
 
 def compile_one(i, case, const):
     typ,expr=case.get('type'),case['src']
     if not typ: return None, [['unknown','', 'type inference required']]
-    src=rust_src(typ,expr,const); base=BUILD/(f'{i}_'+('const' if const else 'eval'))
+    src=rust_src(typ,expr,const,case.get('items','')); base=BUILD/(f'{i}_'+('const' if const else 'eval'))
     rs=base.with_suffix('.rs'); bin=base
     rs.write_text(src)
     p=subprocess.run(['rustc','+'+TOOLCHAIN,'--edition',EDITION,'--error-format=json','-o',str(bin),str(rs)],capture_output=True,text=True)
@@ -78,6 +83,7 @@ def main():
     cases=json.loads((HERE/'rust.cases.json').read_text())['cases']; out=[]
     for i,c in enumerate(cases):
         ent={'src':c['src'],'type':c.get('type')}
+        if 'items' in c: ent={'items':c['items'],**ent}
         if 'unknown' in c: ent['unknown']=c['unknown']
         cv,cd=compile_one(i,c,True); ev,ed=compile_one(i,c,False)
         ent['const']=cv if cv is not None else (['error',cd[0][1],cd[0][2]] if cd and cd[0][0]=='error' else ['unknown',cd[0][2] if cd else ''])

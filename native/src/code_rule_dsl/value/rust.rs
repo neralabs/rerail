@@ -1,8 +1,11 @@
 //! Rust literal values as rustc evaluates them.
 
+use crate::code_rule_dsl::scope::rust::resolve_index;
+use crate::code_rule_dsl::scope::{Form, ScopeTable};
 use ast_grep_core::{Doc, Node};
 use num_bigint::BigInt;
 use num_traits::{Num, ToPrimitive, Zero};
+use std::cell::Cell;
 
 /// A Rust integer type (suffix or annotation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -349,22 +352,78 @@ fn hex(b: &[u8]) -> Option<u8> {
     Some(u8::from_str_radix(std::str::from_utf8(b).ok()?, 16).ok()?)
 }
 
+/// Most `const` names `evaluate_following` follows one into another (`A = B`, `B = C`, ...).
+const MAX_FOLLOW_DEPTH: usize = 16;
+/// Most `const` names one `evaluate_following` call resolves in all, so initializers that name
+/// several constants each (`A + A + A`) cannot multiply the work past a bound.
+const MAX_FOLLOWED_NAMES: usize = 4096;
+
+/// The type an enclosing `const` declares for an unsuffixed literal in its initializer: rustc
+/// infers the literal's type from it.
+#[derive(Clone, Copy, Debug)]
+enum Hint {
+    Int(IntTy),
+    Float(FloatTy),
+}
+
+/// What an evaluation may read besides the expression itself.
+#[derive(Clone, Copy)]
+struct Context<'t> {
+    /// The file's scopes, where names are followed to their `const` items; `None` reads no name.
+    table: Option<&'t ScopeTable>,
+    /// `const` names followed on the way to this expression.
+    depth: usize,
+    /// `const` names resolved so far in the whole evaluation.
+    budget: &'t Cell<usize>,
+}
+
 /// The value rustc gives the expression `node` (tree-sitter-rust), folding literals through
 /// operators, casts, parentheses and constant `if`/block expressions; `RustValue::Unknown` for
 /// anything else (names, paths, calls, macros) and for every expression rustc rejects.
 pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
-    eval(node)
+    let budget = Cell::new(0);
+    eval(
+        node,
+        Context {
+            table: None,
+            depth: 0,
+            budget: &budget,
+        },
+        None,
+    )
 }
 
-fn eval<D: Doc>(node: &Node<'_, D>) -> RustValue {
+/// `evaluate`, but a bare name that resolves (`scope::rust::resolve_index`) to a `const` item of
+/// this file evaluates to that const's initializer, converted to the type the const declares: an
+/// unsuffixed integer takes the declared integer type, and a value of another type is `Unknown`.
+/// A chain of more than 16 names, a cycle, a `static`, a `let` binding (a run-time value), a path
+/// (`Self::C`, `m::C`) and a name no item of the file binds are `Unknown`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn evaluate_following<D: Doc>(node: &Node<'_, D>, table: &ScopeTable) -> RustValue {
+    let budget = Cell::new(0);
+    eval(
+        node,
+        Context {
+            table: Some(table),
+            depth: 0,
+            budget: &budget,
+        },
+        None,
+    )
+}
+
+fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> RustValue {
     match node.kind().as_ref() {
-        "integer_literal" | "float_literal" | "boolean_literal" | "char_literal"
-        | "string_literal" | "raw_string_literal" => literal(node),
+        "integer_literal" | "float_literal" => hinted_literal(node, hint),
+        "boolean_literal" | "char_literal" | "string_literal" | "raw_string_literal" => {
+            literal(node)
+        }
+        "identifier" => follow_const(node, ctx).unwrap_or(RustValue::Unknown),
         "parenthesized_expression" => node
             .children()
             .filter(|n| n.is_named())
             .next()
-            .map_or(RustValue::Unknown, |n| eval(&n)),
+            .map_or(RustValue::Unknown, |n| eval(&n, ctx, hint)),
         "unary_expression" => {
             let Some(op) = node.field("operator").or_else(|| node.children().next()) else {
                 return RustValue::Unknown;
@@ -375,13 +434,15 @@ fn eval<D: Doc>(node: &Node<'_, D>) -> RustValue {
             else {
                 return RustValue::Unknown;
             };
-            let argument = eval(&arg);
-            let argument = if matches!(argument, RustValue::Unknown) && op.text().as_ref() == "-" {
-                min_literal(&arg).unwrap_or(RustValue::Unknown)
+            let operator = op.text();
+            let operand_hint = hint.filter(|_| matches!(operator.as_ref(), "-" | "+" | "!"));
+            let argument = eval(&arg, ctx, operand_hint);
+            let argument = if matches!(argument, RustValue::Unknown) && operator.as_ref() == "-" {
+                min_literal(&arg, operand_hint).unwrap_or(RustValue::Unknown)
             } else {
                 argument
             };
-            unary(op.text().as_ref(), argument)
+            unary(operator.as_ref(), argument)
         }
         "binary_expression" => {
             let (Some(left), Some(op), Some(right)) = (
@@ -391,7 +452,19 @@ fn eval<D: Doc>(node: &Node<'_, D>) -> RustValue {
             ) else {
                 return RustValue::Unknown;
             };
-            binary(op.text().as_ref(), eval(&left), eval(&right))
+            let operator = op.text();
+            // An arithmetic or bitwise operator's operands have the type of its result; a shift's
+            // right operand and a comparison's or `&&`'s operands are typed on their own.
+            let (left_hint, right_hint) = match operator.as_ref() {
+                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" => (hint, hint),
+                "<<" | ">>" => (hint, None),
+                _ => (None, None),
+            };
+            binary(
+                operator.as_ref(),
+                eval(&left, ctx, left_hint),
+                eval(&right, ctx, right_hint),
+            )
         }
         "type_cast_expression" => {
             let mut named = node.children().filter(|n| n.is_named());
@@ -401,7 +474,7 @@ fn eval<D: Doc>(node: &Node<'_, D>) -> RustValue {
             let Some(ty) = node.field("type").or_else(|| named.next()) else {
                 return RustValue::Unknown;
             };
-            cast(eval(&value), ty.text().as_ref())
+            cast(eval(&value, ctx, None), ty.text().as_ref())
         }
         "if_expression" => {
             let (Some(condition), Some(consequence)) =
@@ -409,31 +482,194 @@ fn eval<D: Doc>(node: &Node<'_, D>) -> RustValue {
             else {
                 return RustValue::Unknown;
             };
-            match eval(&condition) {
-                RustValue::Bool(true) => eval_block(&consequence),
+            match eval(&condition, ctx, None) {
+                RustValue::Bool(true) => eval_block(&consequence, ctx, hint),
                 RustValue::Bool(false) => node
                     .field("alternative")
-                    .map_or(RustValue::Unknown, |n| eval_block(&n)),
+                    .map_or(RustValue::Unknown, |n| eval_block(&n, ctx, hint)),
                 _ => RustValue::Unknown,
             }
         }
-        "block" => eval_block(node),
+        "block" => eval_block(node, ctx, hint),
         _ => RustValue::Unknown,
     }
 }
 
-fn eval_block<D: Doc>(node: &Node<'_, D>) -> RustValue {
+fn eval_block<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> RustValue {
+    // `let A = 9;` where `A` names a const or static is no binding but a refutable path pattern,
+    // which rustc rejects (E0005): the block has no value.
+    let rejected = ctx.table.is_some_and(|table| {
+        node.children().any(|statement| {
+            statement.kind() == "let_declaration"
+                && statement
+                    .field("pattern")
+                    .is_some_and(|pattern| table.reference(&pattern.range()).is_some())
+        })
+    });
+    if rejected {
+        return RustValue::Unknown;
+    }
     node.children()
         .filter(|n| n.is_named())
         .last()
-        .map_or(RustValue::Unknown, |n| eval(&n))
+        .map_or(RustValue::Unknown, |n| eval(&n, ctx, hint))
 }
 
-fn min_literal<D: Doc>(node: &Node<'_, D>) -> Option<RustValue> {
+/// A numeric literal, with the type `hint` gives it when it has no suffix; an integer the hinted
+/// type cannot hold is `Unknown`.
+fn hinted_literal<D: Doc>(node: &Node<'_, D>, hint: Option<Hint>) -> RustValue {
+    match (literal(node), hint) {
+        (RustValue::Int { value, ty: None }, Some(Hint::Int(ty))) => {
+            in_range(value, ty).map_or(RustValue::Unknown, |value| RustValue::Int {
+                value,
+                ty: Some(ty),
+            })
+        }
+        // An f32 literal is the nearest f32 to its text, not the nearest f32 to the nearest f64.
+        (RustValue::Float { ty: None, .. }, Some(Hint::Float(FloatTy::F32))) => {
+            float(&format!("{}f32", node.text()))
+        }
+        (RustValue::Float { value, ty: None }, Some(Hint::Float(ty))) => RustValue::Float {
+            value,
+            ty: Some(ty),
+        },
+        (value, _) => value,
+    }
+}
+
+/// The value of the `const` item the name `node` resolves to, as `evaluate_following` reads it.
+fn follow_const<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>) -> Option<RustValue> {
+    let table = ctx.table?;
+    if ctx.depth >= MAX_FOLLOW_DEPTH || ctx.budget.get() >= MAX_FOLLOWED_NAMES {
+        return None;
+    }
+    ctx.budget.set(ctx.budget.get() + 1);
+    let reference = table.reference(&node.range())?;
+    let name = node.text();
+    let (scope, index) = resolve_index(table, reference, name.as_ref())?;
+    let scope = table.scopes.get(scope as usize)?;
+    let binding = scope.bindings.get(name.as_ref())?.get(index)?;
+    // A `const` item is bound at the start of its scope, a `let` after its declaration; a
+    // `static`, a function or an import is bound with another form.
+    if binding.site.form != Form::Assignment || binding.offset != scope.range.start {
+        return None;
+    }
+    let root = node.root().root();
+    let value = binding.site.value?.find_near(root.clone(), node)?;
+    let annotation = binding.site.annotation?.find_near(root, node)?;
+    if value.parent()?.kind() != "const_item" {
+        return None;
+    }
+    let declared = Declared::of(&annotation)?;
+    let inner = Context {
+        depth: ctx.depth + 1,
+        ..ctx
+    };
+    let evaluated = eval(&value, inner, declared.hint());
+    Some(declared.convert(evaluated))
+}
+
+/// The type a `const` declares, for the types a value of this module can have.
+enum Declared {
+    Int(IntTy),
+    Float(FloatTy),
+    Bool,
+    Char,
+    Str,
+    /// `&[u8; N]` (the length) or `&[u8]` (none).
+    Bytes(Option<usize>),
+}
+
+impl Declared {
+    /// The declared type `annotation` spells; `None` for an alias, a path or any other type.
+    fn of<D: Doc>(annotation: &Node<'_, D>) -> Option<Self> {
+        let text: String = annotation
+            .text()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if annotation.kind() == "primitive_type" {
+            return match text.as_str() {
+                "bool" => Some(Self::Bool),
+                "char" => Some(Self::Char),
+                "f32" => Some(Self::Float(FloatTy::F32)),
+                "f64" => Some(Self::Float(FloatTy::F64)),
+                _ => int_suffix(&format!("_{text}")).1.map(Self::Int),
+            };
+        }
+        let referent = text
+            .strip_prefix("&'static")
+            .or_else(|| text.strip_prefix('&'))?;
+        if referent == "str" {
+            return Some(Self::Str);
+        }
+        if referent == "[u8]" {
+            return Some(Self::Bytes(None));
+        }
+        let length = referent.strip_prefix("[u8;")?.strip_suffix(']')?;
+        length
+            .parse::<usize>()
+            .ok()
+            .map(|length| Self::Bytes(Some(length)))
+    }
+
+    /// The type an unsuffixed literal of the initializer takes.
+    fn hint(&self) -> Option<Hint> {
+        match self {
+            Self::Int(ty) => Some(Hint::Int(*ty)),
+            Self::Float(ty) => Some(Hint::Float(*ty)),
+            _ => None,
+        }
+    }
+
+    /// `value` as a value of the declared type; `Unknown` for one of another type (rustc rejects
+    /// the item) or an integer out of the type's range.
+    fn convert(&self, value: RustValue) -> RustValue {
+        match (self, value) {
+            (Self::Int(want), RustValue::Int { value, ty })
+                if ty.map_or(true, |ty| ty == *want) =>
+            {
+                in_range(value, *want).map_or(RustValue::Unknown, |value| RustValue::Int {
+                    value,
+                    ty: Some(*want),
+                })
+            }
+            (Self::Float(want), RustValue::Float { value, ty })
+                if ty.map_or(true, |ty| ty == *want) =>
+            {
+                RustValue::Float {
+                    value: if *want == FloatTy::F32 {
+                        f64::from(value as f32)
+                    } else {
+                        value
+                    },
+                    ty: Some(*want),
+                }
+            }
+            (Self::Bool, value @ RustValue::Bool(_)) => value,
+            (Self::Char, value @ RustValue::Char(_)) => value,
+            (Self::Str, value @ RustValue::Str(_)) => value,
+            (Self::Bytes(length), RustValue::Bytes(bytes))
+                if length.map_or(true, |length| length == bytes.len()) =>
+            {
+                RustValue::Bytes(bytes)
+            }
+            _ => RustValue::Unknown,
+        }
+    }
+}
+
+/// The literal `-node` negates, as its own type's most negative value would not fit unnegated:
+/// `128i8` in `-128i8`, or an unsuffixed `128` where `hint` makes it an `i8`.
+fn min_literal<D: Doc>(node: &Node<'_, D>, hint: Option<Hint>) -> Option<RustValue> {
     let text = node.text();
     let text = text.trim_matches(|c| c == '(' || c == ')');
-    let (body, ty) = int_suffix(text);
-    let ty = ty?;
+    let (body, suffixed) = int_suffix(text);
+    let ty = match (suffixed, hint) {
+        (Some(ty), _) => ty,
+        (None, Some(Hint::Int(ty))) if node.kind() == "integer_literal" => ty,
+        _ => return None,
+    };
     if !ty.name().starts_with('i') {
         return None;
     }

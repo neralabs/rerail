@@ -176,15 +176,20 @@ fn upstream_value_oracle() {
         ("(1, 2).0", "tuple field access is explicitly Unknown"),
     ];
     let mut checked = 0usize;
+    let mut followed = 0usize;
     let mut failures = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {
         let source = case["src"].as_str().expect("src");
-        let root = GrammarDialect::Rust.ast_grep(&format!("fn f() {{ let _ = {source}; }}"));
+        // `items` are module-level items the expression may name; the probe follows them.
+        let items = case.get("items").and_then(serde_json::Value::as_str);
+        let prefix = items.map_or_else(String::new, |items| format!("{items}\n"));
+        let root =
+            GrammarDialect::Rust.ast_grep(&format!("{prefix}fn f() {{ let _ = {source}; }}"));
         if root.root().dfs().any(|node| node.is_error()) {
             continue;
         }
         let Some(value) = root.root().dfs().find_map(|node| {
-            (node.kind().as_ref() == "let_declaration")
+            (node.kind().as_ref() == "let_declaration" && node.range().start >= prefix.len())
                 .then(|| node.field("value"))
                 .flatten()
         }) else {
@@ -195,7 +200,23 @@ fn upstream_value_oracle() {
             .get("const")
             .filter(|value| value[0] != "error")
             .unwrap_or(&case["eval"]);
-        let actual = evaluate(&value);
+        let table = crate::code_rule_dsl::scope::rust::build_for_test(&format!(
+            "{prefix}fn f() {{ let _ = {source}; }}"
+        ));
+        let actual = if items.is_some() {
+            followed += 1;
+            evaluate_following(&value, &table)
+        } else {
+            // Without items there is no const to follow: both entry points agree.
+            let plain = evaluate(&value);
+            // Compared as text: `0.0 / 0.0` is a NaN, which equals nothing.
+            if format!("{:?}", evaluate_following(&value, &table)) != format!("{plain:?}") {
+                failures.push(format!(
+                    "{source}: evaluate_following differs from evaluate"
+                ));
+            }
+            plain
+        };
         let known = !matches!(actual, RustValue::Unknown);
         let expected_error = expected[0] == "error";
         let good = if expected_error {
@@ -242,4 +263,8 @@ fn upstream_value_oracle() {
         failures.join("\n")
     );
     assert!(checked >= 200, "only {checked} oracle cases checked");
+    assert!(
+        followed >= 30,
+        "only {followed} const-following cases checked"
+    );
 }

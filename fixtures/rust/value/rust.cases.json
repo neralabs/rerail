@@ -1146,6 +1146,242 @@
   {
    "src": "-128i8",
    "type": "i8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 50;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 55;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 56;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 100;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u32 = 7; const B: u32 = A * 2; const D: u32 = B + A;",
+   "src": "D",
+   "type": "u32"
+  },
+  {
+   "items": "const A: i8 = -128; const B: i8 = A; const D: i8 = B;",
+   "src": "D",
+   "type": "i8"
+  },
+  {
+   "items": "const B: u8 = A + 1; const A: u8 = 1;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u16 = 300;",
+   "src": "A",
+   "type": "u16"
+  },
+  {
+   "items": "const A: u8 = 300;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: i64 = -5;",
+   "src": "A",
+   "type": "i64"
+  },
+  {
+   "items": "const A: u8 = 255;",
+   "src": "A as i8",
+   "type": "i8"
+  },
+  {
+   "items": "const A: u8 = 5;",
+   "src": "A as u32",
+   "type": "u32"
+  },
+  {
+   "items": "const A: u64 = 1 << 40;",
+   "src": "A",
+   "type": "u64"
+  },
+  {
+   "items": "const A: u32 = 1 << 32;",
+   "src": "A",
+   "type": "u32"
+  },
+  {
+   "items": "const A: u128 = 1 << 100;",
+   "src": "A",
+   "type": "u128"
+  },
+  {
+   "items": "const A: u8 = 200 + 100 - 100;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = !0;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: i32 = !0;",
+   "src": "A",
+   "type": "i32"
+  },
+  {
+   "items": "const A: i32 = 5;",
+   "src": "-A",
+   "type": "i32"
+  },
+  {
+   "items": "const A: i8 = -128;",
+   "src": "-A",
+   "type": "i8"
+  },
+  {
+   "items": "const A: i32 = 2147483647; const B: i32 = A + 1;",
+   "src": "B",
+   "type": "i32"
+  },
+  {
+   "items": "const A: f32 = 0.1 + 0.2;",
+   "src": "A",
+   "type": "f32"
+  },
+  {
+   "items": "const A: f64 = 0.1; const B: f64 = A * 3.0;",
+   "src": "B",
+   "type": "f64"
+  },
+  {
+   "items": "const A: bool = true; const B: bool = !A;",
+   "src": "B",
+   "type": "bool"
+  },
+  {
+   "items": "const A: u8 = 3; const B: bool = A < 5;",
+   "src": "B",
+   "type": "bool"
+  },
+  {
+   "items": "const A: u8 = 3; const B: u8 = if A > 2 { 10 } else { 20 };",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const N: usize = 4; const M: usize = N * N;",
+   "src": "M",
+   "type": "usize"
+  },
+  {
+   "items": "const A: char = 'x';",
+   "src": "A",
+   "type": "char"
+  },
+  {
+   "items": "const A: &str = \"hi\";",
+   "src": "A",
+   "type": "&str"
+  },
+  {
+   "items": "const A: &[u8; 3] = b\"abc\";",
+   "src": "A",
+   "type": "&[u8; 3]"
+  },
+  {
+   "items": "const A: u8 = 5u16;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = true;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "mod m { const A: u8 = 1; }",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "mod m { pub const A: u8 = 1; }",
+   "src": "m::A",
+   "type": "u8",
+   "unknown": "a path past its first segment is not followed"
+  },
+  {
+   "items": "mod m { const A: u8 = 1; } const A: u8 = 2;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ const A: u8 = 9; A }",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ let A = 9; A }",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ let x: u8 = A; x }",
+   "type": "u8",
+   "unknown": "a let binding is a run-time value"
+  },
+  {
+   "items": "static S: u8 = 3;",
+   "src": "S",
+   "type": "u8",
+   "unknown": "a static is not followed"
+  },
+  {
+   "items": "static mut S: u8 = 3;",
+   "src": "S",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = B; const B: u8 = A;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "struct S; impl S { const C: u8 = 3; }",
+   "src": "S::C",
+   "type": "u8",
+   "unknown": "an associated const is reached through a path"
+  },
+  {
+   "items": "type T = u8; const A: T = 5;",
+   "src": "A",
+   "type": "u8",
+   "unknown": "a type alias is not resolved"
+  },
+  {
+   "items": "const K0: u32 = 1; const K1: u32 = K0 + 1; const K2: u32 = K1 + 1; const K3: u32 = K2 + 1; const K4: u32 = K3 + 1; const K5: u32 = K4 + 1; const K6: u32 = K5 + 1; const K7: u32 = K6 + 1; const K8: u32 = K7 + 1; const K9: u32 = K8 + 1; const K10: u32 = K9 + 1; const K11: u32 = K10 + 1; const K12: u32 = K11 + 1; const K13: u32 = K12 + 1; const K14: u32 = K13 + 1; const K15: u32 = K14 + 1; const K16: u32 = K15 + 1; const K17: u32 = K16 + 1; const K18: u32 = K17 + 1; const K19: u32 = K18 + 1;",
+   "src": "K19",
+   "type": "u32",
+   "unknown": "a chain of more than 16 names is not followed"
+  },
+  {
+   "items": "const K0: u32 = 1; const K1: u32 = K0 + 1; const K2: u32 = K1 + 1; const K3: u32 = K2 + 1; const K4: u32 = K3 + 1; const K5: u32 = K4 + 1; const K6: u32 = K5 + 1; const K7: u32 = K6 + 1; const K8: u32 = K7 + 1; const K9: u32 = K8 + 1; const K10: u32 = K9 + 1; const K11: u32 = K10 + 1; const K12: u32 = K11 + 1; const K13: u32 = K12 + 1; const K14: u32 = K13 + 1; const K15: u32 = K14 + 1; const K16: u32 = K15 + 1; const K17: u32 = K16 + 1; const K18: u32 = K17 + 1; const K19: u32 = K18 + 1;",
+   "src": "K10",
+   "type": "u32"
+  },
+  {
+   "items": "const Z: u8 = 0;",
+   "src": "{ const K: u8 = 4; K * K }",
+   "type": "u8"
   }
  ]
 }
