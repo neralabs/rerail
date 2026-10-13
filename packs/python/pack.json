@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "163 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "162 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -711,13 +711,6 @@
       "document": "rules/SIM115.json",
       "title": "Ruff SIM115: Open file with context handler",
       "group": "Ruff"
-    },
-    {
-      "id": "ruff:SIM116",
-      "document": "rules/SIM116.json",
-      "title": "Ruff SIM116: If else block instead of dict lookup",
-      "group": "Ruff",
-      "on": false
     },
     {
       "id": "ruff:SIM201",

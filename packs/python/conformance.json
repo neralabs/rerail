@@ -1469,20 +1469,6 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-sim116-if-else-block-instead-of-dict-lookup",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "SIM116"
-      },
-      "policy": "rules/SIM116.json",
-      "capabilities": [
-        "compare",
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-sim201-negate-equal-op",
       "upstream": {
         "tool": "ruff",
@@ -2599,6 +2585,20 @@
       "policy": "candidates/rules/SIM114.json",
       "capabilities": [
         "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim116-if-else-block-instead-of-dict-lookup",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM116"
+      },
+      "policy": "candidates/rules/SIM116.json",
+      "capabilities": [
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
