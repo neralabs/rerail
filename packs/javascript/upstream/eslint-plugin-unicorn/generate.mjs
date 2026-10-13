@@ -17,6 +17,9 @@
 // eslint-plugin-unicorn/fixtures/<rule>/<n>.<ext>, or, for a case with a `filename` (filename-case's tests are file
 // names), to <rule>/<n>/<filename>; a case named outside the ecma family's extensions (`.vue`, `.md`) is left out,
 // since Rerail does not read it as JavaScript. Code that does not parse is left out. Each kept file is one analysis unit.
+// Tests that build a `filename` from process.cwd() (filename-case's `path.join(cwd, …)` and `outsideCwd`) see
+// RECORDING_CWD while their file is imported, so a recording never carries the maintainer's own directory: neither in
+// a fixture path (which must stay short enough to check out on Windows) nor in the case's code.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join, normalize, resolve } from "node:path";
@@ -31,6 +34,8 @@ const CHECKOUT = { repository: "https://github.com/sindresorhus/eslint-plugin-un
 const PREFIX = "unicorn/";
 /** The ecma family's extensions (`CODE_RULE_DIALECTS`): a named case outside them is not JavaScript to Rerail. */
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+/** The working directory the upstream tests see while they declare their cases: the same on every machine. */
+const RECORDING_CWD = "/work/project";
 
 function parseArguments(argv) {
   const options = {};
@@ -126,7 +131,13 @@ async function extractFixtures() {
   for (const rule of RULES) {
     const name = rule.slice(PREFIX.length);
     RUNS.length = 0;
-    await import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href);
+    const realCwd = process.cwd;
+    process.cwd = () => RECORDING_CWD;
+    try {
+      await import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href);
+    } finally {
+      process.cwd = realCwd;
+    }
     const runs = RUNS.filter(run => run.rule === name);
     if (runs.length === 0) throw new Error(`${rule}: test/${name}.js declared no cases`);
     const seen = new Set();
