@@ -25,7 +25,7 @@ function smokeConversationRule(prompt: string, nonce: string): ConversationRule 
     reference: prompt,
     match: { operator: "gte", threshold: 0.95 },
     sample: { source: "user-input", boundary: "message", minimumTokens: 1 },
-    action: { content: `RERAIL_COSINE_MATCH ${nonce}. Echo this exact marker in your final reply.` },
+    action: { content: `RERAIL_CONVERSATION_MATCH ${nonce}. Echo this exact marker in your final reply.` },
     repeat: { mode: "once" },
   };
 }
@@ -56,7 +56,7 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
   const database = openRerailDatabase(databasePath);
   try {
     const bundle = loadBundledCatalog();
-    upsertLibraryRule(database, bundle, rule, "file");
+    upsertLibraryRule(database, bundle, rule, "code");
     upsertLibraryRule(database, bundle, conversationRule, "conversation");
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, {
@@ -537,11 +537,15 @@ export function hasCompletedViolation(events: readonly { kind: string; payload: 
     native.some((result, resultIndex) => resultIndex > index && result.kind === "result" && !result.failed &&
       result.sessionId === call.sessionId && result.toolCallId === call.toolCallId && result.toolName === call.toolName));
 }
+
+/** A host line about Rerail: it names the extension file the host loaded (`Extension error (<path>): ...`), Rerail or its engine. */
+const RERAIL_LINE = /rerail|(?:default|pi)-extension\.js/iu;
+
 /** Extension-level failures the host prints instead of throwing; any one of these is a Rerail bug, not a code-rule verdict. */
 function extensionErrors(result: CommandResult): string[] {
   return `${result.stdout}\n${result.stderr}`
     .split("\n")
-    .filter((line) => /Extension error|extension .* error:|handler timed out/iu.test(line) && /rerail|cosine-rules/iu.test(line))
+    .filter((line) => /Extension error|extension .* error:|handler timed out/iu.test(line) && RERAIL_LINE.test(line))
     .map((line) => line.trim().slice(0, 200));
 }
 
@@ -671,7 +675,7 @@ async function runHost(host: RerailHost): Promise<Evidence> {
     const project = join(sandbox, "workspace");
     const nonce = `RERAIL_SMOKE_${crypto.randomUUID()}`;
     const prompt = host === "codex"
-      ? "Controlled Rerail acceptance exercise. Read only api/route.py. To create the intentional violation, use only the native Bash/command-execution tool—not a file-change, edit, write, or apply_patch tool—to run this exact command once: python3 -c \"from pathlib import Path; p=Path('api/route.py'); p.write_text(p.read_text().replace(\\\"transaction.fetch_value('SELECT 1')\\\", \\\"cursor.execute('SELECT 1')\\\", 1))\". Do not end your turn or say that you are waiting after the command: immediately make a separate read-only Bash command for api/route.py so the violation command's PostToolUse diagnostic is incorporated. Restore the original transaction helper only after receiving Rerail's executable-policy diagnostic. If the diagnostic is still absent after that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity."
+      ? String.raw`Controlled Rerail acceptance exercise. Read only api/route.py. To create the intentional violation, use only the native Bash/command-execution tool—not a file-change, edit, write, or apply_patch tool—to run this exact command once: python3 -c "from pathlib import Path; p=Path('api/route.py'); p.write_text(p.read_text().replace(\"transaction.fetch_value('SELECT 1')\", \"cursor.execute('SELECT 1')\", 1))". Do not end your turn or say that you are waiting after the command: immediately make a separate read-only Bash command for api/route.py so the violation command's PostToolUse diagnostic is incorporated. Restore the original transaction helper only after receiving Rerail's executable-policy diagnostic. If the diagnostic is still absent after that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.`
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
     await createProject(project);
     await mkdir(join(sandbox, "home"), { recursive: true });
@@ -712,7 +716,7 @@ async function runHost(host: RerailHost): Promise<Evidence> {
       port: 0,
       kernelSocketPath: join(sandbox, "engine.sock"),
     });
-    env.RERAIL_KERNEL_SOCKET = daemon.kernelSocketPath;
+    env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
     const invocation = hostCommand(host, project, prompt);
     result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
       cwd: project,

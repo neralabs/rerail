@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-eq-null",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-eq-null` rule (https://eslint.org/docs/latest/rules/no-eq-null). Reports `==` and `!=` with a `null` operand (through parentheses).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "loose-null-comparison",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "all": [
+              {
+                "has": {
+                  "regex": "^(==|!=)$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "null",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-eq-null",
+        "message": "Use '===' to compare with null."
+      }
+    }
+  ]
+}

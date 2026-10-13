@@ -1,0 +1,1 @@
+var baz = typeof foo + 'thing'

@@ -35,15 +35,15 @@ const unboundMessage: CodeRule = {
 const ENGINE_REASON = /\/clauses\/0\/violation\/message: `\$TYPO` names no capture/;
 
 let root: string;
-const originalEnginePath = process.env.RERAIL_NATIVE_KERNEL_PATH;
+const originalEnginePath = process.env.RERAIL_ENGINE_PATH;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "rerail-policy-write-"));
 });
 
 afterEach(async () => {
-  if (originalEnginePath === undefined) delete process.env.RERAIL_NATIVE_KERNEL_PATH;
-  else process.env.RERAIL_NATIVE_KERNEL_PATH = originalEnginePath;
+  if (originalEnginePath === undefined) delete process.env.RERAIL_ENGINE_PATH;
+  else process.env.RERAIL_ENGINE_PATH = originalEnginePath;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -56,10 +56,10 @@ describe("code rule writes compile in the engine", () => {
     const database = library();
     const bundle = loadBundledCatalog();
     try {
-      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "file")).toThrow(ENGINE_REASON);
-      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "file")).toThrow(/policy rule test:unbound-message does not compile/);
+      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(ENGINE_REASON);
+      expect(() => upsertLibraryRule(database, bundle, unboundMessage, "code")).toThrow(/policy rule test:unbound-message does not compile/);
       expect(getLibraryRule(database, unboundMessage.id)).toBeUndefined();
-      expect(upsertLibraryRule(database, bundle, MOCK_CODE_RULES[1]!, "file").document.rule).toEqual(MOCK_CODE_RULES[1]);
+      expect(upsertLibraryRule(database, bundle, MOCK_CODE_RULES[1]!, "code").document.rule).toEqual(MOCK_CODE_RULES[1]);
     } finally {
       database.$client.close();
     }
@@ -79,8 +79,8 @@ describe("code rule writes compile in the engine", () => {
   it("refuses to store a code rule it cannot validate when the native engine is unavailable", () => {
     const database = library();
     try {
-      process.env.RERAIL_NATIVE_KERNEL_PATH = join(root, "missing.node");
-      expect(() => upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "file"))
+      process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
+      expect(() => upsertLibraryRule(database, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code"))
         .toThrow(/cannot validate policy rule mock-no-console-log: native kernel unavailable/);
       expect(getLibraryRule(database, MOCK_CODE_RULES[0]!.id)).toBeUndefined();
     } finally {
@@ -99,17 +99,17 @@ describe("code rule writes compile in the engine", () => {
       const rejected = await app.request(`/api/library-rules/${unboundMessage.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "file", rule: unboundMessage }),
+        body: JSON.stringify({ kind: "code", rule: unboundMessage }),
       });
       expect(rejected.status).toBe(400);
       expect(await rejected.json()).toMatchObject({ error: "invalid-rule", message: expect.stringMatching(ENGINE_REASON) });
       expect(getLibraryRule(stores.database(), unboundMessage.id)).toBeUndefined();
 
-      process.env.RERAIL_NATIVE_KERNEL_PATH = join(root, "missing.node");
+      process.env.RERAIL_ENGINE_PATH = join(root, "missing.node");
       const unavailable = await app.request(`/api/library-rules/${MOCK_CODE_RULES[0]!.id}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "file", rule: MOCK_CODE_RULES[0] }),
+        body: JSON.stringify({ kind: "code", rule: MOCK_CODE_RULES[0] }),
       });
       expect(unavailable.status).toBe(503);
       expect(await unavailable.json()).toMatchObject({ error: "kernel-unavailable" });
@@ -123,8 +123,8 @@ describe("code rule writes compile in the engine", () => {
     const bundle = loadBundledCatalog();
     let dump: RulesDump;
     try {
-      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[0]!, "file");
-      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[1]!, "file");
+      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[0]!, "code");
+      upsertLibraryRule(source, bundle, MOCK_CODE_RULES[1]!, "code");
       dump = exportRulesDump(source);
     } finally {
       source.$client.close();

@@ -1,0 +1,1 @@
+return 1; function foo(){ return 1; } return 1;

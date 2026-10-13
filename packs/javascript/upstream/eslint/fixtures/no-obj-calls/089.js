@@ -1,0 +1,1 @@
+/*globals Intl: true*/ new Intl();

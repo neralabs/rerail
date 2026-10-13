@@ -108,13 +108,13 @@ Repository-level semantic rules are usable now. Shared team assertions, cross-se
 
 A conversation rule is a standing semantic query over one event source and boundary. The reference describes the concept to detect; the action contains the context to deliver.
 
-The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for rule configuration. A repository owns its configuration: rule packs, By Rerail rules and rules created by you are attached to it per folder, and rule settings turn rules or packs on or off and set their mode for the repository or one checkout. Each file is judged by the checkout that owns it; conversation rules come from the folder the session started in. OMP and Pi load the conversation rules at session start and re-read the configuration before every ingested event, and every runtime compiles the file rules into the kernel and re-reads them before each audit, so a change made through the daemon, the dashboard or MCP applies on the next event or tool call; the Rust kernel only loads and evaluates what the database hands it. Rules come only from the repository's configuration: there are no rule files in the working tree. See [Rule scoping](docs/rule-scoping.md).
+The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for rule configuration. A repository owns its configuration: rule packs, By Rerail rules and rules created by you are attached to it per folder, and rule settings turn rules or packs on or off and set their mode for the repository or one checkout. Each file is judged by the checkout that owns it; conversation rules come from the folder the session started in. OMP and Pi load the conversation rules at session start and re-read the configuration before every ingested event, and every runtime compiles the code rules into the kernel and re-reads them before each audit, so a change made through the daemon, the dashboard or MCP applies on the next event or tool call; the Rust kernel only loads and evaluates what the database hands it. Rules come only from the repository's configuration: there are no rule files in the working tree. See [Rule scoping](docs/rule-scoping.md).
 
 The package ships its rules as **By Rerail** rules: the rules of the packs core ships, under `packs/<id>/rules/`; core has no rules of its own. They are read from the package and never copied into the database; they run only where a repository adds them or a pack that holds them. Rules people write are **Created by you**, stored once per machine in the library. Editing a By Rerail rule stores a copy in the library, added where the original was with the original switched off there. `rerail rules export` writes the library and every repository's configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`), and `rerail rules import <file>` loads one back. `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`; `rerail reset` never touches rules.
 
 Rule packs (`packs/<id>/`, [pack format](docs/pack-format.md)) hold rule documents in `rules/` and a `pack.json` that lists each with its document, a title and a group, and an optional match definition (file globs or `package.json` dependencies) used to explain why it fits. Rerail ships one: **complexity**, three cyclomatic complexity rules chosen by hand. A pack for a project's own conventions is added the same way: a pack directory with its rule documents and a `pack.json` listing them. `recommendRulePacks` matches a checkout's files and manifests against every pack locally, with no model and no network, and returns each fitting pack with its rule count, the reason and the folder to add it in; a pack without a match definition, such as complexity, is never recommended. Setting a repository up adds its recommended packs, so with complexity the only shipped pack it adds none. See [Rule packs](docs/rule-packs.md).
 
-A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native engine evaluates, each with the violation it reports. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
+A code rule is a `rerail.policy/v1` document: a path `scope` and a list of regex, AST, or relational clauses the native engine evaluates, each with the violation it reports. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct, and [Tool-call rules](docs/tool-call-rules.md) covers structural matching of tool calls. A conversation rule file looks like this:
 
 ```json
 {
@@ -145,7 +145,7 @@ A file rule is a `rerail.policy/v1` document: a path `scope` and a list of regex
 }
 ```
 
-`mode` is required on every rule, conversation and file alike:
+`mode` is required on every rule, conversation and code alike:
 
 - `log` records a match for review and never sends guidance.
 - `steer` sends the rule's guidance to the agent.
@@ -197,11 +197,11 @@ Rerail keeps one SQLite file per Rerail home: `$RERAIL_HOME/rerail.sqlite` (`~/.
 - `work_links` — loose associations from a session to external references (`kind` such as `git-branch`, `github-pr`, `linear-issue`; `reference`; optional `url`). No foreign key on purpose, so links can be recorded by any process before or after the session row exists.
 - `audits` — every run of rules over a session, live or re-run, with independent scope (`repository`, `touched-files`, `ai-output`) and run mode (`steer`, `log`), selected paths, session, source revision, timestamps, violations, and concrete execution failures. Terminal records are immutable; closing or reopening a session interrupts its unfinished audits without discarding partial results.
 
-The daemon serves every repository on the machine. Its listings — sessions, audits, violations, repository audits, and rule activity — take an optional `repository` (a key or alias) and cover the whole machine without it; a session addressed by its id is found whichever repository recorded it. File-rule path filters (`scope.include`, `scope.exclude`, exclusions winning) narrow a repository to matching paths for all three audit scopes, independently of the `steer` or `log` run mode. Paths are normalized relative to the session's `cwd`.
+The daemon serves every repository on the machine. Its listings — sessions, audits, violations, repository audits, and rule activity — take an optional `repository` (a key or alias) and cover the whole machine without it; a session addressed by its id is found whichever repository recorded it. Code-rule path filters (`scope.include`, `scope.exclude`, exclusions winning) narrow a repository to matching paths for all three audit scopes, independently of the `steer` or `log` run mode. Paths are normalized relative to the session's `cwd`.
 
 `rerail reset` deletes the current repository's session history, across all of its worktrees — ended sessions and every session's events, work links, audits, audit requests, and repository audits — in one write transaction. Rules, other repositories' history, audit settings, and presentation preferences stay. The file is never unlinked, so a daemon or harness session holding it open is unaffected, and a still-running session keeps its row (its earlier events are gone) and carries on recording.
 
-`rerail seed` fills the database with throwaway mock rows — three file rules covering `forbid` with regex, ast, and llm clauses and two conversation rules, stored in the library and added to the current repository (which it sets up, with one conversation rule off), and a session with events and two work links attributed to that repository — so MCP and UI work has data to show. It is idempotent.
+`rerail seed` fills the database with throwaway mock rows — three code rules covering `forbid` with regex, ast, and llm clauses and two conversation rules, stored in the library and added to the current repository (which it sets up, with one conversation rule off), and a session with events and two work links attributed to that repository — so MCP and UI work has data to show. It is idempotent.
 
 ## Install
 
@@ -302,7 +302,7 @@ To cut a release, bump `package.json` only (`npm version <version> --no-git-tag-
 One `rerail` install carries the rules kernel, the transcript database, and a browser view of it. `rerail daemon start` runs them as one background daemon:
 
 ```sh
-rerail daemon start            # background daemon on http://127.0.0.1:4737/, opens nothing
+rerail daemon start            # background daemon on http://127.0.0.1:4737/ (a free port when 4737 is held), opens nothing
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
@@ -357,7 +357,7 @@ The daemon owns the resident kernel execution service and exposes the Rerail dat
 | `repository_audits_list`      | `GET /api/repository-audits`                                          | One full repository audit per historically audited repository: its `repositoryAudit` and latest `audit` summary with `violationCount`.                                                          |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Paginated violations and failures of one repository audit; `kind` is `violation` or `failure`, `mode` is the producing rule's mode.                                                    |
 
-Every operation is defined once (`src/api/operations.ts`, with the repository and rule operations in `src/api/repository-operations.ts`: id, route, zod schemas for params/query/body/output, handler). `src/api/http.ts` mounts them with Hono and emits the OpenAPI document; `src/api/mcp.ts` registers the same definitions as MCP tools, so a new operation appears in all three places with no further wiring. Validation failures return `400 { error: "invalid-request", issues }`; handler errors carry a status and a code (`rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`). `rerail install` (and `rerail setup`) registers the endpoint with OMP by writing a `rerail` entry into `~/.omp/agent/mcp.json` (`{ "type": "http", "url": "http://127.0.0.1:4737/mcp" }`) next to the extension symlink; `--remove` takes only that entry out again. OMP lists it under `/mcp`; run `/mcp reload` if the daemon came up after the session did. A daemon started on another `--port` needs that entry edited to match. Other harnesses point at the same URL by hand.
+Every operation is defined once (`src/api/operations.ts`, with the repository and rule operations in `src/api/repository-operations.ts`: id, route, zod schemas for params/query/body/output, handler). `src/api/http.ts` mounts them with Hono and emits the OpenAPI document; `src/api/mcp.ts` registers the same definitions as MCP tools, so a new operation appears in all three places with no further wiring. Validation failures return `400 { error: "invalid-request", issues }`; handler errors carry a status and a code (`rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`). `rerail install` (and `rerail setup`) registers the endpoint with OMP by writing a `rerail` entry into `~/.omp/agent/mcp.json` next to the extension symlink: a stdio server that runs the installed `rerail mcp-bridge` (`{ "command": "<node>", "args": ["<install>/dist/cli/cli.js", "mcp-bridge"] }`); `--remove` takes only that entry out again. The bridge relays each request to the daemon that `daemon.json` (below) records, so it follows a daemon that took a free port, was started with `--port`, or restarted, and the entry never needs editing. It checks each `daemon.json` once, sending nothing to its daemon until that daemon's `/healthz` answers with the recorded pid, so a bridge that starts after a crash or a reboot left `daemon.json` behind answers "Rerail daemon is not running" instead of reaching whatever now holds the port. After that check a request costs one file read, and the bridge checks again only when a request fails to connect: if a daemon it already checked is killed with SIGKILL, its pid is reused and another daemon takes its port before the next request, that request reaches the other daemon. OMP lists it under `/mcp`; run `/mcp reload` if the daemon came up after the session did. Other harnesses can run the same bridge command, or read the daemon's URL from `daemon.json`.
 
 Repository and rule operations name their target in the query or body: `repository` (a key such as `remote:github.com/acme/app` or `clone:<id>`, or an alias), `checkout` (an absolute path in a checkout) and `folder`. A checkout wins over a repository, and an MCP call without either uses the calling agent's checkout: the MCP bridge sends `x-rerail-caller-cwd`, the URI-encoded real path of the folder its session started in, on every request. `/api` callers are people and `/mcp` callers are coding agents (advisory, not a security boundary). A coding agent may start, stop and change settings in its own checkout and the checkouts inside it; it may change a repository's attachments and settings only while the repository is not set up, or to add a rule it creates in the same call or its copy of a By Rerail rule. Anything else is `403 agent-not-permitted` with the dashboard URL, `<origin>/?repository=<key>&checkout=<path>#rules`, where a person can make the change. See [Rule scoping](docs/rule-scoping.md).
 
@@ -367,7 +367,7 @@ Being on loopback is not by itself the write authorization. A page on another si
 
 The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `ui` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
 
-`daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_KERNEL_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks. A daemon started before resident IPC support must be stopped with `rerail daemon stop` and restarted before new hooks can use it; the stop command accepts the older state format.
+`daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks.
 
 Native tool-call IDs correlate edits with their results, including concurrent calls to the same tool. Events are ordered in a session-specific lane: waiting on one agent's open, audit, or delivery does not hold up unrelated sessions, while events within each session remain serialized. The resident kernel keys these lanes by runtime configuration and session ID, so separate databases or workspaces do not share a lane even when session IDs coincide. Pending calls and their captured preimages survive daemon restarts. Turn checkpoints discover filesystem changes made through shells or tools without explicit edit paths. Discovery retains source fingerprints, not a repository-sized copy of source text or a baseline of violations.
 
@@ -422,7 +422,7 @@ sessions but runs no rules. Stopping takes effect immediately in OMP and Pi
 and before the next one-shot Claude Code, Codex, or Cursor hook runs. It
 persists across coding agent and daemon restarts, does not delete history or
 rules, and does not stop the machine-wide daemon. In a stopped checkout no
-events are recorded, no file or conversation rules run, no guidance is
+events are recorded, no code or conversation rules run, no guidance is
 delivered, and hooks do not autostart or contact the daemon. The footer in
 Claude Code, OMP, and Pi reads `Rerail ○ not on here` while a daemon is
 running to say so, and `Rerail ○ not set up  ·  rerail start` in a started
@@ -504,7 +504,7 @@ link to the audit IDs they produced; history retains the session, workspace,
 source revision, and evaluated rule revisions. Historical records and work
 cancelled before evaluation have no compiled-rule provenance; they are not
 attributed to today's rules. A recorded catalog with no individual revisions
-means it had no enabled file rules. Diagnostics indexes every repository in
+means it had no enabled code rules. Diagnostics indexes every repository in
 retained session history and renders the latest repository audit's violations
 and execution failures as separate accessible records. Entry type
 (`kind=violation|failure`), rule mode (`mode=log|steer|block`, the mode of the
@@ -652,7 +652,7 @@ One repository holds everything: the core package at the root, rule packs under 
 git clone https://github.com/neralabs/rerail.git
 ```
 
-`RERAIL_FIXTURES_DIR` points the build and tests at another fixtures directory.
+`RERAIL_ORACLES_DIR` points the build and tests at another fixtures directory.
 
 Prerequisites: Node.js 24+, npm, and Rust through [rustup](https://rustup.rs/). `rust-toolchain.toml` pins the toolchain, so `cargo` installs and selects it on first use.
 

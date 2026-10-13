@@ -1,0 +1,1 @@
+Object[`prototype`][`hasOwnProperty`][`call`](object, property);

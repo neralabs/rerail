@@ -31,7 +31,7 @@ export function defaultRulesDumpPath(databasePath: string): string {
 function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): void {
   const problems: string[] = [];
   for (const [index, document] of documents.entries()) {
-    if (document.kind !== "file") continue;
+    if (document.kind !== "code") continue;
     try {
       assertCodeRuleStorable(document.rule);
     } catch (error) {
@@ -40,7 +40,7 @@ function assertDumpCompiles(path: string, documents: readonly RuleDocument[]): v
     }
   }
   if (problems.length > 0) {
-    throw new Error(`${path}: nothing imported; ${problems.length} file rule(s) do not compile:\n${problems.join("\n")}`);
+    throw new Error(`${path}: nothing imported; ${problems.length} code rule(s) do not compile:\n${problems.join("\n")}`);
   }
 }
 
@@ -124,7 +124,7 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
 }
 
 /**
- * Import a rules dump, all or nothing: every file rule must compile first. Library rules are upserted, including one
+ * Import a rules dump, all or nothing: every code rule must compile first. Library rules are upserted, including one
  * that takes a By Rerail rule's id (the library rule wins). Each listed repository's attachments and repository settings
  * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
  * knows under another key or an alias receives them, and keeps every key as an alias.

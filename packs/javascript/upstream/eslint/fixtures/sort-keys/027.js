@@ -1,0 +1,1 @@
+function fn(...args) { return [...args].length; }

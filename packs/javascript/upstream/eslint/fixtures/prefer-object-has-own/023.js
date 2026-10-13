@@ -1,0 +1,1 @@
+Object.prototype.hasOwnProperty(obj, prop)

@@ -1,0 +1,1 @@
+obj.foo.apply(null, [1, 2]);

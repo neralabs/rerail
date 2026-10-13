@@ -1,0 +1,1 @@
+const obj: { foo(): void } = { foo(): void { const bar: () => void = (): void => super.baz; } }

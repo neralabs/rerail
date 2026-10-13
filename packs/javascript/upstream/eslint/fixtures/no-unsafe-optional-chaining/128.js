@@ -1,0 +1,1 @@
+foo instanceof obj?.prop

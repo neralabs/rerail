@@ -1,0 +1,167 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint:no-empty",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-empty` rule (https://eslint.org/docs/latest/rules/no-empty). Flags a block (not a function body, class static block or TS module body) or switch with no statements and no comment. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "allowEmptyCatch": {
+            "type": "boolean",
+            "nullable": true,
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-block",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "statement_block",
+            "not": {
+              "has": {
+                "not": {
+                  "regex": "^[{}]$"
+                }
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      },
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "ambient_declaration"
+                      },
+                      {
+                        "$option": "allowEmptyCatch",
+                        "cases": {
+                          "true": [
+                            {
+                              "kind": "catch_clause"
+                            }
+                          ]
+                        },
+                        "default": [],
+                        "spread": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-empty",
+        "message": "Empty block statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-empty"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-switch",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "switch_body",
+            "inside": {
+              "kind": "switch_statement",
+              "stopBy": "neighbor"
+            },
+            "not": {
+              "has": {
+                "not": {
+                  "regex": "^[{}]$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-empty",
+        "message": "Empty switch statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-empty"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

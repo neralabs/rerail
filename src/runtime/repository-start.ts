@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -32,14 +32,26 @@ export function stateOf(status: RepositoryStatus): RepositoryStartState {
   return status.setUp ? "started" : "not-set-up";
 }
 
+const START_TABLES = [getTableName(repositories), getTableName(checkouts)];
+
+/**
+ * Whether the tables a start state is read from are there. A read-only open of a database whose creator has not
+ * committed the schema yet sees no table; only a writable open, which waits for the creator, could read it.
+ */
+function hasStartTables(database: Pick<RerailDatabase, "all">): boolean {
+  const names = sql.join(START_TABLES.map(name => sql`${name}`), sql`, `);
+  return database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${names})`).length === START_TABLES.length;
+}
+
 /**
  * `workspace`'s start state without side effects: no identity file, database, or schema is created and nothing
- * is recorded.
+ * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped.
  */
 export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
+    if (!hasStartTables(database)) return stateOf(STOPPED);
     return stateOf(checkoutStatus(database, lookupCheckout(database, workspace)));
   } finally {
     database.$client.close();
@@ -54,7 +66,7 @@ export function workspaceSetUp(workspace: string, databasePath = defaultRerailDa
   if (!existsSync(databasePath)) return false;
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
-    return checkoutStatus(database, lookupCheckout(database, workspace)).setUp;
+    return hasStartTables(database) && checkoutStatus(database, lookupCheckout(database, workspace)).setUp;
   } finally {
     database.$client.close();
   }
@@ -62,11 +74,12 @@ export function workspaceSetUp(workspace: string, databasePath = defaultRerailDa
 
 /**
  * `workspaceStartState` for readers that refresh often and must never fail on a database they cannot read
- * (the status line, `/rerail`): undefined where the database cannot be opened.
+ * (the status line, `/rerail`): undefined where the database cannot be opened or has no schema yet.
  */
 export function readOnlyStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
-  return readOnly(databasePath, database => stateOf(checkoutStatus(database, lookupCheckout(database, workspace))));
+  return readOnly(databasePath, database =>
+    hasStartTables(database) ? stateOf(checkoutStatus(database, lookupCheckout(database, workspace))) : undefined);
 }
 
 /** `read` over a read-only connection; undefined when the database cannot be opened or read. */
@@ -94,6 +107,7 @@ const NOT_SET_UP: SessionNoteRules = { setUp: false };
 export function sessionNoteRules(workspace: string, databasePath = defaultRerailDatabasePath()): SessionNoteRules {
   if (!existsSync(databasePath)) return NOT_SET_UP;
   return readOnly(databasePath, database => {
+    if (!hasStartTables(database)) return NOT_SET_UP;
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined || !checkoutStatus(database, checkout).setUp) return NOT_SET_UP;
     return { setUp: true, ruleCount: onRuleCount(database, checkout) } satisfies SessionNoteRules;

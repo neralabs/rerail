@@ -29,13 +29,17 @@ import type { RuleDocument } from "../catalog/rule-store.js";
  */
 /**
  * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
- * newer version. New tables and indexes need no bump: the DDL is idempotent and older builds
- * ignore what they do not know. A change an older build would misread, or one SQLite cannot
- * apply idempotently, raises it.
+ * newer version. Until the first release the version stays 1 and the tables are edited in place;
+ * the DDL only creates what is missing, so a database created by an earlier development build
+ * keeps its old tables and has to be moved aside. From the first release on, new tables and
+ * indexes need no bump: the DDL is idempotent and older builds ignore what they do not know. A
+ * change an older build would misread, or one SQLite cannot apply idempotently, raises it.
+ * Some development builds stamped their files 2 before the version went back to 1, so the first
+ * raise goes to 3: such a file then stays refused instead of being read as current.
  */
 export const RERAIL_SCHEMA_VERSION = 1 as const;
 
-export const RULE_KINDS = ["file", "conversation"] as const;
+export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
 export const RULE_SCOPES = ["repository", "global"] as const;
@@ -82,7 +86,7 @@ export const rules = sqliteTable(
      */
     sourceDigest: text("source_digest"),
 
-    // kind = 'file': one column per top-level field of the executable
+    // kind = 'code': one column per top-level field of the executable
     // `rerail.policy/v1` document the engine compiles. Nested structures are
     // JSON validated by codeRuleSchema at the write boundary.
     format: text("format", { enum: [CODE_RULE_FORMAT] }),
@@ -112,8 +116,8 @@ export const rules = sqliteTable(
     check("rules_action_json", sql`${table.action} IS NULL OR json_type(${table.action}) = 'object'`),
     check("rules_repeat_json", sql`${table.repeat} IS NULL OR json_type(${table.repeat}) = 'object'`),
     check(
-      "rules_file_columns",
-      sql`${table.kind} <> 'file' OR (
+      "rules_code_columns",
+      sql`${table.kind} <> 'code' OR (
         ${table.format} IS NOT NULL
         AND ${table.clauses} IS NOT NULL
         AND ${table.reference} IS NULL
@@ -141,10 +145,14 @@ export const rules = sqliteTable(
 );
 
 /** One logical rule id has one evaluation kind across every owner. */
-export const ruleCatalogIdentities = sqliteTable("rule_catalog_identities", {
-  ruleId: text("rule_id").primaryKey(),
-  kind: text("kind", { enum: RULE_KINDS }).notNull(),
-});
+export const ruleCatalogIdentities = sqliteTable(
+  "rule_catalog_identities",
+  {
+    ruleId: text("rule_id").primaryKey(),
+    kind: text("kind", { enum: RULE_KINDS }).notNull(),
+  },
+  table => [check("rule_catalog_identities_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`)],
+);
 
 /**
  * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
@@ -254,7 +262,10 @@ export const libraryRules = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  table => [check("library_rules_revision", sql`${table.revision} > 0`)],
+  table => [
+    check("library_rules_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`),
+    check("library_rules_revision", sql`${table.revision} > 0`),
+  ],
 );
 
 /**

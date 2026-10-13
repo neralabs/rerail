@@ -35,7 +35,7 @@ export interface RerailDaemonOptions {
   host?: string;
   /** Hostnames besides loopback that requests may be addressed to; anything else is answered 421. */
   publicHosts?: readonly string[];
-  /** `0` asks the OS for a free port. */
+  /** `0` asks the OS for a free port; omitted, the default port unless another process holds it. */
   port?: number;
   /** Directory holding the page. Omit to serve `/api` and `/healthz` alone. */
   uiRoot?: string;
@@ -103,6 +103,20 @@ async function listen(server: Server, port: number, host: string): Promise<void>
     listening.resolve();
   });
   await listening.promise;
+}
+
+/**
+ * An explicit port is bound or fails. Without one the daemon prefers the default port and, when another process
+ * already holds it, takes a free port instead; clients find it through the state file, never by the port number.
+ */
+async function listenPreferred(server: Server, port: number | undefined, host: string): Promise<void> {
+  if (port !== undefined) return await listen(server, port, host);
+  try {
+    await listen(server, DEFAULT_DAEMON_PORT, host);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
+    await listen(server, 0, host);
+  }
 }
 
 async function closeHttpServer(server: Server): Promise<void> {
@@ -242,7 +256,7 @@ export class RerailDaemon {
     const listener = getRequestListener(app.fetch);
     const server = createServer((request, response) => void listener(request, response));
     try {
-      await listen(server, options.port ?? DEFAULT_DAEMON_PORT, bindHost);
+      await listenPreferred(server, options.port, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
       });
@@ -395,7 +409,7 @@ export function parseArguments(
 interface DaemonArguments {
   host: string;
   publicHosts: readonly string[];
-  port: number;
+  port?: number;
   dev: boolean;
   stateFile?: string;
 }
@@ -433,7 +447,7 @@ function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   return {
     host,
     publicHosts: parsePublicHosts(options.get("--public-host")),
-    port: port === undefined ? DEFAULT_DAEMON_PORT : parsePort(port),
+    ...(port === undefined ? {} : { port: parsePort(port) }),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
   };
@@ -474,7 +488,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     workspaceRoot,
     host: arguments_.host,
     publicHosts: arguments_.publicHosts,
-    port: arguments_.port,
+    ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
     uiRoot,
     dev,
     ...services,

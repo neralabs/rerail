@@ -1,0 +1,1 @@
+new Reflect.foo(a, b)

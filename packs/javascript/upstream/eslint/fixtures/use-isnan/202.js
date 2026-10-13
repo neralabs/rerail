@@ -1,0 +1,1 @@
+foo.indexOf(NaN, b)

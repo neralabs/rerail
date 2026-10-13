@@ -1,0 +1,1 @@
+function *foo() { yield a < 1 }

@@ -76,9 +76,9 @@ export const inactiveField = {
     .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
 };
 
-/** The `inactive` field for a file rule whose language, or a capability it reads, the engine does not read yet. */
+/** The `inactive` field for a code rule whose language, or a capability it reads, the engine does not read yet. */
 export function inactiveOf(kind: string, rule: unknown): { inactive?: CodeRuleLanguageNotSupported } {
-  const unsupported = kind === "file" ? codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]) : undefined;
+  const unsupported = kind === "code" ? codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]) : undefined;
   return unsupported === undefined ? {} : { inactive: unsupported };
 }
 
@@ -99,7 +99,7 @@ const effectiveRuleBase = {
   payloadHash: z.string(),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
+  z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...effectiveRuleBase }).strict(),
 ]);
 
@@ -172,7 +172,7 @@ const libraryRuleBase = {
   updatedAt: z.number().int(),
 };
 export const libraryRuleRecordSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, ...libraryRuleBase, ...inactiveField }).strict(),
+  z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...libraryRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...libraryRuleBase }).strict(),
 ]);
 
@@ -187,16 +187,16 @@ export const quarantinedRuleSchema = z.object({
 export const libraryUpsertBodySchema = z.object({
   kind: z.enum(RULE_KINDS),
   rule: z.union([codeRuleSchema, conversationRuleSchema]),
-  revision: z.number().int().positive().optional().describe("Conversation rules only; file rules carry rule.revision."),
+  revision: z.number().int().positive().optional().describe("Conversation rules only; code rules carry rule.revision."),
   ...targetShape,
   ...folderShape,
   attach: z.boolean().optional().describe("Also add the rule to the target repository, in folder."),
 }).strict().superRefine((value, context) => {
-  if ((value.kind === "file") !== ("clauses" in value.rule)) {
+  if ((value.kind === "code") !== ("clauses" in value.rule)) {
     context.addIssue({ code: "custom", path: ["rule"], message: `rule body does not match kind ${value.kind}` });
   }
-  if (value.kind === "file" && value.revision !== undefined) {
-    context.addIssue({ code: "custom", path: ["revision"], message: "file rules take their revision from rule.revision" });
+  if (value.kind === "code" && value.revision !== undefined) {
+    context.addIssue({ code: "custom", path: ["revision"], message: "code rules take their revision from rule.revision" });
   }
   if (value.kind === "conversation" && !("clauses" in value.rule)) {
     for (const issue of engineRegexIssues(value.rule)) {
@@ -213,7 +213,7 @@ export const libraryUpsertResultSchema = z.object({
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
+  z.object({ kind: z.literal("code"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable() }).strict(),
 ]);
 

@@ -14,7 +14,7 @@ export const rulePackSchema = z.object({
   honourSuppressionComments: z.boolean().describe("Whether the pack's rules honour their linters' suppression comments (# noqa, eslint-disable)."),
   rules: z.array(z.object({
     id: z.string(),
-    kind: z.enum(RULE_KINDS).describe("A file rule checks code; a conversation rule watches the coding agent's tool calls."),
+    kind: z.enum(RULE_KINDS).describe("A code rule checks source files; a conversation rule watches the coding agent's tool calls."),
     title: z.string(),
     group: z.string().describe("The group the rule is filed under inside its pack, e.g. Complexity or api."),
     mode: z.enum(RULE_MODES).describe("The rule mode the pack starts it in."),

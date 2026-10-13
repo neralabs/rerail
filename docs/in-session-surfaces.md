@@ -58,7 +58,7 @@ Each steered rule is one block:
 
 ```text
 ▲ Rerail · <rule id>  Steered.
-<guidance; for file rules: message (path:line:col), then any Suggested fix line>
+<guidance; for code rules: message (path:line:col), then any Suggested fix line>
 Why? → <dashboard>/#rule/<id>
 ```
 

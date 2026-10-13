@@ -96,7 +96,7 @@ describe("Rerail API over HTTP", () => {
 
   function addLibraryRules(): void {
     const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "file");
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code");
     for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { revision: 1 });
   }
 

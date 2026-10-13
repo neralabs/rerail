@@ -1,0 +1,1 @@
+var foo = (5 < value) ? true : false

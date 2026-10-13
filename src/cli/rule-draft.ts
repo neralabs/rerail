@@ -55,7 +55,7 @@ type Expectation = "caught" | "passed";
 
 /** A draft rule, the folder of its repository it is added at (`""`, the whole repository, unless the draft names one), and its cases. */
 export type RuleDraft =
-  | { kind: "file"; rule: CodeRule; folder: string; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
+  | { kind: "code"; rule: CodeRule; folder: string; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
   | { kind: "conversation"; rule: ConversationRule; folder: string; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> };
 
 /** A draft is added to the repository of the checkout it is added from; it never names another. */
@@ -125,10 +125,10 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   }
   const cases = draftCasesSchema.safeParse(rawCases ?? {});
   if (!cases.success) throw new RuleDraftError(issuesText(cases.error, ["cases"]));
-  if (upsert.data.kind === "file") {
+  if (upsert.data.kind === "code") {
     const schema = codeRuleCaseSchema;
     return {
-      kind: "file",
+      kind: "code",
       rule: upsert.data.rule as CodeRule,
       folder,
       cases: [...parseCases(schema, cases.data.caught, "caught"), ...parseCases(schema, cases.data.passed, "passed")],

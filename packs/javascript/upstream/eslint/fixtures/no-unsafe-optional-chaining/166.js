@@ -1,0 +1,1 @@
+bar += (foo && obj?.foo);

@@ -1,0 +1,1 @@
+/*globals a:readonly, Array:writable */

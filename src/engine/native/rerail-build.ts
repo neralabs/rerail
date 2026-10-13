@@ -53,7 +53,8 @@ let current: RerailBuild | undefined;
 
 /** The running build, resolved once per process. */
 export function currentRerailBuild(): RerailBuild {
-  return (current ??= resolveRerailBuild(PACKAGE_ROOT));
+  current ??= resolveRerailBuild(PACKAGE_ROOT);
+  return current;
 }
 
 /**

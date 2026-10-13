@@ -1,0 +1,1 @@
+if ((a === b && fn(c)) || d) {} else if (fn(c) && a === b) {}

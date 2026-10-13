@@ -1,0 +1,3 @@
+class A {static set foo(value: string) {
+    // empty
+}}

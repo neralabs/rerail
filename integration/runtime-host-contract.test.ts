@@ -40,7 +40,7 @@ describe("shared host engine", () => {
     // The repository runs the contract code rule and one conversation rule, both from the library.
     setUpTestRepository(root, {
       library: [
-        { kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
+        { kind: "code", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
         {
           kind: "conversation",
           rule: {
@@ -218,7 +218,7 @@ describe("shared host engine", () => {
     process.env.RERAIL_HOME = join(root, "home");
     setUpTestRepository(root, {
       library: [
-        { kind: "file", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
+        { kind: "code", rule: codeRuleSchema.parse(CONTRACT_CURSOR_EXECUTE_CODE_RULE) },
         {
           kind: "conversation",
           rule: {

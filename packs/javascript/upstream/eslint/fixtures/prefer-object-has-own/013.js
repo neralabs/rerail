@@ -1,0 +1,1 @@
+Object.hasOwnProperty.foo(obj, prop)

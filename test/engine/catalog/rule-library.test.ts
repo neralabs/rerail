@@ -40,11 +40,11 @@ async function repositoryWithLintPack(folders: readonly string[]) {
 describe("library rules", () => {
   it("rejects a By Rerail rule id and keeps one kind per id", async () => {
     const db = await temporaryDatabase();
-    expect(() => upsertLibraryRule(db, bundle, codeRule("no-console"), "file")).toThrow(/By Rerail rule id/u);
+    expect(() => upsertLibraryRule(db, bundle, codeRule("no-console"), "code")).toThrow(/By Rerail rule id/u);
 
-    upsertLibraryRule(db, bundle, codeRule("mine"), "file");
-    expect(() => upsertLibraryRule(db, bundle, conversation("mine"), "conversation")).toThrow(/exists with kind file/u);
-    expect(getLibraryRule(db, "mine")?.document.kind).toBe("file");
+    upsertLibraryRule(db, bundle, codeRule("mine"), "code");
+    expect(() => upsertLibraryRule(db, bundle, conversation("mine"), "conversation")).toThrow(/exists with kind code/u);
+    expect(getLibraryRule(db, "mine")?.document.kind).toBe("code");
   });
 
   it("bumps a conversation rule's revision on each write and removes everything that points at a rule", async () => {
@@ -57,16 +57,16 @@ describe("library rules", () => {
     expect(removeLibraryRule(db, "chat")).toBe(true);
     expect(db.select().from(ruleAttachments).all().map(row => row.sourceKind)).toEqual(["pack"]);
     expect(db.select().from(ruleSettings).all()).toEqual([]);
-    upsertLibraryRule(db, bundle, codeRule("chat"), "file");
+    upsertLibraryRule(db, bundle, codeRule("chat"), "code");
     expect(removeLibraryRule(db, "chat")).toBe(true);
     expect(removeLibraryRule(db, "chat")).toBe(false);
   });
 
   it("reports an unreadable row as quarantined and leaves it out of reads", async () => {
     const db = await temporaryDatabase();
-    upsertLibraryRule(db, bundle, codeRule("good"), "file");
+    upsertLibraryRule(db, bundle, codeRule("good"), "code");
     db.insert(libraryRules).values({
-      ruleId: "broken", kind: "file", document: { kind: "file", rule: { id: "broken" } } as never,
+      ruleId: "broken", kind: "code", document: { kind: "code", rule: { id: "broken" } } as never,
       revision: 1, payloadHash: "x", createdAt: 1, updatedAt: 1,
     }).run();
 
@@ -106,9 +106,9 @@ describe("copyRerailRuleToLibrary", () => {
 
   it("lets a library rule win over a later bundled rule with its id", async () => {
     const db = await repositoryWithLintPack([]);
-    writeLibraryRule(db, testBundle(), { kind: "file", rule: codeRule("shared", { mode: "log" }) });
+    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) });
     const later = testBundle();
-    const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "file" as const, rule: codeRule("shared") }]]) };
+    const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "code" as const, rule: codeRule("shared") }]]) };
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "shared" });
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "lib", sourceKind: "library_rule", sourceId: "shared" });
 
@@ -122,7 +122,7 @@ describe("copyRerailRuleToLibrary", () => {
 describe("rules dump", () => {
   it("round-trips the library and repository configuration, keeping this machine's start state", async () => {
     const source = await repositoryWithLintPack(["web"]);
-    upsertLibraryRule(source, bundle, codeRule("mine"), "file");
+    upsertLibraryRule(source, bundle, codeRule("mine"), "code");
     addAttachment(source, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "library_rule", sourceId: "mine" });
     setRuleSetting(source, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: "log" });
     setRuleSetting(source, { owner: { kind: "checkout", checkoutPath: CHECKOUT }, folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null });
@@ -142,10 +142,10 @@ describe("rules dump", () => {
 
   it("keeps a library rule that a later release bundles editable, and round-trips it through a dump", async () => {
     const source = await temporaryDatabase();
-    writeLibraryRule(source, testBundle(), { kind: "file", rule: codeRule("shared", { mode: "log" }) });
+    writeLibraryRule(source, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) });
     const later = testBundle();
-    const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "file" as const, rule: codeRule("shared") }]]) };
-    expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "file").document.rule.mode).toBe("steer");
+    const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "code" as const, rule: codeRule("shared") }]]) };
+    expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "code").document.rule.mode).toBe("steer");
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
 
     expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0 });
@@ -168,15 +168,15 @@ describe("rules dump", () => {
       .toEqual([{ key: "remote:github.com/acme/app-renamed", folder: "web" }]);
   });
 
-  it("imports nothing when a file rule does not compile", async () => {
+  it("imports nothing when a code rule does not compile", async () => {
     const db = await temporaryDatabase();
     const broken = { ...codeRule("broken"), clauses: [{ ...codeRule("broken").clauses[0], forbid: { regex: { pattern: "(", source: "file.content" } } }] };
     const dump = {
       version: 1,
       exportedAt: "now",
       library: [
-        { kind: "file", rule: codeRule("fine"), revision: 1, copiedFromRuleId: null, createdAt: 1, updatedAt: 1 },
-        { kind: "file", rule: broken, revision: 1, copiedFromRuleId: null, createdAt: 1, updatedAt: 1 },
+        { kind: "code", rule: codeRule("fine"), revision: 1, copiedFromRuleId: null, createdAt: 1, updatedAt: 1 },
+        { kind: "code", rule: broken, revision: 1, copiedFromRuleId: null, createdAt: 1, updatedAt: 1 },
       ],
       repositories: [],
     };

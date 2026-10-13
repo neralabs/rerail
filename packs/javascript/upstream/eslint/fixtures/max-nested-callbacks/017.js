@@ -1,0 +1,1 @@
+foo(function() { if (isTrue) { bar(function(data) { baz(function() {}); }); } });

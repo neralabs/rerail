@@ -3,7 +3,7 @@ import { parseGeneratedScenarios } from "../src/generation-contract.js";
 
 const rule = {
   id: "logging",
-  kind: "file" as const,
+  kind: "code" as const,
   definition: "{}",
   digest: "saved-rule",
   updatedAt: "1",

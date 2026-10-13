@@ -31,13 +31,13 @@ A repository that is set up runs only what is attached to it. The rules that shi
 Rules come from two places:
 
 - **By Rerail**: the rules and rule packs that ship with Rerail. They are read from the package, never copied into the database.
-- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`file` or `conversation`). If a later release ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
+- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If a later release ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
 A **rule setting** changes the `on` and/or `mode` (Log, Steer or Block) of one rule or one whole pack in a folder. It belongs to the repository (the default for every checkout) or to one checkout (this worktree only). A null field leaves it to the next owner.
 
-**Rule Path Criteria** (`scope.include`, `scope.exclude` on a file rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
+**Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
 
 ## Precedence
 
@@ -94,6 +94,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every file rule compiles. `rerail reset` deletes only the current repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `onFrom` and `modeFrom` for each folder. Later edits don't rewrite past audits.

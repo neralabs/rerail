@@ -1,0 +1,1 @@
+null instanceof Foo

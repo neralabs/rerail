@@ -1,0 +1,1 @@
+class C { #x; foo() { const x = this.#x; } }

@@ -1,0 +1,1 @@
+obj.bar.foo = function bar() {};

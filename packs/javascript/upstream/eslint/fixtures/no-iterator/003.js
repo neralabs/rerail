@@ -1,0 +1,1 @@
+foo[`__iterator`] = null;

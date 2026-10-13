@@ -1,0 +1,1 @@
+class C { static { var a; foo; var b; } }

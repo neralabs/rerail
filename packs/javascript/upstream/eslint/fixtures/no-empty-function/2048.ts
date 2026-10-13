@@ -1,0 +1,1 @@
+class A { @decorator() foo() {} } // allow: overrideMethods

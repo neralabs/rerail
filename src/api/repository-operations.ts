@@ -214,8 +214,8 @@ function effectiveRuleRecord(rule: EffectiveRule): z.infer<typeof repositoryRule
     revision: rule.revision,
     payloadHash: rule.payloadHash,
   };
-  return rule.document.kind === "file"
-    ? { kind: "file", rule: rule.document.rule, ...shared, ...inactiveOf("file", rule.document.rule) }
+  return rule.document.kind === "code"
+    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
     : { kind: "conversation", rule: rule.document.rule, ...shared };
 }
 
@@ -227,8 +227,8 @@ function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchem
     createdAt: rule.createdAt,
     updatedAt: rule.updatedAt,
   };
-  return rule.document.kind === "file"
-    ? { kind: "file", rule: rule.document.rule, ...shared, ...inactiveOf("file", rule.document.rule) }
+  return rule.document.kind === "code"
+    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
     : { kind: "conversation", rule: rule.document.rule, ...shared };
 }
 
@@ -530,8 +530,8 @@ export const repositoryOperations: readonly Operation[] = [
       return {
         rules: [...bundle.documents.values()]
           .filter(document => input.kind === undefined || document.kind === input.kind)
-          .map(document => document.kind === "file"
-            ? { kind: "file" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null, ...inactiveOf("file", document.rule) }
+          .map(document => document.kind === "code"
+            ? { kind: "code" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
             : { kind: "conversation" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null }),
       };
     },
@@ -568,7 +568,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a file rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
+    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -638,7 +638,7 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
  * The rules `rules_activity` reports: those present in the repository, or without one every By Rerail rule and
  * every rule created by you. An unknown repository has none.
  */
-export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "file" | "conversation"; rule: unknown }[] {
+export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "code" | "conversation"; rule: unknown }[] {
   const db = stores.database();
   const bundle = stores.bundle();
   if (key === undefined) {

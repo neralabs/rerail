@@ -137,7 +137,7 @@ jobs:
       - name: Check Windows engine has no Visual C++ runtime dependency
         if: endsWith(matrix.target, '-windows-msvc')
         shell: bash
-        run: node scripts/check/check-windows-runtime.mjs native/rerail.*.node
+        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node
 
       - name: Smoke Windows rerail CLI install planning
         if: matrix.windows_runtime_smoke
@@ -242,7 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
-            test -f "native/rerail.${target}.node" || { echo "missing native/rerail.${target}.node" >&2; exit 1; }
+            test -f "native/rerail_engine.${target}.node" || { echo "missing native/rerail_engine.${target}.node" >&2; exit 1; }
           done
 
       - id: packed-package

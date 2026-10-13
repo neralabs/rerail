@@ -70,14 +70,14 @@ export function testCodeRuleCatalog(
   const checkout = { checkoutPath: "/test-checkout", repositoryKey: "clone:test", cloneId: "test", git: false, main: true };
   const load = () => {
     const rules: EffectiveRule[] = current().map(rule => ({
-      document: { kind: "file", rule },
+      document: { kind: "code", rule },
       source: { kind: "library_rule", id: rule.id, packId: null },
       attachmentFolder: "",
       on: true,
       mode: rule.mode,
       decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" } },
       revision: rule.revision,
-      payloadHash: ruleDocumentDigest({ kind: "file", rule }),
+      payloadHash: ruleDocumentDigest({ kind: "code", rule }),
     }));
     const ruleSet: CheckoutRuleSet = {
       checkout,

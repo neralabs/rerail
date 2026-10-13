@@ -215,11 +215,11 @@ describe("ruleConfigurationSignature", () => {
 
   it("reports a pack rule a library rule shadows, and changes when that library rule goes", async () => {
     const db = await workedExample();
-    writeLibraryRule(db, testBundle(), { kind: "file", rule: codeRule("shared") });
+    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared") });
     const pack = bundle.packs.get("lint")!;
     const withShared: BundledCatalog = {
       ...bundle,
-      documents: new Map([...bundle.documents, ["shared", { kind: "file", rule: codeRule("shared") }]]),
+      documents: new Map([...bundle.documents, ["shared", { kind: "code", rule: codeRule("shared") }]]),
       packs: new Map([["lint", { ...pack, rules: [...pack.rules, { ...pack.rules[0]!, id: "shared" }] }]]),
     };
 

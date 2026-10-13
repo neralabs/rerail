@@ -1,0 +1,1 @@
+foo[insertBefore](bar, null)

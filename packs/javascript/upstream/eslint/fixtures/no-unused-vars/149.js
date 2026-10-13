@@ -1,0 +1,1 @@
+const a = 5; const _c = a + 5;

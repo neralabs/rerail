@@ -64,8 +64,8 @@ VERDACCIO_PID=""
 # reach a real project's session files, and the device keystore never touches the system keychain.
 # BROWSER=none: set-up shows the dashboard link without opening a browser on this machine.
 sandbox() {
-  env -u RERAIL_CONTENT_STORE_PATH -u RERAIL_DEV -u RERAIL_MODEL_PATH -u RERAIL_KERNEL_SOCKET \
-    -u RERAIL_NATIVE_KERNEL_PATH -u RERAIL_TAG -u RERAIL_REGISTRY -u RERAIL_AUTOSTART \
+  env -u RERAIL_CONTENT_STORE_PATH -u RERAIL_DEV -u RERAIL_MODEL_PATH -u RERAIL_ENGINE_SOCKET \
+    -u RERAIL_ENGINE_PATH -u RERAIL_TAG -u RERAIL_REGISTRY -u RERAIL_AUTOSTART \
     -u NPM_CONFIG_REGISTRY -u npm_config_registry -u NPM_CONFIG_GLOBALCONFIG -u npm_config_globalconfig \
     HOME="$SANDBOX_HOME" RERAIL_HOME="$RERAIL_DIR" XDG_STATE_HOME="$SMOKE/state" BROWSER=none \
     RERAIL_STORAGE_ROOT="$PROJECT/.rerail/sessions" RERAIL_DEVICE_SECRET_STORE=file \

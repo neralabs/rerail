@@ -200,7 +200,7 @@ const sinceParameter = countParameter.describe("Epoch milliseconds; only activit
 /**
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
  * audit, so they carry no evidence either way: `measured: false` says so rather than
- * reporting a zero that reads as "never triggered". A file rule kept
+ * reporting a zero that reads as "never triggered". A code rule kept
  * inactive (`inactive`) is not measured either: it is never evaluated.
  */
 const ruleActivitySchema = z.object({

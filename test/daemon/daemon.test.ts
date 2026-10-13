@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { publicHostSet, operations, presentationResponseSchema } from "../../src/api/index.js";
 import {
   assertHostBindable,
+  DEFAULT_DAEMON_PORT,
   parsePublicHosts,
   RerailDaemon,
   type RerailDaemonOptions,
@@ -329,20 +330,20 @@ describe("Rerail daemon", () => {
     expect(await getJson(daemon, "/api/library-rules")).toEqual({ status: 200, body: { rules: [], quarantined: [] } });
     for (const removed of ["/api/rule-context", "/api/rules"]) expect((await getJson(daemon, removed)).status).toBe(404);
 
-    const created = await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "file", rule: codeRule });
-    expect(created).toMatchObject({ status: 200, body: { rule: { kind: "file", revision: codeRule.revision, rule: codeRule, copiedFromRuleId: null }, attached: null } });
+    const created = await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "code", rule: codeRule });
+    expect(created).toMatchObject({ status: 200, body: { rule: { kind: "code", revision: codeRule.revision, rule: codeRule, copiedFromRuleId: null }, attached: null } });
     expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "conversation", rule: conversationRule })).toMatchObject({
       status: 200, body: { rule: { kind: "conversation", revision: 1, rule: conversationRule } },
     });
 
-    expect(await sendJson(daemon, "/api/library-rules/other", "PUT", { kind: "file", rule: codeRule })).toMatchObject({ status: 400, body: { error: "rule-id-mismatch" } });
-    expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "file", rule: conversationRule })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
+    expect(await sendJson(daemon, "/api/library-rules/other", "PUT", { kind: "code", rule: codeRule })).toMatchObject({ status: 400, body: { error: "rule-id-mismatch" } });
+    expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "code", rule: conversationRule })).toMatchObject({ status: 400, body: { error: "invalid-request" } });
     expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "conversation", rule: { ...conversationRule, match: { operator: "gte", threshold: 2 } } }))
       .toMatchObject({ status: 400, body: { error: "invalid-request" } });
     // One id keeps one kind.
-    expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "file", rule: { ...codeRule, id: conversationRule.id } })).toMatchObject({ status: 409, body: { error: "rule-conflict" } });
+    expect(await sendJson(daemon, `/api/library-rules/${conversationRule.id}`, "PUT", { kind: "code", rule: { ...codeRule, id: conversationRule.id } })).toMatchObject({ status: 409, body: { error: "rule-conflict" } });
     // Attaching names a repository Rerail knows.
-    expect(await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "file", rule: codeRule, attach: true })).toMatchObject({ status: 400, body: { error: "target-required" } });
+    expect(await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "code", rule: codeRule, attach: true })).toMatchObject({ status: 400, body: { error: "target-required" } });
 
     expect((await getJson<{ rules: Array<{ rule: { id: string } }> }>(daemon, "/api/library-rules?kind=conversation")).body.rules.map(stored => stored.rule.id)).toEqual([conversationRule.id]);
     expect(await getJson(daemon, "/api/library-rules?kind=nope")).toMatchObject({ status: 400 });
@@ -636,6 +637,41 @@ describe("Rerail daemon", () => {
     });
   });
 
+  it("takes a free port when another process holds the default one and no port was asked for", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const blocker = createServer();
+    // Either this test holds the default port or another process already does; both leave it taken.
+    const held = await new Promise<boolean>((resolveHeld) => {
+      blocker.once("error", () => resolveHeld(false));
+      blocker.listen(DEFAULT_DAEMON_PORT, "127.0.0.1", () => resolveHeld(true));
+    });
+    try {
+      process.env.RERAIL_HOME = join(root, "home");
+      const daemon = await RerailDaemon.start({
+        version: "0.0.0-test",
+        databasePath: join(root, "rerail.sqlite"),
+        workspaceRoot: root,
+        nativeHealth: healthyNative,
+      });
+      daemons.push(daemon);
+      expect(daemon.port).not.toBe(DEFAULT_DAEMON_PORT);
+      expect((await getJson(daemon, "/healthz")).status).toBe(200);
+    } finally {
+      if (held) await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
+    }
+  });
+
+  it("refuses an explicit port another process holds", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const blocker = createServer();
+    await new Promise<void>((resolveListening) => blocker.listen(0, "127.0.0.1", () => resolveListening()));
+    try {
+      const { port } = blocker.address() as { port: number };
+      await expect(start({ port })).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
+    }
+  });
 
   it("publishes every operation in the OpenAPI document", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));

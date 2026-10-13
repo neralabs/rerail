@@ -1,0 +1,1 @@
+(class { set [a+b](foo){} get [a-b](){} get [a+b](){} set [a-b](bar){} })

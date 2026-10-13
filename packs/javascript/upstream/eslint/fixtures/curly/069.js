@@ -1,0 +1,1 @@
+if (true) { label: if (false); } else;

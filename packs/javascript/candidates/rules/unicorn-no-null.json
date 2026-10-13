@@ -1,0 +1,88 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn:no-null",
+  "revision": 1,
+  "mode": "log",
+  "description": "A `null` literal, except in `Object.create(null)`, `useRef(null)` and `===`/`!==` comparisons.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "null",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "kind": "null",
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "arguments",
+                    "stopBy": "neighbor",
+                    "inside": {
+                      "kind": "call_expression",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?:Object\\.create|useRef|React\\.useRef)$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "binary_expression",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "regex": "^(?:===|!==)$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unicorn/no-null",
+        "message": "Use undefined instead of null.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "unicorn/no-null"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -195,7 +195,7 @@ function compareSettings(left: SettingRow, right: SettingRow): number {
 }
 
 function bundledPresenceFields(document: RuleDocument): Pick<Presence, "revision" | "payloadHash"> {
-  return { revision: document.kind === "file" ? document.rule.revision : 1, payloadHash: ruleDocumentDigest(document) };
+  return { revision: document.kind === "code" ? document.rule.revision : 1, payloadHash: ruleDocumentDigest(document) };
 }
 
 /** Resolves effective rules at any path from rows read once. */
@@ -363,7 +363,7 @@ export function loadCheckoutRuleSet(
   const signature = `${signatureOf(bundle.digest, ownerCheckoutPaths, rows)}:${status.started ? "started" : "stopped"}:${status.setUp ? "set-up" : "not-set-up"}`;
   const active = status.started && status.setUp;
   const resolver = new ConfigurationResolver(bundle, rows, ownersOf(checkout.repositoryKey, ownerCheckoutPaths));
-  const fileRules = new Map<string, readonly EffectiveRule[]>();
+  const codeRules = new Map<string, readonly EffectiveRule[]>();
   const conversationRules = new Map<string, readonly EffectiveRule[]>();
   const memoised = (cache: Map<string, readonly EffectiveRule[]>, path: string, kind: RuleKind): readonly EffectiveRule[] => {
     if (!active) return [];
@@ -378,7 +378,7 @@ export function loadCheckoutRuleSet(
     checkout,
     status,
     signature,
-    rulesFor: relativePath => memoised(fileRules, normalizeFolder(relativePath), "file"),
+    rulesFor: relativePath => memoised(codeRules, normalizeFolder(relativePath), "code"),
     conversationRules: startFolder => memoised(conversationRules, normalizeFolder(startFolder), "conversation"),
     unavailable: active ? resolver.unavailable : [],
   };
@@ -404,7 +404,7 @@ export function listRepositoryRules(
   const rows = readRows(db, bundle, repositoryKey, checkoutPaths);
   const resolver = new ConfigurationResolver(bundle, rows, ownersOf(repositoryKey, checkoutPaths));
   const folders = [...new Set(rows.attachments.map(row => row.folder))].sort(compareDeterministicStrings);
-  const rules = folders.flatMap(folder => (["file", "conversation"] as const)
+  const rules = folders.flatMap(folder => (["code", "conversation"] as const)
     .flatMap(kind => resolver.at(folder, kind))
     .filter(rule => rule.attachmentFolder === folder));
   return { rules, unavailable: resolver.unavailable };

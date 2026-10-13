@@ -6,7 +6,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 
 ### Rules
 
-- Two rule kinds: `file` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.
+- Two rule kinds: `code` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.
 - One required `mode` on every rule: `log` records only, `steer` delivers guidance, and `block` is stored, shown, and carried on violations but delivered exactly like `steer` until block enforcement lands; no shipped rule uses `block`. The rules and diagnostics filters take `mode=log|steer|block`.
 
 ### Semantic monitor
@@ -16,7 +16,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 - Structural tool-call rules: a conversation rule's `match` may instead be a condition in the code-rule DSL's vocabulary (`regex`, `eq`, `contains` combined with `all`/`any`/`not`) over `text`, `tool.name`, `input`, or one string argument such as `input.command`. Structural rules never embed, and the engine validates their regexes when a rule is written.
 - Generic `mark`, `select`, `project`, and `relate` primitives for custom semantic workflows, exposed in OMP and Pi as the `rerail_mark`, `rerail_select`, `rerail_project`, and `rerail_relate` tools.
 
-### File rules
+### Code rules
 
 - The `rerail.policy/v1` code-rule DSL evaluated by a resident native engine over Python, JavaScript, TypeScript, PHP, and Blade sources: regex, AST (ast-grep), and relational clauses with ordered violations, witnesses, optional fixes, and bounded source, node, and witness budgets.
 - Python identifiers are NFKC-normalized wherever the engine resolves or compares them, as CPython and Ruff read them; string contents, spans, and `regex` keep the source text.
@@ -40,6 +40,7 @@ First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 ### Rule catalog and database
 
 - One SQLite database per Rerail home (`$RERAIL_HOME/rerail.sqlite`) holds repositories and their checkouts, rule attachments and settings, your rule library, and every repository's sessions, events, work links, audits, and audit requests; the schema is defined as Drizzle tables.
+- The file records its schema version in `PRAGMA user_version` (1 in this release). A file written by a newer Rerail, or by other software, is refused and left untouched; no data is converted. Until this release the tables changed in place under version 1, so a database from the `0.1.0-next.0` pre-release or a development build before this release, which stores code rules as `file`, is not detected and has to be moved aside (see `docs/installation.md`). So does a file a development build stamped 2, which is refused as written by a newer Rerail.
 - Rules belong to repositories. A repository is keyed by its normalised `origin` (or sole) remote address, `remote:<host>/<path>`, else `clone:<clone id>`, with aliases for renames and mirrors, so every clone and worktree of one remote shares its rules; checkouts are recorded under their real Git top level. A repository is Not set up until its first configuration, and a repository that is not set up records sessions but runs no rules.
 - By Rerail rules are read from the package and run only where a repository adds them or their pack; rules created by you live in a library, once per machine, and run only where added. Either can be added for the whole repository or one folder. Editing a By Rerail rule stores a copy in the library, added where the original was, with the original switched off there.
 - Rule settings turn a rule or pack on or off or change its mode for the repository or one checkout, per folder. Per field, this checkout wins, then the checkouts containing it, then the repository, then the deepest folder, the rule before its pack, the pack's starting value and the rule's default. Edits made through the daemon, the UI, or MCP apply to the next sample or tool call in every open session.

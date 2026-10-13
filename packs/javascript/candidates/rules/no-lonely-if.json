@@ -1,0 +1,869 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint:no-lonely-if",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of ESLint's `no-lonely-if` rule (https://eslint.org/docs/latest/rules/no-lonely-if). Flags an if that is the only statement of an else block whose braces are not necessary; fixes to `else if` under ESLint's comment and ASI guards (the ASI guard is approximated conservatively).",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "lonely-if-fix-spaced",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "statement": {
+       "all": [
+        {
+         "not": {
+          "kind": "comment"
+         }
+        },
+        {
+         "not": {
+          "regex": "^[{}]$"
+         }
+        }
+       ]
+      },
+      "unsafe-if": {
+       "any": [
+        {
+         "kind": "if_statement",
+         "not": {
+          "has": {
+           "kind": "else_clause"
+          }
+         }
+        },
+        {
+         "kind": "if_statement",
+         "has": {
+          "kind": "else_clause",
+          "has": {
+           "matches": "unsafe-if"
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "kind": "for_statement"
+          },
+          {
+           "kind": "for_in_statement"
+          },
+          {
+           "kind": "while_statement"
+          },
+          {
+           "kind": "labeled_statement"
+          },
+          {
+           "kind": "with_statement"
+          }
+         ],
+         "has": {
+          "matches": "unsafe-if"
+         }
+        }
+       ]
+      },
+      "before-else": {
+       "any": [
+        {
+         "precedes": {
+          "kind": "else_clause"
+         }
+        },
+        {
+         "inside": {
+          "any": [
+           {
+            "kind": "for_statement"
+           },
+           {
+            "kind": "for_in_statement"
+           },
+           {
+            "kind": "while_statement"
+           },
+           {
+            "kind": "labeled_statement"
+           },
+           {
+            "kind": "with_statement"
+           }
+          ],
+          "stopBy": "neighbor",
+          "matches": "before-else"
+         }
+        },
+        {
+         "inside": {
+          "kind": "else_clause",
+          "stopBy": "neighbor",
+          "inside": {
+           "kind": "if_statement",
+           "stopBy": "neighbor",
+           "matches": "before-else"
+          }
+         }
+        }
+       ]
+      },
+      "lonely-else-block": {
+       "kind": "statement_block",
+       "inside": {
+        "kind": "else_clause",
+        "stopBy": "neighbor"
+       },
+       "has": {
+        "kind": "if_statement",
+        "pattern": "$IF"
+       },
+       "all": [
+        {
+         "not": {
+          "has": {
+           "all": [
+            {
+             "matches": "statement"
+            },
+            {
+             "not": {
+              "kind": "if_statement"
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "if_statement",
+           "precedes": {
+            "kind": "if_statement",
+            "stopBy": "end"
+           }
+          }
+         }
+        },
+        {
+         "not": {
+          "all": [
+           {
+            "has": {
+             "kind": "if_statement",
+             "matches": "unsafe-if"
+            }
+           },
+           {
+            "inside": {
+             "kind": "else_clause",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "if_statement",
+              "stopBy": "neighbor",
+              "matches": "before-else"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "fixable": {
+       "all": [
+        {
+         "not": {
+          "has": {
+           "kind": "comment"
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "comment",
+           "stopBy": "end",
+           "follows": {
+            "regex": "^\\}$"
+           },
+           "not": {
+            "precedes": {
+             "regex": "[\\s\\S]",
+             "stopBy": "end"
+            }
+           }
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "kind": "statement_block"
+            }
+           }
+          },
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "all": [
+              {
+               "matches": "statement"
+              },
+              {
+               "not": {
+                "kind": "parenthesized_expression"
+               }
+              },
+              {
+               "not": {
+                "kind": "else_clause"
+               }
+              },
+              {
+               "not": {
+                "regex": "^if$"
+               }
+              },
+              {
+               "regex": ";$"
+              }
+             ]
+            }
+           }
+          },
+          {
+           "inside": {
+            "kind": "else_clause",
+            "stopBy": "neighbor",
+            "inside": {
+             "kind": "if_statement",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "program",
+              "stopBy": "neighbor"
+             },
+             "not": {
+              "precedes": {
+               "matches": "statement",
+               "stopBy": "end"
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "matches": "fixable"
+       },
+       {
+        "not": {
+         "inside": {
+          "kind": "else_clause",
+          "stopBy": "neighbor",
+          "regex": "^else\\{"
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Unexpected if as the only statement in an else block.",
+    "fix": "$IF"
+   }
+  },
+  {
+   "id": "lonely-if-fix-tight",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "statement": {
+       "all": [
+        {
+         "not": {
+          "kind": "comment"
+         }
+        },
+        {
+         "not": {
+          "regex": "^[{}]$"
+         }
+        }
+       ]
+      },
+      "unsafe-if": {
+       "any": [
+        {
+         "kind": "if_statement",
+         "not": {
+          "has": {
+           "kind": "else_clause"
+          }
+         }
+        },
+        {
+         "kind": "if_statement",
+         "has": {
+          "kind": "else_clause",
+          "has": {
+           "matches": "unsafe-if"
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "kind": "for_statement"
+          },
+          {
+           "kind": "for_in_statement"
+          },
+          {
+           "kind": "while_statement"
+          },
+          {
+           "kind": "labeled_statement"
+          },
+          {
+           "kind": "with_statement"
+          }
+         ],
+         "has": {
+          "matches": "unsafe-if"
+         }
+        }
+       ]
+      },
+      "before-else": {
+       "any": [
+        {
+         "precedes": {
+          "kind": "else_clause"
+         }
+        },
+        {
+         "inside": {
+          "any": [
+           {
+            "kind": "for_statement"
+           },
+           {
+            "kind": "for_in_statement"
+           },
+           {
+            "kind": "while_statement"
+           },
+           {
+            "kind": "labeled_statement"
+           },
+           {
+            "kind": "with_statement"
+           }
+          ],
+          "stopBy": "neighbor",
+          "matches": "before-else"
+         }
+        },
+        {
+         "inside": {
+          "kind": "else_clause",
+          "stopBy": "neighbor",
+          "inside": {
+           "kind": "if_statement",
+           "stopBy": "neighbor",
+           "matches": "before-else"
+          }
+         }
+        }
+       ]
+      },
+      "lonely-else-block": {
+       "kind": "statement_block",
+       "inside": {
+        "kind": "else_clause",
+        "stopBy": "neighbor"
+       },
+       "has": {
+        "kind": "if_statement",
+        "pattern": "$IF"
+       },
+       "all": [
+        {
+         "not": {
+          "has": {
+           "all": [
+            {
+             "matches": "statement"
+            },
+            {
+             "not": {
+              "kind": "if_statement"
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "if_statement",
+           "precedes": {
+            "kind": "if_statement",
+            "stopBy": "end"
+           }
+          }
+         }
+        },
+        {
+         "not": {
+          "all": [
+           {
+            "has": {
+             "kind": "if_statement",
+             "matches": "unsafe-if"
+            }
+           },
+           {
+            "inside": {
+             "kind": "else_clause",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "if_statement",
+              "stopBy": "neighbor",
+              "matches": "before-else"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "fixable": {
+       "all": [
+        {
+         "not": {
+          "has": {
+           "kind": "comment"
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "comment",
+           "stopBy": "end",
+           "follows": {
+            "regex": "^\\}$"
+           },
+           "not": {
+            "precedes": {
+             "regex": "[\\s\\S]",
+             "stopBy": "end"
+            }
+           }
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "kind": "statement_block"
+            }
+           }
+          },
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "all": [
+              {
+               "matches": "statement"
+              },
+              {
+               "not": {
+                "kind": "parenthesized_expression"
+               }
+              },
+              {
+               "not": {
+                "kind": "else_clause"
+               }
+              },
+              {
+               "not": {
+                "regex": "^if$"
+               }
+              },
+              {
+               "regex": ";$"
+              }
+             ]
+            }
+           }
+          },
+          {
+           "inside": {
+            "kind": "else_clause",
+            "stopBy": "neighbor",
+            "inside": {
+             "kind": "if_statement",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "program",
+              "stopBy": "neighbor"
+             },
+             "not": {
+              "precedes": {
+               "matches": "statement",
+               "stopBy": "end"
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "matches": "fixable"
+       },
+       {
+        "inside": {
+         "kind": "else_clause",
+         "stopBy": "neighbor",
+         "regex": "^else\\{"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Unexpected if as the only statement in an else block.",
+    "fix": " $IF"
+   }
+  },
+  {
+   "id": "lonely-if-nofix",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "utils": {
+      "statement": {
+       "all": [
+        {
+         "not": {
+          "kind": "comment"
+         }
+        },
+        {
+         "not": {
+          "regex": "^[{}]$"
+         }
+        }
+       ]
+      },
+      "unsafe-if": {
+       "any": [
+        {
+         "kind": "if_statement",
+         "not": {
+          "has": {
+           "kind": "else_clause"
+          }
+         }
+        },
+        {
+         "kind": "if_statement",
+         "has": {
+          "kind": "else_clause",
+          "has": {
+           "matches": "unsafe-if"
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "kind": "for_statement"
+          },
+          {
+           "kind": "for_in_statement"
+          },
+          {
+           "kind": "while_statement"
+          },
+          {
+           "kind": "labeled_statement"
+          },
+          {
+           "kind": "with_statement"
+          }
+         ],
+         "has": {
+          "matches": "unsafe-if"
+         }
+        }
+       ]
+      },
+      "before-else": {
+       "any": [
+        {
+         "precedes": {
+          "kind": "else_clause"
+         }
+        },
+        {
+         "inside": {
+          "any": [
+           {
+            "kind": "for_statement"
+           },
+           {
+            "kind": "for_in_statement"
+           },
+           {
+            "kind": "while_statement"
+           },
+           {
+            "kind": "labeled_statement"
+           },
+           {
+            "kind": "with_statement"
+           }
+          ],
+          "stopBy": "neighbor",
+          "matches": "before-else"
+         }
+        },
+        {
+         "inside": {
+          "kind": "else_clause",
+          "stopBy": "neighbor",
+          "inside": {
+           "kind": "if_statement",
+           "stopBy": "neighbor",
+           "matches": "before-else"
+          }
+         }
+        }
+       ]
+      },
+      "lonely-else-block": {
+       "kind": "statement_block",
+       "inside": {
+        "kind": "else_clause",
+        "stopBy": "neighbor"
+       },
+       "has": {
+        "kind": "if_statement",
+        "pattern": "$IF"
+       },
+       "all": [
+        {
+         "not": {
+          "has": {
+           "all": [
+            {
+             "matches": "statement"
+            },
+            {
+             "not": {
+              "kind": "if_statement"
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "if_statement",
+           "precedes": {
+            "kind": "if_statement",
+            "stopBy": "end"
+           }
+          }
+         }
+        },
+        {
+         "not": {
+          "all": [
+           {
+            "has": {
+             "kind": "if_statement",
+             "matches": "unsafe-if"
+            }
+           },
+           {
+            "inside": {
+             "kind": "else_clause",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "if_statement",
+              "stopBy": "neighbor",
+              "matches": "before-else"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "fixable": {
+       "all": [
+        {
+         "not": {
+          "has": {
+           "kind": "comment"
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "kind": "comment",
+           "stopBy": "end",
+           "follows": {
+            "regex": "^\\}$"
+           },
+           "not": {
+            "precedes": {
+             "regex": "[\\s\\S]",
+             "stopBy": "end"
+            }
+           }
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "kind": "statement_block"
+            }
+           }
+          },
+          {
+           "has": {
+            "kind": "if_statement",
+            "has": {
+             "all": [
+              {
+               "matches": "statement"
+              },
+              {
+               "not": {
+                "kind": "parenthesized_expression"
+               }
+              },
+              {
+               "not": {
+                "kind": "else_clause"
+               }
+              },
+              {
+               "not": {
+                "regex": "^if$"
+               }
+              },
+              {
+               "regex": ";$"
+              }
+             ]
+            }
+           }
+          },
+          {
+           "inside": {
+            "kind": "else_clause",
+            "stopBy": "neighbor",
+            "inside": {
+             "kind": "if_statement",
+             "stopBy": "neighbor",
+             "inside": {
+              "kind": "program",
+              "stopBy": "neighbor"
+             },
+             "not": {
+              "precedes": {
+               "matches": "statement",
+               "stopBy": "end"
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "not": {
+         "matches": "fixable"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Unexpected if as the only statement in an else block."
+   }
+  }
+ ]
+}

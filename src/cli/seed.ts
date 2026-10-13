@@ -129,7 +129,7 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
   const database = openRerailDatabase(path);
   try {
     const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "file", { now });
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code", { now });
     for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { now, revision: 1 });
   } finally {
     database.$client.close();

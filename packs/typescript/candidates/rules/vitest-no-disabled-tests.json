@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "vitest:no-disabled-tests",
+  "revision": 1,
+  "mode": "log",
+  "description": "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
+  "scope": {
+    "include": [
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/*.test.mts",
+      "**/*.spec.mts",
+      "**/__tests__/**/*.ts",
+      "**/__tests__/**/*.tsx"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "skip",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b"
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:xit|xtest|xdescribe|pending)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vitest/no-disabled-tests",
+        "message": "This test is disabled. Fix it or delete it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vitest/no-disabled-tests"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^(?:it|test)$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "arguments",
+                  "not": {
+                    "has": {
+                      "nthChild": 2
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vitest/no-disabled-tests",
+        "message": "This test has no function, so it never runs.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vitest/no-disabled-tests"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

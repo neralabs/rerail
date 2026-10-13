@@ -1,0 +1,1 @@
+A: for (a of ary) { break A; }

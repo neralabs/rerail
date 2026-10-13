@@ -222,10 +222,13 @@ async function runHost(command: string, args: string[], cwd: string, env: NodeJS
   return promise;
 }
 
+/** A host line about Rerail: it names the extension file the host loaded (`Extension error (<path>): ...`), Rerail or its engine. */
+const RERAIL_LINE = /rerail|(?:default|pi)-extension\.js/iu;
+
 function extensionErrors(run: Run): string[] {
   return `${run.stdout}\n${run.stderr}`
     .split("\n")
-    .filter((line) => /Extension error|handler timed out/iu.test(line) && /rerail|cosine-rules/iu.test(line))
+    .filter((line) => /Extension error|handler timed out/iu.test(line) && RERAIL_LINE.test(line))
     .map((line) => line.trim().replace(/^.*(default|pi)-extension\.js\): /u, "").slice(0, 160));
 }
 
@@ -250,7 +253,7 @@ async function project(): Promise<Workspace> {
   const database = openRerailDatabase(databasePath);
   try {
     const bundle = loadBundledCatalog();
-    upsertLibraryRule(database, bundle, CODE_RULE, "file");
+    upsertLibraryRule(database, bundle, CODE_RULE, "code");
     const { repositoryKey } = recordCheckout(database, root);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

@@ -1,0 +1,1 @@
+({}.propertyIsEnumerable.apply(foo, ['bar']))

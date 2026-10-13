@@ -1,0 +1,1 @@
+class A extends B.C { constructor([a, b, c]) { super(...arguments); } }

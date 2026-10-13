@@ -1,0 +1,1 @@
+var obj = {set foo(value) { bar(); }};

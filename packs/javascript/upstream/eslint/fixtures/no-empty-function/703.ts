@@ -1,0 +1,1 @@
+const B = class { @decorator() foo() {} } // allow: methods

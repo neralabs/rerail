@@ -1,0 +1,5 @@
+
+  class Foo implements Bar {
+    override method() {}
+  }
+        

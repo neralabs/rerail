@@ -48,6 +48,19 @@
   ],
   "rules": [
     {
+      "id": "next-no-head-element",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-head-element"
+      },
+      "policy": "rules/next-no-head-element.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "next-google-font-display",
       "upstream": {
         "tool": "eslint-plugin-next",
@@ -70,6 +83,21 @@
       "policy": "rules/next-no-page-custom-font.json",
       "capabilities": [
         "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-no-location-assign-relative-destination",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-location-assign-relative-destination"
+      },
+      "policy": "rules/next-no-location-assign-relative-destination.json",
+      "capabilities": [
+        "syntax",
+        "scope",
         "value",
         "suppression"
       ],

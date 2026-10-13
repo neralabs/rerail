@@ -1,5 +1,5 @@
 /**
- * Compiled file rules per checkout. A checkout's catalog compiles the file rules its repository's
+ * Compiled code rules per checkout. A checkout's catalog compiles the code rules its repository's
  * configuration makes present and places each one per folder (on at a mode, or off), so one native workspace
  * evaluates every folder of the checkout. Executables are compiled once per process and shared by every catalog.
  */
@@ -149,7 +149,7 @@ interface PlacedRule {
   readonly decisions: RulePlacementDecision[];
 }
 
-/** Each file rule present in some folder, with how it runs in every folder it is present in. */
+/** Each code rule present in some folder, with how it runs in every folder it is present in. */
 function placedRules(ruleSet: CheckoutRuleSet, folders: readonly string[]): Map<string, PlacedRule> {
   const placed = new Map<string, PlacedRule>();
   for (const folder of folders) {
@@ -191,7 +191,7 @@ interface CatalogState {
 }
 
 /**
- * One checkout's file rules, compiled into resident executables and placed per folder. `refresh()` reloads only
+ * One checkout's code rules, compiled into resident executables and placed per folder. `refresh()` reloads only
  * when the source signature changes; an unchanged rule is never recompiled.
  */
 export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
@@ -249,7 +249,7 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
         // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
         const unsupported = languageNotSupportedOf(outcome.reason);
         quarantined.push({
-          ruleId: id, kind: "file", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+          ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
           reason: unsupported?.reason ?? outcome.reason,
           ...(unsupported === undefined ? {} : { code: unsupported.code }),
         });
@@ -352,7 +352,7 @@ export class CheckoutCatalogs {
       .filter(path => path !== root && withinCheckout(root, path));
   }
 
-  /** The compiled file rules of `root`; its `refresh()` re-reads eligibility and configuration. */
+  /** The compiled code rules of `root`; its `refresh()` re-reads eligibility and configuration. */
   catalog(root: string): CheckoutCodeRuleCatalog {
     const entry = this.#entry(root);
     entry.catalog ??= new CheckoutCodeRuleCatalog({
@@ -449,7 +449,7 @@ export class CheckoutCatalogs {
     const missingLibrary = new Set(ruleSet.unavailable
       .filter(reference => reference.sourceKind === "library_rule" && reference.reason === "missing")
       .map(reference => reference.sourceId));
-    const quarantined = quarantinedLibraryRules(this.database).filter(rule => rule.kind === "file" && missingLibrary.has(rule.ruleId));
+    const quarantined = quarantinedLibraryRules(this.database).filter(rule => rule.kind === "code" && missingLibrary.has(rule.ruleId));
     return { ruleSet, folders, quarantined };
   }
 }

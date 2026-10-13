@@ -1,0 +1,1 @@
+class A { set #abc(foo){} get '#abc'(){} }

@@ -1,0 +1,1 @@
+class set { foo(val) { return 1; } }

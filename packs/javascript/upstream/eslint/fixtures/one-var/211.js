@@ -1,0 +1,1 @@
+export const foo= a, bar=2, bar2=2;
