@@ -36,13 +36,23 @@ fn unquote(r: Range<usize>, s: &str) -> Range<usize> {
     }
 }
 impl<'t> Directive<'t> {
-    /// Reads a grammar directive attribute, including Vue 2 scope aliases.
+    /// Reads a grammar directive attribute, including Vue 2 scope aliases: `slot-scope` on any
+    /// element, `scope` on a `<template>` only (vue-eslint-parser's reading; `<th scope="col">`
+    /// is HTML's attribute).
     pub(crate) fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
         let kind = node.kind();
         if kind == "attribute" {
             let n = node.named_child(0)?;
             let name = text(n, source);
-            if name != "slot-scope" && name != "scope" {
+            let on_template = || {
+                let start = node.parent()?;
+                let mut cursor = start.walk();
+                let tag = start
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "tag_name")?;
+                Some(text(tag, source) == "template")
+            };
+            if name != "slot-scope" && !(name == "scope" && on_template() == Some(true)) {
                 return None;
             }
             let value = node.named_child(1).map(|v| unquote(v.byte_range(), source));

@@ -1153,6 +1153,19 @@ mod tests {
         }
     }
 
+    /// `scope` is Vue 2's slot scope on a `<template>` only; on `<th>` it is HTML's attribute.
+    #[test]
+    fn scope_is_a_slot_scope_on_template_only() {
+        let source = r#"<template><th scope="col">{{ x }}</th></template>"#;
+        assert_eq!(view(source).text(), "{ (x); }");
+        let source = r#"<template><R><template scope="p">{{ p }}</template></R></template>"#;
+        assert!(
+            view(source).text().contains("(p) => {"),
+            "{}",
+            view(source).text()
+        );
+    }
+
     #[test]
     fn if_wraps_for_on_one_element() {
         let source =
