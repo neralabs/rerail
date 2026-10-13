@@ -32,10 +32,7 @@
    "vue/no-watch-after-await",
    "vue/require-valid-default-prop"
   ],
-  "files": 1009,
-  "manifestSha256": "10ca51ab196e8ac630dc528b6ab7b616ea6919422edf8fc789a9b414280ec98a",
-  "skipped": [],
-  "skippedReasons": []
+  "skipped": []
  },
  "findings": [
   {

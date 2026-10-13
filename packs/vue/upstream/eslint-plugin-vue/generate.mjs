@@ -31,7 +31,6 @@
 // units to code points, as the conformance standard counts them.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -273,18 +272,13 @@ function corpus(names) {
     const files = vueFiles(root, corpus.paths);
     const findings = [];
     const skipped = [];
-    const hashes = [];
     for (const path of files) {
-      const bytes = readFileSync(join(root, path));
-      hashes.push(`${path}\0${createHash("sha256").update(bytes).digest("hex")}`);
-      const result = lint(bytes.toString("utf8"), path);
-      if (result.fatal !== undefined) skipped.push({ path, line: result.fatal.line, message: result.fatal.message });
+      const result = lint(readFileSync(join(root, path), "utf8"), path);
+      if (result.fatal !== undefined) skipped.push(path);
       else findings.push(...result.findings);
     }
     write(`corpus-${corpus.name}.expected.json`, {
-      kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: ruleIds,
-      files: files.length, manifestSha256: createHash("sha256").update(hashes.join("\n")).digest("hex"),
-      skipped: skipped.map(entry => entry.path), skippedReasons: skipped,
+      kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: ruleIds, skipped,
     }, findings);
   }
 }
