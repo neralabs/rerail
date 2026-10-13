@@ -8,12 +8,14 @@
 //               MAX_LENGTH leaves 60 for the clone directory, enough for the release runner's `D:\a\rerail\rerail`
 //               and a typical `C:\Users\<name>\source\repos\rerail`.
 //   characters  No segment holds a character Windows forbids in a file name: `< > : " \ | ? *` or a control character.
-//   reserved    No segment is a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, any
-//               case), alone or before an extension (`aux.js`).
+//   reserved    No segment is a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`-`COM9`,
+//               `LPT0`-`LPT9`, superscript digits too, any case), alone or before an extension, trailing spaces
+//               included (`aux.js`, `nul .js`).
 //   trailing    No segment ends with a dot or a space, which Windows drops.
-//   case        No two paths, or directories along them, differ only by case: Windows folds them into one.
-// No exemptions. A recorder that copies a test's absolute `filename` into a fixture path must not carry the
-// recording machine's own directory into it.
+//   case        No two paths, or directories along them, differ only by case: Windows folds them into one. Compared
+//               upper-cased, as NTFS's upcase table does; each clash is reported once.
+// No exemptions. A fixture that names the recording machine's own directories is a recorder's to refuse
+// (`assertPortableCase` in conformance/recorders/eslint-record.mjs), not this check's: a short leak passes every rule here.
 //
 //   node scripts/check/check-windows-paths.mjs   (npm run check:windows-paths; part of npm run check)
 import { execFileSync } from "node:child_process";
@@ -23,11 +25,14 @@ import { fileURLToPath } from "node:url";
 export const MAX_LENGTH = 200;
 
 const FORBIDDEN = /[<>:"\\|?*\u0000-\u001f]/u;
-const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/iu;
+const RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/iu;
+
+/** A segment's name as Windows matches it against device names: before the first dot, trailing spaces dropped. */
+const deviceStem = (segment) => segment.split(".")[0].replace(/ +$/u, "");
 
 function segmentProblem(segment) {
   if (FORBIDDEN.test(segment)) return `${JSON.stringify(segment)} holds a character Windows forbids in a file name`;
-  if (RESERVED.test(segment)) return `${segment} is a reserved Windows device name`;
+  if (RESERVED.test(deviceStem(segment))) return `${segment} is a reserved Windows device name`;
   if (/[. ]$/u.test(segment)) return `${JSON.stringify(segment)} ends with a dot or a space, which Windows drops`;
   return null;
 }
@@ -36,6 +41,7 @@ function segmentProblem(segment) {
 export function windowsPathProblems(files) {
   const problems = [];
   const spelled = new Map();
+  const reported = new Set();
   for (const path of [...files].sort()) {
     if (path.length > MAX_LENGTH) {
       problems.push({ path, message: `${path.length} characters; Windows checkouts allow ${MAX_LENGTH} (its 260 less the clone directory)` });
@@ -43,12 +49,15 @@ export function windowsPathProblems(files) {
     const segments = path.split("/");
     const bad = segments.map(segmentProblem).find((problem) => problem !== null);
     if (bad !== undefined) problems.push({ path, message: bad });
-    for (let depth = 1; depth <= segments.length; depth += 1) {
-      const prefix = segments.slice(0, depth).join("/");
-      const first = spelled.get(prefix.toLowerCase());
-      if (first === undefined) spelled.set(prefix.toLowerCase(), prefix);
+    let prefix = "";
+    for (const segment of segments) {
+      prefix = prefix === "" ? segment : `${prefix}/${segment}`;
+      const folded = prefix.toUpperCase();
+      const first = spelled.get(folded);
+      if (first === undefined) spelled.set(folded, prefix);
       else if (first !== prefix) {
-        problems.push({ path, message: `${prefix} and ${first} differ only by case; Windows sees one path` });
+        if (!reported.has(prefix)) problems.push({ path, message: `${prefix} and ${first} differ only by case; Windows sees one path` });
+        reported.add(prefix);
         break;
       }
     }

@@ -17,14 +17,14 @@
 // eslint-plugin-unicorn/fixtures/<rule>/<n>.<ext>, or, for a case with a `filename` (filename-case's tests are file
 // names), to <rule>/<n>/<filename>; a case named outside the ecma family's extensions (`.vue`, `.md`) is left out,
 // since Rerail does not read it as JavaScript. Code that does not parse is left out. Each kept file is one analysis unit.
-// Tests that build a `filename` from process.cwd() (filename-case's `path.join(cwd, …)` and `outsideCwd`) see
-// RECORDING_CWD while their file is imported, so a recording never carries the maintainer's own directory: neither in
-// a fixture path (which must stay short enough to check out on Windows) nor in the case's code.
+// Tests that build a `filename` from process.cwd() (filename-case's `path.join(cwd, …)` and `outsideCwd`) are imported
+// under `withRecordingCwd`, so a recording never carries the maintainer's own directory, neither in a fixture path (which
+// must stay short enough to check out on Windows) nor in the case's code; `assertPortableCase` refuses one that would.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, lint, pinnedRequire, withRecordingCwd, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -34,8 +34,6 @@ const CHECKOUT = { repository: "https://github.com/sindresorhus/eslint-plugin-un
 const PREFIX = "unicorn/";
 /** The ecma family's extensions (`CODE_RULE_DIALECTS`): a named case outside them is not JavaScript to Rerail. */
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-/** The working directory the upstream tests see while they declare their cases: the same on every machine. */
-const RECORDING_CWD = "/work/project";
 
 function parseArguments(argv) {
   const options = {};
@@ -131,13 +129,7 @@ async function extractFixtures() {
   for (const rule of RULES) {
     const name = rule.slice(PREFIX.length);
     RUNS.length = 0;
-    const realCwd = process.cwd;
-    process.cwd = () => RECORDING_CWD;
-    try {
-      await import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href);
-    } finally {
-      process.cwd = realCwd;
-    }
+    await withRecordingCwd(() => import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href));
     const runs = RUNS.filter(run => run.rule === name);
     if (runs.length === 0) throw new Error(`${rule}: test/${name}.js declared no cases`);
     const seen = new Set();
@@ -170,6 +162,7 @@ async function extractFixtures() {
           seen.add(key);
           const n = String(seen.size).padStart(3, "0");
           const file = named === undefined ? `${name}/${n}${extension}` : `${name}/${n}/${named}`;
+          assertPortableCase(file, test.code);
           mkdirSync(dirname(join(fixtures, file)), { recursive: true });
           writeFileSync(join(fixtures, file), test.code);
           files.push(file);

@@ -22,7 +22,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Rejects a malformed tag, or one that disagrees with package.json, before any engine is built.
+  # Rejects a malformed tag, one that disagrees with package.json, or a tree Windows cannot check out, before any
+  # engine is built. A tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
     runs-on: ubuntu-24.04
@@ -35,6 +36,9 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Check every tracked path checks out on Windows
+        run: node scripts/check/check-windows-paths.mjs
 
       - id: release-channel
         name: Derive npm dist-tag
