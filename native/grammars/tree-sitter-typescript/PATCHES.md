@@ -10,7 +10,7 @@ fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `common/scanner.h` | upstream, verbatim |
+| `common/scanner.h` | upstream with Patch 6 |
 | `typescript/src/scanner.c`, `tsx/src/scanner.c` | upstream, verbatim |
 | `common/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 (one copy for both grammars) |
 | `typescript/src/grammar.json`, `tsx/src/grammar.json` | regenerated from the patched `common/define-grammar.js` |
@@ -29,7 +29,7 @@ git apply <the patches below>
 (cd tsx && tree-sitter generate)
 ```
 
-then copy `{typescript,tsx}/src/grammar.json` here. Unpatched, this reproduces upstream's
+then copy `{typescript,tsx}/src/grammar.json` and `common/scanner.h` here. Unpatched, this reproduces upstream's
 `grammar.json` but for the `"reserved": {}` key tree-sitter 0.25 added.
 
 ## Patch 1: a postfix `!` binds at member precedence
@@ -248,3 +248,182 @@ parser is byte-identical (it has no JSX); the TSX parser has the same 5,580 stat
 corpus parses as before (111 of 112, the one failure patch 1's `foo++!`), and so does tree-sitter-javascript 0.23.1's
 under TSX. A bare `&` in JSX children (`<p>Terms & Conditions</p>`) is still a parse error: the other 82 of
 shadcn-ui's syntax-error files.
+
+## Patch 4: variance annotations on type parameters
+
+Upstream issue: tree-sitter/tree-sitter-typescript#370 (open; present at tag `v0.23.2` and at upstream HEAD).
+Mirrors: tree-sitter/tree-sitter-typescript#364 (open), with the follow-up its review proposes
+(brajevicm/tree-sitter-typescript@9fcaa13) so `out` alone still names a parameter. tree-sitter/tree-sitter-typescript#361
+(open, draft) adds the same syntax as a named `variance` node instead.
+
+Why: TypeScript 4.7 allows `in`, `out` and `in out` before a type parameter (`interface Producer<out T>`,
+`class Box<in out T>`), after `const` when both appear. Upstream's `type_parameter` has only `const`, so every
+annotated parameter is a parse error that takes its whole interface, class or type alias with it (NER-1791;
+botpress's `packages/zui/src/z/typings.ts` declares `interface IZodObject<…, out T extends ZodRawShape = …>`).
+With only #364's change, `out` becomes a keyword at the start of a type parameter and `type F<out> = out[]` stops
+parsing, so the name also accepts `out`, as TypeScript reads it before `>`, `,` or `=`.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -1039,7 +1039,9 @@ module.exports = function defineGrammar(dialect) {
+ 
+       type_parameter: $ => seq(
+         optional('const'),
+-        field('name', $._type_identifier),
++        optional(choice('in', seq(optional('in'), 'out'))),
++        // `out` before `>`, `,` or `=` is the parameter's name, as in TypeScript: `type F<out> = out[]`.
++        field('name', choice($._type_identifier, alias('out', $.type_identifier))),
+         field('constraint', optional($.constraint)),
+         field('value', optional($.default_type)),
+       ),
+```
+
+`out in T` stays a parse error (TypeScript's TS1029, "'in' modifier must precede 'out' modifier").
+
+Node kinds and field names are unchanged. The annotations are anonymous tokens, as `const` is, so a type parameter's
+named children are as before, and `out` is one more anonymous kind. A parameter named `out` is a `type_identifier`, as
+any other name is. Each generated parser has 13 more states (5,344 for TypeScript, 5,593 for TSX).
+
+## Patch 5: a function type's parameter may be named by a type keyword
+
+Upstream issue: none open at tree-sitter/tree-sitter-typescript (present at tag `v0.23.2` and at upstream HEAD).
+
+Why: TypeScript reads `(any) => void` as a function type with one parameter named `any`, as it does
+`(foo) => void` (an error only under `noImplicitAny`, TS7051, not a syntax error). Upstream reads `(any)` as a
+`parenthesized_type` and fails at `=>` for `any`, `unknown`, `number`, `string`, `boolean`, `never`, `object`,
+`symbol` and `undefined`: the precedences `[literal_type, pattern]` and `[predefined_type, pattern]` decide `(kw)`
+before the `)` is past, and `unknown` and `never` are missing from the words a parameter may be named by. So
+`Record<number, (any) => void>`, `(unknown, x) => void` and `interface I { n: (string) => void }` are parse errors
+(NER-1804); `(bigint) => void` parsed only because `bigint` is no keyword of the grammar.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -62,8 +62,6 @@ module.exports = function defineGrammar(dialect) {
+       [$.type_query, $.primary_expression],
+       [$.override_modifier, $.primary_expression],
+       [$.decorator_call_expression, $.decorator],
+-      [$.literal_type, $.pattern],
+-      [$.predefined_type, $.pattern],
+       [$.call_expression, $._type_query_call_expression],
+       [$.call_expression, $._type_query_call_expression_in_type_annotation],
+       [$.new_expression, $.primary_expression],
+@@ -94,6 +92,12 @@ module.exports = function defineGrammar(dialect) {
+       [$.primary_expression, $.pattern, $.primary_type],
+       [$._parameter_name, $.primary_type],
+       [$.pattern, $.primary_type],
++      // `(any) => void` and `(any)` read alike up to the `)`: GLR keeps both, so a function type's parameter may be
++      // named by a type keyword, as in TypeScript, and `=>` decides.
++      [$.literal_type, $.pattern],
++      [$.primary_expression, $.pattern, $.literal_type],
++      [$.predefined_type, $.pattern],
++      [$.primary_expression, $.pattern, $.predefined_type],
+ 
+       [$.optional_tuple_parameter, $.primary_type],
+       [$.rest_pattern, $.primary_type, $.primary_expression],
+@@ -1129,6 +1133,8 @@ module.exports = function defineGrammar(dialect) {
+         'symbol',
+         'export',
+         'object',
++        'unknown',
++        'never',
+         'new',
+         'readonly',
+         previous,
+```
+
+The two precedences become conflicts, so GLR keeps both readings of `(kw)` until the token after `)` decides: `=>`
+keeps the function type, anything else the parenthesized type. The generator then also reports each keyword's
+`primary_expression` reading at the same point, hence the two three-way conflicts. `(string)` and
+`(string)[]` stay a `parenthesized_type`, and `(void) => void`, `(null) => void` and `(true) => void` stay parse
+errors, as in TypeScript: those words cannot name a parameter.
+
+Node kinds and field names are unchanged. The parameter has the shape any other named parameter has:
+`formal_parameters > required_parameter` with an `identifier` as its `pattern` (`undefined` is an `undefined` node
+there, as in the arrow function `(undefined) => 1`). `unknown` and `never` may now also name a parameter or a
+variable where the grammar reads both a keyword and a name; elsewhere they already parsed as names. The state counts
+are unchanged.
+
+## Patch 6: no automatic semicolon is withheld before a member named `in` or `instanceof`
+
+Upstream issue: tree-sitter/tree-sitter-typescript#373 (open) for the identifiers that start with `in`; none open for
+members named `in` or `instanceof`. Present at tag `v0.23.2` and at upstream HEAD, and in tree-sitter-javascript's
+`src/scanner.c`. tree-sitter/tree-sitter-typescript#372 (closed unmerged) proposed the identifier half.
+
+Why: the external scanner inserts no semicolon at a line break before `in` or `instanceof`, so that `a⏎instanceof B`
+stays one binary expression. In an object type, an interface or a class body, a member on the next line may be named
+`in` or `instanceof`, and without the semicolon the member before it swallows the keyword:
+`a: typeof b⏎  instanceof: typeof c` and `a: number⏎  in: string` are parse errors, and the declaration around
+them is lost (botpress's `packages/zui/src/z/typings.ts` declares `instanceof: typeof createInstanceOf` this way,
+line 2008). The scanner also takes an `in` or `instanceof` followed by `_`, a digit or `$` for the keyword, so
+`a: string⏎  in_point: number` fails too.
+
+```diff
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -79,6 +79,17 @@ static bool scan_whitespace_and_comments(TSLexer *lexer, bool *scanned_comment)
+     }
+ }
+ 
++static bool is_identifier_char(int32_t c) { return iswalnum(c) || c == '_' || c == '$'; }
++
++// After `in` or `instanceof` at the start of a line where no binary operator can follow: whether a `:` or `?`
++// follows, so the keyword names a member (`in: T`, `instanceof?(): T`) that no expression continues with.
++static bool scan_member_name_end(TSLexer *lexer) {
++    while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
++        skip(lexer);
++    }
++    return lexer->lookahead == ':' || lexer->lookahead == '?';
++}
++
+ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
+     lexer->result_symbol = AUTOMATIC_SEMICOLON;
+     lexer->mark_end(lexer);
+@@ -163,7 +174,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             return lexer->lookahead != '=';
+ 
+             // Don't insert a semicolon before `in` or `instanceof`, but do insert one
+-            // before an identifier.
++            // before an identifier, such as `in_point`, or before a member named `in` or `instanceof` after a type.
+         case 'i':
+             skip(lexer);
+ 
+@@ -172,8 +183,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             }
+             skip(lexer);
+ 
+-            if (!iswalpha(lexer->lookahead)) {
+-                return false;
++            if (!is_identifier_char(lexer->lookahead)) {
++                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
+             }
+ 
+             for (unsigned i = 0; i < 8; i++) {
+@@ -183,8 +194,8 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+                 skip(lexer);
+             }
+ 
+-            if (!iswalpha(lexer->lookahead)) {
+-                return false;
++            if (!is_identifier_char(lexer->lookahead)) {
++                return !valid_symbols[LOGICAL_OR] && scan_member_name_end(lexer);
+             }
+             break;
+     }
+```
+
+A semicolon goes in only where the keyword is followed, on its line, by `:` or `?`, which no `in` or `instanceof`
+expression allows, and only where no binary operator could continue the line (the `||` token is not valid, as the
+scanner already tests before `(` and `[`). So `a⏎instanceof B` and `a⏎instanceof (B)` stay binary expressions, and
+the class field `a = b⏎  in: number` stays a parse error, as in TypeScript, which reads `b in` there. A method
+signature named `instanceof` with no `?` (`a: number⏎  instanceof(): void`) is still a parse error: a `(` after the
+keyword does not tell a call signature from `a⏎instanceof (B)`.
+
+Node kinds and field names are unchanged, and so are both grammars' `grammar.json`.
+
+With Patches 4 to 6, upstream's corpus parses as before (114 of 115 with three added cases, one per patch; the one
+failure patch 1's `foo++!`). Over 22,898 TypeScript and TSX files of vscode@729f257 and eight other local corpora
+(shadcn-ui, excalidraw, prettier, fastify, Next.js examples and commerce, and two private applications), 2 files
+that had syntax errors parse (prettier's variance tests), none gains an error, and every other tree is unchanged but
+for the error recovery in two prettier files that have syntax errors before and after.

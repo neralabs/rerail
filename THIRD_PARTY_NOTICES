@@ -367,8 +367,8 @@ THE SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
-Files: native/grammars/tree-sitter-typescript/ (LICENSE, common/scanner.h and
-  {typescript,tsx}/src/scanner.c byte-identical to upstream; {typescript,tsx}/src/grammar.json
+Files: native/grammars/tree-sitter-typescript/ (LICENSE and {typescript,tsx}/src/scanner.c
+  byte-identical to upstream; common/scanner.h patched; {typescript,tsx}/src/grammar.json
   regenerated from the patched grammar; common/tree_sitter/{alloc,array,parser}.h written by
   tree-sitter-cli 0.27.0)
 Revision: f975a621f4e7f532fe322e13c4f79495e0a7b2e7
