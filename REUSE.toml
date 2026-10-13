@@ -632,6 +632,15 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
+# Rule documents: Rerail's re-implementations of eslint-plugin-vue's rules, annotated with the licence the pack publishes
+# them under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
+# (docs/pack-format.md#licensing).
+[[annotations]]
+path = "packs/vue/rules/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # shadcn/ui components adapted for the rule playground (a development tool, never published).
 [[annotations]]
 path = [
