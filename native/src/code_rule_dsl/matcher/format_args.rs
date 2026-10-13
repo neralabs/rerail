@@ -878,6 +878,7 @@ fn binary(operator: &str, left: Type, right: Type) -> Type {
 }
 
 mod printf;
+mod rust;
 mod scanf;
 
 #[cfg(test)]

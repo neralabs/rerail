@@ -11,6 +11,7 @@ pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
+pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
 
