@@ -307,17 +307,33 @@ fn line_ends_and_multi_byte_text_keep_their_places() {
 
 #[test]
 fn a_file_without_an_open_tag_is_all_inline_text() {
-    let source = "<html>\n<?xml version=\"1.0\"?>\n<?phpx f(); ?>\n</html>\n";
+    let source = "<html>\n<?xml version=\"1.0\"?>\n<?XML-stylesheet href=\"a.xsl\"?>\n</html>\n";
     assert_view(source, &blanked(source));
 }
 
 #[test]
 fn a_short_open_tag_opens_php() {
-    // PHP's compiled default (`short_open_tag`) and tree-sitter-php's `php_tag` read `<?` before a
-    // blank as an open tag.
+    // PHP's compiled default (`short_open_tag`) and tree-sitter-php's `php_tag` read any `<?` but
+    // an XML declaration's as an open tag, before a blank or not.
     assert_view(
         "<? eval($a); ?>\n<p>x</p>\n<?\n$b();\n",
         &format!("<? eval($a); {}\n$b();\n", blanked("?>\n<p>x</p>\n<?")),
+    );
+    // A file of compact short-tag PHP is pure PHP: its own view.
+    for source in [
+        "<?$x = eval('1'); ?>",
+        "<?/*c*/eval('1');?>",
+        "<?echo 1 ?>\n",
+    ] {
+        assert!(matches!(view(source), Cow::Borrowed(_)), "{source:?}");
+    }
+    assert_view(
+        "<?php $a = 1; ?>html<?$x = eval('1');?>tail<?phpx(); ?>",
+        &format!(
+            "<?php $a = 1; {}$x = eval('1');{}phpx(); ?>",
+            blanked("?>html<?"),
+            blanked("?>tail<?")
+        ),
     );
 }
 
@@ -466,6 +482,21 @@ fn inline_text_is_no_php_code_to_a_rule() {
     ] {
         assert_eq!(
             violation_lines(&evaluate_file(&compiled, "php", "call.php", source), source),
+            [1],
+            "{source:?}"
+        );
+    }
+    // A short open tag needs no blank after it: the `eval` in each compact block is found.
+    for source in [
+        "<?$x = eval('1'); ?>\n",
+        "<?/*c*/eval('1');?>\n",
+        "<?php $a = 1; ?>html<?$x = eval('1');?>tail<?php $b = 2; ?>\n",
+    ] {
+        assert_eq!(
+            violation_lines(
+                &evaluate_file(&compiled, "php", "short.php", source),
+                source
+            ),
             [1],
             "{source:?}"
         );

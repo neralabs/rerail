@@ -157,29 +157,25 @@ fn next_word(source: &[u8], mut at: usize) -> &[u8] {
 }
 
 /// The first open tag at or after `from`, as PHP reads one with `short_open_tag` on (its compiled
-/// default, and what tree-sitter-php's `php_tag` reads): `<?php` (in any case) not followed by a
-/// letter, digit or `_`, `<?=`, or `<?` before a blank (not `<?xml`).
+/// default, and what tree-sitter-php's `php_tag` reads): `<?php` (in any case) before a blank or
+/// the end, `<?=`, or any other `<?` (a short tag: `<?phpx` is `<?` and `phpx`) but an XML
+/// declaration or processing instruction's `<?xml`.
 fn open_tag(source: &[u8], mut from: usize) -> Option<Range<usize>> {
     while let Some(at) = scan::strpos(source, b"<?", from) {
         let rest = &source[at + 2..];
-        let length = if rest.len() >= 3 && rest[..3].eq_ignore_ascii_case(b"php") {
-            if rest
+        let length = if rest.len() >= 3
+            && rest[..3].eq_ignore_ascii_case(b"php")
+            && rest
                 .get(3)
-                .is_some_and(|&byte| scan::is_alnum(byte) || byte == b'_')
-            {
-                0
-            } else {
-                5
-            }
+                .is_none_or(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            5
         } else if rest.first() == Some(&b'=') {
             3
-        } else if rest
-            .first()
-            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
-        {
-            2
-        } else {
+        } else if rest.len() >= 3 && rest[..3].eq_ignore_ascii_case(b"xml") {
             0
+        } else {
+            2
         };
         if length > 0 {
             return Some(at..at + length);
