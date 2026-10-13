@@ -33,12 +33,15 @@ const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", "
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 /**
- * Cases Rerail wrote for the plugin to score: inputs the ports once misread. Each is linted with every pack rule, like
- * the plugin's own cases. Upstream classifies a call as Vitest's only when its head is a global or bound by `vitest`
- * (`resolveVitestFn` in src/utils/parse-vitest-fn-call.ts), so the node:test, bun:test, AVA and local bindings
- * report nothing, and the `vitest` bindings (named import, `require`, `await import`, `.extend`) report as globals do.
+ * Cases Rerail wrote for the plugin to score: inputs the ports once misread (NER-1779, NER-1780, NER-1781: a call was
+ * Vitest's by its name alone). Each is linted with every pack rule, like the plugin's own cases. Upstream classifies a
+ * call by its head's binding (`resolveVitestFn` in src/utils/parse-vitest-fn-call.ts): a global; a named import, or a
+ * key destructured from `require`/`await import`, of `vitest`; a `.extend` of a test function so bound; or a test
+ * context. `reports` is what the plugin reports on each, by rule (none when absent); the recorder fails when the
+ * recording differs, so a case cannot silently stop proving what it was written for.
  */
 const AUTHORED = [
+  // Not Vitest's: another runner's import, a local, a parameter, or a binding of `vitest` that is not a test function.
   {
     rule: "no-focused-tests",
     name: "node-test",
@@ -111,6 +114,68 @@ it.only('focused', () => {});
 `,
   },
   {
+    rule: "no-focused-tests",
+    name: "vitest-type-import",
+    code: `import type { it } from 'vitest';
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-default-import",
+    code: `import test from 'vitest';
+
+test.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-whole",
+    code: `const it = require('vitest');
+
+it.only('focused', () => {});
+it.skip('skipped', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-require-default-value",
+    code: `const { it = { only() {} } } = require('vitest');
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-alias-not-a-test",
+    code: `import { expect as it, describe as test } from 'vitest';
+
+it.only('focused', () => {});
+test('no function');
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-extend-not-a-test",
+    code: `import { describe as base } from 'vitest';
+
+const describe = base.extend({});
+
+describe.only('suite', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "suite-only",
+    code: `suite.only('suite', () => {});
+bench.only('bench', () => {
+  expect(1).toBe(1);
+});
+`,
+  },
+  // Vitest's: reported as the globals are.
+  {
     rule: "no-disabled-tests",
     name: "vitest-import",
     code: `import { describe, it, test as check } from 'vitest';
@@ -121,6 +186,17 @@ describe.only('suite', () => {
   it('todo');
 });
 `,
+    reports: { "expect-expect": 2, "no-disabled-tests": 2, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-alias",
+    code: `import { test as it } from 'vitest';
+
+it.only('focused', () => {});
+it('no function');
+`,
+    reports: { "expect-expect": 2, "no-disabled-tests": 1, "no-focused-tests": 1 },
   },
   {
     rule: "no-focused-tests",
@@ -129,6 +205,17 @@ describe.only('suite', () => {
 
 it.only('focused', () => {});
 `,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-renamed",
+    code: `const { test: it, describe } = require('vitest');
+
+describe.skip('skipped', () => {});
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-disabled-tests": 1, "no-focused-tests": 1 },
   },
   {
     rule: "no-disabled-tests",
@@ -137,6 +224,7 @@ it.only('focused', () => {});
 
 it.skip('skipped', () => {});
 `,
+    reports: { "no-disabled-tests": 1 },
   },
   {
     rule: "expect-expect",
@@ -148,6 +236,38 @@ const it = base.extend({});
 it.only('focused', () => {});
 it('asserts nothing', () => {});
 `,
+    reports: { "expect-expect": 2, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-extend-chain",
+    code: `const { test: base } = require('vitest');
+
+const extended = base.extend({});
+const it = extended.extend({});
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context",
+    code: `test('suite', (context, it) => {
+  it.only('focused', () => {});
+  it.skip('skipped', () => {});
+});
+`,
+    reports: { "expect-expect": 2, "no-disabled-tests": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context-property",
+    code: `test('suite', ({ it }) => {
+  it.only('focused', () => {});
+});
+`,
+    reports: { "expect-expect": 2, "no-focused-tests": 1 },
   },
 ];
 
@@ -314,20 +434,20 @@ function extractFixtures() {
     }
   }
   const authored = [];
-  for (const { rule, name, code } of AUTHORED) {
+  for (const { rule, name, code, reports = {} } of AUTHORED) {
     if (!RULES.includes(`${PREFIX}${rule}`)) throw new Error(`AUTHORED ${name}: ${rule} is not a pack rule`);
     const file = `${rule}/rerail-${name}.test.ts`;
     mkdirSync(join(fixtures, rule), { recursive: true });
     writeFileSync(join(fixtures, file), code);
     files.push(file);
-    authored.push(file);
+    authored.push({ file, reports });
   }
   return { fixtures, files, authored, languages: [...languages].map(([group, members]) => ({ files: members, languageOptions: { parserOptions: JSON.parse(group) } })), counts };
 }
 
 /** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
 function writeAuthoredRecord(authored) {
-  const rows = authored.map(file => `| \`upstream/${TOOL}/fixtures/${file}\` | written by Rerail |`);
+  const rows = authored.map(({ file }) => `| \`upstream/${TOOL}/fixtures/${file}\` | written by Rerail |`);
   const text = `# ${TOOL} ${VERSION}: cases Rerail wrote
 
 The fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\`licenses/${TOOL}/UPSTREAM.md\`). Each is an input the ports once misread; \`generate.mjs\` holds them (\`AUTHORED\`) and records the plugin's findings on them in \`fixtures.expected.json\`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under \`licenses/\`. Paths are relative to the pack directory.
@@ -339,18 +459,33 @@ ${rows.join("\n")}
   writeFileSync(join(HERE, "UPSTREAM.md"), text);
 }
 
+/** The AUTHORED cases whose recorded findings differ from their `reports`, as `<file> <rule>: expected n, recorded m`. */
+function authoredMismatches(authored, findings) {
+  const mismatches = [];
+  for (const { file, reports } of authored) {
+    for (const rule of RULES) {
+      const expected = reports[rule.slice(PREFIX.length)] ?? 0;
+      const recorded = findings.filter(finding => finding.path === file && finding.rule === rule).length;
+      if (recorded !== expected) mismatches.push(`${file} ${rule}: expected ${expected}, recorded ${recorded}`);
+    }
+  }
+  return mismatches;
+}
+
 async function recordFixtures() {
   const { fixtures, files, authored, languages, counts } = extractFixtures();
   const { findings, skipped } = await lint(ESLint, fixtures, config(languages), files, RULES);
   for (const { path, reason } of skipped) {
-    if (authored.includes(path)) throw new Error(`AUTHORED ${path} does not parse: ${reason}`);
+    if (authored.some(({ file }) => file === path)) throw new Error(`AUTHORED ${path} does not parse: ${reason}`);
     rmSync(join(fixtures, path));
     const count = counts[`${PREFIX}${path.split("/")[0]}`];
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
+  const mismatches = authoredMismatches(authored, findings);
+  if (mismatches.length > 0) throw new Error(`AUTHORED cases the plugin reports otherwise:\n  ${mismatches.join("\n  ")}`);
   const unparsed = new Set(skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
-  writeAuthoredRecord([...authored].sort());
+  writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
   writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept }, findings);
   console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
