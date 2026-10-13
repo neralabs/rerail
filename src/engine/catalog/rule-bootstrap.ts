@@ -85,7 +85,11 @@ export interface RulesDumpImportReport {
   readonly repositories: number;
 }
 
-/** Export the library and every repository's configuration; checkout settings and start state stay on this machine. */
+/**
+ * Export the library and every repository's configuration; checkout settings and start state stay on this machine. A
+ * setting that sets neither `on` nor `mode` (only fields a later Rerail stored) is left out: every setting of a dump
+ * sets one of them, and the import refuses one that does not.
+ */
 export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump {
   const quarantined = quarantinedLibraryRules(db);
   if (quarantined.length > 0) throw new Error(`cannot export ${quarantined.length} quarantined library rule(s)`);
@@ -113,7 +117,7 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
       configuredAt: row.configuredAt,
       attachments: attachments.filter(attachment => attachment.repositoryKey === row.repositoryKey)
         .map(({ folder, sourceKind, sourceId }) => ({ folder, sourceKind, sourceId })),
-      settings: settings.filter(setting => setting.ownerId === row.repositoryKey)
+      settings: settings.filter(setting => setting.ownerId === row.repositoryKey && (setting.on !== null || setting.mode !== null))
         .map(({ folder, targetKind, targetId, on, mode }) => ({ folder, targetKind, targetId, on, mode })),
     })),
   };

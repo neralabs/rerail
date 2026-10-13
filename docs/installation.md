@@ -313,10 +313,14 @@ or a command that writes; from then on older versions refuse the file, and
 version change when the floor is now above what the version rolled back to
 opens. It writes the copy into the database file itself, so anything that has
 the file open goes on with the restored database, after keeping what the
-database held as `rerail.sqlite.before-rollback`. While a coding agent session
-still has the database open, the copy is not put back: close the sessions,
-then copy it over yourself, as the message says. An update that finds nothing
-newer, or fails, keeps the copy of the last change.
+database held as `rerail.sqlite.before-rollback` (readable only by you). While
+it writes, `rerail.sqlite.restoring` sits beside the database and every Rerail
+process refuses to open it; try again in a moment. While a coding agent session
+still has the database open, or `rerail.sqlite.restoring` is already there
+(another rollback is running, or one was interrupted: delete the file once no
+rollback runs), the copy is not put back: copy it over yourself, as the message
+says. An update that finds nothing newer, or fails, keeps the copy of the last
+change.
 
 A database file written by a newer Rerail (a floor above this release's), or
 by other software, is refused with an error and left untouched. So is a file
