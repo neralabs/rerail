@@ -29,6 +29,8 @@ export interface CodeRuleDslSuppress {
   noqa?: { codes: string[]; parent?: "statement" };
   /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
   nosec?: { codes: string[] };
+  /** Oxlint's `oxlint-disable` (and `eslint-disable`) comments, as oxlint asks them: `rules` are its own rule names, without a plugin. */
+  oxlint?: { rules: string[] };
   phpstan?: { identifiers: string[] };
   /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */
   psalm?: { issues: string[]; suppressAll?: boolean };

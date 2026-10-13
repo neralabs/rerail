@@ -473,6 +473,11 @@ pub(super) fn bind(
                 "nosec: nosec comments are Bandit's",
             ),
             (
+                suppress.oxlint.is_some(),
+                Suppression::Oxlint,
+                "oxlint: oxlint-disable comments are Oxlint's",
+            ),
+            (
                 suppress.phpstan.is_some(),
                 Suppression::Phpstan,
                 "phpstan: @phpstan-ignore comments are PHPStan's",

@@ -2302,6 +2302,47 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+    it("honours oxlint's disable directives as oxlint 1.88.0 reads them", async () => {
+      const nativeWorkspace = workspace();
+      const compiled = compileJson([{
+        violation: {
+          ...violation("RULES_OF_HOOKS"),
+          suppress: { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] } },
+        },
+        forbid: {
+          ast: {
+            language: "typescript",
+            rule: { kind: "call_expression", has: { field: "function", kind: "identifier", regex: "^useEffect$" }, inside: { kind: "if_statement", stopBy: "end" } },
+          },
+        },
+        id: "conditional-hook",
+      }]);
+      nativeWorkspace.addCodeRule(compiled);
+      try {
+        const source = [
+          "import { useEffect } from \"react\";",
+          "// oxlint-disable react-hooks/rules-of-hooks",
+          "function Avatar({ x }) { if (x) useEffect(() => {}); return null; }",
+          "// oxlint-enable react-hooks/rules-of-hooks",
+          "function Badge({ x }) { if (x) useEffect(() => {}); return null; } // oxlint-disable-line react-hooks/rules-of-hooks",
+          "// oxlint-disable-next-line react-hooks/rules-of-hooks",
+          "function Chip({ x }) { if (x) useEffect(() => {}); return null; }",
+          "// biome-ignore lint/correctness/useHookAtTopLevel: intentional",
+          "function Dot({ x }) { if (x) useEffect(() => {}); return null; }",
+          "/* eslint-disable react-hooks/rules-of-hooks */",
+          "function Eslinted({ x }) { if (x) useEffect(() => {}); return null; }",
+          "/* eslint-enable react-hooks/rules-of-hooks */",
+          "function Plain({ x }) { if (x) useEffect(() => {}); return null; }",
+          "",
+        ].join("\n");
+        const actual = await applyWorkspace(nativeWorkspace, 1, [{ language: "tsx" as const, path: "src/avatar.tsx", source }]);
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        // 1-based lines 9 (Dot, under biome-ignore) and 13 (Plain), as `oxlint` 1.88.0 reports them.
+        expect(actual.violations.map(item => item.span!.startLine + 1)).toEqual([9, 13]);
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
 
   });
 

@@ -8,6 +8,7 @@ use ast_grep_core::{Doc, Node};
 use napi::Result;
 pub(crate) use noqa::{NoqaIndex, parent_statement};
 pub(crate) use nosec::NosecIndex;
+pub(crate) use oxlint::OxlintDirectives;
 pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
 pub(crate) use phpstan::PhpstanIndex;
 pub(crate) use psalm::PsalmIndex;
@@ -26,6 +27,9 @@ pub(super) struct Suppress {
     /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress
     /// the violation.
     pub(super) nosec: Option<Vec<String>>,
+    /// `oxlint.rules`: oxlint's names of the rule (without a plugin), which a disable directive
+    /// must name (after its last `/`, or name none) to suppress the violation.
+    pub(super) oxlint: Option<Vec<String>>,
     /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
     pub(super) phpstan: Option<Vec<String>>,
     pub(super) psalm: Option<Psalm>,
@@ -92,6 +96,9 @@ fn singular(what: &str) -> &str {
             "a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll)"
         }
         "Bandit test ids" => "a Bandit test id (B, then digits: B101)",
+        "oxlint rule names" => {
+            "an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+        }
         "PHP_CodeSniffer codes" => {
             "a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code)"
         }
@@ -102,6 +109,12 @@ fn singular(what: &str) -> &str {
 /// A rule name an `eslint-disable` list can name: ESLint splits the list on commas and trims.
 fn rule_name(name: &str) -> bool {
     !name.is_empty() && !name.contains(',') && name.trim() == name
+}
+
+/// A rule name oxlint asks its directives about: its own name, without the plugin (a directive's
+/// list splits on commas and white space).
+fn oxlint_rule_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains([',', '/']) && !name.contains(char::is_whitespace)
 }
 
 /// A Bandit test id a `# nosec` list can name: `B`, then digits.
@@ -142,7 +155,9 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
     let suppress = object(value, path)?;
     reject_unknown(
         suppress,
-        &["eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs"],
+        &[
+            "eslint", "noqa", "nosec", "oxlint", "phpstan", "psalm", "phpcs",
+        ],
         path,
     )?;
     let eslint = suppress
@@ -189,6 +204,19 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
                 &format!("{at}/codes"),
                 bandit_test,
                 "Bandit test ids",
+            )
+        })
+        .transpose()?;
+    let oxlint = suppress
+        .get("oxlint")
+        .map(|oxlint| {
+            let at = format!("{path}/oxlint");
+            reject_unknown(object(oxlint, &at)?, &["rules"], &at)?;
+            names(
+                oxlint.get("rules"),
+                &format!("{at}/rules"),
+                oxlint_rule_name,
+                "oxlint rule names",
             )
         })
         .transpose()?;
@@ -260,18 +288,20 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
     if eslint.is_none()
         && noqa.is_none()
         && nosec.is_none()
+        && oxlint.is_none()
         && phpstan.is_none()
         && psalm.is_none()
         && phpcs.is_none()
     {
         return Err(invalid(format!(
-            "{path} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"
+            "{path} must hold eslint, noqa, nosec, oxlint, phpstan, psalm, or phpcs"
         )));
     }
     Ok(Suppress {
         eslint,
         noqa,
         nosec,
+        oxlint,
         phpstan,
         psalm,
         phpcs,
@@ -375,6 +405,7 @@ impl EslintDirectives {
 mod eslint;
 mod noqa;
 mod nosec;
+mod oxlint;
 #[cfg(test)]
 mod php_corpus_tests;
 mod phpcs;
@@ -414,7 +445,7 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"),
+                format!("{at} must hold eslint, noqa, nosec, oxlint, phpstan, psalm, or phpcs"),
             ),
             (
                 "typescript",
@@ -481,6 +512,42 @@ mod tests {
                 "php",
                 json!({ "nosec": { "codes": ["B101"] } }),
                 format!("{at}/nosec: nosec comments are Bandit's; a php query has none"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": [] } }),
+                format!("{at}/oxlint/rules must be a list of 1 to 256 oxlint rule names"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["react-hooks/rules-of-hooks"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no console"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no-console"], "plugins": ["eslint"] } }),
+                format!("unknown field `plugins` at {at}/oxlint"),
+            ),
+            (
+                "python",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!(
+                    "{at}/oxlint: oxlint-disable comments are Oxlint's; a python query has none"
+                ),
+            ),
+            (
+                "php",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!("{at}/oxlint: oxlint-disable comments are Oxlint's; a php query has none"),
             ),
             (
                 "python",
@@ -579,6 +646,17 @@ mod tests {
             (
                 "typescript",
                 json!({ "eslint": { "rules": ["strict", "rule-to-test/strict"] } }),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["rules-of-hooks"] } }),
+            ),
+            (
+                "javascript",
+                json!({
+                    "eslint": { "rules": ["react-hooks/rules-of-hooks"] },
+                    "oxlint": { "rules": ["rules-of-hooks"] }
+                }),
             ),
             (
                 "python",

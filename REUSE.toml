@@ -54,6 +54,13 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Herrington Darkholme", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# oxc's oxlint 1.88.0 disable directives, ported.
+[[annotations]]
+path = "native/src/code_rule_dsl/suppress/oxlint.rs"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # typescript-estree 8.70.1 JSX entities, as written by scripts/generate/value/ecma-entities.mjs.
 [[annotations]]
 path = "native/src/code_rule_dsl/value/ecma/entities.generated.rs"
