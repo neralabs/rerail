@@ -3,7 +3,12 @@
   "id": "rust-conformance:clippy-redundant-field-names",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's redundant_field_names: reports struct field initializers whose field and value names are identical; macro expansion and semantic resolution are not modelled.",
+  "description": "Port of Clippy 0.1.99's redundant_field_names: reports a struct expression's field initializer whose value is a path of one segment, without generic arguments, naming the field (`S { a: a }`), unless an item around it sets `#[clippy::msrv]` below 1.17 (field init shorthand). Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "clauses": [{ "id": "redundant-field-name", "forbid": { "ast": { "language": "rust", "rule": { "kind": "field_initializer", "all": [{ "has": { "field": "field", "pattern": "$F" } }, { "has": { "field": "value", "pattern": "$V", "kind": "identifier" } }, { "compare": { "left": "F", "op": "eq", "right": "V", "text": "source" } }] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "redundant_field_names", "message": "Clippy redundant_field_names: field init shorthand is possible" } }]
+  "clauses": [{ "id": "redundant-field-name", "forbid": { "ast": { "language": "rust", "rule": { "kind": "field_initializer", "all": [
+    { "has": { "field": "field", "pattern": "$F" } },
+    { "has": { "field": "value", "pattern": "$V", "kind": "identifier" } },
+    { "compare": { "left": "F", "op": "eq", "right": "V", "text": "source" } },
+    { "not": { "inside": { "stopBy": "end", "follows": { "stopBy": { "not": { "any": [{ "kind": "attribute_item" }, { "kind": "line_comment" }, { "kind": "block_comment" }] } }, "kind": "attribute_item", "regex": "^#\\[\\s*clippy\\s*::\\s*msrv\\s*=\\s*\"1\\.([0-9]|1[0-6])(\\.[0-9]+)?\"\\s*\\]$" } } } }
+  ] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "redundant_field_names", "message": "Clippy redundant_field_names: redundant field names in struct initialization" } }]
 }
