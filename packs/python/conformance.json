@@ -77,7 +77,7 @@
         "tool": "ruff",
         "rule": "ASYNC109"
       },
-      "policy": "rules/ruff-async109-async-function-with-timeout.json",
+      "policy": "candidates/rules/ruff-async109-async-function-with-timeout.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -90,7 +90,7 @@
         "tool": "ruff",
         "rule": "ASYNC110"
       },
-      "policy": "rules/ruff-async110-async-busy-wait.json",
+      "policy": "candidates/rules/ruff-async110-async-busy-wait.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -146,7 +146,7 @@
         "tool": "ruff",
         "rule": "ASYNC212"
       },
-      "policy": "rules/ruff-async212-blocking-http-call-httpx-in-async-function.json",
+      "policy": "candidates/rules/ruff-async212-blocking-http-call-httpx-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -160,7 +160,7 @@
         "tool": "ruff",
         "rule": "ASYNC220"
       },
-      "policy": "rules/ruff-async220-create-subprocess-in-async-function.json",
+      "policy": "candidates/rules/ruff-async220-create-subprocess-in-async-function.json",
       "capabilities": [
         "arguments",
         "compare",
@@ -220,7 +220,7 @@
         "tool": "ruff",
         "rule": "ASYNC240"
       },
-      "policy": "rules/ruff-async240-blocking-path-method-in-async-function.json",
+      "policy": "candidates/rules/ruff-async240-blocking-path-method-in-async-function.json",
       "capabilities": [
         "scope",
         "suppression",

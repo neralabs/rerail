@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "162 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "138 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -20,10 +20,15 @@
           "**/*_test.py",
           "**/conftest.py",
           "**/scripts/**",
+          "**/script/**",
+          "**/tools/**",
+          "**/ci/**",
+          "**/.github/**",
           "**/setup.py",
           "**/noxfile.py",
           "**/fabfile.py",
-          "**/docs/conf.py"
+          "**/docs/**",
+          "**/doc/**"
         ],
         "label": "Python source files"
       }
@@ -41,20 +46,6 @@
       "document": "rules/ruff-async105-trio-sync-call.json",
       "title": "Ruff ASYNC105: Trio sync call",
       "group": "Ruff"
-    },
-    {
-      "id": "ruff-async109-async-function-with-timeout",
-      "document": "rules/ruff-async109-async-function-with-timeout.json",
-      "title": "Ruff ASYNC109: Async function with timeout",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-async110-async-busy-wait",
-      "document": "rules/ruff-async110-async-busy-wait.json",
-      "title": "Ruff ASYNC110: Async busy wait",
-      "group": "Ruff",
-      "on": false
     },
     {
       "id": "ruff-async115-async-zero-sleep",
@@ -75,19 +66,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-async212-blocking-http-call-httpx-in-async-function",
-      "document": "rules/ruff-async212-blocking-http-call-httpx-in-async-function.json",
-      "title": "Ruff ASYNC212: Blocking http call httpx in async function",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-async220-create-subprocess-in-async-function",
-      "document": "rules/ruff-async220-create-subprocess-in-async-function.json",
-      "title": "Ruff ASYNC220: Create subprocess in async function",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-async221-run-process-in-async-function",
       "document": "rules/ruff-async221-run-process-in-async-function.json",
       "title": "Ruff ASYNC221: Run process in async function",
@@ -104,13 +82,6 @@
       "document": "rules/ruff-async230-blocking-open-call-in-async-function.json",
       "title": "Ruff ASYNC230: Blocking open call in async function",
       "group": "Ruff"
-    },
-    {
-      "id": "ruff-async240-blocking-path-method-in-async-function",
-      "document": "rules/ruff-async240-blocking-path-method-in-async-function.json",
-      "title": "Ruff ASYNC240: Blocking path method in async function",
-      "group": "Ruff",
-      "on": false
     },
     {
       "id": "ruff-async250-blocking-input-in-async-function",

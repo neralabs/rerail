@@ -124,6 +124,10 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/SIM905.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM910.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/T100.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/ASYNC109-parenthesized-override.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/ASYNC110-tuple-body.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/ASYNC212-ASYNC240-builtin-name-module-binding.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/ASYNC220-ASYNC221-with-item-mode.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/B017-comment-before-argument.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/B017-continuation.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/B019-parenthesized-decorator.py` | written by Rerail |
