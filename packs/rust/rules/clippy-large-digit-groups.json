@@ -1,0 +1,16 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-large-digit-groups",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's large_digit_groups: reports underscore-separated numeric groups longer than four digits; macro expansions are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "large-digit-groups",
+    "forbid": { "ast": { "language": "rust", "rule": { "any": [
+      { "kind": "integer_literal", "regex": "^(?:[0-9]+|0[xX][0-9A-Fa-f]+|0[bBoO][0-9A-Fa-f]+)(?:_[0-9A-Fa-f]{5,})(?:_[0-9A-Fa-f]+)*(?:[iu](?:8|16|32|64|128|size))?$" },
+      { "kind": "float_literal", "regex": "^.*_[0-9A-Fa-f]{5,}.*$" }
+    ] } } },
+    "violation": { "anchor": "witness.span", "code": "large_digit_groups", "message": "Clippy large_digit_groups: digit group has more than four digits" }
+  }]
+}

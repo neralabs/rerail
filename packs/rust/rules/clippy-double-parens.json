@@ -1,0 +1,30 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-double-parens",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression; macro expansion and tuple/unit argument semantics are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "nested-parentheses",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(", "has": { "kind": "parenthesized_expression" } } } },
+      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+    },
+    {
+      "id": "nested-tuple",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(", "has": { "kind": "tuple_expression" } } } },
+      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+    },
+    {
+      "id": "nested-unit",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(\\)\\)$" } } },
+      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+    },
+    {
+      "id": "parenthesized-call-argument",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "inside": { "stopBy": "neighbor", "kind": "arguments" }, "follows": { "stopBy": "neighbor", "regex": "^\\($" }, "not": { "inside": { "stopBy": "end", "kind": "binary_expression" } } } } },
+      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+    }
+  ]
+}

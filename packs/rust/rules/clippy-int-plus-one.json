@@ -1,0 +1,36 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-int-plus-one",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's int_plus_one lint: reports inequalities equivalent to a strict comparison through addition or subtraction by one; constant evaluation and type semantics are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "ge-adjusted",
+      "forbid": { "ast": { "language": "rust", "rule": { "all": [
+        { "kind": "binary_expression" }, { "has": { "field": "operator", "regex": "^>=$" } },
+        { "any": [
+          { "has": { "field": "right", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "right", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "right", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "left", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^-$" } }, { "has": { "field": "right", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "left", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^-1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } }
+        ] }
+      ] } } },
+      "violation": { "anchor": "witness.span", "code": "int_plus_one", "message": "Clippy int_plus_one: inequality can be replaced by a strict comparison" }
+    },
+    {
+      "id": "le-adjusted",
+      "forbid": { "ast": { "language": "rust", "rule": { "all": [
+        { "kind": "binary_expression" }, { "has": { "field": "operator", "regex": "^<=$" } },
+        { "any": [
+          { "has": { "field": "left", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "right", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "left", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "right", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^-$" } }, { "has": { "field": "right", "regex": "^1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } },
+          { "has": { "field": "right", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^-1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } }
+        ] }
+      ] } } },
+      "violation": { "anchor": "witness.span", "code": "int_plus_one", "message": "Clippy int_plus_one: inequality can be replaced by a strict comparison" }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-partial-pub-fields",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's partial_pub_fields: reports mixed-visibility fields in public structs; visibility ordering and semantic reachability are approximated structurally.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    { "id": "partial-public-after-private", "forbid": { "ast": { "language": "rust", "rule": { "kind": "struct_item", "regex": "(?s)^pub\\s+struct\\b[^{}]*\\{.*:[^}]*,\\s*(?P<A>pub)\\s+.*\\}$" } } }, "violation": { "anchor": "capture.A", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: struct has partially public fields" } },
+    { "id": "partial-tuple-public-after-private", "forbid": { "ast": { "language": "rust", "rule": { "kind": "struct_item", "regex": "(?s)^pub\\s+struct\\b.*\\([^)]*,\\s*(?P<A>pub)\\s+.*\\)\\s*;?$" } } }, "violation": { "anchor": "capture.A", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: struct has partially public fields" } }
+  ]
+}

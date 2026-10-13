@@ -1,0 +1,15 @@
+{
+  "format":"rerail.policy/v1",
+  "id":"rust-conformance:clippy-needless-raw-string-hashes",
+  "revision":1,"mode":"steer",
+  "description":"Port of Clippy 0.1.99's needless_raw_string_hashes: reports raw literals whose delimiter contains more hashes than their contents require; configurable allowed-hash threshold is not modelled.",
+  "scope":{"include":["**/*"],"exclude":[]},
+  "clauses":[
+    {"id":"one","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#.*\"\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\"[^\"\\\\]*\"\\#$"}},{"not":{"regex":"(?s)\"\\#.*\"\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}},
+    {"id":"two","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#\\#.*\"\\#\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\\#\"[^\"\\\\]*\"\\#\\#$"}},{"not":{"regex":"(?s)\"\\#.*\"\\#\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}},
+    {"id":"three","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#\\#\\#.*\"\\#\\#\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\\#\\#\"[^\"\\\\]*\"\\#\\#\\#$"}},{"not":{"regex":"(?s)\"\\#\\#.*\"\\#\\#\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}},
+    {"id":"four","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#.*\"\\#\\#\\#\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#\"[^\"\\\\]*\"\\#\\#\\#\\#$"}},{"not":{"regex":"(?s)\"\\#\\#\\#.*\"\\#\\#\\#\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}},
+    {"id":"five","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#\\#.*\"\\#\\#\\#\\#\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#\\#\"[^\"\\\\]*\"\\#\\#\\#\\#\\#$"}},{"not":{"regex":"(?s)\"\\#\\#\\#\\#.*\"\\#\\#\\#\\#\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}},
+    {"id":"six","forbid":{"ast":{"language":"rust","rule":{"all":[{"kind":"raw_string_literal","regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#\\#\\#.*\"\\#\\#\\#\\#\\#\\#$"},{"not":{"regex":"(?s)^(?:b|c)?r\\#\\#\\#\\#\\#\\#\"[^\"\\\\]*\"\\#\\#\\#\\#\\#\\#$"}},{"not":{"regex":"(?s)\"\\#\\#\\#\\#\\#.*\"\\#\\#\\#\\#\\#\\#$"}}]}}},"violation":{"anchor":"witness.span","code":"needless_raw_string_hashes","message":"Clippy needless_raw_string_hashes: too many # in raw string literal"}}
+  ]
+}

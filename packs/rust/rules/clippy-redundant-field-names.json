@@ -1,0 +1,9 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-redundant-field-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's redundant_field_names: reports struct field initializers whose field and value names are identical; macro expansion and semantic resolution are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{ "id": "redundant-field-name", "forbid": { "ast": { "language": "rust", "rule": { "kind": "field_initializer", "all": [{ "has": { "field": "field", "pattern": "$F" } }, { "has": { "field": "value", "pattern": "$V", "kind": "identifier" } }, { "compare": { "left": "F", "op": "eq", "right": "V", "text": "source" } }] } } }, "violation": { "anchor": "witness.span", "code": "redundant_field_names", "message": "Clippy redundant_field_names: field init shorthand is possible" } }]
+}

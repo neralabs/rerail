@@ -1,0 +1,20 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-many-single-char-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's many_single_char_names: reports scopes containing more than the configured threshold (default 4) single-character bindings; this structural port counts identifier nodes and cannot distinguish bindings or nested scopes.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "many-single-char-parameters",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "parameters", "count": { "has": { "kind": "identifier", "regex": "^[A-Za-z]$", "stopBy": "end" }, "min": 5 } } } },
+      "violation": { "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
+    },
+    {
+      "id": "many-single-char-tuple-pattern",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "tuple_pattern", "count": { "has": { "kind": "identifier", "regex": "^[A-Za-z]$", "stopBy": "end" }, "min": 5 } } } },
+      "violation": { "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
+    }
+  ]
+}

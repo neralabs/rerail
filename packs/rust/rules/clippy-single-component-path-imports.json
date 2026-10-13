@@ -1,0 +1,13 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-single-component-path-imports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's single_component_path_imports: structurally reports a plain one-segment use declaration; exactness requires name resolution and use-site analysis.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "single-component-import",
+    "forbid": { "ast": { "language": "rust", "rule": { "kind": "use_declaration", "all": [{ "regex": "^use\\s+[A-Za-z_][A-Za-z0-9_]*\\s*;$" }, { "not": { "regex": "^use\\s+(core|std)\\s*;$" } }] } } },
+    "violation": { "anchor": "witness.span", "code": "single_component_path_imports", "message": "Clippy single_component_path_imports: this import is redundant" }
+  }]
+}

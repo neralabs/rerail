@@ -1,0 +1,24 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-octal-escapes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's octal_escapes: reports each \\0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "octal-escape",
+    "forbid": { "ast": { "language": "rust", "rule": {
+      "kind": "string_literal",
+      "regex": "(?s)(?:^|[^\\\\]|\\\\\\\\)(?P<O>\\\\0[0-7]{1,2})"
+    } } },
+    "violation": { "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+  }, {
+    "id": "octal-escape-after-first",
+      "forbid": { "ast": { "language": "rust", "rule": {
+        "kind": "string_literal",
+        "regex": "(?s).*?(?:^|[^\\\\]|\\\\\\\\)\\\\0[0-7]{1,2}.*?(?P<O>\\\\0[0-7]{1,2})"
+      } } },
+      "violation": { "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+  }
+  ]
+}

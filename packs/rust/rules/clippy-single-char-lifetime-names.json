@@ -1,0 +1,9 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-single-char-lifetime-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's single_char_lifetime_names: reports single-character lifetime parameters at their declarations; naming configuration is not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{ "id": "single-char-lifetime", "forbid": { "ast": { "language": "rust", "rule": { "kind": "lifetime", "regex": "^'[A-Za-z]$", "inside": { "kind": "lifetime_parameter", "stopBy": "end" } } } }, "violation": { "anchor": "witness.span", "code": "single_char_lifetime_names", "message": "Clippy single_char_lifetime_names: single-character lifetime name" } }]
+}

@@ -1,0 +1,37 @@
+{
+  "format":"rerail.policy/v1",
+  "id":"rust-conformance:clippy-precedence-bits",
+  "revision":1,
+  "mode":"steer",
+  "description":"Port of Clippy 0.1.99's precedence_bits lint: reports the outermost mixed bitwise operation combining shifts with bit masking/combining; macro expansion and semantic type checks are not modelled.",
+  "scope":{"include":["**/*"],"exclude":[]},
+  "clauses":[
+    {
+      "id":"and-with-shift",
+      "forbid":{"ast":{"language":"rust","rule":{"all":[
+        {"kind":"binary_expression"},{"has":{"field":"operator","regex":"^&$"}},
+        {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}}]},
+        {"not":{"inside":{"kind":"binary_expression"}}}
+      ]}}},
+      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+    },
+    {
+      "id":"shift-with-or-xor",
+      "forbid":{"ast":{"language":"rust","rule":{"all":[
+        {"kind":"binary_expression"},{"has":{"field":"operator","regex":"^(?:<<|>>)$"}},
+        {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^[|^]$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^[|^]$"}}}]},
+        {"not":{"inside":{"kind":"binary_expression"}}}
+      ]}}},
+      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+    },
+    {
+      "id":"or-xor-with-shift",
+      "forbid":{"ast":{"language":"rust","rule":{"all":[
+        {"kind":"binary_expression"},{"has":{"field":"operator","regex":"^[|^]$"}},
+        {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}}]},
+        {"not":{"inside":{"kind":"binary_expression"}}}
+      ]}}},
+      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+    }
+  ]
+}

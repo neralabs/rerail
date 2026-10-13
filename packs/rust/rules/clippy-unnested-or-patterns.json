@@ -1,0 +1,27 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-unnested-or-patterns",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's unnested_or_patterns: reports equivalent alternatives that can be nested into a single or-pattern; macro-expanded code is not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "unnested-or",
+      "forbid": { "ast": { "language": "rust", "rule": { "all": [
+        { "kind": "or_pattern" },
+        { "not": { "has": { "kind": "or_pattern" } } },
+        { "any": [
+          { "regex": "(?s)box\\s+.+\\|\\s*box" },
+          { "regex": "(?s)&mut\\s+.+\\|\\s*&mut" },
+          { "regex": "(?s)[A-Za-z_][A-Za-z0-9_]*\\s*@.+\\|\\s*[A-Za-z_][A-Za-z0-9_]*\\s*@" },
+          { "regex": "(?s)\\(.*\\)\\s*\\|\\s*\\(" },
+          { "regex": "(?s)\\[.*\\]\\s*\\|\\s*\\[" },
+          { "regex": "(?s)[A-Za-z_][A-Za-z0-9_:]*\\s*\\(.*\\)\\s*\\|\\s*[A-Za-z_][A-Za-z0-9_:]*\\s*\\(" },
+          { "regex": "(?s)[A-Za-z_][A-Za-z0-9_:]*\\s*\\{.*\\}\\s*\\|\\s*[A-Za-z_][A-Za-z0-9_:]*\\s*\\{" }
+        ] }
+      ] } } },
+      "violation": { "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Clippy unnested_or_patterns: unnested or-patterns" }
+    }
+  ]
+}

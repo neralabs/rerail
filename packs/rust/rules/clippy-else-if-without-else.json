@@ -1,0 +1,15 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rust-conformance:clippy-else-if-without-else",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's else_if_without_else lint: reports an else-if branch whose final if has no else; macro expansion and cfg evaluation are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "else-if-final-branch",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "else_clause", "regex": "(?s)^else\\s+(?P<I>if)\\b", "has": { "stopBy": "neighbor", "kind": "if_expression", "not": { "has": { "field": "alternative", "kind": "else_clause" } } } } } },
+      "violation": { "anchor": "capture.I", "code": "else_if_without_else", "message": "Clippy else_if_without_else: this `else if` block is missing an `else`" }
+    }
+  ]
+}
