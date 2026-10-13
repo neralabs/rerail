@@ -50,7 +50,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "AL09",
-        "message": "Column should not be self-aliased."
+        "message": "Column should not be self-aliased.", "suppress": { "sqlfluff": { "rules": ["AL09", "aliasing", "aliasing.self_alias.column", "all", "core"] } }
       }
     },
     {
@@ -108,7 +108,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "AL09",
-        "message": "Ambiguous self alias. Either remove unnecessary alias, or quote alias/reference to make case change explicit."
+        "message": "Ambiguous self alias. Either remove unnecessary alias, or quote alias/reference to make case change explicit.", "suppress": { "sqlfluff": { "rules": ["AL09", "aliasing", "aliasing.self_alias.column", "all", "core"] } }
       }
     }
   ]

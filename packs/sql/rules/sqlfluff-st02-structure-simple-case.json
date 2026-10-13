@@ -12,7 +12,7 @@
         "kind": "case",
         "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>.*?)\\s+THEN\\s+(?:TRUE\\s+ELSE\\s+FALSE|FALSE\\s+ELSE\\s+TRUE)\\s+END$"
       }}},
-      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead."}
+      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead.", "suppress": { "sqlfluff": { "rules": ["ST02", "L043", "all", "structure", "structure.simple_case"] } }}
     },
     {
       "id": "null-filling-case",
@@ -20,7 +20,7 @@
         "kind": "case",
         "regex": "(?is)^CASE\\s+WHEN\\s+(?<COND>[^\\r\\n]+?\\s+IS(?:\\s+NOT)?\\s+NULL)\\s+THEN\\s+.+?\\s+(?:ELSE\\s+.+?\\s+)?END$"
       }}},
-      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead."}
+      "violation": {"anchor": "capture.COND", "code": "ST02", "message": "Unnecessary CASE statement. Use COALESCE function instead.", "suppress": { "sqlfluff": { "rules": ["ST02", "L043", "all", "structure", "structure.simple_case"] } }}
     }
   ]
 }

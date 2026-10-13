@@ -14,7 +14,7 @@
           { "inside": { "kind": "term", "inside": { "kind": "select_expression", "has": { "kind": "keyword_distinct" } } } }
         ]
       } } },
-      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses." }
+      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses.", "suppress": { "sqlfluff": { "rules": ["ST08", "L015", "all", "core", "structure", "structure.distinct"] } } }
     },
     {
       "id": "distinct-function-parentheses",
@@ -24,7 +24,7 @@
           { "inside": { "kind": "invocation", "has": { "kind": "parenthesized_expression", "not": { "has": { "kind": "subquery" } } } } }
         ]
       } } },
-      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses." }
+      "violation": { "anchor": "witness.start", "code": "ST08", "message": "DISTINCT used with parentheses.", "suppress": { "sqlfluff": { "rules": ["ST08", "L015", "all", "core", "structure", "structure.distinct"] } } }
     }
   ]
 }

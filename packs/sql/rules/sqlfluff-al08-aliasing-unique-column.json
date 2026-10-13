@@ -42,7 +42,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "AL08",
-        "message": "Reuse of column alias."
+        "message": "Reuse of column alias.", "suppress": { "sqlfluff": { "rules": ["AL08", "aliasing", "aliasing.unique", "aliasing.unique.column", "all", "core"] } }
       }
     }
   ]

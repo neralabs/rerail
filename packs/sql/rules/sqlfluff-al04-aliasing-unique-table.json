@@ -42,7 +42,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "AL04",
-        "message": "Duplicate table alias."
+        "message": "Duplicate table alias.", "suppress": { "sqlfluff": { "rules": ["AL04", "L020", "aliasing", "aliasing.unique", "aliasing.unique.table", "all", "core"] } }
       }
     }
   ]

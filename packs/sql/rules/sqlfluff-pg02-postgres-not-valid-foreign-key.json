@@ -27,7 +27,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG02",
-        "message": "ADD CONSTRAINT ... FOREIGN KEY should use NOT VALID, then VALIDATE CONSTRAINT separately, to avoid locking the table while validating existing rows."
+        "message": "ADD CONSTRAINT ... FOREIGN KEY should use NOT VALID, then VALIDATE CONSTRAINT separately, to avoid locking the table while validating existing rows.", "suppress": { "sqlfluff": { "rules": ["PG02", "all", "postgres", "postgres.not_valid_foreign_key"] } }
       }
     }
   ]

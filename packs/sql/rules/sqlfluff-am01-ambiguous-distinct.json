@@ -12,7 +12,7 @@
         "kind": "keyword_distinct",
         "inside": { "kind": "select", "has": { "kind": "group_by" } }
       } } },
-      "violation": { "anchor": "witness.start", "code": "AM01", "message": "DISTINCT is ambiguous with GROUP BY." }
+      "violation": { "anchor": "witness.start", "code": "AM01", "message": "DISTINCT is ambiguous with GROUP BY.", "suppress": { "sqlfluff": { "rules": ["AM01", "L021", "all", "ambiguous", "ambiguous.distinct", "core"] } } }
     }
   ]
 }

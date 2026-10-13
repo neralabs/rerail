@@ -20,7 +20,7 @@
           {"kind": "exclusion_constraint_element"}
         ]}}
       }}},
-      "violation": {"anchor": "capture.OP", "code": "CV05", "message": "Comparisons with NULL should use IS or IS NOT."}
+      "violation": {"anchor": "capture.OP", "code": "CV05", "message": "Comparisons with NULL should use IS or IS NOT.", "suppress": { "sqlfluff": { "rules": ["CV05", "L049", "all", "convention", "convention.is_null", "core"] } }}
     }
   ]
 }
