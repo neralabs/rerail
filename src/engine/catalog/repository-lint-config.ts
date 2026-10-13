@@ -8,7 +8,9 @@
  * What is read becomes settings for the rules of the packs being set up, matched through each port's `violation.
  * suppress` (the upstream rule names the port honours suppression comments for): a rule turned off (`"off"`, `0`, a
  * Ruff selector in `ignore`) starts off; ESLint options become the port's `config` where they map onto the options its
- * document declares. A rule some config turns off starts off even where another config keeps it on.
+ * document declares. A rule some config turns off starts off even where another config keeps it on. An oxlint config
+ * key is resolved to a built-in oxlint rule as oxlint resolves it (`oxlintRuleOfKey`), not by its bare name as its
+ * suppression comments are: `custom/no-console` is another plugin's rule and leaves ESLint's `no-console` alone.
  */
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,6 +35,122 @@ const RUFF_KEYS = ["ignore", "extend-ignore", "lint.ignore", "lint.extend-ignore
 /** A Ruff selector: `ALL`, or a rule code or prefix of one (`E`, `E7`, `E711`, `PLR09`). */
 const RUFF_SELECTOR = /^(?:ALL|[A-Z]+[0-9]*)$/u;
 const NEVER_RUN = "Rerail never runs your config.";
+
+/**
+ * A rule built into oxlint: oxlint's internal plugin name (`eslint`, `typescript`, `react`, `jsx_a11y`, `nextjs`,
+ * `node`, ...) and the rule's name.
+ */
+interface OxlintRule {
+  readonly plugin: string;
+  readonly name: string;
+}
+
+/**
+ * A config key's plugin, as oxlint 1.88.0 names its built-in plugins (oxc `crates/oxc_linter/src/config/plugins.rs`
+ * `TryFrom<&str> for LintPlugins` l.164-194, then `unalias_plugin_name` in `config/rules.rs` l.672-688: `eslint` stays,
+ * the others take their `From<LintPlugins>` name with `-` as `_`). Any other plugin is an external (JS) plugin.
+ */
+const OXLINT_PLUGINS: Readonly<Record<string, string>> = {
+  eslint: "eslint",
+  react: "react", "react-hooks": "react", react_hooks: "react",
+  unicorn: "unicorn",
+  typescript: "typescript", "typescript-eslint": "typescript", typescript_eslint: "typescript", "@typescript-eslint": "typescript",
+  oxc: "oxc", deepscan: "oxc",
+  import: "import", "import-x": "import",
+  jsdoc: "jsdoc",
+  jest: "jest",
+  vitest: "vitest",
+  "jsx-a11y": "jsx_a11y", jsx_a11y: "jsx_a11y", "jsx-a11y-x": "jsx_a11y", "jsx_a11y-x": "jsx_a11y",
+  nextjs: "nextjs", "@next": "nextjs", "@next/next": "nextjs",
+  "react-perf": "react_perf", react_perf: "react_perf",
+  promise: "promise",
+  node: "node",
+  vue: "vue",
+};
+
+/**
+ * The plugin a bare config key names when several built-in plugins have a rule of that name: the plugin of the first
+ * such rule in oxlint 1.88.0's `RULES` (`crates/oxc_linter/src/generated/rules_enum.rs` l.22192), which
+ * `parse_rule_key` takes (`config/rules.rs` l.647-657). A name only one plugin has names that plugin; a name no
+ * built-in rule has names `eslint`.
+ */
+const OXLINT_SHARED_RULE_NAMES: Readonly<Record<string, string>> = Object.fromEntries(Object.entries({
+  eslint: [
+    "no-dupe-keys", "no-implied-eval", "no-lonely-if", "no-negated-condition", "no-nested-ternary", "prefer-promise-reject-errors",
+    "prefer-spread", "require-await",
+  ],
+  import: ["no-anonymous-default-export", "no-namespace"],
+  typescript: ["prefer-includes", "prefer-string-starts-ends-with"],
+  react: ["require-render-return"],
+  jest: [
+    "consistent-test-it", "expect-expect", "max-expects", "max-nested-describe", "no-alias-methods", "no-commented-out-tests",
+    "no-conditional-expect", "no-conditional-in-test", "no-disabled-tests", "no-duplicate-hooks", "no-focused-tests", "no-hooks",
+    "no-identical-title", "no-interpolation-in-snapshots", "no-large-snapshots", "no-mocks-import", "no-restricted-matchers",
+    "no-standalone-expect", "no-test-prefixes", "no-test-return-statement", "no-unneeded-async-expect-function",
+    "padding-around-after-all-blocks", "padding-around-test-blocks", "prefer-called-with", "prefer-comparison-matcher", "prefer-each",
+    "prefer-equality-matcher", "prefer-expect-assertions", "prefer-expect-resolves", "prefer-hooks-in-order", "prefer-hooks-on-top",
+    "prefer-lowercase-title", "prefer-mock-promise-shorthand", "prefer-mock-return-shorthand", "prefer-snapshot-hint", "prefer-spy-on",
+    "prefer-strict-equal", "prefer-to-be", "prefer-to-contain", "prefer-to-have-been-called-times", "prefer-to-have-length",
+    "prefer-todo", "require-hook", "require-to-throw-message", "require-top-level-describe", "valid-describe-callback", "valid-expect",
+    "valid-expect-in-promise", "valid-title",
+  ],
+}).flatMap(([plugin, rules]) => rules.map(rule => [rule, plugin])));
+
+/**
+ * The ESLint rules oxlint runs for typescript-eslint's extension rules of the same name (oxc
+ * `crates/oxc_linter/src/utils/mod.rs` l.51-90, applied by `transform_rule_and_plugin_name` in `config/rules.rs`
+ * l.244-253): `typescript/no-unused-vars` configures oxlint's `no-unused-vars`.
+ */
+const OXLINT_TYPESCRIPT_AS_ESLINT = new Set([
+  "class-methods-use-this", "default-param-last", "init-declarations", "max-params", "no-array-constructor", "no-dupe-class-members",
+  "no-empty-function", "no-invalid-this", "no-loop-func", "no-loss-of-precision", "no-magic-numbers", "no-redeclare",
+  "no-restricted-imports", "no-shadow", "no-unused-expressions", "no-unused-vars", "no-use-before-define", "no-useless-constructor",
+]);
+
+/** A plugin package name without its `eslint-plugin`/`oxlint-plugin` part (oxc `config/plugins.rs` l.30-63). */
+function normalizeOxlintPluginName(name: string): string {
+  const prefixes = ["eslint-plugin", "oxlint-plugin"];
+  const slash = name.indexOf("/");
+  if (slash >= 0) {
+    const scope = name.slice(0, slash);
+    const rest = name.slice(slash + 1);
+    for (const prefix of prefixes) {
+      if (rest === prefix) return scope;
+      if (rest.startsWith(`${prefix}-`)) return `${scope}/${rest.slice(prefix.length + 1)}`;
+    }
+  }
+  const prefix = prefixes.find(candidate => name.startsWith(`${candidate}-`));
+  return prefix === undefined ? name : name.slice(prefix.length + 1);
+}
+
+/**
+ * The rule an `.oxlintrc.json` `rules` key configures, resolved as oxlint 1.88.0 resolves it (oxc
+ * `crates/oxc_linter/src/config/rules.rs`: `parse_rule_key` l.641-660, `unalias_plugin_name` l.672-688,
+ * `transform_rule_and_plugin_name` l.244-253). A key with a `@scope` splits at its last `/`, any other at its first;
+ * the plugin part loses `eslint-plugin-`/`oxlint-plugin-` and its aliases (`@typescript-eslint` → `typescript`,
+ * `react-hooks` → `react`, `@next/next` → `nextjs`); an unknown plugin stays as written, an external plugin that never
+ * names a built-in rule. A bare key names the plugin of the first built-in rule of that name, `eslint` when there is
+ * none; `soleRulePlugin` gives the plugin of a name only one plugin has, where the caller knows it.
+ */
+function oxlintRuleOfKey(key: string, soleRulePlugin: (name: string) => string | undefined = () => undefined): OxlintRule {
+  const split = key.startsWith("@") ? key.lastIndexOf("/") : key.indexOf("/");
+  if (split < 0) return { plugin: OXLINT_SHARED_RULE_NAMES[key] ?? soleRulePlugin(key) ?? "eslint", name: key };
+  const name = key.slice(split + 1);
+  const normalized = normalizeOxlintPluginName(key.slice(0, split));
+  // `LintPlugins::try_from` normalises the name once more.
+  const plugin = OXLINT_PLUGINS[normalized] ?? OXLINT_PLUGINS[normalizeOxlintPluginName(normalized)] ?? normalized;
+  return { plugin: plugin === "typescript" && OXLINT_TYPESCRIPT_AS_ESLINT.has(name) ? "eslint" : plugin, name };
+}
+
+/**
+ * The oxlint rule a port of ESLint rule `eslintName` models: the rule oxlint configures for that ESLint key, except
+ * that eslint-plugin-n's `n/<rule>` is oxlint's `node/<rule>` (its `node` plugin ports eslint-plugin-node, of which
+ * eslint-plugin-n is the fork: oxc `config/plugins.rs` l.119), while oxlint itself takes an `n/` key for an external
+ * plugin.
+ */
+function oxlintRuleOfPort(eslintName: string): OxlintRule {
+  return oxlintRuleOfKey(eslintName.startsWith("n/") ? `node/${eslintName.slice(2)}` : eslintName);
+}
 
 export type LintConfigLinter = "eslint" | "oxlint" | "ruff";
 
@@ -285,16 +403,21 @@ function eslintOptionsConfig(declared: Declared, options: readonly unknown[]): M
   return { ok: true, config };
 }
 
-/** The upstream rule names a code rule's violations honour suppression comments for, and its declared options. */
-function portOf(bundle: BundledCatalog, ruleId: string): { eslint: string[]; oxlint: string[]; noqa: string[]; declared: Declared } | undefined {
+/** The upstream rules a code rule's violations honour suppression comments for, and its declared options. */
+function portOf(bundle: BundledCatalog, ruleId: string): { eslint: string[]; oxlint: OxlintRule[]; noqa: string[]; declared: Declared } | undefined {
   const document = bundle.documents.get(ruleId);
   if (document?.kind !== "code") return undefined;
-  const port = { eslint: [] as string[], oxlint: [] as string[], noqa: [] as string[], declared: {} as Record<string, CodeRuleDslOptionDeclaration> };
+  const port = { eslint: [] as string[], oxlint: [] as OxlintRule[], noqa: [] as string[], declared: {} as Record<string, CodeRuleDslOptionDeclaration> };
   for (const clause of document.rule.clauses) {
     if (clause.define !== undefined) Object.assign(port.declared, clause.define.options ?? {});
     const suppress = clause.violation?.suppress;
     port.eslint.push(...(suppress?.eslint?.rules ?? []));
-    port.oxlint.push(...(suppress?.oxlint?.rules ?? []));
+    // `suppress.oxlint` names the rule bare, as oxlint's comments do; which plugin's rule it is follows from the
+    // ESLint rule the port ports. A port without one is matched to no oxlint config key.
+    const bare = suppress?.oxlint?.rules ?? [];
+    for (const rule of (suppress?.eslint?.rules ?? []).map(oxlintRuleOfPort)) {
+      if (bare.includes(rule.name) && !port.oxlint.some(known => known.plugin === rule.plugin && known.name === rule.name)) port.oxlint.push(rule);
+    }
     port.noqa.push(...(suppress?.noqa?.codes ?? []));
   }
   return port;
@@ -347,9 +470,14 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       }
       add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
     }
-    for (const [key, value] of Object.entries(files.oxlint?.rules ?? {})) {
-      // oxlint matches a rule by its name after the plugin prefix.
-      if (!port.oxlint.includes(key.slice(key.lastIndexOf("/") + 1))) continue;
+    for (const rule of port.oxlint) {
+      // oxlint applies a rule's last key: `{"no-unused-vars": "off", "typescript/no-unused-vars": "error"}` keeps it on.
+      const key = Object.keys(files.oxlint?.rules ?? {}).findLast(candidate => {
+        const resolved = oxlintRuleOfKey(candidate, name => (name === rule.name ? rule.plugin : undefined));
+        return resolved.plugin === rule.plugin && resolved.name === rule.name;
+      });
+      if (key === undefined) continue;
+      const value = files.oxlint!.rules[key];
       const because = entryText(files.oxlint!.file, key, value);
       const severity = severityOf(value, "oxlint");
       if (severity === undefined) {

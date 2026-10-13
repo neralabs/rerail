@@ -266,6 +266,45 @@ describe("proposeLintConfigSettings", () => {
     });
   });
 
+  /** The rules of `packs` an `.oxlintrc.json` with `rules` turns off. */
+  async function oxlintOff(rules: Readonly<Record<string, unknown>>, packs: readonly string[]): Promise<string[]> {
+    const root = await repository({ ".oxlintrc.json": JSON.stringify({ rules }) });
+    return readRepositoryLintConfig(root, bundle, packs).settings.filter(setting => setting.on === false).map(setting => setting.ruleId);
+  }
+
+  it("resolves an .oxlintrc.json key to a built-in rule as oxlint does: another plugin's rule of the same name is not it", async () => {
+    expect(await oxlintOff({ "custom/no-console": "off" }, ["javascript"])).toEqual([]);
+    expect(await oxlintOff({ "custom/no-console": "off", "eslint/no-console": "error" }, ["javascript"])).toEqual([]);
+    expect(await oxlintOff({ "react/no-console": "off" }, ["javascript"])).toEqual([]);
+    expect(await oxlintOff({ "eslint/no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
+    expect(await oxlintOff({ "no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
+  });
+
+  it("takes typescript-eslint's prefixes and its extension rules as oxlint does", async () => {
+    for (const key of ["typescript/ban-tslint-comment", "@typescript-eslint/ban-tslint-comment", "ban-tslint-comment"]) {
+      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint:ban-tslint-comment"]);
+    }
+    // oxlint runs its ESLint default-param-last for typescript-eslint's; every key names that one rule.
+    for (const key of ["default-param-last", "typescript/default-param-last", "@typescript-eslint/default-param-last"]) {
+      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint:default-param-last"]);
+    }
+    // A bare no-namespace is the import plugin's, the first of three plugins with a rule of that name.
+    expect(await oxlintOff({ "no-namespace": "off" }, ["typescript"])).toEqual([]);
+    expect(await oxlintOff({ "typescript/no-namespace": "off" }, ["typescript"])).toEqual(["typescript-eslint-no-namespace"]);
+  });
+
+  it("takes react-hooks as oxlint's react plugin, and an unknown plugin as no built-in one", async () => {
+    for (const key of ["react-hooks/rules-of-hooks", "react/rules-of-hooks", "eslint-plugin-react-hooks/rules-of-hooks", "rules-of-hooks"]) {
+      expect(await oxlintOff({ [key]: "off" }, ["hooks"])).toEqual([HOOKS_RULE]);
+    }
+    expect(await oxlintOff({ "hooks/rules-of-hooks": "off" }, ["hooks"])).toEqual([]);
+  });
+
+  it("applies a rule's last .oxlintrc.json key, as oxlint does", async () => {
+    expect(await oxlintOff({ "no-console": "off", "eslint/no-console": "error" }, ["javascript"])).toEqual([]);
+    expect(await oxlintOff({ "eslint/no-console": "error", "no-console": "off" }, ["javascript"])).toEqual(["eslint:no-console"]);
+  });
+
   it("starts a rule off when one config turns it off and another keeps it on", async () => {
     const root = await repository({
       ".eslintrc.json": "{ \"rules\": { \"react-hooks/rules-of-hooks\": \"error\" } }",

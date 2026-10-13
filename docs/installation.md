@@ -120,14 +120,20 @@ settings, owned by the repository. Nothing is executed or imported.
 | Linter | Read | Not read |
 |---|---|---|
 | ESLint | the config ESLint itself would use: `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`; JSON with comments and trailing commas; its own top-level `rules` | flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), which ESLint prefers over every `.eslintrc`; `.eslintrc.{js,cjs,yaml,yml}`; `extends`, `overrides`, plugins' presets |
-| oxlint | `.oxlintrc.json`, top-level `rules` (a key matches by its name after the plugin prefix, as oxlint does) | `extends`, `overrides`, `categories`; rule options |
+| oxlint | `.oxlintrc.json`, top-level `rules`; each key resolved to a built-in rule as oxlint 1.88.0 resolves it, and a rule's last key applies | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options |
 | Ruff | `ignore` and `extend-ignore` (top level or `[lint]`) of the file Ruff uses: `.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]` | `select`/`extend-select` (a more specific `select` that re-enables an ignored code is not seen), `per-file-ignores`, `extend`; Bandit config |
 
 A port matches an upstream rule through the names its document honours
 suppression comments for (`violation.suppress`): an ESLint key in
-`eslint.rules`, an oxlint key in `oxlint.rules`, a Ruff selector that selects
-one of its `noqa.codes` (`E7` selects `E711`, `E` does not select `ERA001`,
-`ALL` selects every code). A rule set to `"off"`/`0` (oxlint also `"allow"`),
+`eslint.rules`; an oxlint key that names the same built-in oxlint rule as
+the port's ESLint rule (`no-console`, `eslint/no-console`; for
+typescript-eslint `typescript/x`, `@typescript-eslint/x` or a bare `x`
+unless another plugin's `x` comes first in oxlint; `react-hooks/x` is
+oxlint's `react/x`; eslint-plugin-n's `n/x` is oxlint's `node/x`), so
+`custom/no-console` (another plugin's rule) changes nothing; a Ruff selector
+that selects one of its `noqa.codes` (`E7` selects `E711`, `E` does not
+select `ERA001`, `ALL` selects every code). A rule set to `"off"`/`0` (oxlint
+also `"allow"`),
 or ignored by Ruff, starts off; when one config turns a rule off and another
 keeps it on, it starts off and the screen says so. ESLint options become the
 port's `config` when every value lands on an option its document declares:
