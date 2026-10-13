@@ -1,6 +1,7 @@
 // The React pack's policies as compact specs, one entry per pack rule (`candidate: true`: a port that does not pass
-// its fixtures or the V1 rule validation gates yet, written to packs/react/candidates/). build.mjs turns each into a rerail.policy/v1 document
-// (scope, violation, eslint suppression and a shared `define` are added there). Edit here, then run build.mjs.
+// its fixtures or the V1 rule validation gates yet, written to packs/react/candidates/). build.mjs turns each into a
+// rerail.policy/v1 document (scope, violation, eslint suppression and a shared `define` are added there) and lists it,
+// with the HAND_WRITTEN ports, in packs/react/conformance.json. Edit here, then run build.mjs.
 const R = "eslint-plugin-react";
 const H = "eslint-plugin-react-hooks";
 const VOID = "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$";
@@ -1249,6 +1250,17 @@ export const SPECS = [
         message: "React Hook has a missing dependency. Either include it or remove the dependency array.",
       },
     ],
+  },
+];
+
+/** Ports whose policy is written by hand, not from a spec: listed in conformance.json as they are. */
+export const HAND_WRITTEN = [
+  {
+    id: "react-no-array-index-key",
+    upstream: { tool: R, rule: "react/no-array-index-key" },
+    policy: "candidates/rules/react-no-array-index-key.json",
+    capabilities: ["syntax", "suppression"],
+    match: "line+column",
   },
 ];
 void H;

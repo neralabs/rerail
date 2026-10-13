@@ -36,9 +36,9 @@ fn generate_languages() -> Vec<(String, Vec<u8>)> {
     languages::generate(&directory, &vendored, &out)
 }
 
-/// A grammar vendored under `grammars/`. Its generated parser is not vendored (Blade's is 22 MB,
-/// TypeScript's and TSX's 8 MB each): it is generated here from `grammar.json`, at the ABI
-/// `tree-sitter` loads.
+/// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and
+/// TSX's are 8 MB each): it is generated here from `grammar.json`, at the ABI `tree-sitter`
+/// loads. Blade has none: Rerail's port of Forte parses it (`src/code_rule_dsl/blade/forte/`).
 struct VendoredGrammar {
     name: &'static str,
     /// The directory holding `grammar.json` and `scanner.c`.
@@ -52,21 +52,6 @@ struct VendoredGrammar {
 }
 
 const GRAMMARS: &[VendoredGrammar] = &[
-    // tree-sitter-blade 0.12.2, commit b5291d1ba207a8ebb8383b2ecb8a8a6535210a50.
-    VendoredGrammar {
-        name: "blade",
-        source: "grammars/tree-sitter-blade/src",
-        headers: "grammars/tree-sitter-blade/src",
-        version: (0, 12, 2),
-        inputs: &[
-            "grammars/tree-sitter-blade/src/grammar.json",
-            "grammars/tree-sitter-blade/src/scanner.c",
-            "grammars/tree-sitter-blade/src/tag.h",
-            "grammars/tree-sitter-blade/src/tree_sitter/alloc.h",
-            "grammars/tree-sitter-blade/src/tree_sitter/array.h",
-            "grammars/tree-sitter-blade/src/tree_sitter/parser.h",
-        ],
-    },
     // tree-sitter-python 0.25.0 with the patches in grammars/tree-sitter-python/PATCHES.md.
     VendoredGrammar {
         name: "python",
@@ -228,9 +213,33 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
             grammar_inputs.push((*input, bytes));
         }
     }
-    // A Blade tape holds the PHP view of its template: how the view is built is part of the tape.
-    let blade_view =
-        std::fs::read(manifest.join("src/code_rule_dsl/blade/view.rs")).expect("view is readable");
+    // A Blade tape is the template's Forte tree and the PHP view of it: the port, its directive
+    // registry and how the view is built are part of the tape. Their tests are not.
+    let mut blade_sources = Vec::new();
+    collect_sources(
+        &manifest.join("src/code_rule_dsl/blade"),
+        &mut blade_sources,
+    );
+    blade_sources.retain(|path| {
+        !path
+            .file_name()
+            .expect("file name")
+            .to_string_lossy()
+            .ends_with("tests.rs")
+    });
+    blade_sources.sort();
+    let blade_sources = blade_sources
+        .into_iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&manifest)
+                .expect("source under manifest")
+                .to_string_lossy()
+                .into_owned();
+            let bytes = std::fs::read(&path).expect("Blade source is readable");
+            (relative, bytes)
+        })
+        .collect::<Vec<_>>();
     println!(
         "cargo:rustc-env=RERAIL_ENGINE_BUILD_ID={}",
         hex(&engine.finalize())
@@ -239,7 +248,11 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
         .iter()
         .map(|(path, bytes)| (*path, bytes.as_slice()))
         .collect();
-    tape_sources.push(("blade-view", &blade_view));
+    tape_sources.extend(
+        blade_sources
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    );
     println!(
         "cargo:rustc-env=RERAIL_GRAMMAR_BUILD_ID={}",
         grammar_build_id(&lock_text, &tape_sources)

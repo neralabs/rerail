@@ -1,19 +1,18 @@
-// Writes the React pack's policies from specs.mjs: packs/react/rules/<id>.json (ported rules) and
-// packs/react/candidates/rules/<id>.json (candidates). The two conformance.json files are maintained by hand and must
-// list exactly the ported / candidate specs (id, upstream, policy, capabilities, match), which this script checks; a
-// pack with no ported specs has no conformance.json.
-// Candidates are scored as their own pack: node --import tsx conformance/languages/cli.ts
-//   --pack-dir packs/react/candidates --corpus-root <checkout>/.rerail/corpora/react
+// Writes the React pack from specs.mjs: each spec's policy, packs/react/rules/<id>.json (ported) or
+// packs/react/candidates/rules/<id>.json (`candidate: true`), and packs/react/conformance.json, the manifest that lists
+// every port: the specs and the hand-written HAND_WRITTEN ports. The conformance runner gates the ports under rules/
+// and scores and reports the candidates without gating them; the recorders read its corpora.
+// Score: node --import tsx conformance/languages/cli.ts --pack react [--fixtures]
 // Usage: node packs/react/candidates/build.mjs
 // Run offline by a maintainer, never in CI.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SPECS } from "./specs.mjs";
+import { PINS } from "../upstream/common.mjs";
+import { HAND_WRITTEN, SPECS } from "./specs.mjs";
 
 const CANDIDATES = dirname(fileURLToPath(import.meta.url));
 const PACK_DIRECTORY = dirname(CANDIDATES);
-const REPOSITORY = dirname(dirname(PACK_DIRECTORY));
 const EXTENSIONS = ["ts", "mts", "cts", "tsx", "js", "jsx", "mjs", "cjs"];
 
 /** A check's own utilities: those the document's shared define does not already hold. */
@@ -63,17 +62,38 @@ for (const spec of SPECS) {
   writeFileSync(join(directory, `${spec.id}.json`), `${JSON.stringify(document(spec), null, 2)}\n`);
 }
 
-const manifest = spec => ({ id: spec.id, upstream: { tool: spec.tool, rule: spec.upstream }, policy: `rules/${spec.id}.json`, capabilities: spec.capabilities, match: spec.match });
-for (const [directory, specs] of [
-  [PACK_DIRECTORY, SPECS.filter(spec => !spec.candidate)],
-  [CANDIDATES, SPECS.filter(spec => spec.candidate)],
-]) {
-  const path = join(directory, "conformance.json");
-  if (specs.length === 0) {
-    if (existsSync(path)) throw new Error(`${relative(REPOSITORY, path)} exists, but no spec is listed there`);
-    continue;
-  }
-  const listed = JSON.stringify(JSON.parse(readFileSync(path, "utf8")).rules);
-  if (listed !== JSON.stringify(specs.map(manifest))) throw new Error(`${relative(REPOSITORY, path)} rules differ from the specs`);
+/** Every capability the pack's ports exercise, in the manifest's order. */
+const CAPABILITIES = ["syntax", "scope", "value", "compare", "arguments", "suppression"];
+const CORPORA = [
+  {
+    name: "excalidraw",
+    repository: "https://github.com/excalidraw/excalidraw",
+    commit: "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    paths: ["packages/excalidraw", "excalidraw-app"],
+    exclude: [],
+  },
+];
+const TOOLS = ["eslint-plugin-react", "eslint-plugin-react-hooks"];
+
+const port = spec => ({
+  id: spec.id,
+  upstream: { tool: spec.tool, rule: spec.upstream },
+  policy: `${spec.candidate ? "candidates/" : ""}rules/${spec.id}.json`,
+  capabilities: spec.capabilities,
+  match: spec.match,
+});
+const ports = [...SPECS.map(port), ...HAND_WRITTEN];
+for (const entry of ports) {
+  const undeclared = entry.capabilities.filter(capability => !CAPABILITIES.includes(capability));
+  if (undeclared.length > 0) throw new Error(`${entry.id}: capabilities ${undeclared.join(", ")} are not in CAPABILITIES`);
 }
-console.log(`wrote ${SPECS.length} policies (${SPECS.filter(spec => !spec.candidate).length} ported)`);
+const manifest = {
+  pack: "react",
+  family: "ecma",
+  capabilities: CAPABILITIES,
+  corpora: CORPORA,
+  tools: TOOLS.map(name => ({ name, version: PINS[name] })),
+  rules: ports,
+};
+writeFileSync(join(PACK_DIRECTORY, "conformance.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`wrote ${SPECS.length} policies (${SPECS.filter(spec => !spec.candidate).length} ported) and conformance.json (${ports.length} ports)`);

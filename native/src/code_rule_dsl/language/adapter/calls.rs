@@ -380,7 +380,6 @@ pub(super) mod kit {
     use crate::code_rule_dsl::module_path::ModulePath;
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use ast_grep_core::AstGrep;
-    use ast_grep_core::tree_sitter::StrDoc;
     use std::sync::Arc;
 
     /// What one family's calls answer.
@@ -421,8 +420,8 @@ pub(super) mod kit {
 
         let (source, defs) = expect.summary;
         let grammar = Grammar::new(dialect).expect("grammar");
-        let native = StrDoc::new(source, dialect);
-        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .expect("parses")
             .expect("encodes");
         let doc = AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
