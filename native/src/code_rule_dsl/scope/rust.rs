@@ -916,53 +916,14 @@ fn path_text<D: Doc>(node: &Node<'_, D>) -> String {
     node.text().chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// A Rust file's table, built as `ScopeTable::build_in` will once the Rust adapter dispatches to
-/// this module.
+/// A Rust file's table, as `ScopeTable::build` builds it.
 #[cfg(test)]
 pub(crate) fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
     let root = GrammarDialect::Rust.ast_grep(source);
-    let mut builder = Builder {
-        module: None,
-        table: ScopeTable {
-            language: GrammarDialect::Rust,
-            family: super::Family::Ecma,
-            scopes: Vec::new(),
-            references: Vec::new(),
-            directives: super::Directives::default(),
-            cost: 0,
-            reading: super::Reading::default(),
-            annotations: Vec::new(),
-            dunder_all: Vec::new(),
-            jsx: Vec::new(),
-            dynamic: Vec::new(),
-            locals_scopes: Vec::new(),
-            module_imports: Vec::new(),
-            usage: std::sync::OnceLock::new(),
-            php: None,
-        },
-        current: 0,
-        position: None,
-        deferring: false,
-        forwarding: false,
-        typing: false,
-        type_roots: Vec::new(),
-        strings: Default::default(),
-        branch: 0,
-        branches: 0,
-        cap: usize::MAX,
-        depth: 0,
-        stack_base: super::stack_address(),
-        deadline: &|| false,
-        php_names: None,
-    };
-    builder.push(ScopeKind::Module, root.root().range());
-    visit_source_file(&mut builder, &root.root()).expect("Rust scope build");
-    let mut table = builder.table;
-    table.sort_references();
-    finish(&mut table, &root.root());
-    table
+    ScopeTable::build(root.root(), GrammarDialect::Rust, usize::MAX, &|| false)
+        .expect("Rust scope build")
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@ pub(crate) struct ClippyIndex {
 
 impl ClippyIndex {
     /// Reads active Rust lint-level attributes from `root`.
-        pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let mut attributes = Vec::new();
         let mut order = 0;
         for node in root.dfs() {
@@ -133,7 +133,7 @@ impl ClippyIndex {
     }
 
     /// Whether an `allow`/`expect` naming one of `lints` is the level in force at byte `at`.
-        pub(crate) fn suppresses(&self, lints: &[String], at: usize) -> bool {
+    pub(crate) fn suppresses(&self, lints: &[String], at: usize) -> bool {
         let matching = self.attributes.iter().filter(|attribute| {
             attribute.start <= at
                 && at < attribute.end

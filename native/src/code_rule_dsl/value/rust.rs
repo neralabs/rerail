@@ -68,7 +68,6 @@ pub(crate) enum FloatTy {
     F64,
 }
 impl FloatTy {
-    #[allow(dead_code)]
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::F32 => "f32",
@@ -398,7 +397,6 @@ pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
 /// unsuffixed integer takes the declared integer type, and a value of another type is `Unknown`.
 /// A chain of more than 16 names, a cycle, a `static`, a `let` binding (a run-time value), a path
 /// (`Self::C`, `m::C`) and a name no item of the file binds are `Unknown`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn evaluate_following<D: Doc>(node: &Node<'_, D>, table: &ScopeTable) -> RustValue {
     let budget = Cell::new(0);
     eval(

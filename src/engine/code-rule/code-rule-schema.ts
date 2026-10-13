@@ -148,7 +148,7 @@ export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
 const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
   percentFormat: ["format", "literal", "placeholder", "mapping_key", "flags", "width", "precision", "star", "length", "conversion", "error"],
   braceFormat: [
@@ -253,6 +253,7 @@ export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[num
     "variable",
     "description",
   ],
+  rustFormat: ["format", "literal", "field", "auto", "index", "name", "format_spec", "type", "error"],
 };
 /** The keys a rule over a parsed tree may use; one over an annotation, whose nodes are Python's, also these. */
 const PARSE_RULE_KEYS: readonly string[] = ["kind", "regex", "all", "any", "not", "inside", "has", "precedes", "follows", "count", "compare", "value", "capture", "host"];
@@ -836,7 +837,7 @@ export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
 export const codeRuleFormatArgsSchema: z.ZodType<CodeRuleDslFormatArgs> = z.lazy(() =>
   z
     .object({
-      style: z.enum(["brace", "percent", "printf", "scanf"]),
+      style: z.enum(["brace", "percent", "printf", "scanf", "rust"]),
       string: metavariableName,
       args: metavariableName,
       unused: codeRuleAstRuleSchema.optional(),
@@ -1003,7 +1004,13 @@ function visitParse(rule: CodeRuleDslAstRule, path: RulePath, visit: AstRuleVisi
   if (CODE_RULE_PARSE_GRAMMARS.includes(grammar)) visit(rule.parse, [...path, "parse"], grammar);
 }
 
-const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = { brace: "braceFormat", percent: "percentFormat", printf: "printfFormat", scanf: "scanfFormat" };
+const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = {
+  brace: "braceFormat",
+  percent: "percentFormat",
+  printf: "printfFormat",
+  scanf: "scanfFormat",
+  rust: "rustFormat",
+};
 
 /** `formatArgs`: its unused arguments are the host's nodes, its missing fields nodes of the format's tree. */
 function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, visit: AstRuleVisit): void {

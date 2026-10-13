@@ -1549,6 +1549,26 @@ impl Graph {
         }
     }
 
+    /// Links a Rust crate path (`calls::rust::summary`): the one function of the workspace the
+    /// path names. A path two definitions share (an inherent and a trait method of one type, one
+    /// function behind two `cfg`s), a trait's method (the call dispatches) and a path no function
+    /// gives (a constructor of another file, a function pointer) are open.
+    pub(crate) fn link_rust(&self, name: &Name) -> Link {
+        match self.by_name.get(name).map(Vec::as_slice) {
+            Some([(file, (local, flags))]) if flags & super::rust::TRAIT_METHOD == 0 => Link {
+                defs: vec![DefRef {
+                    file: *file,
+                    local: *local,
+                }],
+                open: false,
+            },
+            _ => Link {
+                defs: Vec::new(),
+                open: true,
+            },
+        }
+    }
+
     /// Links a Python callee name: what the name itself names (`member`), else the member of the
     /// longest prefix something names: an alias to follow, a class whose method resolution order
     /// gives the attribute, a function or value whose attribute is set at run time (unknown), or a

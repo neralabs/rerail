@@ -8,6 +8,11 @@
 //! count names) are read as `char::is_alphabetic`/`is_alphanumeric` plus `_`, an approximation of
 //! rustc's XID tables (the two differ on combining marks and a few format characters).
 
+use super::offsets::{Decode, Decoded, Span};
+use super::{Grammar, PNode};
+use crate::code_rule_dsl::value::rust::IntTy;
+use crate::code_rule_dsl::value::{BigInt, MAX_STRING_BYTES, Value};
+use ast_grep_core::{Doc, Node};
 use std::ops::Range;
 
 /// A template rustc refuses: what it says and the byte offset it points at.
@@ -130,7 +135,6 @@ pub(crate) enum Piece {
 }
 
 /// Reads `template` as `format_args!` does.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse(template: &str) -> Result<Vec<Piece>, FormatError> {
     let mut parser = Parser {
         chars: template.char_indices().collect(),
@@ -480,7 +484,6 @@ pub(crate) struct Binding {
 /// Resolves `pieces` against a call with `positional` unnamed arguments followed by the
 /// arguments called `named`. A precision `*` takes the next implicit index before the field's own
 /// value does; `{name}` and `{:name$}` that no named argument is called capture a variable.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn bind(pieces: &[Piece], positional: usize, named: &[String]) -> Binding {
     let total = positional + named.len();
     let slot_for_index = |index: usize| {
@@ -562,6 +565,238 @@ pub(crate) fn bind(pieces: &[Piece], positional: usize, named: &[String]) -> Bin
         unused,
         missing,
     }
+}
+
+/// The kinds of a `rustFormat` tree: a `format` root holding `literal` and `field` parts. A field's
+/// value is the argument it names (an explicit index, or a name; none for `{}`); it holds `auto`
+/// (zero width, for `{}`), `index` or `name`, then its `format_spec` (whose value is the spec's
+/// text) with the `type` of its formatting trait (`?`, `x`, `e`, ...) where it names one. A
+/// template rustc refuses is a `format` root with one `error` node, whose value is rustc's message.
+pub(crate) const KINDS: &[&str] = &[
+    "format",
+    "literal",
+    "field",
+    "auto",
+    "index",
+    "name",
+    "format_spec",
+    "type",
+    "error",
+];
+
+const G: Grammar = Grammar::RustFormat;
+
+/// The `rustFormat` tree of a decoded template.
+pub(crate) fn tree(text: &str) -> PNode {
+    let mut root = PNode::new(G, "format", 0, text.len());
+    match parse(text) {
+        Ok(pieces) => root.children = pieces.iter().map(|piece| piece_node(text, piece)).collect(),
+        Err(error) => {
+            let mut node = PNode::new(G, "error", error.at.min(text.len()), text.len());
+            node.error = true;
+            node.value = Some(Value::Str(error.message));
+            root.children = vec![node];
+        }
+    }
+    root
+}
+
+fn piece_node(text: &str, piece: &Piece) -> PNode {
+    let Piece::Field {
+        range,
+        argument,
+        spec_range,
+        spec,
+        ..
+    } = piece
+    else {
+        let Piece::Literal { range } = piece else {
+            unreachable!("a piece is a literal or a field")
+        };
+        return PNode::new(G, "literal", range.start, range.end)
+            .with_value(Value::Str(text[range.clone()].to_owned()));
+    };
+    // The argument runs from after the `{` to the `:` before the spec, or to the closing brace.
+    let argument_end = if text[..spec_range.start].ends_with(':') {
+        spec_range.start - 1
+    } else {
+        range.end - 1
+    };
+    let written = &text[range.start + 1..argument_end.max(range.start + 1)];
+    let start = range.start + 1 + (written.len() - written.trim_start().len());
+    let end = start + written.trim().len();
+    let (kind, value) = match argument {
+        Argument::Next => ("auto", None),
+        Argument::Index(index) => ("index", Some(usize_value(*index))),
+        Argument::Name(name) => ("name", Some(Value::Str(name.clone()))),
+    };
+    let mut field = PNode::new(G, "field", range.start, range.end);
+    field.value = value.clone();
+    let mut name = PNode::new(G, kind, start, end);
+    name.value = value;
+    field.children.push(name);
+    if !spec_range.is_empty() {
+        let mut node = PNode::new(G, "format_spec", spec_range.start, spec_range.end)
+            .with_value(Value::Str(text[spec_range.clone()].to_owned()));
+        let written = trait_text(spec.ty);
+        if !written.is_empty() && text[spec_range.clone()].ends_with(written) {
+            node.children.push(
+                PNode::new(G, "type", spec_range.end - written.len(), spec_range.end)
+                    .with_value(Value::Str(written.to_owned())),
+            );
+        }
+        field.children.push(node);
+    }
+    field
+}
+
+/// An argument index as Rust reads it: a `usize`.
+fn usize_value(index: usize) -> Value {
+    Value::RustInt {
+        value: BigInt::from(index),
+        ty: Some(IntTy::Usize),
+    }
+}
+
+/// How a spec writes its formatting trait.
+fn trait_text(ty: Trait) -> &'static str {
+    match ty {
+        Trait::Display => "",
+        Trait::Debug => "?",
+        Trait::DebugLowerHex => "x?",
+        Trait::DebugUpperHex => "X?",
+        Trait::LowerExp => "e",
+        Trait::UpperExp => "E",
+        Trait::Octal => "o",
+        Trait::Pointer => "p",
+        Trait::Binary => "b",
+        Trait::LowerHex => "x",
+        Trait::UpperHex => "X",
+    }
+}
+
+/// Decodes a tree-sitter-rust `string_literal` or `raw_string_literal` as the `str` rustc reads,
+/// with the source span of every decoded character: what a format template is. A byte or C string
+/// is no template (`NotString`); an escape rustc refuses, and a value past 64 KiB, are `Unknown`.
+pub(crate) fn decode<D: Doc>(node: &Node<'_, D>) -> Decode {
+    let text = node.text();
+    let base = node.range().start;
+    let mut decoded = Decoded {
+        text: String::new(),
+        spans: Vec::new(),
+        host: node.range(),
+        simple: None,
+    };
+    match node.kind().as_ref() {
+        "string_literal" if text.starts_with('"') => {
+            if text.len() < 2 || !text.ends_with('"') {
+                return Decode::Unknown;
+            }
+            if !unescape(&text[1..text.len() - 1], base + 1, &mut decoded) {
+                return Decode::Unknown;
+            }
+        }
+        "raw_string_literal" if text.starts_with('r') => {
+            let hashes = text[1..].bytes().take_while(|byte| *byte == b'#').count();
+            let open = 2 + hashes;
+            if text.len() < open + 1 + hashes || text.as_bytes().get(open - 1) != Some(&b'"') {
+                return Decode::Unknown;
+            }
+            let body = &text[open..text.len() - 1 - hashes];
+            for (at, c) in body.char_indices() {
+                let start = base + open + at;
+                push(&mut decoded, c, start..start + c.len_utf8());
+            }
+        }
+        _ => return Decode::NotString,
+    }
+    if decoded.text.len() > MAX_STRING_BYTES {
+        return Decode::Unknown;
+    }
+    Decode::Known(decoded)
+}
+
+fn push(decoded: &mut Decoded, c: char, source: Range<usize>) {
+    decoded.spans.push(Span {
+        at: decoded.text.len() as u32,
+        start: source.start as u32,
+        end: source.end as u32,
+    });
+    decoded.text.push(c);
+}
+
+/// Decodes a non-raw string's body starting at source byte `base`; `false` for an escape rustc
+/// refuses.
+fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
+    let bytes = body.as_bytes();
+    let mut at = 0;
+    while at < body.len() {
+        let c = body[at..].chars().next().expect("a char");
+        if c != '\\' {
+            // A bare carriage return is refused in a string literal.
+            if c == '\r' && bytes.get(at + 1) != Some(&b'\n') {
+                return false;
+            }
+            push(decoded, c, base + at..base + at + c.len_utf8());
+            at += c.len_utf8();
+            continue;
+        }
+        let start = at;
+        let Some(&escape) = bytes.get(at + 1) else {
+            return false;
+        };
+        let (value, next) = match escape {
+            b'n' => (Some('\n'), at + 2),
+            b'r' => (Some('\r'), at + 2),
+            b't' => (Some('\t'), at + 2),
+            b'\\' => (Some('\\'), at + 2),
+            b'0' => (Some('\0'), at + 2),
+            b'\'' => (Some('\''), at + 2),
+            b'"' => (Some('"'), at + 2),
+            b'x' => {
+                let Some(code) = body
+                    .get(at + 2..at + 4)
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                    .filter(|code| *code <= 0x7f)
+                else {
+                    return false;
+                };
+                (Some(char::from(code)), at + 4)
+            }
+            b'u' => {
+                let Some(close) = body[at..].find('}').map(|close| at + close) else {
+                    return false;
+                };
+                let Some(digits) = body.get(at + 2..close).and_then(|d| d.strip_prefix('{')) else {
+                    return false;
+                };
+                let digits: String = digits.chars().filter(|c| *c != '_').collect();
+                let Some(c) = (!digits.is_empty() && digits.len() <= 6)
+                    .then(|| u32::from_str_radix(&digits, 16).ok())
+                    .flatten()
+                    .and_then(char::from_u32)
+                else {
+                    return false;
+                };
+                (Some(c), close + 1)
+            }
+            // A line continuation skips the newline and the whitespace after it.
+            b'\n' | b'\r' => {
+                let rest = &body[at + 1..];
+                let skipped = rest.len()
+                    - rest
+                        .trim_start_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r'))
+                        .len();
+                (None, at + 1 + skipped)
+            }
+            _ => return false,
+        };
+        if let Some(value) = value {
+            push(decoded, value, base + start..base + next);
+        }
+        at = next;
+    }
+    true
 }
 
 #[cfg(test)]

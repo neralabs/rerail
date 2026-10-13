@@ -12,7 +12,7 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    ClippyIndex, EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -760,7 +760,7 @@ pub(super) fn unparenthesized<'r, D: Doc>(
     while paren_kinds.contains(&node.kind_id()) {
         let mut inner = node
             .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .filter(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()));
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -887,6 +887,8 @@ struct FileScopes {
     psalm: Option<Rc<PsalmIndex>>,
     /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
     phpcs: Option<Rc<PhpcsIndex>>,
+    /// The file's Rust lint-level attributes (`suppress.clippy`), read on first use.
+    clippy: Option<Rc<ClippyIndex>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
@@ -932,6 +934,7 @@ impl FileScopeSlot {
             phpstan: None,
             psalm: None,
             phpcs: None,
+            clippy: None,
             php_names: None,
             php_names_failed_within: 0,
             php_names_charged: Vec::new(),
@@ -1127,6 +1130,23 @@ pub(crate) fn file_phpcs(read: impl FnOnce() -> PhpcsIndex) -> Rc<PhpcsIndex> {
     index
 }
 
+/// The Rust lint-level attribute index of the file being matched: read once per file while a
+/// file is being matched, and fresh outside one.
+pub(crate) fn file_clippy(read: impl FnOnce() -> ClippyIndex) -> Rc<ClippyIndex> {
+    if let Some(index) =
+        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.clippy.clone()))
+    {
+        return index;
+    }
+    let index = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.clippy = Some(Rc::clone(&index));
+        }
+    });
+    index
+}
+
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
 pub(super) fn memoized_parse(key: &(usize, Grammar)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
@@ -1208,6 +1228,22 @@ pub(super) fn binding_value<D: Doc>(
     let reference = table.reference(&range)?;
     let (binding, value) = table.binding(reference, name)?;
     Some(binding.followed(value?))
+}
+
+/// The table of `node`'s file a value follows names through (`value.follow`): `None` outside a
+/// file evaluation, in a file with syntax errors (a binding may hide in an error region), or when
+/// the table cannot be built (`UTIL_EXCEEDED` is then set).
+pub(super) fn followed_table<D: Doc>(
+    node: &Node<'_, D>,
+    language: GrammarDialect,
+    options: Option<&LanguageOptions>,
+    python: Option<&PythonOptions>,
+) -> Option<Arc<ScopeTable>> {
+    let has_errors = FILE_SCOPES.with_borrow(|slot| slot.as_ref().map(|slot| slot.has_errors))?;
+    if has_errors {
+        return None;
+    }
+    file_table(node, language, table_reading(options, python))
 }
 
 /// The value node of the PHP constant `target` fetches in `node`'s file (`value.follow`), where

@@ -5,10 +5,16 @@
 //! needs types (other method calls, trait dispatch, closures and function pointers) is `Open`;
 //! calls inside macro token trees are not read.
 
+use super::names::Name;
+use super::summary::{self, Def, OPEN, Summary};
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeTable};
 use ast_grep_core::{Doc, Node};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +25,6 @@ const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
 const PRELUDE_CONSTRUCTORS: &[&str] = &["Some", "Ok", "Err"];
 
 /// What a call expression calls.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Callee {
     /// A function of the crate, by the qualified name `definitions` gives it.
@@ -32,11 +37,12 @@ pub(crate) enum Callee {
 
 /// The qualified names of the whole crate, which a path may resolve to: every function the
 /// crate's files define, and the traits among the types it names (a call through a trait
-/// dispatches).
-#[cfg_attr(not(test), allow(dead_code))]
+/// dispatches). A deferred one knows none of them: a file's summary names every crate path a
+/// call denotes, and the call graph confirms it against the crate's definitions (`link`).
 pub(crate) struct Known {
     counts: HashMap<String, usize>,
     traits: HashSet<String>,
+    deferred: bool,
 }
 
 impl Known {
@@ -53,19 +59,31 @@ impl Known {
         Self {
             counts,
             traits: traits.into_iter().collect(),
+            deferred: false,
+        }
+    }
+
+    /// Names whose confirmation the call graph makes.
+    fn deferred() -> Self {
+        Self {
+            counts: HashMap::new(),
+            traits: HashSet::new(),
+            deferred: true,
         }
     }
 
     /// Whether exactly one function of the crate has this name: a name two definitions share
     /// (an inherent and a trait method of one type, one function behind two `cfg`s) names neither.
     fn names_one(&self, name: &str) -> bool {
-        self.counts.get(name) == Some(&1)
+        self.deferred || self.counts.get(name) == Some(&1)
     }
 
     /// Whether `name` is a method or function of a trait.
     fn in_trait(&self, name: &str) -> bool {
-        name.rsplit_once("::")
-            .is_some_and(|(owner, _)| self.traits.contains(owner))
+        !self.deferred
+            && name
+                .rsplit_once("::")
+                .is_some_and(|(owner, _)| self.traits.contains(owner))
     }
 }
 
@@ -74,7 +92,6 @@ impl Known {
 /// `None` for a file outside `src/`, outside Rust, or under `src/bin/` (each file there is a
 /// crate root of its own). A module declared with `#[path]` is named by its declaration, not its
 /// file: the caller must not ask for it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn module_of(path: &str) -> Option<Vec<String>> {
     let rest = path.strip_prefix("src/")?;
     let stem = rest.strip_suffix(".rs")?;
@@ -117,8 +134,9 @@ enum ItemKind {
 
 impl Items {
     /// Scans a file's items: modules, functions, types and impls, wherever they nest (a function
-    /// body or block holds items too).
-    fn collect<D: Doc>(root: &Node<'_, D>, module: &[String], table: &ScopeTable) -> Self {
+    /// body or block holds items too). Without a table no `impl`'s type is resolved, so its
+    /// functions are not read.
+    fn collect<D: Doc>(root: &Node<'_, D>, module: &[String], table: Option<&ScopeTable>) -> Self {
         let mut items = Items {
             functions: HashMap::new(),
             types: HashMap::new(),
@@ -128,7 +146,9 @@ impl Items {
         let mut pending = Vec::new();
         items.scan(root, &qualify(module), &mut pending);
         let mut next = 0;
-        while next < pending.len() {
+        while let Some(table) = table
+            && next < pending.len()
+        {
             let node = pending[next].clone();
             next += 1;
             let module = enclosing_module(&node, module);
@@ -267,7 +287,7 @@ pub(crate) fn definitions<D: Doc>(
     module: &[String],
     table: &ScopeTable,
 ) -> Vec<(String, usize)> {
-    let mut found: Vec<(String, usize)> = Items::collect(root, module, table)
+    let mut found: Vec<(String, usize)> = Items::collect(root, module, Some(table))
         .functions
         .into_iter()
         .map(|(offset, name)| (name, offset))
@@ -283,7 +303,7 @@ pub(crate) fn trait_names<D: Doc>(
     module: &[String],
     table: &ScopeTable,
 ) -> Vec<String> {
-    let mut names: Vec<String> = Items::collect(root, module, table)
+    let mut names: Vec<String> = Items::collect(root, module, Some(table))
         .types
         .into_values()
         .filter(|(_, kind)| *kind == ItemKind::Trait)
@@ -305,10 +325,181 @@ pub(crate) fn callees<D: Doc>(
     table: &ScopeTable,
     known: &Known,
 ) -> Vec<(usize, Callee)> {
-    let items = Items::collect(root, module, table);
+    let items = Items::collect(root, module, Some(table));
     let mut found = Vec::new();
     visit_calls(root, module, table, known, &items, &mut found);
     found
+}
+
+/// A definition of a trait (its default method): a call of its name dispatches, so it links to
+/// nothing (`Known::in_trait`).
+pub(crate) const TRAIT_METHOD: u8 = 8;
+
+/// The crate a workspace file belongs to and its module there: the directory holding the crate's
+/// `src/` (empty for the workspace root's) and `module_of` the path under it. A file outside a
+/// crate's `src/` (a test, an example, a build script) and a binary under `src/bin/` is a crate
+/// root of its own, named by its path.
+pub(crate) fn crate_module(path: &str) -> (String, Vec<String>) {
+    let split = match path.strip_prefix("src/") {
+        Some(rest) => Some(("", rest)),
+        None => path.find("/src/").map(|at| (&path[..at], &path[at + 5..])),
+    };
+    split
+        .and_then(|(dir, rest)| Some((dir.to_owned(), module_of(&format!("src/{rest}"))?)))
+        .unwrap_or_else(|| (path.to_owned(), Vec::new()))
+}
+
+/// A crate path's name in the call graph: qualified by the crate's directory, so two crates of a
+/// workspace never share one.
+fn graph_name(dir: &str, qualified: &str) -> String {
+    if dir.is_empty() {
+        qualified.to_owned()
+    } else {
+        format!("{dir}/{qualified}")
+    }
+}
+
+/// The summary of the Rust file at `path` (`CallRules::summary`): its functions (`definitions`),
+/// what each body calls by crate path, and whether a call needs types to tell. A library call names
+/// nothing; a call that builds a value is none. Without `table` (it could not be built) the
+/// summary holds nothing and is open. The module is the crate's directory and the file's module,
+/// which `callee_at` reads back.
+pub(crate) fn summary<D: Doc>(
+    root: &Node<'_, D>,
+    path: &str,
+    table: Option<&ScopeTable>,
+    has_errors: bool,
+) -> Summary {
+    let (dir, module) = crate_module(path);
+    let mut names = Interner::default();
+    let module_name = names.intern(&graph_name(&dir, &qualify(&module)));
+    let items = Items::collect(root, &module, table);
+    let traits: HashSet<&str> = items
+        .types
+        .values()
+        .filter(|(_, kind)| *kind == ItemKind::Trait)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let mut defs = Vec::new();
+    for function in root.dfs().filter(|node| node.kind() == "function_item") {
+        let Some(qualified) = function
+            .field("name")
+            .and_then(|name| items.functions.get(&name.range().start))
+        else {
+            continue;
+        };
+        let in_trait = qualified
+            .rsplit_once("::")
+            .is_some_and(|(owner, _)| traits.contains(owner));
+        let range = function.range();
+        defs.push(Def {
+            name: names.intern(&graph_name(&dir, qualified)),
+            start: range.start as u32,
+            end: range.end as u32,
+            flags: if in_trait { TRAIT_METHOD } else { 0 },
+        });
+    }
+    defs.sort_unstable_by_key(|def| def.start);
+    let mut summary = Summary {
+        module: Some(module_name),
+        defs,
+        open: has_errors || table.is_none(),
+        ..Summary::default()
+    };
+    let Some(table) = table else {
+        return names.finish(summary);
+    };
+    let mut found = Vec::new();
+    visit_calls(root, &module, table, &Known::deferred(), &items, &mut found);
+    for (at, callee) in found {
+        let owner = summary
+            .functions_around(at as u32)
+            .next()
+            .map(|def| def.start);
+        let owner = owner.map(|start| summary.defs.partition_point(|def| def.start < start));
+        match callee {
+            Callee::Path(path) => {
+                let target = names.intern(&graph_name(&dir, &path));
+                summary.targets.push(target);
+                if let Some(owner) = owner {
+                    summary.edges.push((owner as u32, target));
+                }
+            }
+            Callee::External(_) => {}
+            Callee::Open => {
+                summary.open_sites = true;
+                if let Some(owner) = owner {
+                    summary.defs[owner].flags |= OPEN;
+                }
+            }
+        }
+    }
+    names.finish(summary)
+}
+
+/// Interns a summary's names.
+#[derive(Default)]
+struct Interner {
+    names: Vec<String>,
+    ids: HashMap<String, u32>,
+}
+
+impl Interner {
+    fn intern(&mut self, name: &str) -> u32 {
+        if let Some(id) = self.ids.get(name) {
+            return *id;
+        }
+        let id = self.names.len() as u32;
+        self.names.push(name.to_owned());
+        self.ids.insert(name.to_owned(), id);
+        id
+    }
+
+    /// `summary` with these names, its edges and targets sorted and distinct.
+    fn finish(self, mut summary: Summary) -> Summary {
+        summary.edges.sort_unstable();
+        summary.edges.dedup();
+        summary.targets.sort_unstable();
+        summary.targets.dedup();
+        summary.names = self
+            .names
+            .iter()
+            .map(|name| Name::new(Family::Rust, name))
+            .collect();
+        summary
+    }
+}
+
+thread_local! {
+    /// The items of the file whose calls `callee_at` last read, by its table (held, so its address
+    /// is not another table's).
+    static ITEMS: RefCell<Option<(Arc<ScopeTable>, Rc<Items>)>> = const { RefCell::new(None) };
+}
+
+/// What the call `node` calls (`CallRules::callee_at`), in the file whose summary is `summary`
+/// and whose table is `table`: a crate path's graph name, `Open` where it needs types, `None` for
+/// a library call and a call that builds a value.
+pub(crate) fn callee_at<D: Doc>(
+    node: &Node<'_, D>,
+    summary: &Summary,
+    table: &Arc<ScopeTable>,
+) -> Option<summary::Callee> {
+    let module_name = summary.name(summary.module?);
+    let (dir, qualified) = module_name.rsplit_once('/').unwrap_or(("", module_name));
+    let module: Vec<String> = qualified.split("::").skip(1).map(str::to_owned).collect();
+    let items = ITEMS.with_borrow_mut(|cached| match cached {
+        Some((held, items)) if Arc::ptr_eq(held, table) => Rc::clone(items),
+        _ => {
+            let items = Rc::new(Items::collect(&node.root().root(), &module, Some(table)));
+            *cached = Some((Arc::clone(table), Rc::clone(&items)));
+            items
+        }
+    });
+    match read_call(node, &module, table, &Known::deferred(), &items)?.1 {
+        Callee::Path(path) => Some(summary::Callee::Name(graph_name(dir, &path))),
+        Callee::External(_) => None,
+        Callee::Open => Some(summary::Callee::Open),
+    }
 }
 
 /// Reads the calls among `node`'s descendants, skipping token trees.

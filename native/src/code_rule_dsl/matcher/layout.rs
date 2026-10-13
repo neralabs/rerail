@@ -218,7 +218,7 @@ fn blank_lines<D: Doc>(
 
 /// Whether a node is a comment, which a token or sibling walk passes over unless asked not to.
 fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
-    matches!(node.kind().as_ref(), "comment" | "html_comment")
+    super::util::is_comment_kind(&node.kind())
 }
 
 /// The nearest token on `side` of the node that has a width, comments included or passed over;

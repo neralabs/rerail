@@ -54,7 +54,6 @@ pub(crate) struct FormatCall<'r, D: Doc> {
 /// The call `invocation` makes when it is a format macro with a string literal as its template;
 /// `None` for any other macro, for a template that is not a literal (`concat!(..)`, a path), and
 /// for a call without a template (`println!()`, `assert!(cond)`).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn format_call<'r, D: Doc>(invocation: &Node<'r, D>) -> Option<FormatCall<'r, D>> {
     if invocation.kind() != "macro_invocation" {
         return None;
