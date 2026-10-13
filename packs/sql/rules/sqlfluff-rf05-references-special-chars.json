@@ -1,1 +1,116 @@
-{"format":"rerail.policy/v1","id":"sqlfluff-rf05-references-special-chars","revision":1,"mode":"steer","description":"Port of SQLFluff 4.4.0's RF05 (references.special_chars) with default settings: quoted_identifiers_policy=all and unquoted_identifiers_policy=all; allow_space_in_identifier=false and no additional allowed characters; identifiers may contain only Unicode alphanumerics and underscores.","scope":{"include":["**/*.sql"],"exclude":[]},"clauses":[{"id":"special-character-in-identifier","forbid":{"ast":{"language":"sql","rule":{"any":[{"kind":"identifier","regex":"(?s)^(?:\\\"|`|\\[)[^\\\"]*[^A-Za-z0-9_\\\"`\\]](?:\\\"|`|\\])$"},{"kind":"literal","regex":"(?s)^(?:\\\"|`|\\[)[^\\\"]*[^A-Za-z0-9_\\\"`\\]](?:\\\"|`|\\])$"}]}}},"violation":{"anchor":"witness.start","code":"RF05","message":"Special characters should not be used in identifiers.", "suppress": { "sqlfluff": { "rules": ["RF05", "L057", "all", "references", "references.special_chars"] } }}}]}
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-rf05-references-special-chars",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's RF05 (references.special_chars) with its defaults (both identifier policies all, no space or additional characters allowed): report a naked or quoted identifier whose name, without its quotes and underscores, holds a character other than a Unicode letter or digit (a doubled quote included). A name in a SELECT element that has an alias is not read (only the alias is), and neither is a PostgreSQL extension name.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "special-character-in-identifier",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "regex": "(?s)^(?:[^\\\"`\\[][^\\\"`\\[]*[^\\p{L}\\p{N}_\\\"`\\[][^\\\"`\\[]*|\\\".*[^\\p{L}\\p{N}_].*\\\"|`.*[^\\p{L}\\p{N}_].*`|\\[.*[^\\p{L}\\p{N}_].*\\])$",
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "literal",
+                "inside": {
+                  "kind": "column_definition",
+                  "field": "name"
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "create_extension"
+                      },
+                      {
+                        "kind": "drop_extension"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "inside": {
+                          "field": "alias",
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "all": [
+                            {
+                              "kind": "term"
+                            },
+                            {
+                              "inside": {
+                                "kind": "select_expression",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ]
+                        },
+                        "all": [
+                          {
+                            "kind": "term"
+                          },
+                          {
+                            "inside": {
+                              "kind": "select_expression",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "has": {
+                          "field": "alias",
+                          "regex": "(?s)."
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "RF05",
+        "message": "Special characters should not be used in identifiers.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "RF05",
+              "L057",
+              "all",
+              "references",
+              "references.special_chars"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
