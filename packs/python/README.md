@@ -1,21 +1,22 @@
 # Rerail rule pack: Python
 
-126 code rules for Python, ported from Ruff 0.16.9 (85 rules) and Bandit 1.9.4 (41 tests). Each is scored against
+158 code rules for Python, ported from Ruff 0.16.9 (117 rules) and Bandit 1.9.4 (41 tests). Each is scored against
 the tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
-disagreement declared in `divergences.json` (none today).
+disagreement declared in `divergences.json` (none today). 32 Ruff rules that Ruff's default selection leaves off ship
+off (`"on": false` in `pack.json`).
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
 checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group; two rules carry examples |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and whether it is on; two rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (django) |
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (108 Ruff and Bandit ports): never shipped, never listed in `pack.json`, and not recorded |
+| `candidates/rules/` | Ports still being evaluated (76 Ruff and Bandit ports): never shipped, never listed in `pack.json`, and not recorded |
 
 Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
 install, on CPython 3.13):

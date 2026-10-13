@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "126 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "158 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -21,13 +21,25 @@
       "id": "ruff:ASYNC100",
       "document": "rules/ASYNC100.json",
       "title": "Ruff ASYNC100: Cancel scope no checkpoint",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC105",
       "document": "rules/ASYNC105.json",
       "title": "Ruff ASYNC105: Trio sync call",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:ASYNC109",
+      "document": "rules/ASYNC109.json",
+      "title": "Ruff ASYNC109: Async function with timeout",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:ASYNC110",
+      "document": "rules/ASYNC110.json",
+      "title": "Ruff ASYNC110: Async busy wait",
       "group": "Ruff",
       "on": false
     },
@@ -35,20 +47,24 @@
       "id": "ruff:ASYNC115",
       "document": "rules/ASYNC115.json",
       "title": "Ruff ASYNC115: Async zero sleep",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC116",
       "document": "rules/ASYNC116.json",
       "title": "Ruff ASYNC116: Long sleep not forever",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC210",
       "document": "rules/ASYNC210.json",
       "title": "Ruff ASYNC210: Blocking http call in async function",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:ASYNC212",
+      "document": "rules/ASYNC212.json",
+      "title": "Ruff ASYNC212: Blocking http call httpx in async function",
       "group": "Ruff",
       "on": false
     },
@@ -56,27 +72,37 @@
       "id": "ruff:ASYNC220",
       "document": "rules/ASYNC220.json",
       "title": "Ruff ASYNC220: Create subprocess in async function",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC221",
       "document": "rules/ASYNC221.json",
       "title": "Ruff ASYNC221: Run process in async function",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC222",
       "document": "rules/ASYNC222.json",
       "title": "Ruff ASYNC222: Wait for process in async function",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:ASYNC230",
       "document": "rules/ASYNC230.json",
       "title": "Ruff ASYNC230: Blocking open call in async function",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:ASYNC240",
+      "document": "rules/ASYNC240.json",
+      "title": "Ruff ASYNC240: Blocking path method in async function",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:ASYNC250",
+      "document": "rules/ASYNC250.json",
+      "title": "Ruff ASYNC250: Blocking input in async function",
       "group": "Ruff",
       "on": false
     },
@@ -84,22 +110,19 @@
       "id": "ruff:ASYNC251",
       "document": "rules/ASYNC251.json",
       "title": "Ruff ASYNC251: Blocking sleep in async function",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B002",
       "document": "rules/B002.json",
       "title": "Ruff B002: Unary prefix increment decrement",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B003",
       "document": "rules/B003.json",
       "title": "Ruff B003: Assignment to os environ",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B004",
@@ -111,6 +134,12 @@
       "id": "ruff:B005",
       "document": "rules/B005.json",
       "title": "Ruff B005: Strip with multi characters",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:B007",
+      "document": "rules/B007.json",
+      "title": "Ruff B007: Unused loop control variable",
       "group": "Ruff",
       "on": false
     },
@@ -127,6 +156,13 @@
       "group": "Ruff"
     },
     {
+      "id": "python-conformance:ruff-b011-assert-false",
+      "document": "rules/ruff-b011-assert-false.json",
+      "title": "Ruff B011: Assert false",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:B013",
       "document": "rules/B013.json",
       "title": "Ruff B013: Redundant tuple in exception handler",
@@ -136,22 +172,19 @@
       "id": "ruff:B014",
       "document": "rules/B014.json",
       "title": "Ruff B014: Duplicate handler exception",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B016",
       "document": "rules/B016.json",
       "title": "Ruff B016: Raise literal",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B017",
       "document": "rules/B017.json",
       "title": "Ruff B017: Assert raises exception",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B019",
@@ -169,15 +202,13 @@
       "id": "ruff:B021",
       "document": "rules/B021.json",
       "title": "Ruff B021: F string docstring",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B022",
       "document": "rules/B022.json",
       "title": "Ruff B022: Useless contextlib suppress",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B023",
@@ -189,8 +220,7 @@
       "id": "ruff:B025",
       "document": "rules/B025.json",
       "title": "Ruff B025: Duplicate try block exception",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B026",
@@ -199,23 +229,34 @@
       "group": "Ruff"
     },
     {
+      "id": "python-conformance:ruff-b028-no-explicit-stacklevel",
+      "document": "rules/ruff-b028-no-explicit-stacklevel.json",
+      "title": "Ruff B028: No explicit stacklevel",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:B029",
       "document": "rules/B029.json",
       "title": "Ruff B029: Except with empty tuple",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B032",
       "document": "rules/B032.json",
       "title": "Ruff B032: Unintentional type annotation",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:B033",
       "document": "rules/B033.json",
       "title": "Ruff B033: Duplicate value",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:B034",
+      "document": "rules/B034.json",
+      "title": "Ruff B034: Re sub positional args",
       "group": "Ruff",
       "on": false
     },
@@ -224,6 +265,55 @@
       "document": "rules/B039.json",
       "title": "Ruff B039: Mutable contextvar default",
       "group": "Ruff"
+    },
+    {
+      "id": "ruff:B904",
+      "document": "rules/ruff-B904.json",
+      "title": "Ruff B904: Raise without from inside except",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "python-conformance:ruff-b905-zip-without-explicit-strict",
+      "document": "rules/ruff-b905-zip-without-explicit-strict.json",
+      "title": "Ruff B905: Zip without explicit strict",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "python-conformance:ruff-e711-none-comparison",
+      "document": "rules/ruff-e711-none-comparison.json",
+      "title": "Ruff E711: None comparison",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:E712",
+      "document": "rules/E712.json",
+      "title": "Ruff E712: True false comparison",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:E713",
+      "document": "rules/E713.json",
+      "title": "Ruff E713: Not in test",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:E714",
+      "document": "rules/E714.json",
+      "title": "Ruff E714: Not is test",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:E721",
+      "document": "rules/E721.json",
+      "title": "Ruff E721: Type comparison",
+      "group": "Ruff",
+      "on": false
     },
     {
       "id": "python-conformance:ruff-e722-bare-except",
@@ -242,9 +332,36 @@
       }
     },
     {
+      "id": "ruff:E731",
+      "document": "rules/E731.json",
+      "title": "Ruff E731: Lambda assignment",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:E742",
+      "document": "rules/E742.json",
+      "title": "Ruff E742: Ambiguous class name",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:F404",
       "document": "rules/F404.json",
       "title": "Ruff F404: Late future import",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:F405",
+      "document": "rules/F405.json",
+      "title": "Ruff F405: Undefined local with import star usage",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:F406",
+      "document": "rules/F406.json",
+      "title": "Ruff F406: Undefined local with nested import star usage",
       "group": "Ruff",
       "on": false
     },
@@ -252,50 +369,43 @@
       "id": "ruff:F407",
       "document": "rules/F407.json",
       "title": "Ruff F407: Future feature not defined",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F501",
       "document": "rules/F501.json",
       "title": "Ruff F501: Percent format invalid format",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F502",
       "document": "rules/F502.json",
       "title": "Ruff F502: Percent format expected mapping",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F503",
       "document": "rules/F503.json",
       "title": "Ruff F503: Percent format expected sequence",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F504",
       "document": "rules/F504.json",
       "title": "Ruff F504: Percent format extra named arguments",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F505",
       "document": "rules/F505.json",
       "title": "Ruff F505: Percent format missing argument",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F506",
       "document": "rules/F506.json",
       "title": "Ruff F506: Percent format mixed positional and named",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f507-percent-format-positional-count-mismatch",
@@ -307,125 +417,114 @@
       "id": "ruff:F508",
       "document": "rules/F508.json",
       "title": "Ruff F508: Percent format star requires sequence",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F509",
       "document": "rules/F509.json",
       "title": "Ruff F509: Percent format unsupported format character",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F521",
       "document": "rules/F521.json",
       "title": "Ruff F521: String dot format invalid format",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F522",
       "document": "rules/F522.json",
       "title": "Ruff F522: String dot format extra named arguments",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f523-string-dot-format-extra-positional-arguments",
       "document": "rules/ruff-f523-string-dot-format-extra-positional-arguments.json",
       "title": "Ruff F523: String dot format extra positional arguments",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f524-string-dot-format-missing-arguments",
       "document": "rules/ruff-f524-string-dot-format-missing-arguments.json",
       "title": "Ruff F524: String dot format missing arguments",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F525",
       "document": "rules/F525.json",
       "title": "Ruff F525: String dot format mixing automatic",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f601-multi-value-repeated-key-literal",
       "document": "rules/ruff-f601-multi-value-repeated-key-literal.json",
       "title": "Ruff F601: Multi value repeated key literal",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F602",
       "document": "rules/F602.json",
       "title": "Ruff F602: Multi value repeated key variable",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F622",
       "document": "rules/F622.json",
       "title": "Ruff F622: Multiple starred expressions",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F631",
       "document": "rules/F631.json",
       "title": "Ruff F631: Assert tuple",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-f632-is-literal",
       "document": "rules/ruff-f632-is-literal.json",
       "title": "Ruff F632: Is literal",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F633",
       "document": "rules/F633.json",
       "title": "Ruff F633: Invalid print syntax",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F634",
       "document": "rules/F634.json",
       "title": "Ruff F634: If tuple",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F701",
       "document": "rules/F701.json",
       "title": "Ruff F701: Break outside loop",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F702",
       "document": "rules/F702.json",
       "title": "Ruff F702: Continue outside loop",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F706",
       "document": "rules/F706.json",
       "title": "Ruff F706: Return outside function",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F707",
       "document": "rules/F707.json",
       "title": "Ruff F707: Default except not last",
+      "group": "Ruff"
+    },
+    {
+      "id": "python-conformance:ruff-f722-forward-annotation-syntax-error",
+      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "title": "Ruff F722: Forward annotation syntax error",
       "group": "Ruff",
       "on": false
     },
@@ -439,22 +538,19 @@
       "id": "python-conformance:ruff-f823-undefined-local",
       "document": "rules/ruff-f823-undefined-local.json",
       "title": "Ruff F823: Undefined local",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F842",
       "document": "rules/F842.json",
       "title": "Ruff F842: Unused annotation",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:F901",
       "document": "rules/F901.json",
       "title": "Ruff F901: Raise not implemented",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:PIE790",
@@ -466,15 +562,13 @@
       "id": "ruff:PIE794",
       "document": "rules/PIE794.json",
       "title": "Ruff PIE794: Duplicate class field definition",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:ruff-pie796-non-unique-enums",
       "document": "rules/ruff-pie796-non-unique-enums.json",
       "title": "Ruff PIE796: Non unique enums",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:PIE800",
@@ -486,15 +580,13 @@
       "id": "ruff:PIE804",
       "document": "rules/PIE804.json",
       "title": "Ruff PIE804: Unnecessary dict kwargs",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:PIE807",
       "document": "rules/PIE807.json",
       "title": "Ruff PIE807: Reimplemented container builtin",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:PIE808",
@@ -515,6 +607,48 @@
       "group": "Ruff"
     },
     {
+      "id": "ruff:RET502",
+      "document": "rules/RET502.json",
+      "title": "Ruff RET502: Implicit return value",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:RET504",
+      "document": "rules/RET504.json",
+      "title": "Ruff RET504: Unnecessary assign",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:RET505",
+      "document": "rules/RET505.json",
+      "title": "Ruff RET505: Superfluous else return",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:RET506",
+      "document": "rules/RET506.json",
+      "title": "Ruff RET506: Superfluous else raise",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:RET507",
+      "document": "rules/RET507.json",
+      "title": "Ruff RET507: Superfluous else continue",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:RET508",
+      "document": "rules/RET508.json",
+      "title": "Ruff RET508: Superfluous else break",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:SIM101",
       "document": "rules/SIM101.json",
       "title": "Ruff SIM101: Duplicate isinstance call",
@@ -524,6 +658,19 @@
       "id": "ruff:SIM107",
       "document": "rules/SIM107.json",
       "title": "Ruff SIM107: Return in try except finally",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:SIM109",
+      "document": "rules/SIM109.json",
+      "title": "Ruff SIM109: Compare with tuple",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff:SIM112",
+      "document": "rules/SIM112.json",
+      "title": "Ruff SIM112: Uncapitalized environment variables",
       "group": "Ruff",
       "on": false
     },
@@ -540,6 +687,13 @@
       "group": "Ruff"
     },
     {
+      "id": "ruff:SIM116",
+      "document": "rules/SIM116.json",
+      "title": "Ruff SIM116: If else block instead of dict lookup",
+      "group": "Ruff",
+      "on": false
+    },
+    {
       "id": "ruff:SIM201",
       "document": "rules/SIM201.json",
       "title": "Ruff SIM201: Negate equal op",
@@ -549,15 +703,13 @@
       "id": "ruff:SIM202",
       "document": "rules/SIM202.json",
       "title": "Ruff SIM202: Negate not equal op",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:SIM208",
       "document": "rules/SIM208.json",
       "title": "Ruff SIM208: Double negation",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:SIM210",
@@ -569,6 +721,12 @@
       "id": "ruff:SIM211",
       "document": "rules/SIM211.json",
       "title": "Ruff SIM211: If expr with false true",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:SIM212",
+      "document": "rules/SIM212.json",
+      "title": "Ruff SIM212: If expr with twisted arms",
       "group": "Ruff",
       "on": false
     },
@@ -576,20 +734,24 @@
       "id": "ruff:SIM220",
       "document": "rules/SIM220.json",
       "title": "Ruff SIM220: Expr and not expr",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:SIM221",
       "document": "rules/SIM221.json",
       "title": "Ruff SIM221: Expr or not expr",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "ruff:SIM905",
       "document": "rules/SIM905.json",
       "title": "Ruff SIM905: Split static string",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff:SIM910",
+      "document": "rules/SIM910.json",
+      "title": "Ruff SIM910: Dict get with none default",
       "group": "Ruff",
       "on": false
     },
@@ -597,8 +759,7 @@
       "id": "ruff:T100",
       "document": "rules/T100.json",
       "title": "Ruff T100: Debugger",
-      "group": "Ruff",
-      "on": false
+      "group": "Ruff"
     },
     {
       "id": "python-conformance:bandit-b101-assert-used",
@@ -632,8 +793,7 @@
       "id": "bandit:b108",
       "document": "rules/b108.json",
       "title": "Bandit B108: Hardcoded tmp directory",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b110",
@@ -663,22 +823,19 @@
       "id": "bandit:b302",
       "document": "rules/b302.json",
       "title": "Bandit B302: Marshal",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b305",
       "document": "rules/b305.json",
       "title": "Bandit B305: Cipher modes",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b306",
       "document": "rules/b306.json",
       "title": "Bandit B306: Mktemp q",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b307",
@@ -690,8 +847,7 @@
       "id": "bandit:b310",
       "document": "rules/b310.json",
       "title": "Bandit B310: Urllib urlopen",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b311",
@@ -703,43 +859,37 @@
       "id": "bandit:b312",
       "document": "rules/b312.json",
       "title": "Bandit B312: Telnetlib",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b313",
       "document": "rules/b313.json",
       "title": "Bandit B313: Xml bad cElementTree",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b314",
       "document": "rules/b314.json",
       "title": "Bandit B314: Xml bad ElementTree",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b315",
       "document": "rules/b315.json",
       "title": "Bandit B315: Xml bad expatreader",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b316",
       "document": "rules/b316.json",
       "title": "Bandit B316: Xml bad expatbuilder",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b317",
       "document": "rules/b317.json",
       "title": "Bandit B317: Xml bad sax",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b318",
@@ -751,8 +901,7 @@
       "id": "bandit:b319",
       "document": "rules/b319.json",
       "title": "Bandit B319: Xml bad pulldom",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b321",
@@ -764,15 +913,13 @@
       "id": "bandit:b323",
       "document": "rules/b323.json",
       "title": "Bandit B323: Unverified context",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b401",
       "document": "rules/b401.json",
       "title": "Bandit B401: Import telnetlib",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b402",
@@ -784,22 +931,19 @@
       "id": "bandit:b405",
       "document": "rules/b405.json",
       "title": "Bandit B405: Import xml etree",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b406",
       "document": "rules/b406.json",
       "title": "Bandit B406: Import xml sax",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b407",
       "document": "rules/b407.json",
       "title": "Bandit B407: Import xml expat",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b408",
@@ -811,43 +955,37 @@
       "id": "bandit:b409",
       "document": "rules/b409.json",
       "title": "Bandit B409: Import xml pulldom",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b411",
       "document": "rules/b411.json",
       "title": "Bandit B411: Import xmlrpclib",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b413",
       "document": "rules/b413.json",
       "title": "Bandit B413: Import pycrypto",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b415",
       "document": "rules/b415.json",
       "title": "Bandit B415: Import pyghmi",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b502",
       "document": "rules/b502.json",
       "title": "Bandit B502: Ssl with bad version",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "python-conformance:bandit-b505-weak-cryptographic-key",
       "document": "rules/bandit-b505-weak-cryptographic-key.json",
       "title": "Bandit B505: Weak cryptographic key",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b507",
@@ -865,15 +1003,13 @@
       "id": "python-conformance:bandit-b610-django-extra-used",
       "document": "rules/bandit-b610-django-extra-used.json",
       "title": "Bandit B610: Django extra used",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b615",
       "document": "rules/b615.json",
       "title": "Bandit B615: Huggingface unsafe download",
-      "group": "Bandit",
-      "on": false
+      "group": "Bandit"
     },
     {
       "id": "bandit:b701",

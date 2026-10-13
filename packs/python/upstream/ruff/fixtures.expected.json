@@ -7,20 +7,27 @@
   "rules": [
    "ASYNC100",
    "ASYNC105",
+   "ASYNC109",
+   "ASYNC110",
    "ASYNC115",
    "ASYNC116",
    "ASYNC210",
+   "ASYNC212",
    "ASYNC220",
    "ASYNC221",
    "ASYNC222",
    "ASYNC230",
+   "ASYNC240",
+   "ASYNC250",
    "ASYNC251",
    "B002",
    "B003",
    "B004",
    "B005",
+   "B007",
    "B009",
    "B010",
+   "B011",
    "B013",
    "B014",
    "B016",
@@ -32,12 +39,25 @@
    "B023",
    "B025",
    "B026",
+   "B028",
    "B029",
    "B032",
    "B033",
+   "B034",
    "B039",
+   "B904",
+   "B905",
+   "E711",
+   "E712",
+   "E713",
+   "E714",
+   "E721",
    "E722",
+   "E731",
+   "E742",
    "F404",
+   "F405",
+   "F406",
    "F407",
    "F501",
    "F502",
@@ -64,6 +84,7 @@
    "F702",
    "F706",
    "F707",
+   "F722",
    "F811",
    "F823",
    "F842",
@@ -77,34 +98,53 @@
    "PIE808",
    "PIE810",
    "RET501",
+   "RET502",
+   "RET504",
+   "RET505",
+   "RET506",
+   "RET507",
+   "RET508",
    "SIM101",
    "SIM107",
+   "SIM109",
+   "SIM112",
    "SIM113",
    "SIM115",
+   "SIM116",
    "SIM201",
    "SIM202",
    "SIM208",
    "SIM210",
    "SIM211",
+   "SIM212",
    "SIM220",
    "SIM221",
    "SIM905",
+   "SIM910",
    "T100"
   ],
   "files": [
    "flake8_async/ASYNC100.py",
    "flake8_async/ASYNC105.py",
+   "flake8_async/ASYNC109_0.py",
+   "flake8_async/ASYNC109_1.py",
+   "flake8_async/ASYNC110.py",
    "flake8_async/ASYNC115.py",
    "flake8_async/ASYNC116.py",
    "flake8_async/ASYNC210.py",
+   "flake8_async/ASYNC212.py",
    "flake8_async/ASYNC22x.py",
    "flake8_async/ASYNC230.py",
+   "flake8_async/ASYNC240.py",
+   "flake8_async/ASYNC250.py",
    "flake8_async/ASYNC251.py",
    "flake8_bugbear/B002.py",
    "flake8_bugbear/B003.py",
    "flake8_bugbear/B004.py",
    "flake8_bugbear/B005.py",
+   "flake8_bugbear/B007.py",
    "flake8_bugbear/B009_B010.py",
+   "flake8_bugbear/B011.py",
    "flake8_bugbear/B013.py",
    "flake8_bugbear/B014.py",
    "flake8_bugbear/B016.py",
@@ -117,10 +157,14 @@
    "flake8_bugbear/B023.py",
    "flake8_bugbear/B025.py",
    "flake8_bugbear/B026.py",
+   "flake8_bugbear/B028.py",
    "flake8_bugbear/B029.py",
    "flake8_bugbear/B032.py",
    "flake8_bugbear/B033.py",
+   "flake8_bugbear/B034.py",
    "flake8_bugbear/B039.py",
+   "flake8_bugbear/B904.py",
+   "flake8_bugbear/B905.py",
    "flake8_debugger/T100.py",
    "flake8_pie/PIE790.py",
    "flake8_pie/PIE794.py",
@@ -133,22 +177,42 @@
    "flake8_pie/PIE810.py",
    "flake8_pyi/PYI021_1.pyi",
    "flake8_return/RET501.py",
+   "flake8_return/RET502.py",
+   "flake8_return/RET504.py",
+   "flake8_return/RET505.py",
+   "flake8_return/RET506.py",
+   "flake8_return/RET507.py",
+   "flake8_return/RET508.py",
    "flake8_simplify/SIM101.py",
    "flake8_simplify/SIM107.py",
+   "flake8_simplify/SIM109.py",
+   "flake8_simplify/SIM112.py",
    "flake8_simplify/SIM113.py",
    "flake8_simplify/SIM115.py",
+   "flake8_simplify/SIM116.py",
    "flake8_simplify/SIM201.py",
    "flake8_simplify/SIM202.py",
    "flake8_simplify/SIM208.py",
    "flake8_simplify/SIM210.py",
    "flake8_simplify/SIM211.py",
+   "flake8_simplify/SIM212.py",
    "flake8_simplify/SIM220.py",
    "flake8_simplify/SIM221.py",
    "flake8_simplify/SIM905.py",
+   "flake8_simplify/SIM910.py",
+   "pycodestyle/E711.py",
+   "pycodestyle/E712.py",
+   "pycodestyle/E713.py",
+   "pycodestyle/E714.py",
+   "pycodestyle/E721.py",
    "pycodestyle/E722.py",
+   "pycodestyle/E731.py",
+   "pycodestyle/E742.py",
    "pycodestyle/constant_literals.py",
    "pyflakes/F404_0.py",
    "pyflakes/F404_1.py",
+   "pyflakes/F405.py",
+   "pyflakes/F406.py",
    "pyflakes/F407.py",
    "pyflakes/F502.py",
    "pyflakes/F503.py",
@@ -170,6 +234,8 @@
    "pyflakes/F702.py",
    "pyflakes/F706.py",
    "pyflakes/F707.py",
+   "pyflakes/F722.py",
+   "pyflakes/F722_1.py",
    "pyflakes/F811_0.py",
    "pyflakes/F811_1.py",
    "pyflakes/F811_10.py",
@@ -432,6 +498,12 @@
   },
   {
    "rule": "ASYNC105",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 18,
+   "column": 9
+  },
+  {
+   "rule": "ASYNC105",
    "path": "flake8_async/ASYNC115.py",
    "line": 11,
    "column": 5
@@ -561,6 +633,54 @@
    "path": "flake8_async/ASYNC116.py",
    "line": 50,
    "column": 14
+  },
+  {
+   "rule": "ASYNC109",
+   "path": "flake8_async/ASYNC109_0.py",
+   "line": 10,
+   "column": 16
+  },
+  {
+   "rule": "ASYNC109",
+   "path": "flake8_async/ASYNC109_0.py",
+   "line": 14,
+   "column": 16
+  },
+  {
+   "rule": "ASYNC109",
+   "path": "flake8_async/ASYNC109_0.py",
+   "line": 20,
+   "column": 25
+  },
+  {
+   "rule": "ASYNC110",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC110",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC110",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC110",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC110",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 37,
+   "column": 5
   },
   {
    "rule": "ASYNC115",
@@ -917,6 +1037,102 @@
    "column": 5
   },
   {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 29,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 31,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 32,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 33,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 34,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 37,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 45,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 55,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC212",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 69,
+   "column": 5
+  },
+  {
    "rule": "ASYNC220",
    "path": "flake8_async/ASYNC22x.py",
    "line": 31,
@@ -1224,6 +1440,12 @@
   },
   {
    "rule": "ASYNC230",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 60,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC230",
    "path": "flake8_simplify/SIM115.py",
    "line": 32,
    "column": 50
@@ -1233,6 +1455,96 @@
    "path": "flake8_simplify/SIM115.py",
    "line": 282,
    "column": 42
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 67,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 68,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 78,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 81,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 88,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 93,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 96,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC240",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 102,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC250",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "ASYNC250",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC250",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "ASYNC250",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 28,
+   "column": 5
   },
   {
    "rule": "ASYNC251",
@@ -1365,6 +1677,198 @@
    "path": "flake8_bugbear/B005.py",
    "line": 24,
    "column": 1
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_async/ASYNC100.py",
+   "line": 35,
+   "column": 19
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 18,
+   "column": 13
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 30,
+   "column": 13
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 34,
+   "column": 10
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 38,
+   "column": 10
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 42,
+   "column": 10
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 46,
+   "column": 10
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 52,
+   "column": 14
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 59,
+   "column": 14
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 68,
+   "column": 14
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 77,
+   "column": 14
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 88,
+   "column": 14
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_bugbear/B007.py",
+   "line": 98,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 139,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 143,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 148,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 164,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 168,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 173,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_pie/PIE790.py",
+   "line": 177,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_return/RET507.py",
+   "line": 82,
+   "column": 9
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_return/RET508.py",
+   "line": 79,
+   "column": 9
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_simplify/SIM113.py",
+   "line": 167,
+   "column": 13
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_simplify/SIM113.py",
+   "line": 180,
+   "column": 13
+  },
+  {
+   "rule": "B007",
+   "path": "flake8_simplify/SIM113.py",
+   "line": 194,
+   "column": 13
+  },
+  {
+   "rule": "B007",
+   "path": "pyflakes/F701.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "pyflakes/F701.py",
+   "line": 13,
+   "column": 9
+  },
+  {
+   "rule": "B007",
+   "path": "pyflakes/F702.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "pyflakes/F702.py",
+   "line": 13,
+   "column": 9
+  },
+  {
+   "rule": "B007",
+   "path": "pyflakes/F823.py",
+   "line": 64,
+   "column": 9
   },
   {
    "rule": "B009",
@@ -1527,6 +2031,18 @@
    "path": "flake8_bugbear/B009_B010.py",
    "line": 81,
    "column": 1
+  },
+  {
+   "rule": "B011",
+   "path": "flake8_bugbear/B011.py",
+   "line": 8,
+   "column": 8
+  },
+  {
+   "rule": "B011",
+   "path": "flake8_bugbear/B011.py",
+   "line": 10,
+   "column": 8
   },
   {
    "rule": "B013",
@@ -2015,6 +2531,18 @@
    "column": 19
   },
   {
+   "rule": "B025",
+   "path": "flake8_bugbear/B904.py",
+   "line": 19,
+   "column": 8
+  },
+  {
+   "rule": "B025",
+   "path": "flake8_bugbear/B904.py",
+   "line": 96,
+   "column": 9
+  },
+  {
    "rule": "B026",
    "path": "flake8_bugbear/B026.py",
    "line": 16,
@@ -2055,6 +2583,30 @@
    "path": "flake8_bugbear/B026.py",
    "line": 21,
    "column": 26
+  },
+  {
+   "rule": "B028",
+   "path": "flake8_bugbear/B028.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B028",
+   "path": "flake8_bugbear/B028.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B028",
+   "path": "flake8_bugbear/B028.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "B028",
+   "path": "flake8_bugbear/B028.py",
+   "line": 32,
+   "column": 1
   },
   {
    "rule": "B029",
@@ -2189,6 +2741,66 @@
    "column": 5
   },
   {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "B034",
+   "path": "flake8_bugbear/B034.py",
+   "line": 14,
+   "column": 1
+  },
+  {
    "rule": "B039",
    "path": "flake8_bugbear/B039.py",
    "line": 21,
@@ -2273,6 +2885,510 @@
    "column": 26
   },
   {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 10,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 63,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 65,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 73,
+   "column": 13
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 79,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 81,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 87,
+   "column": 9
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 88,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 93,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_bugbear/B904.py",
+   "line": 97,
+   "column": 5
+  },
+  {
+   "rule": "B904",
+   "path": "flake8_return/RET506.py",
+   "line": 84,
+   "column": 13
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B020.py",
+   "line": 32,
+   "column": 31
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_bugbear/B905.py",
+   "line": 34,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "flake8_simplify/SIM113.py",
+   "line": 24,
+   "column": 17
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 2,
+   "column": 11
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 8,
+   "column": 4
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 11,
+   "column": 4
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 14,
+   "column": 14
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 17,
+   "column": 14
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 20,
+   "column": 4
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 23,
+   "column": 4
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 26,
+   "column": 9
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/E711.py",
+   "line": 26,
+   "column": 17
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/constant_literals.py",
+   "line": 14,
+   "column": 13
+  },
+  {
+   "rule": "E711",
+   "path": "pycodestyle/constant_literals.py",
+   "line": 16,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E711.py",
+   "line": 48,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 5,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 8,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 11,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 14,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 17,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 20,
+   "column": 12
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 20,
+   "column": 36
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 22,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 25,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 25,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 28,
+   "column": 3
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 31,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E712.py",
+   "line": 58,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E713.py",
+   "line": 33,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/E714.py",
+   "line": 33,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/constant_literals.py",
+   "line": 14,
+   "column": 4
+  },
+  {
+   "rule": "E712",
+   "path": "pycodestyle/constant_literals.py",
+   "line": 16,
+   "column": 4
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E711.py",
+   "line": 36,
+   "column": 9
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E712.py",
+   "line": 41,
+   "column": 9
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 2,
+   "column": 8
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 5,
+   "column": 8
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 8,
+   "column": 8
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 11,
+   "column": 23
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 14,
+   "column": 9
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E713.py",
+   "line": 40,
+   "column": 12
+  },
+  {
+   "rule": "E713",
+   "path": "pycodestyle/E714.py",
+   "line": 21,
+   "column": 9
+  },
+  {
+   "rule": "E714",
+   "path": "pycodestyle/E713.py",
+   "line": 39,
+   "column": 13
+  },
+  {
+   "rule": "E714",
+   "path": "pycodestyle/E714.py",
+   "line": 2,
+   "column": 8
+  },
+  {
+   "rule": "E714",
+   "path": "pycodestyle/E714.py",
+   "line": 5,
+   "column": 8
+  },
+  {
+   "rule": "E714",
+   "path": "pycodestyle/E714.py",
+   "line": 39,
+   "column": 13
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 5,
+   "column": 4
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 8,
+   "column": 4
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 21,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 21,
+   "column": 36
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 23,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 25,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 27,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 29,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 31,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 37,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 39,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 41,
+   "column": 8
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 59,
+   "column": 4
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 140,
+   "column": 1
+  },
+  {
+   "rule": "E721",
+   "path": "pycodestyle/E721.py",
+   "line": 144,
+   "column": 4
+  },
+  {
+   "rule": "E722",
+   "path": "flake8_return/RET502.py",
+   "line": 38,
+   "column": 5
+  },
+  {
    "rule": "E722",
    "path": "flake8_simplify/SIM107.py",
    "line": 6,
@@ -2289,6 +3405,24 @@
    "path": "flake8_simplify/SIM113.py",
    "line": 107,
    "column": 9
+  },
+  {
+   "rule": "E722",
+   "path": "pycodestyle/E721.py",
+   "line": 67,
+   "column": 1
+  },
+  {
+   "rule": "E722",
+   "path": "pycodestyle/E721.py",
+   "line": 74,
+   "column": 1
+  },
+  {
+   "rule": "E722",
+   "path": "pycodestyle/E721.py",
+   "line": 79,
+   "column": 1
   },
   {
    "rule": "E722",
@@ -2363,6 +3497,198 @@
    "column": 1
   },
   {
+   "rule": "E731",
+   "path": "flake8_bugbear/B009_B010.py",
+   "line": 24,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "flake8_bugbear/B009_B010.py",
+   "line": 45,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "flake8_return/RET504.py",
+   "line": 77,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 14,
+   "column": 9
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 57,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 73,
+   "column": 9
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 75,
+   "column": 9
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 86,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 94,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 102,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 110,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 119,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 127,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 135,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 139,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 140,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 147,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 163,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 169,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 171,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 176,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 182,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 188,
+   "column": 1
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 200,
+   "column": 5
+  },
+  {
+   "rule": "E731",
+   "path": "pycodestyle/E731.py",
+   "line": 201,
+   "column": 5
+  },
+  {
+   "rule": "E742",
+   "path": "pycodestyle/E742.py",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "E742",
+   "path": "pycodestyle/E742.py",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "E742",
+   "path": "pycodestyle/E742.py",
+   "line": 9,
+   "column": 7
+  },
+  {
    "rule": "F404",
    "path": "pyflakes/F404_0.py",
    "line": 6,
@@ -2379,6 +3705,30 @@
    "path": "syntax_errors/late_future_import.py",
    "line": 2,
    "column": 1
+  },
+  {
+   "rule": "F405",
+   "path": "pyflakes/F405.py",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "F405",
+   "path": "pyflakes/F405.py",
+   "line": 11,
+   "column": 12
+  },
+  {
+   "rule": "F406",
+   "path": "pyflakes/F406.py",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "F406",
+   "path": "pyflakes/F406.py",
+   "line": 9,
+   "column": 5
   },
   {
    "rule": "F407",
@@ -3761,6 +5111,60 @@
    "column": 1
   },
   {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 9,
+   "column": 12
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 13,
+   "column": 4
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 30,
+   "column": 11
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 35,
+   "column": 11
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 39,
+   "column": 11
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722.py",
+   "line": 42,
+   "column": 11
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722_1.py",
+   "line": 8,
+   "column": 22
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722_1.py",
+   "line": 8,
+   "column": 46
+  },
+  {
+   "rule": "F722",
+   "path": "pyflakes/F722_1.py",
+   "line": 9,
+   "column": 12
+  },
+  {
    "rule": "F811",
    "path": "flake8_async/ASYNC100.py",
    "line": 12,
@@ -3870,6 +5274,78 @@
   },
   {
    "rule": "F811",
+   "path": "flake8_async/ASYNC109_0.py",
+   "line": 10,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC109_0.py",
+   "line": 14,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC109_1.py",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC109_1.py",
+   "line": 9,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 11,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 16,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 21,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 26,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 31,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 36,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 41,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC110.py",
+   "line": 46,
+   "column": 11
+  },
+  {
+   "rule": "F811",
    "path": "flake8_async/ASYNC115.py",
    "line": 45,
    "column": 5
@@ -3972,6 +5448,48 @@
   },
   {
    "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 25,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 44,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 49,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 54,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 59,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 68,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC212.py",
+   "line": 73,
+   "column": 11
+  },
+  {
+   "rule": "F811",
    "path": "flake8_async/ASYNC22x.py",
    "line": 11,
    "column": 11
@@ -4044,6 +5562,48 @@
   },
   {
    "rule": "F811",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 64,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 70,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 74,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 80,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 6,
+   "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_async/ASYNC250.py",
+   "line": 20,
+   "column": 11
+  },
+  {
+   "rule": "F811",
    "path": "flake8_async/ASYNC251.py",
    "line": 9,
    "column": 5
@@ -4059,6 +5619,30 @@
    "path": "flake8_bugbear/B003.py",
    "line": 10,
    "column": 1
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_bugbear/B007.py",
+   "line": 57,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_bugbear/B007.py",
+   "line": 66,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_bugbear/B007.py",
+   "line": 75,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_bugbear/B007.py",
+   "line": 86,
+   "column": 5
   },
   {
    "rule": "F811",
@@ -4278,6 +5862,270 @@
   },
   {
    "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 21,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 42,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET502.py",
+   "line": 60,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 49,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 55,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 64,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 70,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 76,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 83,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 88,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 95,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 104,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 111,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 119,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 243,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 249,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 265,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 272,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 324,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 331,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 339,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 345,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 351,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 357,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 372,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 379,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 386,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 394,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 403,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 420,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 435,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 444,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET504.py",
+   "line": 460,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET505.py",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET505.py",
+   "line": 142,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET505.py",
+   "line": 213,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET505.py",
+   "line": 223,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_return/RET505.py",
+   "line": 233,
+   "column": 5
+  },
+  {
+   "rule": "F811",
    "path": "flake8_simplify/SIM107.py",
    "line": 13,
    "column": 5
@@ -4419,6 +6267,168 @@
    "path": "flake8_simplify/SIM115.py",
    "line": 279,
    "column": 11
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 42,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 55,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E721.py",
+   "line": 111,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E721.py",
+   "line": 121,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 33,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 39,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 45,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 60,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 67,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 79,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 89,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 97,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 105,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 114,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 122,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 130,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 144,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pycodestyle/E731.py",
+   "line": 195,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pyflakes/F405.py",
+   "line": 8,
+   "column": 5
   },
   {
    "rule": "F811",
@@ -5369,6 +7379,432 @@
    "column": 9
   },
   {
+   "rule": "RET502",
+   "path": "flake8_return/RET502.py",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 6,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 23,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 246,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 251,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 269,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 321,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 342,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 348,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 354,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 359,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 365,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 400,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 423,
+   "column": 16
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 458,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "flake8_return/RET504.py",
+   "line": 463,
+   "column": 12
+  },
+  {
+   "rule": "RET504",
+   "path": "pyflakes/F823.py",
+   "line": 27,
+   "column": 12
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 41,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 53,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 64,
+   "column": 9
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 79,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 89,
+   "column": 9
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 109,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 145,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 153,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 160,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 169,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 177,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 183,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 200,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 207,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 217,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 227,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 237,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 245,
+   "column": 2
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_return/RET505.py",
+   "line": 252,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 54,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 64,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 74,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 93,
+   "column": 9
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 34,
+   "column": 5
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 45,
+   "column": 9
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 60,
+   "column": 5
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 70,
+   "column": 9
+  },
+  {
+   "rule": "RET506",
+   "path": "flake8_return/RET506.py",
+   "line": 80,
+   "column": 5
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 8,
+   "column": 9
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 22,
+   "column": 9
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 36,
+   "column": 9
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 47,
+   "column": 13
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 63,
+   "column": 9
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 74,
+   "column": 13
+  },
+  {
+   "rule": "RET507",
+   "path": "flake8_return/RET507.py",
+   "line": 85,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 8,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 22,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 33,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 44,
+   "column": 13
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 60,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 71,
+   "column": 13
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 82,
+   "column": 9
+  },
+  {
+   "rule": "RET508",
+   "path": "flake8_return/RET508.py",
+   "line": 158,
+   "column": 13
+  },
+  {
    "rule": "SIM101",
    "path": "flake8_simplify/SIM101.py",
    "line": 1,
@@ -5490,9 +7926,93 @@
   },
   {
    "rule": "SIM107",
+   "path": "flake8_return/RET502.py",
+   "line": 46,
+   "column": 9
+  },
+  {
+   "rule": "SIM107",
    "path": "flake8_simplify/SIM107.py",
    "line": 9,
    "column": 9
+  },
+  {
+   "rule": "SIM109",
+   "path": "flake8_simplify/SIM109.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "SIM109",
+   "path": "flake8_simplify/SIM109.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "SIM109",
+   "path": "flake8_simplify/SIM109.py",
+   "line": 10,
+   "column": 4
+  },
+  {
+   "rule": "SIM109",
+   "path": "flake8_simplify/SIM109.py",
+   "line": 17,
+   "column": 4
+  },
+  {
+   "rule": "SIM109",
+   "path": "flake8_simplify/SIM109.py",
+   "line": 24,
+   "column": 4
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 4,
+   "column": 12
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 6,
+   "column": 16
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 8,
+   "column": 16
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 10,
+   "column": 11
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 12,
+   "column": 22
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 14,
+   "column": 18
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 16,
+   "column": 26
+  },
+  {
+   "rule": "SIM112",
+   "path": "flake8_simplify/SIM112.py",
+   "line": 19,
+   "column": 22
   },
   {
    "rule": "SIM113",
@@ -5576,6 +8096,24 @@
    "rule": "SIM115",
    "path": "flake8_async/ASYNC230.py",
    "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "SIM115",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 25,
+   "column": 12
+  },
+  {
+   "rule": "SIM115",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "SIM115",
+   "path": "flake8_async/ASYNC240.py",
+   "line": 36,
    "column": 5
   },
   {
@@ -5783,6 +8321,48 @@
    "column": 5
   },
   {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 26,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 34,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 44,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 52,
+   "column": 5
+  },
+  {
+   "rule": "SIM116",
+   "path": "flake8_simplify/SIM116.py",
+   "line": 80,
+   "column": 5
+  },
+  {
    "rule": "SIM201",
    "path": "flake8_simplify/SIM201.py",
    "line": 2,
@@ -5936,6 +8516,18 @@
    "rule": "SIM211",
    "path": "flake8_simplify/SIM211.py",
    "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "SIM212",
+   "path": "flake8_simplify/SIM212.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "SIM212",
+   "path": "flake8_simplify/SIM212.py",
+   "line": 3,
    "column": 5
   },
   {
@@ -6393,6 +8985,90 @@
    "path": "flake8_simplify/SIM905.py",
    "line": 173,
    "column": 1
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 20,
+   "column": 9
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 27,
+   "column": 1
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 31,
+   "column": 7
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 39,
+   "column": 9
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 43,
+   "column": 9
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 57,
+   "column": 11
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 64,
+   "column": 7
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 73,
+   "column": 7
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 77,
+   "column": 7
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 84,
+   "column": 7
+  },
+  {
+   "rule": "SIM910",
+   "path": "flake8_simplify/SIM910.py",
+   "line": 87,
+   "column": 7
   },
   {
    "rule": "T100",

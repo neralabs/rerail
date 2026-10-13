@@ -70,6 +70,30 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-async109-async-function-with-timeout",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC109"
+      },
+      "policy": "rules/ASYNC109.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async110-async-busy-wait",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC110"
+      },
+      "policy": "rules/ASYNC110.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-async115-async-zero-sleep",
       "upstream": {
         "tool": "ruff",
@@ -106,6 +130,19 @@
       "policy": "rules/ASYNC210.json",
       "capabilities": [
         "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async212-blocking-http-call-httpx-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC212"
+      },
+      "policy": "rules/ASYNC212.json",
+      "capabilities": [
+        "scope",
+        "value"
       ],
       "match": "line+column"
     },
@@ -162,6 +199,31 @@
         "compare",
         "scope",
         "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async240-blocking-path-method-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC240"
+      },
+      "policy": "rules/ASYNC240.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-async250-blocking-input-in-async-function",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ASYNC250"
+      },
+      "policy": "rules/ASYNC250.json",
+      "capabilities": [
+        "scope"
       ],
       "match": "line+column"
     },
@@ -227,6 +289,18 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-b007-unused-loop-control-variable",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B007"
+      },
+      "policy": "rules/B007.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-b009-get-attr-with-constant",
       "upstream": {
         "tool": "ruff",
@@ -249,6 +323,19 @@
       "capabilities": [
         "scope",
         "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b011-assert-false",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B011"
+      },
+      "policy": "rules/ruff-b011-assert-false.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -386,6 +473,20 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-b028-no-explicit-stacklevel",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B028"
+      },
+      "policy": "rules/ruff-b028-no-explicit-stacklevel.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-b029-except-with-empty-tuple",
       "upstream": {
         "tool": "ruff",
@@ -422,12 +523,112 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-b034-re-sub-positional-args",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B034"
+      },
+      "policy": "rules/B034.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-b039-mutable-contextvar-default",
       "upstream": {
         "tool": "ruff",
         "rule": "B039"
       },
       "policy": "rules/B039.json",
+      "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b904-raise-without-from-inside-except",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B904"
+      },
+      "policy": "rules/ruff-B904.json",
+      "capabilities": [
+        "suppression",
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-b905-zip-without-explicit-strict",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "B905"
+      },
+      "policy": "rules/ruff-b905-zip-without-explicit-strict.json",
+      "capabilities": [
+        "arguments",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e711-none-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E711"
+      },
+      "policy": "rules/ruff-e711-none-comparison.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e712-true-false-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E712"
+      },
+      "policy": "rules/E712.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e713-not-in-test",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E713"
+      },
+      "policy": "rules/E713.json",
+      "capabilities": [
+        "annotation"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e714-not-is-test",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E714"
+      },
+      "policy": "rules/E714.json",
+      "capabilities": [
+        "annotation"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e721-type-comparison",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E721"
+      },
+      "policy": "rules/E721.json",
       "capabilities": [
         "scope"
       ],
@@ -447,6 +648,30 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-e731-lambda-assignment",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E731"
+      },
+      "policy": "rules/E731.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-e742-ambiguous-class-name",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "E742"
+      },
+      "policy": "rules/E742.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f404-late-future-import",
       "upstream": {
         "tool": "ruff",
@@ -455,6 +680,31 @@
       "policy": "rules/F404.json",
       "capabilities": [
         "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f405-undefined-local-with-import-star-usage",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F405"
+      },
+      "policy": "rules/F405.json",
+      "capabilities": [
+        "annotation",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-f406-undefined-local-with-nested-import-star-usage",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F406"
+      },
+      "policy": "rules/F406.json",
+      "capabilities": [
+        "syntax"
       ],
       "match": "line+column"
     },
@@ -778,6 +1028,20 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-f722-forward-annotation-syntax-error",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "F722"
+      },
+      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "capabilities": [
+        "scope",
+        "annotation",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-f811-redefined-while-unused",
       "upstream": {
         "tool": "ruff",
@@ -941,6 +1205,79 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-ret502-implicit-return-value",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET502"
+      },
+      "policy": "rules/RET502.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret504-unnecessary-assign",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET504"
+      },
+      "policy": "rules/RET504.json",
+      "capabilities": [
+        "compare",
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret505-superfluous-else-return",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET505"
+      },
+      "policy": "rules/RET505.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret506-superfluous-else-raise",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET506"
+      },
+      "policy": "rules/RET506.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret507-superfluous-else-continue",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET507"
+      },
+      "policy": "rules/RET507.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-ret508-superfluous-else-break",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "RET508"
+      },
+      "policy": "rules/RET508.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-sim101-duplicate-isinstance-call",
       "upstream": {
         "tool": "ruff",
@@ -966,6 +1303,31 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-sim109-compare-with-tuple",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM109"
+      },
+      "policy": "rules/SIM109.json",
+      "capabilities": [
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim112-uncapitalized-environment-variables",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM112"
+      },
+      "policy": "rules/SIM112.json",
+      "capabilities": [
+        "scope",
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-sim113-enumerate-for-loop",
       "upstream": {
         "tool": "ruff",
@@ -987,6 +1349,19 @@
       },
       "policy": "rules/SIM115.json",
       "capabilities": [
+        "scope"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim116-if-else-block-instead-of-dict-lookup",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM116"
+      },
+      "policy": "rules/SIM116.json",
+      "capabilities": [
+        "compare",
         "scope"
       ],
       "match": "line+column"
@@ -1052,6 +1427,18 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-sim212-if-expr-with-twisted-arms",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM212"
+      },
+      "policy": "rules/SIM212.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-sim220-expr-and-not-expr",
       "upstream": {
         "tool": "ruff",
@@ -1083,6 +1470,19 @@
       },
       "policy": "rules/SIM905.json",
       "capabilities": [
+        "value"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-sim910-dict-get-with-none-default",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "SIM910"
+      },
+      "policy": "rules/SIM910.json",
+      "capabilities": [
+        "scope",
         "value"
       ],
       "match": "line+column"
