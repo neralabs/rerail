@@ -8,6 +8,6 @@
   "clauses": [{
     "id": "needless-raw-string",
     "forbid": { "ast": { "language": "rust", "rule": { "kind": "raw_string_literal", "regex": "(?s)^(?:b|c)?r#*\\\"[^\\\"\\\\]*\\\"#*$" } } },
-    "violation": { "anchor": "witness.span", "code": "needless_raw_strings", "message": "Clippy needless_raw_strings: raw string literal can be shortened" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_raw_strings", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "needless_raw_strings", "message": "Clippy needless_raw_strings: raw string literal can be shortened" }
   }]
 }

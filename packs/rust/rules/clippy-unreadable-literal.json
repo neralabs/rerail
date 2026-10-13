@@ -5,5 +5,5 @@
   "mode": "steer",
   "description": "Port of Clippy 0.1.99's unreadable_literal: reports long ungrouped numeric literals; value-based thresholds and macro expansions are not modelled.",
   "scope": { "include": ["**/*"], "exclude": [] },
-  "clauses": [{"id":"unreadable-literal","forbid":{"ast":{"language":"rust","rule":{"any":[{"kind":"integer_literal","regex":"^(?:0[bBoOxX][0-9A-Fa-f]{6,}|[0-9]{6,})(?:_[iu](?:8|16|32|64|128|size))?$"},{"kind":"float_literal","regex":"^(?:[0-9]+\\.[0-9]{6,}(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)(?:_[iu](?:8|16|32|64|128|size))?$"}]}}},"violation":{"anchor":"witness.span","code":"unreadable_literal","message":"Clippy unreadable_literal: numeric literal is difficult to read"}}]
+  "clauses": [{"id":"unreadable-literal","forbid":{"ast":{"language":"rust","rule":{"any":[{"kind":"integer_literal","regex":"^(?:0[bBoOxX][0-9A-Fa-f]{6,}|[0-9]{6,})(?:_[iu](?:8|16|32|64|128|size))?$"},{"kind":"float_literal","regex":"^(?:[0-9]+\\.[0-9]{6,}(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)(?:_[iu](?:8|16|32|64|128|size))?$"}]}}},"violation":{"suppress":{"clippy":{"lints":["clippy::unreadable_literal","clippy::pedantic","warnings"]}},"anchor":"witness.span","code":"unreadable_literal","message":"Clippy unreadable_literal: numeric literal is difficult to read"}}]
 }

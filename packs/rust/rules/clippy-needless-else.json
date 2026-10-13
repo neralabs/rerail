@@ -9,7 +9,7 @@
     {
       "id": "empty-else-block",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "else_clause", "has": { "kind": "block", "regex": "^\\{\\s*\\}$" }, "not": { "regex": "(?s)/\\*|//" } } } },
-      "violation": { "anchor": "witness.span", "code": "needless_else", "message": "Clippy needless_else: unnecessary `else`" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_else", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "needless_else", "message": "Clippy needless_else: unnecessary `else`" }
     }
   ]
 }

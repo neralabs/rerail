@@ -11,6 +11,6 @@
       { "kind": "integer_literal", "regex": "^(?:[0-9]+|0[xX][0-9A-Fa-f]+|0[bBoO][0-9A-Fa-f]+)(?:_[0-9A-Fa-f]{5,})(?:_[0-9A-Fa-f]+)*(?:[iu](?:8|16|32|64|128|size))?$" },
       { "kind": "float_literal", "regex": "^.*_[0-9A-Fa-f]{5,}.*$" }
     ] } } },
-    "violation": { "anchor": "witness.span", "code": "large_digit_groups", "message": "Clippy large_digit_groups: digit group has more than four digits" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::large_digit_groups", "clippy::pedantic", "warnings"] } }, "anchor": "witness.span", "code": "large_digit_groups", "message": "Clippy large_digit_groups: digit group has more than four digits" }
   }]
 }

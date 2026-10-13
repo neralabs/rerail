@@ -13,7 +13,7 @@
         {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}}]},
         {"not":{"inside":{"kind":"binary_expression"}}}
       ]}}},
-      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+      "violation":{"suppress":{"clippy":{"lints":["clippy::precedence_bits","clippy::restriction","warnings"]}},"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
     },
     {
       "id":"shift-with-or-xor",
@@ -22,7 +22,7 @@
         {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^[|^]$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^[|^]$"}}}]},
         {"not":{"inside":{"kind":"binary_expression"}}}
       ]}}},
-      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+      "violation":{"suppress":{"clippy":{"lints":["clippy::precedence_bits","clippy::restriction","warnings"]}},"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
     },
     {
       "id":"or-xor-with-shift",
@@ -31,7 +31,7 @@
         {"any":[{"has":{"field":"left","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}},{"has":{"field":"right","kind":"binary_expression","has":{"field":"operator","regex":"^(?:<<|>>)$"}}}]},
         {"not":{"inside":{"kind":"binary_expression"}}}
       ]}}},
-      "violation":{"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
+      "violation":{"suppress":{"clippy":{"lints":["clippy::precedence_bits","clippy::restriction","warnings"]}},"anchor":"witness.span","code":"precedence_bits","message":"Clippy precedence_bits: mixed bitwise operations may be confusing"}
     }
   ]
 }

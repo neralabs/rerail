@@ -37,6 +37,7 @@
     {"id":"rust-conformance:clippy-octal-escapes","document":"rules/clippy-octal-escapes.json","title":"Clippy octal_escapes: Octal escapes","group":"Clippy"},
     {"id":"rust-conformance:clippy-needless-raw-strings","document":"rules/clippy-needless-raw-strings.json","title":"Clippy needless_raw_strings: Needless raw strings","group":"Clippy"},
     {"id":"rust-conformance:clippy-needless-raw-string-hashes","document":"rules/clippy-needless-raw-string-hashes.json","title":"Clippy needless_raw_string_hashes: Needless raw string hashes","group":"Clippy"},
+    {"id":"rust-conformance:clippy-needless-raw-string-hashes-one-allowed","document":"rules/clippy-needless-raw-string-hashes-one-allowed.json","title":"Clippy needless_raw_string_hashes (allow-one-hash-in-raw-strings): Needless raw string hashes","group":"Clippy"},
     {"id":"rust-conformance:clippy-builtin-type-shadow","document":"rules/clippy-builtin-type-shadow.json","title":"Clippy builtin_type_shadow: Builtin type shadow","group":"Clippy"},
     {"id":"rust-conformance:clippy-redundant-field-names","document":"rules/clippy-redundant-field-names.json","title":"Clippy redundant_field_names: Redundant field names","group":"Clippy"},
     {"id":"rust-conformance:clippy-single-char-lifetime-names","document":"rules/clippy-single-char-lifetime-names.json","title":"Clippy single_char_lifetime_names: Single char lifetime names","group":"Clippy"},

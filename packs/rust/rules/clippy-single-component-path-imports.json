@@ -8,6 +8,6 @@
   "clauses": [{
     "id": "single-component-import",
     "forbid": { "ast": { "language": "rust", "rule": { "kind": "use_declaration", "all": [{ "regex": "^use\\s+[A-Za-z_][A-Za-z0-9_]*\\s*;$" }, { "not": { "regex": "^use\\s+(core|std)\\s*;$" } }] } } },
-    "violation": { "anchor": "witness.span", "code": "single_component_path_imports", "message": "Clippy single_component_path_imports: this import is redundant" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::single_component_path_imports", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "single_component_path_imports", "message": "Clippy single_component_path_imports: this import is redundant" }
   }]
 }

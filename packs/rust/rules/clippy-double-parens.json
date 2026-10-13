@@ -9,22 +9,22 @@
     {
       "id": "nested-parentheses",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(", "has": { "kind": "parenthesized_expression" } } } },
-      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
     },
     {
       "id": "nested-tuple",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(", "has": { "kind": "tuple_expression" } } } },
-      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
     },
     {
       "id": "nested-unit",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "regex": "^\\(\\(\\)\\)$" } } },
-      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
     },
     {
       "id": "parenthesized-call-argument",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "parenthesized_expression", "inside": { "stopBy": "neighbor", "kind": "arguments" }, "follows": { "stopBy": "neighbor", "regex": "^\\($" }, "not": { "inside": { "stopBy": "end", "kind": "binary_expression" } } } } },
-      "violation": { "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
     }
   ]
 }

@@ -21,7 +21,7 @@
           { "regex": "(?s)[A-Za-z_][A-Za-z0-9_:]*\\s*\\{.*\\}\\s*\\|\\s*[A-Za-z_][A-Za-z0-9_:]*\\s*\\{" }
         ] }
       ] } } },
-      "violation": { "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Clippy unnested_or_patterns: unnested or-patterns" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::unnested_or_patterns", "clippy::pedantic", "warnings"] } }, "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Clippy unnested_or_patterns: unnested or-patterns" }
     }
   ]
 }

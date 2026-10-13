@@ -11,14 +11,14 @@
       "kind": "string_literal",
       "regex": "(?s)(?:^|[^\\\\]|\\\\\\\\)(?P<O>\\\\0[0-7]{1,2})"
     } } },
-    "violation": { "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
   }, {
     "id": "octal-escape-after-first",
       "forbid": { "ast": { "language": "rust", "rule": {
         "kind": "string_literal",
         "regex": "(?s).*?(?:^|[^\\\\]|\\\\\\\\)\\\\0[0-7]{1,2}.*?(?P<O>\\\\0[0-7]{1,2})"
       } } },
-      "violation": { "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
   }
   ]
 }

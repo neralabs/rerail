@@ -9,12 +9,12 @@
     {
       "id": "many-single-char-parameters",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "parameters", "count": { "has": { "kind": "identifier", "regex": "^[A-Za-z]$", "stopBy": "end" }, "min": 5 } } } },
-      "violation": { "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::many_single_char_names", "clippy::pedantic", "warnings"] } }, "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
     },
     {
       "id": "many-single-char-tuple-pattern",
       "forbid": { "ast": { "language": "rust", "rule": { "kind": "tuple_pattern", "count": { "has": { "kind": "identifier", "regex": "^[A-Za-z]$", "stopBy": "end" }, "min": 5 } } } },
-      "violation": { "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::many_single_char_names", "clippy::pedantic", "warnings"] } }, "anchor": "witness.span", "code": "many_single_char_names", "message": "Clippy many_single_char_names: more than four single-character names in scope" }
     }
   ]
 }
