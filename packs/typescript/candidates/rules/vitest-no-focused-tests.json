@@ -43,39 +43,67 @@
               "binding": {
                 "site": {
                   "kind": "variable_declarator",
-                  "has": {
-                    "field": "name",
-                    "kind": "identifier"
-                  },
                   "all": [
                     {
                       "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
                         "field": "value",
-                        "kind": "call_expression",
-                        "has": {
-                          "field": "function",
-                          "kind": "member_expression",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "property",
-                                "regex": "^extend$"
-                              }
-                            },
-                            {
-                              "has": {
-                                "field": "object",
-                                "matches": "vitest-focusable-test-root"
-                              }
-                            }
-                          ]
-                        }
+                        "matches": "vitest-focusable-test-extend-call"
                       }
                     }
                   ]
                 }
               }
             }
+          },
+          "vitest-focusable-test-extend-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-focusable-test-extend-member"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-focusable-test-extend-call"
+                }
+              }
+            ]
+          },
+          "vitest-focusable-test-extend-member": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-focusable-test-root"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-focusable-test-extend-member"
+                }
+              }
+            ]
           },
           "vitest-focusable-test-root": {
             "any": [
@@ -93,6 +121,12 @@
                 "kind": "call_expression",
                 "has": {
                   "field": "function",
+                  "matches": "vitest-focusable-test-root"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
                   "matches": "vitest-focusable-test-root"
                 }
               }
@@ -120,7 +154,7 @@
                             },
                             "has": {
                               "field": "source",
-                              "regex": "^[\"']vitest[\"']$"
+                              "matches": "vitest-source"
                             }
                           }
                         }
@@ -142,19 +176,7 @@
                                   "stopBy": "end",
                                   "has": {
                                     "field": "value",
-                                    "any": [
-                                      {
-                                        "kind": "call_expression",
-                                        "regex": "^require\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                      },
-                                      {
-                                        "kind": "await_expression",
-                                        "has": {
-                                          "kind": "call_expression",
-                                          "regex": "^import\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                        }
-                                      }
-                                    ]
+                                    "matches": "vitest-module"
                                   }
                                 }
                               }
@@ -175,19 +197,7 @@
                                     "stopBy": "end",
                                     "has": {
                                       "field": "value",
-                                      "any": [
-                                        {
-                                          "kind": "call_expression",
-                                          "regex": "^require\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                        },
-                                        {
-                                          "kind": "await_expression",
-                                          "has": {
-                                            "kind": "call_expression",
-                                            "regex": "^import\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                          }
-                                        }
-                                      ]
+                                      "matches": "vitest-module"
                                     }
                                   }
                                 }
@@ -236,7 +246,7 @@
                             },
                             "has": {
                               "field": "source",
-                              "regex": "^[\"']vitest[\"']$"
+                              "matches": "vitest-source"
                             }
                           }
                         }
@@ -258,19 +268,7 @@
                                   "stopBy": "end",
                                   "has": {
                                     "field": "value",
-                                    "any": [
-                                      {
-                                        "kind": "call_expression",
-                                        "regex": "^require\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                      },
-                                      {
-                                        "kind": "await_expression",
-                                        "has": {
-                                          "kind": "call_expression",
-                                          "regex": "^import\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                        }
-                                      }
-                                    ]
+                                    "matches": "vitest-module"
                                   }
                                 }
                               }
@@ -291,19 +289,7 @@
                                     "stopBy": "end",
                                     "has": {
                                       "field": "value",
-                                      "any": [
-                                        {
-                                          "kind": "call_expression",
-                                          "regex": "^require\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                        },
-                                        {
-                                          "kind": "await_expression",
-                                          "has": {
-                                            "kind": "call_expression",
-                                            "regex": "^import\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$"
-                                          }
-                                        }
-                                      ]
+                                      "matches": "vitest-module"
                                     }
                                   }
                                 }
@@ -343,8 +329,87 @@
                   "field": "function",
                   "matches": "vitest-focusable-chain"
                 }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-focusable-chain"
+                }
               }
             ]
+          },
+          "vitest-context-pair": {
+            "kind": "pair_pattern",
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "any": [
+                  {
+                    "kind": "pair_pattern"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  },
+                  {
+                    "kind": "object_assignment_pattern"
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "kind": "object_pattern",
+              "inside": {
+                "any": [
+                  {
+                    "kind": "required_parameter"
+                  },
+                  {
+                    "kind": "optional_parameter"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "any": [
+                      {
+                        "kind": "required_parameter"
+                      },
+                      {
+                        "kind": "optional_parameter"
+                      }
+                    ],
+                    "has": {
+                      "field": "pattern",
+                      "kind": "object_pattern"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "has": {
+              "field": "key",
+              "kind": "property_identifier",
+              "pattern": "$CONTEXT_NAME"
+            }
           },
           "vitest-test-callback": {
             "any": [
@@ -442,39 +507,30 @@
                   "binding": {
                     "form": "parameter",
                     "occurrence": {
-                      "kind": "shorthand_property_identifier_pattern",
                       "any": [
                         {
-                          "nthChild": {
-                            "position": 1,
-                            "ofRule": {
-                              "any": [
-                                {
-                                  "kind": "pair_pattern"
-                                },
-                                {
-                                  "kind": "shorthand_property_identifier_pattern"
-                                },
-                                {
-                                  "kind": "object_assignment_pattern"
-                                }
-                              ]
-                            }
-                          },
-                          "inside": {
-                            "kind": "object_pattern",
-                            "inside": {
-                              "any": [
-                                {
-                                  "kind": "required_parameter"
-                                },
-                                {
-                                  "kind": "optional_parameter"
-                                }
-                              ],
+                          "kind": "shorthand_property_identifier_pattern",
+                          "any": [
+                            {
                               "nthChild": {
                                 "position": 1,
                                 "ofRule": {
+                                  "any": [
+                                    {
+                                      "kind": "pair_pattern"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    },
+                                    {
+                                      "kind": "object_assignment_pattern"
+                                    }
+                                  ]
+                                }
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
                                   "any": [
                                     {
                                       "kind": "required_parameter"
@@ -483,68 +539,68 @@
                                       "kind": "optional_parameter"
                                     }
                                   ],
-                                  "has": {
-                                    "field": "pattern",
-                                    "kind": "object_pattern"
-                                  }
-                                }
-                              },
-                              "inside": {
-                                "kind": "formal_parameters",
-                                "inside": {
-                                  "any": [
-                                    {
-                                      "kind": "arrow_function"
-                                    },
-                                    {
-                                      "kind": "function_expression"
-                                    },
-                                    {
-                                      "kind": "generator_function"
-                                    },
-                                    {
-                                      "kind": "method_definition"
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "any": [
+                                        {
+                                          "kind": "required_parameter"
+                                        },
+                                        {
+                                          "kind": "optional_parameter"
+                                        }
+                                      ],
+                                      "has": {
+                                        "field": "pattern",
+                                        "kind": "object_pattern"
+                                      }
                                     }
-                                  ]
-                                }
-                              }
-                            }
-                          }
-                        },
-                        {
-                          "inside": {
-                            "kind": "object_assignment_pattern",
-                            "field": "left",
-                            "nthChild": {
-                              "position": 1,
-                              "ofRule": {
-                                "any": [
-                                  {
-                                    "kind": "pair_pattern"
                                   },
-                                  {
-                                    "kind": "shorthand_property_identifier_pattern"
-                                  },
-                                  {
-                                    "kind": "object_assignment_pattern"
+                                  "inside": {
+                                    "kind": "formal_parameters",
+                                    "inside": {
+                                      "any": [
+                                        {
+                                          "kind": "arrow_function"
+                                        },
+                                        {
+                                          "kind": "function_expression"
+                                        },
+                                        {
+                                          "kind": "generator_function"
+                                        },
+                                        {
+                                          "kind": "method_definition"
+                                        }
+                                      ]
+                                    }
                                   }
-                                ]
+                                }
                               }
                             },
-                            "inside": {
-                              "kind": "object_pattern",
+                            {
                               "inside": {
-                                "any": [
-                                  {
-                                    "kind": "required_parameter"
-                                  },
-                                  {
-                                    "kind": "optional_parameter"
-                                  }
-                                ],
+                                "kind": "object_assignment_pattern",
+                                "field": "left",
                                 "nthChild": {
                                   "position": 1,
                                   "ofRule": {
+                                    "any": [
+                                      {
+                                        "kind": "pair_pattern"
+                                      },
+                                      {
+                                        "kind": "shorthand_property_identifier_pattern"
+                                      },
+                                      {
+                                        "kind": "object_assignment_pattern"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
                                     "any": [
                                       {
                                         "kind": "required_parameter"
@@ -553,38 +609,161 @@
                                         "kind": "optional_parameter"
                                       }
                                     ],
-                                    "has": {
-                                      "field": "pattern",
-                                      "kind": "object_pattern"
-                                    }
-                                  }
-                                },
-                                "inside": {
-                                  "kind": "formal_parameters",
-                                  "inside": {
-                                    "any": [
-                                      {
-                                        "kind": "arrow_function"
-                                      },
-                                      {
-                                        "kind": "function_expression"
-                                      },
-                                      {
-                                        "kind": "generator_function"
-                                      },
-                                      {
-                                        "kind": "method_definition"
+                                    "nthChild": {
+                                      "position": 1,
+                                      "ofRule": {
+                                        "any": [
+                                          {
+                                            "kind": "required_parameter"
+                                          },
+                                          {
+                                            "kind": "optional_parameter"
+                                          }
+                                        ],
+                                        "has": {
+                                          "field": "pattern",
+                                          "kind": "object_pattern"
+                                        }
                                       }
-                                    ]
+                                    },
+                                    "inside": {
+                                      "kind": "formal_parameters",
+                                      "inside": {
+                                        "any": [
+                                          {
+                                            "kind": "arrow_function"
+                                          },
+                                          {
+                                            "kind": "function_expression"
+                                          },
+                                          {
+                                            "kind": "generator_function"
+                                          },
+                                          {
+                                            "kind": "method_definition"
+                                          }
+                                        ]
+                                      }
+                                    }
                                   }
                                 }
                               }
                             }
-                          }
+                          ]
+                        },
+                        {
+                          "kind": "identifier",
+                          "pattern": "$CONTEXT_NAME",
+                          "any": [
+                            {
+                              "inside": {
+                                "field": "value",
+                                "matches": "vitest-context-pair"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "assignment_pattern",
+                                "field": "left",
+                                "inside": {
+                                  "field": "value",
+                                  "matches": "vitest-context-pair"
+                                }
+                              }
+                            }
+                          ]
                         }
                       ]
                     }
                   }
+                }
+              }
+            ]
+          },
+          "vitest-source": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string"
+              }
+            ],
+            "value": {
+              "eq": "vitest"
+            }
+          },
+          "vitest-module-argument": {
+            "kind": "arguments",
+            "has": {
+              "nthChild": {
+                "position": 1,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "matches": "vitest-source"
+            }
+          },
+          "vitest-module": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^require$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-module-argument"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "await_expression",
+                "has": {
+                  "matches": "vitest-dynamic-import"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-module"
+                }
+              }
+            ]
+          },
+          "vitest-dynamic-import": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-module-argument"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-dynamic-import"
                 }
               }
             ]

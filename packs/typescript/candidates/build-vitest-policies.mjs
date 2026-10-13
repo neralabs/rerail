@@ -63,22 +63,39 @@ const FUNCTION_KINDS = [{ kind: "arrow_function" }, { kind: "function_expression
 const PARAMETER = { any: [{ kind: "required_parameter" }, { kind: "optional_parameter" }] };
 
 /**
+ * Module-source utilities, read as upstream's ESTree resolver reads them: the argument that names the module is matched
+ * by its string value (quotes, template literals without substitutions and escapes as JavaScript reads them), comments
+ * and trailing commas aside, and parentheses around an expression are transparent (ESTree keeps none).
+ */
+const MODULE_SOURCE = {
+  "vitest-source": { any: [{ kind: "string" }, { kind: "template_string" }], value: { eq: "vitest" } },
+  "vitest-module-argument": { kind: "arguments", has: { nthChild: { position: 1, ofRule: { not: { kind: "comment" } } }, matches: "vitest-source" } },
+  // `require('vitest')` or `await import('vitest')` (findImportSourceNode); `await require(...)` is neither.
+  "vitest-module": {
+    any: [
+      {
+        kind: "call_expression",
+        all: [{ has: { field: "function", kind: "identifier", regex: "^require$" } }, { has: { field: "arguments", matches: "vitest-module-argument" } }],
+      },
+      { kind: "await_expression", has: { matches: "vitest-dynamic-import" } },
+      { kind: "parenthesized_expression", has: { matches: "vitest-module" } },
+    ],
+  },
+  "vitest-dynamic-import": {
+    any: [
+      { kind: "call_expression", all: [{ has: { field: "function", kind: "import" } }, { has: { field: "arguments", matches: "vitest-module-argument" } }] },
+      { kind: "parenthesized_expression", has: { matches: "vitest-dynamic-import" } },
+    ],
+  },
+};
+
+/**
  * An object pattern in the name of a declarator whose value is `require('vitest')` or `await import('vitest')`, at any
  * depth (`{ a: { it } }`), as upstream reads the declarator's initializer whatever the pattern.
  */
 const VITEST_DESTRUCTURING = {
   kind: "object_pattern",
-  inside: {
-    kind: "variable_declarator",
-    stopBy: "end",
-    has: {
-      field: "value",
-      any: [
-        { kind: "call_expression", regex: "^require\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$" },
-        { kind: "await_expression", has: { kind: "call_expression", regex: "^import\\s*\\(\\s*[\"'`]vitest[\"'`]\\s*\\)$" } },
-      ],
-    },
-  },
+  inside: { kind: "variable_declarator", stopBy: "end", has: { field: "value", matches: "vitest-module" } },
 };
 
 /**
@@ -98,7 +115,7 @@ function vitestBinding(names) {
                 kind: "import_statement",
                 stopBy: "end",
                 not: { regex: "^import\\s+type\\b" },
-                has: { field: "source", regex: "^[\"']vitest[\"']$" },
+                has: { field: "source", matches: "vitest-source" },
               },
             },
           },
@@ -149,36 +166,39 @@ function extendUtilities(label, cases) {
         binding: {
           site: {
             kind: "variable_declarator",
-            has: { field: "name", kind: "identifier" },
-            all: [
-              {
-                has: {
-                  field: "value",
-                  kind: "call_expression",
-                  has: {
-                    field: "function",
-                    kind: "member_expression",
-                    all: [{ has: { field: "property", regex: "^extend$" } }, { has: { field: "object", matches: `vitest-${label}-root` } }],
-                  },
-                },
-              },
-            ],
+            all: [{ has: { field: "name", kind: "identifier" } }, { has: { field: "value", matches: `vitest-${label}-extend-call` } }],
           },
         },
       },
+    },
+    [`vitest-${label}-extend-call`]: {
+      any: [
+        { kind: "call_expression", has: { field: "function", matches: `vitest-${label}-extend-member` } },
+        { kind: "parenthesized_expression", has: { matches: `vitest-${label}-extend-call` } },
+      ],
+    },
+    [`vitest-${label}-extend-member`]: {
+      any: [
+        {
+          kind: "member_expression",
+          all: [{ has: { field: "property", regex: "^extend$" } }, { has: { field: "object", matches: `vitest-${label}-root` } }],
+        },
+        { kind: "parenthesized_expression", has: { matches: `vitest-${label}-extend-member` } },
+      ],
     },
     [`vitest-${label}-root`]: chain(`vitest-${label}-root`, `vitest-${label}-bound`),
     [`vitest-${label}-bound`]: { kind: "identifier", any: [vitestBinding(cases), { matches: `vitest-${label}-extended` }] },
   };
 }
 
-/** A node whose chain of member objects and call functions starts at a node `head` matches. */
+/** A node whose chain of member objects and call functions, through parentheses, starts at a node `head` matches. */
 function chain(self, head) {
   return {
     any: [
       { matches: head },
       { kind: "member_expression", has: { field: "object", matches: self } },
       { kind: "call_expression", has: { field: "function", matches: self } },
+      { kind: "parenthesized_expression", has: { matches: self } },
     ],
   };
 }
@@ -196,8 +216,24 @@ const FIRST_CONTEXT_PROPERTY = {
   },
 };
 
+/**
+ * The first property of a function's first object-pattern parameter, whose key is the name: `{ it }`, `{ it = x }`,
+ * `{ it: it }` or `{ it: it = x }` (upstream compares that property's identifier key with the name).
+ */
+const CONTEXT_PROPERTY_NAME = {
+  any: [
+    { kind: "shorthand_property_identifier_pattern", any: [FIRST_CONTEXT_PROPERTY, { inside: { kind: "object_assignment_pattern", field: "left", ...FIRST_CONTEXT_PROPERTY } }] },
+    {
+      kind: "identifier",
+      pattern: "$CONTEXT_NAME",
+      any: [{ inside: { field: "value", matches: "vitest-context-pair" } }, { inside: { kind: "assignment_pattern", field: "left", inside: { field: "value", matches: "vitest-context-pair" } } }],
+    },
+  ],
+};
+
 /** Test-context names (upstream's `testContext`), which upstream classifies by their own name. */
 const TEST_CONTEXT = {
+  "vitest-context-pair": { kind: "pair_pattern", ...FIRST_CONTEXT_PROPERTY, has: { field: "key", kind: "property_identifier", pattern: "$CONTEXT_NAME" } },
   "vitest-test-callback": {
     any: FUNCTION_KINDS,
     all: [
@@ -225,17 +261,7 @@ const TEST_CONTEXT = {
           },
         },
       },
-      {
-        resolves: {
-          binding: {
-            form: "parameter",
-            occurrence: {
-              kind: "shorthand_property_identifier_pattern",
-              any: [FIRST_CONTEXT_PROPERTY, { inside: { kind: "object_assignment_pattern", field: "left", ...FIRST_CONTEXT_PROPERTY } }],
-            },
-          },
-        },
-      },
+      { resolves: { binding: { form: "parameter", occurrence: CONTEXT_PROPERTY_NAME } } },
     ],
   },
 };
@@ -244,7 +270,7 @@ const TEST_CONTEXT = {
 function define(...labels) {
   const utils = {};
   for (const label of labels) Object.assign(utils, functionUtilities(label, FUNCTIONS[label]));
-  Object.assign(utils, TEST_CONTEXT);
+  Object.assign(utils, TEST_CONTEXT, MODULE_SOURCE);
   return { id: "vitest-functions", define: { language: "typescript", utils } };
 }
 

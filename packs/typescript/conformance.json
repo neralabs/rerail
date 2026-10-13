@@ -636,6 +636,7 @@
       "policy": "candidates/rules/vitest-expect-expect.json",
       "capabilities": [
         "syntax",
+        "value",
         "scope",
         "suppression"
       ],
@@ -650,6 +651,7 @@
       "policy": "candidates/rules/vitest-no-disabled-tests.json",
       "capabilities": [
         "syntax",
+        "value",
         "scope",
         "suppression"
       ],
@@ -664,6 +666,7 @@
       "policy": "candidates/rules/vitest-no-focused-tests.json",
       "capabilities": [
         "syntax",
+        "value",
         "scope",
         "suppression"
       ],

@@ -269,6 +269,93 @@ it.only('focused', () => {});
 `,
     reports: { "expect-expect": 2, "no-focused-tests": 1 },
   },
+  // Syntax upstream's ESTree resolver reads through (review of NER-1869): comments, trailing commas, template literals
+  // and escapes in the module name; parentheses around an initializer; a test context named by an explicit property.
+  {
+    rule: "no-focused-tests",
+    name: "vitest-require-comment",
+    code: `const { it } = require(/* the runner */ 'vitest',);
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-dynamic-import-trailing-comma",
+    code: `const { it } = await import('vitest',);
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-template",
+    code: `const { test } = require(\`vitest\`);
+
+test.skip('skipped', () => {});
+`,
+    reports: { "no-disabled-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-import-escaped",
+    code: `import { it } from 'vit\\u0065st';
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-require-parenthesized",
+    code: `const { it } = (require('vitest'));
+
+it.only('focused', () => {});
+`,
+    reports: { "expect-expect": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "vitest-extend-parenthesized",
+    code: `import { test as base } from 'vitest';
+
+const it = (base.extend({}));
+
+it.only('focused', () => {});
+it.skip('skipped', () => {});
+it('asserts nothing', () => {});
+`,
+    reports: { "expect-expect": 2, "no-disabled-tests": 1, "no-focused-tests": 1 },
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context-explicit-property",
+    code: `test('suite', ({ it: it }) => {
+  it.only('focused', () => {});
+});
+`,
+    reports: { "expect-expect": 2, "no-focused-tests": 1 },
+  },
+  // Not Vitest's: a submodule of vitest, and a context property whose key is not the name.
+  {
+    rule: "no-focused-tests",
+    name: "vitest-submodule",
+    code: `const { it } = require('vitest/config');
+
+it.only('focused', () => {});
+`,
+  },
+  {
+    rule: "no-focused-tests",
+    name: "test-context-renamed-property",
+    code: `test('suite', ({ test: it }) => {
+  it.only('focused', () => {});
+});
+`,
+    reports: { "expect-expect": 1 },
+  },
 ];
 
 function parseArguments(argv) {
