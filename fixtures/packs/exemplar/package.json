@@ -5,7 +5,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neralabs/rerail.git",
-    "directory": "packs/vue"
+    "directory": "packs/exemplar"
   },
   "files": [
     "pack.json",
