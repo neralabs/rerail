@@ -50,9 +50,14 @@ static bool is_space(int32_t c) {
     }
 }
 
-// An ECMAScript LineTerminator as automatic semicolon insertion reads one: `\n`, U+2028 or U+2029 (`\r` comes
-// before a `\n` in CRLF).
-static bool is_line_terminator(int32_t c) { return c == '\n' || c == 0x2028 || c == 0x2029; }
+// An ECMAScript LineTerminator: `\n`, `\r`, U+2028 or U+2029 (CRLF reads as one, the `\n` skipped as whitespace).
+static bool is_line_terminator(int32_t c) { return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029; }
+
+// The whitespace JSX text may be laid out with, which is no text before or after a line break: ASCII whitespace only,
+// so a U+00A0 or U+3000 stays text whatever the C library's locale says.
+static bool is_jsx_layout_space(int32_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
 
 static bool scan_template_chars(TSLexer *lexer) {
     lexer->result_symbol = TEMPLATE_CHARS;
@@ -293,8 +298,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
 
 // The rest of an HTML comment's line, once its `<!--` or `-->` is read.
 static bool scan_html_comment_rest(TSLexer *lexer) {
-    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-           lexer->lookahead != 0x2029) {
+    while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
         advance(lexer);
     }
 
@@ -385,7 +389,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
             at_newline = false;
             continue;
         }
-        bool is_wspace = iswspace(lexer->lookahead);
+        bool is_wspace = is_jsx_layout_space(lexer->lookahead);
         if (lexer->lookahead == '\n') {
             at_newline = true;
         } else {

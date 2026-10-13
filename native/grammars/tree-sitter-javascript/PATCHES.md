@@ -701,7 +701,7 @@ call of the yield expression.
 Node kinds and field names are unchanged. A `yield` that is a name is an `identifier`, as `var yield` already gave.
 The generated parser has 20 more states (2,175). Over the 11,540 files above, no tree changes from Patch 9's.
 
-## Patch 11: the scanner reads every ECMAScript whitespace
+## Patch 11: the scanner reads every ECMAScript whitespace and line terminator
 
 Upstream issue: none open (tree-sitter/tree-sitter-javascript#135, closed, was U+3000 read as an identifier). Present
 at tag `v0.25.0` and at HEAD.
@@ -712,12 +712,14 @@ the engine runs in is true only for ASCII whitespace. So where the scanner decid
 ternary `?` or an HTML comment, a U+3000, U+00A0, U+FEFF or other Unicode space ends its look: an automatic semicolon
 is refused before it. `` `　template`　 `` (an ideographic space after the closing backtick, ESLint fixtures
 `no-irregular-whitespace/192` and `193`) is a parse error with a missing `;`. The result also depends on the C
-library's locale.
+library's locale. The scanner also ends a line only at LF, U+2028 and U+2029, not at a lone CR, so `a = 1\rb = 2`
+and `a = 1 // c\rb = 2` are parse errors, though the grammar's `//` comment ends at the CR. JSX text's layout test
+uses `iswspace` too, so `<a>\n\u00A0</a>` holds a `jsx_text` in the C locale and none in a UTF-8 one.
 
 ```diff
 --- a/src/scanner.c
 +++ b/src/scanner.c
-@@ -34,6 +34,33 @@ static inline void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+@@ -34,6 +34,40 @@ static inline void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
  
  static inline void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
  
@@ -748,10 +750,17 @@ library's locale.
 +    }
 +}
 +
++// An ECMAScript LineTerminator: LF, CR, U+2028 and U+2029, as the grammar's `//` comment ends at.
++static bool is_line_terminator(int32_t c) { return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029; }
++
++// Whitespace JSX text may hold between lines, as `iswspace` reads it in the C locale: ASCII alone, so a JSX text's
++// range does not depend on the locale (U+00A0 or U+3000 on a line of its own stays text, as React renders it).
++static bool is_jsx_space(int32_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
++
  static bool scan_template_chars(TSLexer *lexer) {
      lexer->result_symbol = TEMPLATE_CHARS;
      for (bool has_content = false;; has_content = true) {
-@@ -70,7 +97,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+@@ -70,7 +104,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
      bool saw_block_newline = false;
  
      for (;;) {
@@ -760,7 +769,31 @@ library's locale.
              skip(lexer);
          }
  
-@@ -150,7 +177,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+@@ -79,8 +113,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+ 
+             if (lexer->lookahead == '/') {
+                 skip(lexer);
+-                while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
+-                       lexer->lookahead != 0x2029) {
++                while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
+                     skip(lexer);
+                 }
+                 *scanned_comment = true;
+@@ -99,7 +132,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+ 
+                             break;
+                         }
+-                    } else if (lexer->lookahead == '\n' || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
++                    } else if (is_line_terminator(lexer->lookahead)) {
+                         saw_block_newline = true;
+                         skip(lexer);
+                     } else {
+@@ -146,11 +179,11 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             return true;
+         }
+ 
+-        if (lexer->lookahead == '\n' || lexer->lookahead == 0x2028 || lexer->lookahead == 0x2029) {
++        if (is_line_terminator(lexer->lookahead)) {
              break;
          }
  
@@ -769,7 +802,7 @@ library's locale.
              return false;
          }
  
-@@ -249,7 +276,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+@@ -249,7 +282,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
  
  static bool scan_ternary_qmark(TSLexer *lexer) {
      for (;;) {
@@ -778,7 +811,7 @@ library's locale.
              break;
          }
          skip(lexer);
-@@ -278,7 +305,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+@@ -278,7 +311,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
  }
  
  static bool scan_html_comment(TSLexer *lexer) {
@@ -787,11 +820,25 @@ library's locale.
          skip(lexer);
      }
  
+@@ -367,7 +400,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
+             at_newline = false;
+             continue;
+         }
+-        bool is_wspace = iswspace(lexer->lookahead);
++        bool is_wspace = is_jsx_space(lexer->lookahead);
+         if (lexer->lookahead == '\n') {
+             at_newline = true;
+         } else {
 ```
 
 `is_space` is the extras' set, spelled out: ASCII whitespace, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+200B,
-U+2028, U+2029, U+202F, U+205F, U+2060, U+3000 and U+FEFF. JSX text's own whitespace test is left as it is, so `jsx_text`
-nodes keep their ranges. Node kinds, field names and the grammar are unchanged.
+U+2028, U+2029, U+202F, U+205F, U+2060, U+3000 and U+FEFF. `is_line_terminator` is LF, CR, U+2028 and U+2029, where
+the scanner ends a line for an automatic semicolon, a `//` comment, a block comment's line break and an HTML comment's
+line. JSX text keeps its layout rule, with its whitespace spelled out as the C locale's `iswspace` reads it (ASCII
+alone), so a `jsx_text`'s range no longer depends on the locale and is the one the engine already built: a U+00A0 or
+U+3000 on a line of its own stays text, as React renders it. Node kinds, field names and the grammar are unchanged.
+A line break inside a block comment still inserts no semicolon where a binary operator could follow
+(`a = 1 /* c⏎ */ b = 2` is a parse error, as upstream's scanner reads it whatever the line terminator).
 
 ## Patch 12: a JSX name may be a reserved word or start with `this`
 
@@ -799,7 +846,7 @@ Upstream issue: none open. Present at tag `v0.25.0` and at HEAD. tree-sitter 0.2
 `reserved: { global: … }`, added with 0.25.0) bar every reserved word from an `identifier`, JSX names included.
 
 Why: a JSX name is any word: Babel and TypeScript read `<a class="x" for="y" default="z" />`, `<a.default />` and
-`<class />`, and `<this.props.tag />` names a component through `this`. Upstream reads `class`, `for` or `default`
+`<class />`, `<this.props.tag />` names a component through `this`, and `<this />` is an element named `this`. Upstream reads `class`, `for` or `default`
 there as the keyword, a parse error that takes the element with it. vscode's colorize fixture `test.jsx` has
 `default="World"`. `this` is not a JSX object either, so eslint-plugin-react's `jsx-no-undef/valid-006.jsx`
 (`<this.props.tag />`) fails too.
@@ -807,7 +854,7 @@ there as the keyword, a parse error that takes the element with it. vscode's col
 ```diff
 --- a/grammar.js
 +++ b/grammar.js
-@@ -714,15 +714,18 @@ module.exports = grammar({
+@@ -714,21 +714,26 @@ module.exports = grammar({
  
      jsx_identifier: _ => /[a-zA-Z_$][a-zA-Z\d_$]*-[a-zA-Z\d_$\-]*/,
  
@@ -829,23 +876,32 @@ there as the keyword, a parse error that takes the element with it. vscode's col
      )),
  
      jsx_namespace_name: $ => seq($._jsx_identifier, ':', $._jsx_identifier),
+ 
+     _jsx_element_name: $ => choice(
+       $._jsx_identifier,
++      // `<this />` is an intrinsic element named `this`, as Babel and TypeScript read it.
++      $.this,
+       alias($.nested_identifier, $.member_expression),
+       $.jsx_namespace_name,
+     ),
 ```
 
 Each identifier of a JSX name is read under the empty `properties` reserved set, as a member expression's property
-already is. `this` may be the object of a JSX member expression. `<this />` alone stays a parse error: there, the
-keyword `this` is read and no element name takes it.
+already is. `this` may be an element's name or the object of a JSX member expression.
 
 Node kinds and field names are unchanged. A reserved word in a JSX name is an `identifier` (a `property_identifier` as
 an attribute name or a member's property), as any other word is. `this` there is a `this` node, as it is in an
-expression. The generated parser has 1 more state.
+expression. The generated parser has the same number of states.
 
 ## Patch 13: a comment between a JSX closing tag's `<` and `/`
 
 Upstream issue: none open. Present at tag `v0.25.0` and at HEAD.
 
-Why: Babel and TypeScript read `<` and `/` of a closing tag as two tokens, so a comment may stand between them:
+Why: Babel and espree read `<` and `/` of a closing tag as two tokens, so a comment may stand between them:
 `<></* c *//>` (eslint-plugin-react's `jsx-no-comment-textnodes/valid-012.jsx`). Upstream's `</` is one token, and
 the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and the element is a parse error.
+TypeScript 5.9 does not allow this (TS1003, "Identifier expected"), but ESLint parses `.js` and `.jsx` with espree, and
+the fixture is valid there.
 
 ```diff
 --- a/grammar.js
@@ -859,13 +915,13 @@ the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and th
    ],
  
    extras: $ => [
-@@ -737,7 +739,9 @@ module.exports = grammar({
+@@ -739,7 +741,9 @@ module.exports = grammar({
      ),
  
      jsx_closing_element: $ => seq(
 -      '</',
 +      // The lexer reads `</` as one token, so a comment between the `<` and the `/` (`<></* c *//>`), which
-+      // Babel and TypeScript allow, needs the scanner: it reads that `<` alone, and the comment is an extra.
++      // Babel and espree allow, needs the scanner: it reads that `<` alone, and the comment is an extra.
 +      choice('</', seq(alias($._jsx_closing_tag_lt, '<'), '/')),
        optional(field('name', $._jsx_element_name)),
        '>',
@@ -881,14 +937,13 @@ the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and th
  };
  
  void *tree_sitter_javascript_external_scanner_create() { return NULL; }
-@@ -304,6 +306,19 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+@@ -310,6 +312,18 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
      return false;
  }
  
 +// The rest of an HTML comment's line, once its `<!--` or `-->` is read.
 +static bool scan_html_comment_rest(TSLexer *lexer) {
-+    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-+           lexer->lookahead != 0x2029) {
++    while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
 +        advance(lexer);
 +    }
 +
@@ -901,7 +956,7 @@ the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and th
  static bool scan_html_comment(TSLexer *lexer) {
      while (is_space(lexer->lookahead)) {
          skip(lexer);
-@@ -330,15 +345,7 @@ static bool scan_html_comment(TSLexer *lexer) {
+@@ -336,15 +350,7 @@ static bool scan_html_comment(TSLexer *lexer) {
          return false;
      }
  
@@ -918,7 +973,7 @@ the lexer prefers it to `<` at `</* c */`, so the comment's `/*` is split and th
  }
  
  // After an `&`: is what follows the rest of an HTML character reference
-@@ -437,6 +444,29 @@ bool tree_sitter_javascript_external_scanner_scan(void *payload, TSLexer *lexer,
+@@ -443,6 +449,29 @@ bool tree_sitter_javascript_external_scanner_scan(void *payload, TSLexer *lexer,
          return true;
      }
  
@@ -956,7 +1011,7 @@ extra and the `/` its own token. The scanner already looked at a `<` there for a
 still reads. A comment between the `/` and the name (`</ /* c */ a>`) already parsed.
 
 Node kinds and field names are unchanged. A closing tag with such a comment has the anonymous children `<` and `/`
-around a `comment`, where any other has `</`. The generated parser has 32 more states (2,208).
+around a `comment`, where any other has `</`. The generated parser has 32 more states (2,207).
 
 ## Corpus and tree comparison
 
@@ -970,6 +1025,6 @@ Patch 4 (a `{` at statement start or as an arrow body). 5 change by Patch 9 (`ar
 `with-custom-babel-config/pages/index.js` (a Babel `do` expression), which has a syntax error before and after.
 espree 11.2.0 reads every changed case as the patched grammar does. Patches 10 to 13 change no tree but the 5 files
 they fix: `no-irregular-whitespace/192` and `193`, `test.jsx`, `jsx-no-undef/valid-006` and
-`jsx-no-comment-textnodes/valid-012`. That comparison parses with tree-sitter 0.27's runtime, the engine's; the
-Patch 11 failures do not show under py-tree-sitter 0.25's. The files that still fail to parse are invalid JavaScript:
-Flow annotations, a Babel `do` expression, and truncated or deliberately broken fixtures.
+`jsx-no-comment-textnodes/valid-012`. Both comparisons parse in the C locale, as the engine does (Python sets a
+UTF-8 locale, under which the scanner's old `iswspace` hid Patch 11's failures). The files that still fail to parse
+are invalid JavaScript: Flow annotations, a Babel `do` expression, and truncated or deliberately broken fixtures.

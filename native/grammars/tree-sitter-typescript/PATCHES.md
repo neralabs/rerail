@@ -1002,69 +1002,102 @@ error. vscode@729f257 writes them in 11 files, among them `claudeSubagentSignals
          $.predefined_type,
          $._type_identifier,
          $.nested_type_identifier,
-@@ -955,6 +957,7 @@ module.exports = function defineGrammar(dialect) {
+@@ -955,6 +957,8 @@ module.exports = function defineGrammar(dialect) {
          field('name', choice(
            $._type_identifier,
            $.nested_type_identifier,
 +          alias($._type_query_member_expression_in_type_annotation, $.member_expression),
++          alias($._type_query_call_expression_in_type_annotation, $.call_expression),
          )),
          field('type_arguments', $.type_arguments),
        )),
 ```
 
 The two import-type alternatives move from `type` to `primary_type` with the same precedence, and a `generic_type`'s
-name may be an import type's `member_expression`. `typeof import('x')`, `keyof import('x').T`, unions of import types
-and `import('x')` alone read as before.
+name may be an import type, qualified or not (`import('x').I<T>`, `import('x')<T>`). `typeof import('x')`,
+`keyof import('x').T`, unions of import types and `import('x')` alone read as before. Type arguments after a
+`typeof import('x')` (`typeof import('x')<T>`, which TypeScript also reads) stay a parse error, as before: they belong
+to the type query, which this patch leaves alone.
 
 Node kinds and field names are unchanged. An import type is the `member_expression` or `call_expression` it was; it
 may now be the element of an `array_type`, the object of a `lookup_type` or the `name` of a `generic_type`. Each
-generated parser has 8 more states.
+generated parser has 15 more states (14 for TSX).
 
 ## Patch 16: a tuple member may be named by a type keyword
 
 Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD.
 
-Why: TypeScript names a tuple member by any identifier or keyword: `[spoken: string, symbol: string][]`,
-`[string: number]`, `[any?: boolean]`. Upstream's tuple member name is an `identifier`, and in a type the lexer reads
-`symbol`, `string`, `any` and the other type keywords as keywords, so each is a parse error (vscode@729f257's
+Why: TypeScript names a tuple member by an identifier or any keyword but a reserved word such as `class` or `if`:
+`[spoken: string, symbol: string][]`, `[string: number]`, `[any?: boolean]`, `[void: number]`, `[null?: string]`.
+Upstream's tuple member name is an `identifier`, and in a type the lexer reads `symbol`, `string`, `any`, `void`,
+`null`, `typeof` and the other type keywords as keywords, so each is a parse error (vscode@729f257's
 `terminalVoice.ts`: `const symbolMap: [spoken: string, symbol: string][] = []`).
 
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -102,6 +102,8 @@ module.exports = function defineGrammar(dialect) {
+@@ -102,6 +102,10 @@ module.exports = function defineGrammar(dialect) {
        [$.primary_expression, $.pattern, $.predefined_type],
  
        [$.optional_tuple_parameter, $.primary_type],
-+      // `[any?: boolean]` and `[any?]` read alike up to the `?`: GLR keeps both, and the `:` decides.
++      // `[any?: boolean]` and `[any?]`, `[null?: T]` and `[null?]` read alike up to the `?`: GLR keeps both, and the
++      // `:` decides.
 +      [$.optional_tuple_parameter, $.predefined_type],
++      [$.optional_tuple_parameter, $.literal_type],
        [$.rest_pattern, $.primary_type, $.primary_expression],
  
        [$.object, $.object_type],
-@@ -865,13 +867,14 @@ module.exports = function defineGrammar(dialect) {
+@@ -134,6 +138,7 @@ module.exports = function defineGrammar(dialect) {
+       .concat([
+         $._type_identifier,
+         $._jsx_start_opening_element,
++        $._tuple_member_name,
+       ]),
+ 
+     rules: {
+@@ -865,17 +870,28 @@ module.exports = function defineGrammar(dialect) {
          $.infer_type,
        ),
  
-+      // A tuple member may be named by a type keyword, as in TypeScript: `[symbol: string]`, `[any?: boolean]`.
++      // A tuple member may be named by a type keyword, as in TypeScript: `[symbol: string]`, `[any?: boolean]`,
++      // `[void: number]`.
        tuple_parameter: $ => seq(
 -        field('name', choice($.identifier, $.rest_pattern)),
-+        field('name', choice($.identifier, alias($._reserved_identifier, $.identifier), $.rest_pattern)),
++        field('name', choice($._tuple_member_name, $.rest_pattern)),
          field('type', $.type_annotation),
        ),
  
        optional_tuple_parameter: $ => seq(
 -        field('name', $.identifier),
-+        field('name', choice($.identifier, alias($._reserved_identifier, $.identifier))),
++        field('name', $._tuple_member_name),
          '?',
          field('type', $.type_annotation),
        ),
+ 
++      _tuple_member_name: $ => choice(
++        $.identifier,
++        alias(choice(
++          $._reserved_identifier,
++          $.this, $.null, $.undefined, $.true, $.false,
++          'void', 'typeof', 'keyof', 'unique', 'infer', 'import',
++        ), $.identifier),
++      ),
++
+       optional_type: $ => seq($.type, '?'),
+       rest_type: $ => seq('...', $.type),
+ 
 ```
 
 The name accepts the words the grammar already lets name a variable (`_reserved_identifier`), as a parameter's name
-does. `[any?]` stays an `optional_type` and `[string, number]` a tuple of types: the `:` after the word decides.
+does, and the type keywords a type may start with: `void`, `null`, `undefined`, `true`, `false`, `this`, `typeof`,
+`keyof`, `unique`, `infer` and `import`. GLR keeps both readings up to the `?` or `:`: `[any?]`, `[null?]` and
+`[this?]` stay `optional_type`s and `[string, number]` a tuple of types, `[typeof x]`, `[keyof T]`, `[unique symbol]`,
+`[infer U]` and `[import('x').T]` read as before. The literal keywords are named through their rules (`$.null`, …),
+so a `null` type keeps its leaf `null` node. `[class: string]` and `[if: T]`, which TypeScript rejects, read as named
+members, as they did: the lexer reads a reserved word where no keyword is valid as an identifier.
 
 Node kinds and field names are unchanged: the name is an `identifier`, as any other tuple member's is. Each generated
-parser has 11 more states.
+parser has 23 more states.
 
 ## Patch 17: a default export may be an anonymous function signature
 
@@ -1078,7 +1111,7 @@ typescript-eslint fixtures `no-invalid-void-type/031` and `unified-signatures/02
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -467,6 +467,20 @@ module.exports = function defineGrammar(dialect) {
+@@ -470,6 +470,20 @@ module.exports = function defineGrammar(dialect) {
          ),
          seq('export', '=', $.expression, $._semicolon),
          seq('export', 'as', 'namespace', $.identifier, $._semicolon),
@@ -1118,7 +1151,7 @@ keyword at the start of a class member, so a member named `accessor` (`accessor 
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -146,10 +146,11 @@ module.exports = function defineGrammar(dialect) {
+@@ -149,10 +149,11 @@ module.exports = function defineGrammar(dialect) {
            seq($.accessibility_modifier, optional('declare')),
          )),
          choice(
@@ -1133,7 +1166,7 @@ keyword at the start of a class member, so a member named `accessor` (`accessor 
          ),
          field('name', $._property_name),
          optional(choice('?', '!')),
-@@ -1254,6 +1255,8 @@ module.exports = function defineGrammar(dialect) {
+@@ -1268,6 +1269,8 @@ module.exports = function defineGrammar(dialect) {
          'unknown',
          'never',
          'new',
@@ -1151,7 +1184,11 @@ may name a variable or a member (`_reserved_identifier`), as `static` has: with 
 
 Node kinds and field names are unchanged: `accessor` stays an anonymous token of the `public_field_definition`, and a
 member or a variable named `accessor` is a `property_identifier` or an `identifier`. Each generated parser has 337 more
-states (5,817 for TypeScript, 6,067 for TSX): the class member's modifier prefixes can no longer share states.
+states (5,836 for TypeScript, 6,085 for TSX): the class member's modifier prefixes can no longer share states.
+
+`static` on its own line before a member's name (`static⏎foo = 1`, `static⏎accessor⏎y = 2`) still ends a field named
+`static`, as upstream reads every modifier before a line break; TypeScript, whose `static` may be followed by a line
+break, reads one static member. This automatic semicolon is upstream's, not this patch's.
 
 ## Patch 19: a type-only re-export of a whole module
 
@@ -1164,7 +1201,7 @@ before an export clause, so both are parse errors (ESLint fixtures `no-duplicate
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -466,6 +466,18 @@ module.exports = function defineGrammar(dialect) {
+@@ -469,6 +469,18 @@ module.exports = function defineGrammar(dialect) {
            optional($._from_clause),
            $._semicolon,
          ),
@@ -1191,21 +1228,22 @@ Node kinds and field names are unchanged: the statement is an `export_statement`
 ## Patch 20: the scanner reads every ECMAScript whitespace and line terminator
 
 Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD. The same change as Patch 11 in
-`grammars/tree-sitter-javascript/PATCHES.md`, with the line terminators tree-sitter-javascript 0.25.0's scanner
-already reads.
+`grammars/tree-sitter-javascript/PATCHES.md`, with the same line terminators.
 
 Why: the grammar's extras skip every ECMAScript WhiteSpace and LineTerminator
 (`/[\s\p{Zs}\uFEFF\u2028\u2029\u2060\u200B]/`). The external scanner uses C's `iswspace`, which in the C locale the
 engine runs in is true only for ASCII whitespace, so where the scanner decides on an automatic semicolon, a ternary
 `?` or an HTML comment, a U+3000, U+00A0, U+FEFF or other Unicode space ends its look: `` `template`　 `` (an
 ideographic space after the backtick), `a = 1　⏎b = 2` and `x = a　? b : c` are parse errors. And it reads only `\n`
-as a line break, so a U+2028 or U+2029 line separator inserts no semicolon (`a\u2028b`) and does not end a `//`
-comment before it (`c = 1 // d\u2028e = 2`).
+as a line break, so a lone `\r`, a U+2028 or a U+2029 inserts no semicolon (`a = 1\rb = 2`, `a\u2028b`) and does not
+end a `//` comment before it (`c = 1 // d\u2028e = 2`). JSX text, in turn, tells layout whitespace from text with
+`iswspace`, so in a UTF-8 locale a line holding only a U+00A0 (`<a>⏎\u00a0</a>`) is no `jsx_text`, and in the C
+locale it is.
 
 ```diff
 --- a/common/scanner.h
 +++ b/common/scanner.h
-@@ -21,6 +21,37 @@ static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+@@ -21,6 +21,42 @@ static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
  
  static void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
  
@@ -1236,14 +1274,19 @@ comment before it (`c = 1 // d\u2028e = 2`).
 +    }
 +}
 +
-+// An ECMAScript LineTerminator as automatic semicolon insertion reads one: `\n`, U+2028 or U+2029 (`\r` comes
-+// before a `\n` in CRLF).
-+static bool is_line_terminator(int32_t c) { return c == '\n' || c == 0x2028 || c == 0x2029; }
++// An ECMAScript LineTerminator: `\n`, `\r`, U+2028 or U+2029 (CRLF reads as one, the `\n` skipped as whitespace).
++static bool is_line_terminator(int32_t c) { return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029; }
++
++// The whitespace JSX text may be laid out with, which is no text before or after a line break: ASCII whitespace only,
++// so a U+00A0 or U+3000 stays text whatever the C library's locale says.
++static bool is_jsx_layout_space(int32_t c) {
++    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
++}
 +
  static bool scan_template_chars(TSLexer *lexer) {
      lexer->result_symbol = TEMPLATE_CHARS;
      for (bool has_content = false;; has_content = true) {
-@@ -46,7 +77,7 @@ static bool scan_template_chars(TSLexer *lexer) {
+@@ -46,7 +82,7 @@ static bool scan_template_chars(TSLexer *lexer) {
  
  static bool scan_whitespace_and_comments(TSLexer *lexer, bool *scanned_comment) {
      for (;;) {
@@ -1252,7 +1295,7 @@ comment before it (`c = 1 // d\u2028e = 2`).
              skip(lexer);
          }
  
-@@ -55,7 +86,7 @@ static bool scan_whitespace_and_comments(TSLexer *lexer, bool *scanned_comment)
+@@ -55,7 +91,7 @@ static bool scan_whitespace_and_comments(TSLexer *lexer, bool *scanned_comment)
  
              if (lexer->lookahead == '/') {
                  skip(lexer);
@@ -1261,7 +1304,7 @@ comment before it (`c = 1 // d\u2028e = 2`).
                      skip(lexer);
                  }
                  *scanned_comment = true;
-@@ -107,16 +138,16 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+@@ -107,16 +143,16 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
              // Therefore, disable automatic semicolons when followed by typing
              do {
                  skip(lexer);
@@ -1281,7 +1324,7 @@ comment before it (`c = 1 // d\u2028e = 2`).
              break;
          }
          skip(lexer);
-@@ -216,7 +247,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+@@ -216,7 +252,7 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
  
  static bool scan_ternary_qmark(TSLexer *lexer) {
      for (;;) {
@@ -1290,7 +1333,7 @@ comment before it (`c = 1 // d\u2028e = 2`).
              break;
          }
          skip(lexer);
-@@ -236,7 +267,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+@@ -236,7 +272,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
          /* TypeScript optional arguments contain the ?: sequence, possibly
             with whitespace. */
          for (;;) {
@@ -1299,7 +1342,7 @@ comment before it (`c = 1 // d\u2028e = 2`).
                  break;
              }
              advance(lexer);
-@@ -259,7 +290,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+@@ -259,7 +295,7 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
  }
  
  static bool scan_closing_comment(TSLexer *lexer) {
@@ -1308,11 +1351,22 @@ comment before it (`c = 1 // d\u2028e = 2`).
          skip(lexer);
      }
  
+@@ -347,7 +383,7 @@ static bool scan_jsx_text(TSLexer *lexer) {
+             at_newline = false;
+             continue;
+         }
+-        bool is_wspace = iswspace(lexer->lookahead);
++        bool is_wspace = is_jsx_layout_space(lexer->lookahead);
+         if (lexer->lookahead == '\n') {
+             at_newline = true;
+         } else {
 ```
 
-`is_space` is tree-sitter-javascript's Patch 11 function: the extras' set, spelled out. JSX text's own whitespace test
-is left as it is, so `jsx_text` nodes keep their ranges. A lone `\r` and a block comment that spans a line break
-(`a /*⏎*/ b`) still insert no semicolon, as in tree-sitter-javascript.
+`is_space` is tree-sitter-javascript's Patch 11 function: the extras' set, spelled out. `is_line_terminator` is
+ECMAScript's LineTerminator (`\n`, `\r`, U+2028, U+2029); a CRLF still reads as one line break, the `\n` skipped as
+whitespace after the `\r`. JSX text tests layout whitespace with `is_jsx_layout_space`, the ASCII whitespace C's
+`iswspace` reads in the C locale, so its trees are those the engine built before, in every locale, and a U+00A0 stays
+text. A block comment that spans a line break (`a /*⏎*/ b`) still inserts no semicolon, as in tree-sitter-javascript.
 
 Node kinds, field names and the grammar are unchanged.
 
@@ -1321,8 +1375,10 @@ Node kinds, field names and the grammar are unchanged.
 Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD. The same change as Patch 13 in
 `grammars/tree-sitter-javascript/PATCHES.md`.
 
-Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, also between its `<` and `/`:
-`<></* c *//>`. The lexer reads `</` as one token, so there it reads `</`, then `* c *//>`, and fails.
+Why: Babel (also with its `typescript` plugin) allows comments between a JSX closing tag's tokens, also between its `<`
+and `/`: `<></* c *//>`. The lexer reads `</` as one token, so there it reads `</`, then `* c *//>`, and fails. The
+TypeScript compiler (5.9) rejects it (TS1003, its scanner reads `</` as one token too), so in TSX this reads more than
+`tsc` does, as Babel-compiled TSX may hold it; the dialects stay alike.
 
 ```diff
 --- a/common/define-grammar.js
@@ -1336,13 +1392,13 @@ Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, als
      ]),
  
      supertypes: ($, previous) => previous.concat([
-@@ -398,6 +400,14 @@ module.exports = function defineGrammar(dialect) {
+@@ -401,6 +403,14 @@ module.exports = function defineGrammar(dialect) {
          '/>',
        )),
  
 +      jsx_closing_element: $ => seq(
 +        // The lexer reads `</` as one token, so a comment between the `<` and the `/` (`<></* c *//>`), which
-+        // Babel and TypeScript allow, needs the scanner: it reads that `<` alone, and the comment is an extra.
++        // Babel and espree allow, needs the scanner: it reads that `<` alone, and the comment is an extra.
 +        choice('</', seq(alias($._jsx_closing_tag_lt, '<'), '/')),
 +        optional(field('name', $._jsx_element_name)),
 +        '>',
@@ -1362,14 +1418,13 @@ Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, als
  };
  
  static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
-@@ -289,6 +291,19 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
+@@ -294,6 +296,18 @@ static bool scan_ternary_qmark(TSLexer *lexer) {
      return false;
  }
  
 +// The rest of an HTML comment's line, once its `<!--` or `-->` is read.
 +static bool scan_html_comment_rest(TSLexer *lexer) {
-+    while (lexer->lookahead != 0 && lexer->lookahead != '\n' && lexer->lookahead != 0x2028 &&
-+           lexer->lookahead != 0x2029) {
++    while (lexer->lookahead != 0 && !is_line_terminator(lexer->lookahead)) {
 +        advance(lexer);
 +    }
 +
@@ -1382,7 +1437,7 @@ Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, als
  static bool scan_closing_comment(TSLexer *lexer) {
      while (is_space(lexer->lookahead)) {
          skip(lexer);
-@@ -315,15 +330,7 @@ static bool scan_closing_comment(TSLexer *lexer) {
+@@ -320,15 +334,7 @@ static bool scan_closing_comment(TSLexer *lexer) {
          return false;
      }
  
@@ -1399,7 +1454,7 @@ Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, als
  }
  
  // After an `&`: whether the rest of a character reference follows, as html_character_reference reads one (`&amp;`,
-@@ -421,6 +428,29 @@ static inline bool external_scanner_scan(void *payload, TSLexer *lexer, const bo
+@@ -426,6 +432,29 @@ static inline bool external_scanner_scan(void *payload, TSLexer *lexer, const bo
          return true;
      }
  
@@ -1433,9 +1488,11 @@ Why: Babel and TypeScript allow comments between a JSX closing tag's tokens, als
 
 The scanner reads a `<` where a closing tag may start only when `/*` follows it, and then only the `<`; every other
 `<` and `</` is the lexer's, as before. Because the scanner then sees the `<` first, it also reads an HTML comment's
-`<!--` there, as `scan_closing_comment` does. The marker is the last external token, so the others keep their
-numbers. The `<` token begins where the scanner began, after any `jsx_text`: when only layout whitespace precedes it,
-the token spans that whitespace, as in tree-sitter-javascript. The TypeScript dialect has no JSX, so the token is valid
+`<!--` there, as `scan_closing_comment` does; the rest of such a comment's line now ends at any line terminator
+(Patch 20's `is_line_terminator`). The marker is the last external token, so the others keep their numbers. The `<`
+token begins where the scanner began, after any `jsx_text`: when only layout whitespace precedes it, the token spans
+that whitespace, as in tree-sitter-javascript. The comment's own `/` is no closing `/`: `<a></* x */a>` stays a parse
+error, as in Babel, and so does an unterminated `</* x`. The TypeScript dialect has no JSX, so the token is valid
 there only during error recovery, where the scanner returns at the template-chars test first.
 
 Node kinds and field names are unchanged: the closing tag's `<` and `/` are the anonymous `<` and `/`, and the
@@ -1443,7 +1500,7 @@ comment is a `comment` child of the `jsx_closing_element`. The TSX parser has 36
 the same count.
 
 tree-sitter-javascript's Patch 12 (a JSX name that is a reserved word or starts with `this`) has no counterpart here:
-tree-sitter-typescript 0.23.2 has no reserved-word sets, and `<this.props.tag />`, `<A default="x" />` and
+tree-sitter-typescript 0.23.2 has no reserved-word sets, and `<this.props.tag />`, `<this />`, `<A default="x" />` and
 `<label for="x" class="y" />` already parse in TSX.
 
 ## Patch 22: `abstract` may name a member or a variable
@@ -1459,7 +1516,7 @@ object type, an interface and a class: `{ abstract: Set<string>; concrete: Set<s
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -1279,6 +1279,8 @@ module.exports = function defineGrammar(dialect) {
+@@ -1293,6 +1293,8 @@ module.exports = function defineGrammar(dialect) {
          'new',
          // A modifier only before a class member's name, as `static` is: `accessor = 1`, `{ accessor }`.
          'accessor',
@@ -1473,10 +1530,9 @@ object type, an interface and a class: `{ abstract: Set<string>; concrete: Set<s
 `abstract class A {}`, `export abstract class B {}`, `abstract m(): void` and `abstract x: number` read as before.
 
 Node kinds and field names are unchanged: a member named `abstract` is a `property_identifier`, and a variable an
-`identifier`. Each generated parser has 19 more states (5,864 for TypeScript; the TSX parser has 6,151 with Patch
-21's).
+`identifier`. Each generated parser has 19 more states (20 for TSX; 5,883 for TypeScript and 6,169 for TSX in all).
 
-With Patches 15 to 22 and the `yield++⏎x` fix to Patch 14, upstream's corpus parses as before (131 of 132 with nine
+With Patches 15 to 22 and the `yield++⏎x` fix to Patch 14, upstream's corpus parses as before (134 of 135 with twelve
 added cases; the one failure patch 1's `foo++!`), and tree-sitter-javascript 0.23.1's corpus builds the same trees
 under either dialect. Over 26,252 TypeScript and TSX files (the corpora above, every pack's upstream sources and the
 repository's fixtures), 32 files that had syntax errors parse, none gains an error, and every other tree is unchanged,
