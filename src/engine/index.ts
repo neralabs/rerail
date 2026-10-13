@@ -96,7 +96,7 @@ export {
   resetRepositoryHistory,
 } from "./storage/database.js";
 export { defaultRerailHome } from "./storage/rerail-home.js";
-export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn } from "./storage/migrations.js";
+export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export {
   auditRequests,
   auditResultPages,
