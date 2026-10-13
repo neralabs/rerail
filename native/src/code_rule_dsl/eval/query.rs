@@ -454,6 +454,7 @@ impl<'a> Leaf<'a> {
                     self.limits,
                     decision,
                     violation,
+                    self.scope.honours_suppressions_at(&file.path),
                     &mut util_work,
                     &mut witnesses,
                 )? {
@@ -665,8 +666,8 @@ pub(super) fn file_tape(
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
-/// `maxVisitedNodes` in preorder, witnesses in syntax-error regions and suppressed ones are
-/// dropped, the witness budget ends the file.
+/// `maxVisitedNodes` in preorder, witnesses in syntax-error regions are dropped, and so are
+/// suppressed ones when `honour_suppressions`; the witness budget ends the file.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_file_clause(
     grammar: &GrammarMatcher,
@@ -678,6 +679,7 @@ fn evaluate_file_clause(
     limits: &Limits,
     decision: bool,
     violation: Option<&ViolationSpec>,
+    honour_suppressions: bool,
     util_work: &mut usize,
     witnesses: &mut Vec<Witness>,
 ) -> Result<FileOutcome> {
@@ -743,11 +745,13 @@ fn evaluate_file_clause(
                         }
                     };
                     for witness in found {
-                        if crate::code_rule_dsl::violations::suppresses(
-                            violation,
-                            matched.get_node(),
-                            &witness,
-                        ) {
+                        if honour_suppressions
+                            && crate::code_rule_dsl::violations::suppresses(
+                                violation,
+                                matched.get_node(),
+                                &witness,
+                            )
+                        {
                             continue;
                         }
                         metrics.witnesses += 1;

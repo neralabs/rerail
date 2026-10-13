@@ -6,7 +6,13 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { LazyReadonlyRerailDatabase, openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, RERAIL_SCHEMA_VERSION, addColumn, type Migration } from "../../../src/engine/storage/migrations.js";
+import {
+  RERAIL_BASELINE_SCHEMA_VERSION,
+  RERAIL_MIGRATIONS,
+  RERAIL_SCHEMA_VERSION,
+  addColumn,
+  type Migration,
+} from "../../../src/engine/storage/migrations.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql.generated.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
@@ -303,6 +309,10 @@ function migrationState(path: string): { recorded: string[]; note: boolean; vers
   }
 }
 
+/** The ids a file records once this build's own steps and `noteStep` have run. */
+const WITH_NOTE = [...RERAIL_MIGRATIONS.map(migration => migration.id), "add-rule-settings-note"].sort();
+const WITHOUT_NOTE = RERAIL_MIGRATIONS.map(migration => migration.id).sort();
+
 /** A step that adds `rule_settings.note`, counting its runs. */
 function noteStep(runs: { count: number }, floor?: number): Migration {
   return {
@@ -356,19 +366,26 @@ function shapeOf(path: string): Record<string, { columns: string[]; checks: stri
   }
 }
 
+/** A file created at the baseline schema, before any step, holding `statements`. */
+async function baselineFile(statements = ""): Promise<string> {
+  const path = await temporaryDatabase();
+  await mkdir(dirname(path), { recursive: true });
+  const created = new Database(path);
+  try {
+    for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) created.exec(statement);
+    created.exec(statements);
+    created.pragma(`user_version = ${RERAIL_BASELINE_SCHEMA_VERSION}`);
+  } finally {
+    created.close();
+  }
+  return path;
+}
+
 describe("the migration path", () => {
   // The guard on every schema change: `schema.ts` and `migrations.ts` must agree. A change to an existing table
   // without a step (or a step that does something else) leaves the migrated file unlike a new one.
   it("brings a file created at the baseline to the shape of a new file", async () => {
-    const baseline = await temporaryDatabase();
-    await mkdir(dirname(baseline), { recursive: true });
-    const created = new Database(baseline);
-    try {
-      for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) created.exec(statement);
-      created.pragma(`user_version = ${RERAIL_BASELINE_SCHEMA_VERSION}`);
-    } finally {
-      created.close();
-    }
+    const baseline = await baselineFile();
     openRerailDatabase(baseline).$client.close();
     const fresh = await temporaryDatabase();
     openRerailDatabase(fresh).$client.close();
@@ -405,6 +422,35 @@ describe("the migration path", () => {
     }
   });
 
+  it("keeps a baseline file's rule settings and accepts a setting that sets only suppressions or config", async () => {
+    const path = await baselineFile(`${SETTING_ROW};
+      INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, mode, updated_at) VALUES ('checkout', '/checkout', 'src', 'pack', 'p', 'log', 2)`);
+    const database = openRerailDatabase(path);
+    try {
+      database.insert(ruleSettings).values({ ownerKind: "repository", ownerId: "repo", targetKind: "pack", targetId: "p", suppressions: "ignore", updatedAt: 3 }).run();
+      database.insert(ruleSettings).values({ ownerKind: "repository", ownerId: "repo", targetKind: "rule", targetId: "q", config: { option: "type" }, updatedAt: 4 }).run();
+      expect(() => database.insert(ruleSettings).values({ ownerKind: "repository", ownerId: "repo", targetKind: "rule", targetId: "empty", updatedAt: 5 }).run())
+        .toThrow(/CHECK constraint failed: rule_settings_value/u);
+      expect(database.select({
+        ownerId: ruleSettings.ownerId,
+        folder: ruleSettings.folder,
+        targetId: ruleSettings.targetId,
+        on: ruleSettings.on,
+        mode: ruleSettings.mode,
+        suppressions: ruleSettings.suppressions,
+        config: ruleSettings.config,
+      }).from(ruleSettings).orderBy(ruleSettings.updatedAt).all()).toEqual([
+        { ownerId: "repo", folder: "", targetId: "r", on: true, mode: null, suppressions: null, config: null },
+        { ownerId: "/checkout", folder: "src", targetId: "p", on: null, mode: "log", suppressions: null, config: null },
+        { ownerId: "repo", folder: "", targetId: "p", on: null, mode: null, suppressions: "ignore", config: null },
+        { ownerId: "repo", folder: "", targetId: "q", on: null, mode: null, suppressions: null, config: { option: "type" } },
+      ]);
+    } finally {
+      database.$client.close();
+    }
+    expect(migrationState(path).recorded).toEqual(WITHOUT_NOTE);
+  });
+
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {
     const path = await temporaryDatabase();
     stampedFile(path, SETTING_ROW);
@@ -413,7 +459,7 @@ describe("the migration path", () => {
     openRerailDatabase(path, { migrations: [noteStep(runs)] }).$client.close();
     expect(runs.count).toBe(1);
     // An additive step leaves the floor where it was.
-    expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITH_NOTE, note: true, version: RERAIL_BASELINE_SCHEMA_VERSION });
     const database = new Database(path, { readonly: true });
     try {
       expect(database.prepare("SELECT owner_id, note FROM rule_settings").all()).toEqual([{ owner_id: "repo", note: null }]);
@@ -452,7 +498,7 @@ describe("the migration path", () => {
     };
     expect(() => openRerailDatabase(path, { migrations: [failing] })).toThrow("step failed");
     expect(settledBytes(path)).toEqual(before);
-    expect(migrationState(path)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 
   // An older build reads and writes a file a newer build changed additively: Drizzle names every column it reads
@@ -473,14 +519,14 @@ describe("the migration path", () => {
       older.$client.close();
     }
     openRerailDatabase(path, { readonly: true }).$client.close();
-    expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: true, version: RERAIL_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITH_NOTE, note: true, version: RERAIL_SCHEMA_VERSION });
   });
 
   it("adds no column to a table the file does not have yet, which the DDL then creates whole", async () => {
     const path = await temporaryDatabase();
     stampedFile(path, "DROP TABLE rule_settings");
     openRerailDatabase(path, { migrations: [noteStep({ count: 0 })] }).$client.close();
-    expect(migrationState(path)).toEqual({ recorded: ["add-rule-settings-note"], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    expect(migrationState(path)).toEqual({ recorded: WITH_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
     const reopened = drizzle(new Database(path, { readonly: true }));
     try {
       expect(reopened.select().from(ruleSettings).all()).toEqual([]);

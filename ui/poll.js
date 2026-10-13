@@ -140,10 +140,10 @@ async function loadContext() {
 
 /**
  * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
- * the first folder's mode on the rule, and each folder's own on and mode (`folderStates`; `mixed` when they differ).
- * A change from the row is written at every folder.
+ * the first folder's mode, suppressions and options on the rule, and each folder's own on, mode and suppressions
+ * (`folderStates`; `mixed` when on or mode differ). A change from the row is written at every folder.
  */
-function toStoredRules(entries) {
+export function toStoredRules(entries) {
   const rules = new Map();
   for (const entry of entries) {
     const id = entry.rule.id;
@@ -151,7 +151,7 @@ function toStoredRules(entries) {
     if (known !== undefined) {
       if (!known.folders.includes(entry.folder)) {
         known.folders.push(entry.folder);
-        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode });
+        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions });
         known.enabled = known.enabled && entry.on;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
       }
@@ -164,10 +164,14 @@ function toStoredRules(entries) {
       origin: entry.source.kind === "library_rule" ? "user" : "rerail",
       source: entry.source,
       folders: [entry.folder],
-      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode }],
+      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions }],
       mixed: false,
       onSource: entry.onSource,
       modeSource: entry.modeSource,
+      suppressions: entry.suppressions,
+      suppressionsSource: entry.suppressionsSource,
+      config: entry.config,
+      configSource: entry.configSource,
       revision: entry.revision,
     });
   }

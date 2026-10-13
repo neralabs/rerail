@@ -5,8 +5,8 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
-import { codeRuleSchema } from "../engine/code-rule/code-rule-schema.js";
-import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../engine/catalog/repository-model.js";
+import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
+import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
@@ -88,6 +88,8 @@ const ruleSourceSchema = z.object({
   packId: z.string().nullable(),
 }).strict();
 
+const ruleConfigSchema = z.record(z.string(), codeRuleValueSchema);
+
 const effectiveRuleBase = {
   source: ruleSourceSchema.describe("Where the rule comes from; a rule in an added pack belongs to the pack."),
   folder: z.string().describe("Folder of the attachment that makes the rule present."),
@@ -95,6 +97,12 @@ const effectiveRuleBase = {
   mode: z.enum(RULE_MODES),
   onSource: deciderSchema.describe("What decided on/off: a checkout's or the repository's setting, the pack's starting value, or the rule's default."),
   modeSource: deciderSchema,
+  suppressions: z.enum(RULE_SUPPRESSIONS)
+    .describe("honour: a linter's suppression comment (eslint-disable, noqa, ...) silences the rule where its document reads that linter's comments; ignore: no comment silences it."),
+  suppressionsSource: deciderSchema.describe("What decided suppressions; a pack starts from its honourSuppressionComments."),
+  config: ruleConfigSchema.nullable().describe("Option values the settings give this rule by Rerail, merged per option; null when none is set."),
+  configSource: z.record(z.string(), deciderSchema).describe("The setting that decided each option in config."),
+  configError: z.string().nullable().describe("Why config does not apply to the rule's document; the rule then runs nowhere."),
   revision: z.number().int().positive(),
   payloadHash: z.string(),
 };
@@ -121,6 +129,10 @@ export const repositoryRulesSchema = z.object({
 const settingValues = {
   on: z.boolean().nullable().optional().describe("true/false sets on/off; null clears it; omitted keeps the stored value."),
   mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value."),
+  suppressions: z.enum(RULE_SUPPRESSIONS).nullable().optional()
+    .describe("honour or ignore linters' suppression comments (eslint-disable, noqa, ...) for the rule; null clears it; omitted keeps the stored value."),
+  config: ruleConfigSchema.nullable().optional()
+    .describe("Option values of one code rule by Rerail (option name → value), replacing the stored ones; rule targets over the whole repository (folder \"\") only. null clears it; omitted keeps the stored value."),
 };
 const settingTargetSchema = z.object({ kind: z.enum(RULE_SETTING_TARGET_KINDS), id: z.string().min(1) }).strict();
 
@@ -140,6 +152,8 @@ export const ruleSettingRecordSchema = z.object({
   targetId: z.string(),
   on: z.boolean().nullable(),
   mode: z.enum(RULE_MODES).nullable(),
+  suppressions: z.enum(RULE_SUPPRESSIONS).nullable(),
+  config: ruleConfigSchema.nullable(),
 }).strict();
 
 const attachmentInputSchema = z.object({

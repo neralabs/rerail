@@ -15,8 +15,8 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const folderText = folder => (folder === "" ? "Whole repository" : folder);
 
 /**
- * What decided a rule's on or mode, in words (`Decider` from the API). `checkoutPath` is the page's own
- * checkout, which reads as "this worktree".
+ * What decided a rule's on, mode, suppressions or an option, in words (`Decider` from the API). `checkoutPath` is the
+ * page's own checkout, which reads as "this worktree".
  */
 export function deciderText(decider, checkoutPath) {
   const at = "folder" in decider && decider.folder !== "" ? ` at ${decider.folder}` : "";
@@ -63,6 +63,45 @@ export const MODE_PLAIN = {
   steer: "Rerail tells the coding agent as it works, and the coding agent fixes it before moving on.",
   block: "Rerail stops the coding agent before it acts.",
 };
+
+export const SUPPRESSIONS_LABEL = { honour: "Honoured", ignore: "Ignored" };
+
+/**
+ * Whether linter suppression comments (`// eslint-disable-next-line`, `# noqa`) silence the rule, and what decided
+ * it; each folder its own when the folders the rule is added at disagree.
+ */
+export function suppressionsText(stored, checkoutPath) {
+  const states = stored.folderStates;
+  if (states.some(state => state.suppressions !== states[0].suppressions)) {
+    return states.map(state => `${SUPPRESSIONS_LABEL[state.suppressions] ?? state.suppressions} in ${folderText(state.folder)}`).join(", ");
+  }
+  return `${SUPPRESSIONS_LABEL[stored.suppressions] ?? stored.suppressions} · ${deciderText(stored.suppressionsSource, checkoutPath)}`;
+}
+
+/** What the suppression comments switch sets: honour once every folder ignores them, else ignore. */
+export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
+
+/**
+ * How an added pack's rules here treat suppression comments, from each rule's own value, and what the pack's switch
+ * sets: honour once every rule ignores them in every folder, else ignore.
+ */
+export function packSuppressions(rules) {
+  const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
+  const text = ignoring === 0 ? "honoured by its rules"
+    : ignoring === rules.length ? "ignored by its rules"
+    : `ignored by ${ignoring} of its ${rules.length} rules`;
+  return { text, next: rules.every(r => nextSuppressions(r) === "honour") ? "honour" : "ignore" };
+}
+
+/** The rule's configured options as `name: value`, each with what decided it; `null` when none is configured. */
+export function optionsText(stored, checkoutPath) {
+  const options = Object.entries(stored.config ?? {});
+  if (options.length === 0) return null;
+  return options.map(([name, value]) => {
+    const decider = stored.configSource?.[name];
+    return `${name}: ${JSON.stringify(value)}${decider === undefined ? "" : ` · ${deciderText(decider, checkoutPath)}`}`;
+  }).join(", ");
+}
 
 export const kindLabel = stored => (stored.kind === "conversation" ? "Conversation rule" : "File rule");
 

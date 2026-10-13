@@ -13,7 +13,13 @@ import {
   type AuditRuleProvenance,
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
-import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../catalog/repository-model.js";
+import {
+  RULE_SETTING_OWNER_KINDS,
+  RULE_SETTING_TARGET_KINDS,
+  RULE_SOURCE_KINDS,
+  RULE_SUPPRESSIONS,
+  type RuleConfig,
+} from "../catalog/repository-model.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
@@ -215,8 +221,9 @@ export const ruleAttachments = sqliteTable(
 );
 
 /**
- * `on` / `mode` for a rule or a whole pack, owned by a repository (`owner_id` = repository key) or a checkout
- * (`owner_id` = checkout path), optionally for one folder. A null field defers to the next owner.
+ * `on` / `mode` / `suppressions` / `config_json` for a rule or a whole pack, owned by a repository (`owner_id` =
+ * repository key) or a checkout (`owner_id` = checkout path), optionally for one folder. A null field defers to the
+ * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets.
  */
 export const ruleSettings = sqliteTable(
   "rule_settings",
@@ -228,6 +235,8 @@ export const ruleSettings = sqliteTable(
     targetId: text("target_id").notNull(),
     on: integer("on", { mode: "boolean" }),
     mode: text("mode", { enum: RULE_MODES }),
+    suppressions: text("suppressions", { enum: RULE_SUPPRESSIONS }),
+    config: text("config_json", { mode: "json" }).$type<RuleConfig>(),
     updatedAt: integer("updated_at").notNull(),
   },
   table => [
@@ -235,7 +244,14 @@ export const ruleSettings = sqliteTable(
     check("rule_settings_owner_kind", sql`${table.ownerKind} IN (${sql.raw(inList(RULE_SETTING_OWNER_KINDS))})`),
     check("rule_settings_target_kind", sql`${table.targetKind} IN (${sql.raw(inList(RULE_SETTING_TARGET_KINDS))})`),
     check("rule_settings_mode", sql`${table.mode} IS NULL OR ${table.mode} IN (${sql.raw(inList(RULE_MODES))})`),
-    check("rule_settings_value", sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL`),
+    check(
+      "rule_settings_suppressions",
+      sql`${table.suppressions} IS NULL OR ${table.suppressions} IN (${sql.raw(inList(RULE_SUPPRESSIONS))})`,
+    ),
+    check(
+      "rule_settings_value",
+      sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL OR ${table.suppressions} IS NOT NULL OR ${table.config} IS NOT NULL`,
+    ),
   ],
 );
 

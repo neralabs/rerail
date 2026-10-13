@@ -63,10 +63,30 @@ declare module "*/ui/poll.js" {
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
+  export type Suppressions = "honour" | "ignore";
+  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions }
+  /** A rule as the page stores it from `GET /api/repository/rules`; only the fields the tests read. */
+  export interface StoredRule {
+    rule: { id: string; mode: string };
+    source: { kind: string; id: string };
+    enabled: boolean;
+    folders: string[];
+    folderStates: FolderState[];
+    mixed: boolean;
+    suppressions: Suppressions;
+    suppressionsSource: object;
+    config: Record<string, unknown> | null;
+    configSource: Record<string, object>;
+  }
+  export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
+  export function suppressionsText(stored: object, checkoutPath?: string): string;
+  export function nextSuppressions(stored: object): "honour" | "ignore";
+  export function optionsText(stored: object, checkoutPath?: string): string | null;
+  export function packSuppressions(rules: readonly object[]): { text: string; next: "honour" | "ignore" };
 }
 
 declare module "*/ui/state.js" {
@@ -98,5 +118,14 @@ declare module "*/ui/attachments.js" {
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
     keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+  };
+}
+
+declare module "*/ui/settings-writes.js" {
+  /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
+  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
+    setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
+    setSuppressions(ids: readonly string[], suppressions: "honour" | "ignore", label: string): Promise<void>;
+    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
 }

@@ -52,14 +52,27 @@ impl CodeRuleScope {
     pub(super) fn mode_at(&self, path: &str) -> Option<RuleMode> {
         placed(self.placement.as_deref()?, path)?.mode
     }
+
+    /// Whether a linter's suppression comment at `path` silences the code rule's violations there:
+    /// what the placement entry deciding `path` says, and `true` when the code rule is not placed
+    /// or no entry contains `path`.
+    pub(super) fn honours_suppressions_at(&self, path: &str) -> bool {
+        self.placement
+            .as_deref()
+            .and_then(|placement| placed(placement, path))
+            .is_none_or(|entry| entry.honour_suppressions)
+    }
 }
 
 /// One folder of a placement. `folder` is relative to the checkout root in POSIX form (`""` is the
-/// whole checkout); `mode` is `None` where the code rule is off.
+/// whole checkout); `mode` is `None` where the code rule is off; `honour_suppressions` is whether a
+/// linter's suppression comment (`// eslint-disable-next-line`, `# noqa`, ...) silences a violation
+/// in the folder, as the violation's `suppress` names it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PlacementEntry {
     pub(super) folder: String,
     pub(super) mode: Option<RuleMode>,
+    pub(super) honour_suppressions: bool,
 }
 
 /// A placement's entries, sorted by folder, no folder twice.

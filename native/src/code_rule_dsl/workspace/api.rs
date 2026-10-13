@@ -100,8 +100,10 @@ impl CodeRuleDslWorkspace {
     }
 
     /// Registers `compiled` with this workspace. `placement`, when given, is the JSON array of
-    /// `{"folder", "mode"}` entries that places this workspace's copy of the code rule per folder
-    /// of the checkout (`mode: null` is off there); the compiled code rule itself is never changed.
+    /// `{"folder", "mode", "suppressions"?}` entries that places this workspace's copy of the code
+    /// rule per folder of the checkout (`mode: null` is off there; `suppressions: "ignore"` reports
+    /// violations a linter's suppression comment would silence, `"honour"` or no `suppressions`
+    /// lets the comment silence them); the compiled code rule itself is never changed.
     #[napi]
     pub fn add_code_rule(
         &mut self,

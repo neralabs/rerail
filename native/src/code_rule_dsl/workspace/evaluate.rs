@@ -783,6 +783,8 @@ fn evaluate_clauses(
             let decision = code_rule.clauses[id.1].decision;
             let each = violation.each.as_deref();
             let limits = &code_rule.capabilities.limits;
+            // The file's placement decides whether a linter's suppression comment silences it.
+            let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let result = {
                 let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
                 run_clause(
@@ -797,7 +799,7 @@ fn evaluate_clauses(
                             Some(name) => {
                                 // A directive does not spend a violation's output allowance, so the
                                 // enumeration continues past suppressed bindings.
-                                let room = if violation.suppress.is_some() {
+                                let room = if honour_suppressions && violation.suppress.is_some() {
                                     usize::MAX
                                 } else {
                                     (limits.max_witnesses + 1)
@@ -854,11 +856,13 @@ fn evaluate_clauses(
                                 }
                             };
                             for witness in found {
-                                if violations::suppresses(
-                                    Some(violation),
-                                    matched.get_node(),
-                                    &witness,
-                                ) {
+                                if honour_suppressions
+                                    && violations::suppresses(
+                                        Some(violation),
+                                        matched.get_node(),
+                                        &witness,
+                                    )
+                                {
                                     continue;
                                 }
                                 let witnesses =
