@@ -591,37 +591,61 @@
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
    "line": 29,
+   "column": 5
+  },
+  {
+   "rule": "double_parens",
+   "path": "rerail/double_parens.rs",
+   "line": 29,
+   "column": 6
+  },
+  {
+   "rule": "double_parens",
+   "path": "rerail/double_parens.rs",
+   "line": 35,
    "column": 13
   },
   {
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
-   "line": 31,
+   "line": 37,
    "column": 13
   },
   {
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
-   "line": 36,
+   "line": 42,
    "column": 13
   },
   {
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
-   "line": 43,
+   "line": 49,
    "column": 16
   },
   {
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
-   "line": 45,
+   "line": 51,
    "column": 15
   },
   {
    "rule": "double_parens",
    "path": "rerail/double_parens.rs",
-   "line": 47,
+   "line": 53,
    "column": 19
+  },
+  {
+   "rule": "double_parens",
+   "path": "rerail/double_parens.rs",
+   "line": 55,
+   "column": 15
+  },
+  {
+   "rule": "double_parens",
+   "path": "rerail/double_parens.rs",
+   "line": 58,
+   "column": 15
   },
   {
    "rule": "double_parens",

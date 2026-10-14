@@ -168,6 +168,12 @@ fn comments() -> i32 {
     (/* c */ (0))
 }
 
+fn triple() -> i32 {
+    ((( 2 )))
+    //~^ double_parens
+    //~| double_parens
+}
+
 fn unit() {
     let _ = ( ());
     //~^ double_parens
@@ -189,6 +195,12 @@ fn call_arguments() {
     //~^ double_parens
     let _ = 2 + g((1));
     //~^ double_parens
+    let _ = g(((2)));
+    //~^ double_parens
+    //~| double_parens
+    let _ = g(( (2) ));
+    //~^ double_parens
+    //~| double_parens
 }
 """,
     "redundant_static_lifetimes": """\
