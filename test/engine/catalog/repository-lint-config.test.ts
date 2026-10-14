@@ -736,6 +736,26 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     expect((await flat(allowed, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 
+  // Self-review round 7: node:vm runs code by design, and a config may require itself; calls into either change the
+  // exported config at load time (ESLint 9.39.1 turns no-console on for both).
+  it("reads nothing from a flat config that calls into a code-running Node module or a module it names by path", async () => {
+    const payload = "'process.getBuiltinModule(\"module\")'";
+    const cases: [string, string][] = [
+      ["eslint.config.cjs", `const vm = require("node:vm");\nmodule.exports = [{ rules: { "no-console": "off" } }];\nconst x = vm.runInThisContext(${payload});`],
+      ["eslint.config.mjs", `import { runInThisContext } from "vm";\nconst x = runInThisContext(${payload});\nexport default [{ rules: { "no-console": "off" } }];`],
+      ["eslint.config.mjs", "import process from \"node:process\";\nconst m = process.getBuiltinModule(\"module\");\nexport default [{ rules: { \"no-console\": \"off\" } }];"],
+      ["eslint.config.cjs", "module.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst self = require(\"./eslint.config.cjs\");\nconst changed = self.push({ rules: { \"no-console\": \"error\" } });"],
+    ];
+    for (const [name, text] of cases) {
+      const proposed = await flat(text, ["javascript"], name);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+    // A local module used as data, not called, is still read.
+    expect((await flat("import shared from \"./shared.mjs\";\nexport default [...shared, { rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs")).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);

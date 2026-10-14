@@ -125,11 +125,14 @@ settings, owned by the repository. Nothing is executed or imported.
 
 A flat config is read only when it is data throughout: imports, top-level
 `const`s, the export and type-only declarations, built from literals, arrays,
-objects without methods, spreads, member reads and calls that are handed none of
-the file's own `const`s (except `defineConfig(...)` and typescript-eslint's
-`config(...)`, which Rerail takes to do what their documentation says, as it
-takes the modules the file imports). A file with anything else is not read at all,
-and the screen says why. A config that is read, is read as ESLint applies it: its
+objects without methods, spreads and member reads, with calls only into the
+packages the file imports or requires (not a module it names by path, which can
+be the config itself, nor a Node module that runs code, such as `node:vm`),
+`require("<package>")`, `new URL(…)`, `process.cwd()` and `import.meta.resolve(…)`,
+and none of the file's own `const`s handed to a call (except `defineConfig(...)`
+and typescript-eslint's `config(...)`, which Rerail takes to do what their
+documentation says, as it takes the packages the file imports). A file with
+anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
 after another, a later one replacing a rule's entry (and keeping its options

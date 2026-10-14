@@ -60,6 +60,8 @@ const MAX_DEPTH = 64;
  * CommonJS, `arguments[2]` is the module).
  */
 const CODE_NAMES = new Set(["eval", "module", "exports", "arguments"]);
+/** Node modules that run code, or reach the module system or the process, and so can change anything when called. */
+const CODE_MODULES = new Set(["vm", "module", "inspector", "repl", "process", "worker_threads", "child_process", "v8", "wasi"]);
 
 /** `<folder>/**` or `<folder>/**\/*`: every file under one folder. A `./` start is allowed. */
 export function folderOfGlob(pattern: string): string | undefined {
@@ -349,21 +351,26 @@ class FlatConfigReader {
   }
 
   /**
-   * Whether `call` calls into a module the file imports or requires, or `import.meta`, through any member path; or is
-   * `require("<module>")`, `new URL(…)` or `process.cwd()` (globals nothing in the file has replaced).
+   * Whether `call` calls into a package the file imports or requires, through any member path; or is
+   * `require("<module>")`, `new URL(…)`, `process.cwd()` or `import.meta.resolve(…)` (globals nothing in the file has
+   * replaced). A module the file names by path (`./x`, `/x`) may be the config itself, and a Node module that runs code
+   * or reaches the module system (`node:vm`, `node:module`, ...) can change anything: calls into them are code.
    */
   #trustedCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
     const global = (name: string): boolean => !this.#locals.has(name) && !this.#imports.has(name);
     const callee = call.callee;
     if (call.type === "CallExpression" && isRequire(call) && global("require")) return true;
     if (call.type === "NewExpression" && callee.type === "Identifier" && callee.name === "URL" && global("URL")) return true;
-    if (call.type === "CallExpression" && callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier"
-      && callee.object.name === "process" && global("process") && callee.property.type === "Identifier" && callee.property.name === "cwd") {
-      return call.arguments.length === 0;
+    if (call.type === "CallExpression" && callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier") {
+      const object = callee.object;
+      if (object.type === "Identifier" && object.name === "process" && global("process") && callee.property.name === "cwd") return call.arguments.length === 0;
+      if (object.type === "MetaProperty" && object.meta.name === "import" && callee.property.name === "resolve") return true;
     }
     let root: t.Node = callee;
     while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
-    return (root.type === "Identifier" && this.#imports.has(root.name)) || (root.type === "MetaProperty" && root.meta.name === "import");
+    if (root.type !== "Identifier") return false;
+    const from = this.#imports.get(root.name)?.module;
+    return from !== undefined && !/^(?:\.|\/|[A-Za-z]:|file:)/u.test(from) && !CODE_MODULES.has(from.replace(/^node:/u, ""));
   }
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */
