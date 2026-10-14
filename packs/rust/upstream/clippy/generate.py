@@ -310,6 +310,16 @@ fn nested() {
     //~^ precedence_bits
 }
 
+fn same_start() {
+    // Clippy reports each of these once per matching operation, so two diagnostics start at the same column
+    let _ = 1 ^ 2 ^ 3 >> 7 ^ 4 >> 16;
+    //~^ precedence_bits
+    //~| precedence_bits
+    let _ = 1 >> 1 ^ 2 ^ 3 ^ 4 >> 2;
+    //~^ precedence_bits
+    //~| precedence_bits
+}
+
 fn arithmetic_inside_a_shift() {
     // the outer `&` has a shift operand and no arithmetic one; the shift's own `+` is the `precedence` lint's
     1 & 2 << 3 + 4;
