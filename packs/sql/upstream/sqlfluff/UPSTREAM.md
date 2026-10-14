@@ -8,6 +8,8 @@ The fixtures listed below were written by Rerail for the pinned SQLFluff to scor
 | `upstream/sqlfluff/fixtures/rerail/postgres/AM05/pass_cross_join_lateral.sql` | written by Rerail |
 | `upstream/sqlfluff/fixtures/rerail/postgres/AM05/pass_inner_join_lateral.sql` | written by Rerail |
 | `upstream/sqlfluff/fixtures/rerail/postgres/AM05/pass_left_join_lateral.sql` | written by Rerail |
+| `upstream/sqlfluff/fixtures/rerail/postgres/RF01/pass_insert_select_on_conflict_excluded.sql` | written by Rerail |
+| `upstream/sqlfluff/fixtures/rerail/postgres/RF01/pass_insert_select_on_conflict_excluded_lower.sql` | written by Rerail |
 | `upstream/sqlfluff/fixtures/rerail/postgres/RF04/fail_postgres_and_mysql_unreserved_column_names.sql` | written by Rerail |
 | `upstream/sqlfluff/fixtures/rerail/postgres/RF04/pass_quoted_keyword_column_name.sql` | written by Rerail |
 | `upstream/sqlfluff/fixtures/rerail/postgres/RF06/fail_quoted_index_column.sql` | written by Rerail |
