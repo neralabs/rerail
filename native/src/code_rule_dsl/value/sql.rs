@@ -874,7 +874,11 @@ mod tests {
                       INSERT INTO t VALUES ($1,$2);\nSELECT $_x1$a$1,$_x1$, $é1$b$é1$;\n";
         let grep = GrammarDialect::Sql.ast_grep(source);
         assert!(!grep.root().get_inner_node().has_error(), "{source}");
-        let parameters = grep.root().dfs().filter(|n| n.kind() == "parameter").count();
+        let parameters = grep
+            .root()
+            .dfs()
+            .filter(|n| n.kind() == "parameter")
+            .count();
         assert_eq!(parameters, 4);
         assert_eq!(
             decoded(source),
