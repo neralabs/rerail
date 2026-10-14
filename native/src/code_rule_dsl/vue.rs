@@ -160,6 +160,40 @@ mod tests {
         assert_eq!(binding.name.map(|name| name.start as usize), Some(declared));
     }
 
+    /// A template's syntax error leaves the program's facts read (`SyntaxErrors::hide_bindings`)
+    /// where the program has no error of its own, and the program holds the template as
+    /// tree-sitter-vue recovers it. An unclosed `{{ x </div>` is text to both parsers, so the
+    /// `v-for` alias is unused, as eslint-plugin-vue 10.11.1 (vue-eslint-parser 10.4.1) reports
+    /// it: `vue/no-unused-vars 10:15 'x' is defined but never used` on this file, with
+    /// `vue/no-ref-as-operand` at 5:11 and 6:11 (the combined audit's `BrokenTpl.vue`).
+    #[test]
+    fn a_template_error_leaves_an_unclosed_interpolations_alias_unused() {
+        use crate::code_rule_dsl::soundness::SyntaxErrors;
+        let source = "<script setup>\n// E2E-MARKER\nimport { ref } from 'vue'\nconst a = ref(1)\nconst b = a + 1\nconst c = a * 2\n</script>\n\n<template>\n  <div v-for=\"x in xs\">{{ x </div>\n  <p>{{ b }}</p>\n</template>\n";
+        let doc = tape(source);
+        let errors = SyntaxErrors::of_doc(doc.root().get_doc(), GrammarDialect::Vue);
+        assert!(!errors.is_empty(), "the template has a syntax error");
+        assert!(!errors.hide_bindings(), "the program has none of its own");
+        let table = ScopeTable::build(doc.root(), GrammarDialect::Vue, usize::MAX, &|| false)
+            .expect("table builds");
+        let usage = Usage::build(&table, &doc.root(), usize::MAX, &|| false).expect("usage");
+        let facts = |name: &'static str| {
+            let scope = table
+                .scopes
+                .iter()
+                .position(|scope| scope.bindings.contains_key(name))
+                .unwrap_or_else(|| panic!("{name} is bound")) as u32;
+            let facts = usage.facts(BindingId {
+                scope,
+                name,
+                index: 0,
+            });
+            (facts.referenced, facts.used)
+        };
+        assert_eq!(facts("x"), (Some(false), Some(false)), "the alias");
+        assert_eq!(facts("b"), (Some(true), Some(true)), "read by {{ b }}");
+    }
+
     /// ast-grep walks a node's later siblings from the first sibling that ends after its start
     /// (`next_all`): a `v-for` parameter's are the parameters after it, the alias's parentheses
     /// standing for no bytes (eslint-plugin-vue no-unused-vars invalid-007 to 009: a parameter
