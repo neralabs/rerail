@@ -52,7 +52,7 @@ libc = "0.2.189"
 [target.'cfg(not(windows))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
 tikv-jemallocator = { version = "=0.6.1", features = ["disable_initial_exec_tls"] }
-tikv-jemalloc-ctl = { version = "=0.6.0", features = ["stats"] }
+tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
 # Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
 tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 
