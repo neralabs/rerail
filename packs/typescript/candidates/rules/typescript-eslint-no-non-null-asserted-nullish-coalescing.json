@@ -1,0 +1,587 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-non-null-asserted-nullish-coalescing",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-non-null-asserted-nullish-coalescing` rule (https://typescript-eslint.io/rules/no-non-null-asserted-nullish-coalescing). Reports a non-null assertion that is the left operand of `??`. As upstream, an assertion that belongs to an optional chain (`a?.b!`) is left alone, since ESTree folds it into the chain. A bare asserted name is also left alone when it resolves to a variable of the file, or to a builtin or declared global (ESLint's globals, the esnext lib, `/* global */` comments), that nothing writes before the assertion: no initializer, definite-assignment `!`, parameter default, assignment or update of it occurs earlier in the file. As in ESLint's scope analysis, a plain, compound or update target counts as a write through parentheses and at most one `!`, `as` or `<T>` around the name (never `satisfies`), while a destructuring or for-in/of target counts through any of them.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "non-null-left-of-nullish",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "lib": [
+              "esnext"
+            ]
+          },
+          "rule": {
+            "kind": "non_null_expression",
+            "pattern": "$W",
+            "all": [
+              {
+                "matches": "nullish-left"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "optional-chain"
+                      },
+                      {
+                        "matches": "unassigned-name"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "nullish-left": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "binary_expression",
+                    "field": "left",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^\\?\\?$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "nullish-left"
+                  }
+                }
+              ]
+            },
+            "optional-chain": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "optional_chain"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\?\\.$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    }
+                  ],
+                  "has": {
+                    "field": "object",
+                    "matches": "optional-chain"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "matches": "optional-chain"
+                  }
+                },
+                {
+                  "kind": "non_null_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "optional-chain"
+                  }
+                }
+              ]
+            },
+            "unassigned-name": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "unassigned-name"
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "undefined"
+                        }
+                      ]
+                    },
+                    {
+                      "pattern": "$NAME"
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "resolves": {
+                                "global": true,
+                                "directives": "eslint"
+                              }
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "stopBy": "end",
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "kind": "undefined"
+                                              },
+                                              {
+                                                "kind": "shorthand_property_identifier_pattern"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "pattern": "$OTHER"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "OTHER",
+                                              "op": "eq",
+                                              "right": "NAME",
+                                              "text": "name"
+                                            }
+                                          },
+                                          {
+                                            "resolves": {
+                                              "global": true,
+                                              "directives": "eslint"
+                                            }
+                                          },
+                                          {
+                                            "matches": "written"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "has": {
+                                          "stopBy": "end",
+                                          "all": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "kind": "undefined"
+                                                },
+                                                {
+                                                  "kind": "shorthand_property_identifier_pattern"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "pattern": "$OTHER"
+                                            },
+                                            {
+                                              "compare": {
+                                                "left": "OTHER",
+                                                "op": "eq",
+                                                "right": "NAME",
+                                                "text": "name"
+                                              }
+                                            },
+                                            {
+                                              "resolves": {
+                                                "global": true,
+                                                "directives": "eslint"
+                                              }
+                                            },
+                                            {
+                                              "matches": "written"
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "resolves": {
+                                "binding": {}
+                              }
+                            },
+                            {
+                              "not": {
+                                "resolves": {
+                                  "binding": {
+                                    "occurrence": {
+                                      "all": [
+                                        {
+                                          "matches": "written"
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "precedes": {
+                                                "stopBy": "end",
+                                                "matches": "holds-assertion"
+                                              }
+                                            },
+                                            {
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "not": {
+                                                  "kind": "program"
+                                                },
+                                                "precedes": {
+                                                  "stopBy": "end",
+                                                  "matches": "holds-assertion"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "holds-assertion": {
+              "any": [
+                {
+                  "kind": "non_null_expression",
+                  "pattern": "$P",
+                  "compare": {
+                    "left": "P",
+                    "op": "eq",
+                    "right": "W",
+                    "text": "node"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "non_null_expression",
+                    "pattern": "$P",
+                    "compare": {
+                      "left": "P",
+                      "op": "eq",
+                      "right": "W",
+                      "text": "node"
+                    }
+                  }
+                }
+              ]
+            },
+            "written": {
+              "any": [
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      },
+                      {
+                        "kind": "object_assignment_pattern"
+                      }
+                    ],
+                    "field": "left"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "update_expression",
+                    "field": "argument"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "pair_pattern",
+                    "field": "value",
+                    "matches": "written"
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "object_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      },
+                      {
+                        "kind": "rest_pattern"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "written"
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "non_null_expression"
+                      },
+                      {
+                        "kind": "as_expression"
+                      },
+                      {
+                        "kind": "satisfies_expression"
+                      },
+                      {
+                        "kind": "type_assertion"
+                      }
+                    ],
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "not": {
+                              "kind": "satisfies_expression"
+                            },
+                            "any": [
+                              {
+                                "inside": {
+                                  "any": [
+                                    {
+                                      "kind": "assignment_expression"
+                                    },
+                                    {
+                                      "kind": "augmented_assignment_expression"
+                                    }
+                                  ],
+                                  "field": "left"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "update_expression",
+                                  "field": "argument"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "parenthesized_expression",
+                                  "matches": "target"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "matches": "in-pattern"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "variable_declarator",
+                    "field": "name",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "value",
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^!$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "required_parameter"
+                      },
+                      {
+                        "kind": "optional_parameter"
+                      }
+                    ],
+                    "field": "pattern",
+                    "has": {
+                      "field": "value",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      }
+                    ],
+                    "field": "left"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "update_expression",
+                    "field": "argument"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "target"
+                  }
+                }
+              ]
+            },
+            "in-pattern": {
+              "any": [
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      },
+                      {
+                        "kind": "object_assignment_pattern"
+                      }
+                    ],
+                    "field": "left"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "pair_pattern",
+                    "field": "value",
+                    "matches": "written"
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "object_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      },
+                      {
+                        "kind": "rest_pattern"
+                      }
+                    ],
+                    "matches": "written"
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "non_null_expression"
+                      },
+                      {
+                        "kind": "as_expression"
+                      },
+                      {
+                        "kind": "satisfies_expression"
+                      },
+                      {
+                        "kind": "type_assertion"
+                      }
+                    ],
+                    "matches": "in-pattern"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-non-null-asserted-nullish-coalescing",
+        "message": "The nullish coalescing operator is designed to handle undefined and null - using a non-null assertion is not needed.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-non-null-asserted-nullish-coalescing"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,308 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-magic-numbers",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-magic-numbers` rule (https://typescript-eslint.io/rules/no-magic-numbers) at its default options (no `ignore` values, every `ignore*` switch, `detectObjects` and `enforceConst` off). Every numeric or BigInt literal is reported, a unary `-` or `+` in front counting as part of it, unless its parent node (parentheses and computed-key brackets looked through, as ESTree does) lets it pass: a variable initializer, an object literal or pattern property (key or value), the right side of an assignment to anything but a plain identifier, the second argument of `parseInt` or `Number.parseInt`, and a JSX expression container. Enum member values, numeric literal types, type indexes and readonly class fields are reported too; in an enum member value or a readonly field a leading `+` is left out of the reported span.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "signed": {
+            "kind": "unary_expression",
+            "all": [
+              { "has": { "stopBy": "neighbor", "regex": "^[-+]$" } },
+              {
+                "has": {
+                  "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                  "kind": "number"
+                }
+              }
+            ]
+          },
+          "operand": { "any": [{ "kind": "number" }, { "matches": "signed" }] },
+          "numbers": {
+            "has": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    { "kind": "parenthesized_expression" },
+                    { "kind": "computed_property_name" }
+                  ]
+                }
+              },
+              "matches": "operand",
+              "pattern": "$N"
+            }
+          },
+          "readonly-field": {
+            "kind": "public_field_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^readonly$",
+              "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+            }
+          },
+          "parse-int": {
+            "any": [
+              { "kind": "identifier", "regex": "^parseInt$" },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression",
+                    "has": { "field": "property", "regex": "^parseInt$" }
+                  },
+                  {
+                    "kind": "subscript_expression",
+                    "has": {
+                      "field": "index",
+                      "value": { "eq": "parseInt" },
+                      "any": [
+                        { "kind": "string" },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": { "stopBy": "neighbor", "kind": "template_substitution" }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                  "kind": "identifier",
+                  "regex": "^Number$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "parse-int" }
+              }
+            ]
+          },
+          "in-array": {
+            "any": [
+              { "inside": { "stopBy": "neighbor", "kind": "array" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "in-array"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "magic-number",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            { "kind": "parenthesized_expression" },
+                            { "kind": "computed_property_name" },
+                            { "kind": "arguments" }
+                          ]
+                        }
+                      },
+                      "any": [{ "kind": "number" }, { "kind": "unary_expression" }]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "not": {
+                              "any": [
+                                { "kind": "variable_declarator" },
+                                { "kind": "pair" },
+                                { "kind": "pair_pattern" },
+                                { "kind": "jsx_expression" },
+                                { "kind": "parenthesized_expression" },
+                                { "kind": "computed_property_name" },
+                                { "kind": "array" },
+                                { "kind": "arguments" },
+                                { "kind": "spread_element" },
+                                { "kind": "method_definition" },
+                                { "kind": "assignment_expression" },
+                                { "kind": "augmented_assignment_expression" },
+                                { "kind": "enum_assignment" },
+                                { "matches": "readonly-field" },
+                                { "matches": "signed" }
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "method_definition",
+                            "inside": { "stopBy": "neighbor", "kind": "class_body" }
+                          },
+                          {
+                            "any": [
+                              { "kind": "assignment_expression" },
+                              { "kind": "augmented_assignment_expression" }
+                            ],
+                            "has": {
+                              "field": "left",
+                              "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                              "any": [{ "kind": "identifier" }, { "kind": "undefined" }]
+                            }
+                          },
+                          {
+                            "kind": "spread_element",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                { "kind": "array" },
+                                { "kind": "arguments" },
+                                { "kind": "object" }
+                              ]
+                            }
+                          }
+                        ],
+                        "matches": "numbers"
+                      },
+                      {
+                        "any": [
+                          { "kind": "new_expression" },
+                          {
+                            "kind": "call_expression",
+                            "any": [
+                              { "not": { "has": { "field": "function", "matches": "parse-int" } } },
+                              {
+                                "arguments": {
+                                  "signature": ["value", "radix"],
+                                  "absent": ["radix"],
+                                  "mode": "estree"
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  { "kind": "parenthesized_expression" },
+                                  { "kind": "computed_property_name" }
+                                ]
+                              }
+                            },
+                            "pattern": "$N",
+                            "any": [
+                              { "kind": "number" },
+                              {
+                                "kind": "unary_expression",
+                                "all": [
+                                  { "has": { "stopBy": "neighbor", "regex": "^[-+]$" } },
+                                  {
+                                    "has": {
+                                      "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                                      "kind": "number"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "call_expression",
+                        "all": [{ "has": { "field": "function", "matches": "parse-int" } }],
+                        "arguments": {
+                          "signature": ["value", "radix"],
+                          "bind": { "R": "radix" },
+                          "mode": "estree"
+                        },
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  { "kind": "parenthesized_expression" },
+                                  { "kind": "computed_property_name" }
+                                ]
+                              }
+                            },
+                            "matches": "operand",
+                            "pattern": "$N",
+                            "compare": { "left": "N", "op": "ne", "right": "R", "text": "node" }
+                          }
+                        }
+                      },
+                      {
+                        "any": [{ "kind": "enum_assignment" }, { "matches": "readonly-field" }],
+                        "has": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                { "kind": "parenthesized_expression" },
+                                { "kind": "computed_property_name" }
+                              ]
+                            }
+                          },
+                          "any": [
+                            { "kind": "number", "pattern": "$N" },
+                            {
+                              "matches": "signed",
+                              "has": { "stopBy": "neighbor", "regex": "^-$" },
+                              "pattern": "$N"
+                            },
+                            {
+                              "kind": "unary_expression",
+                              "all": [
+                                { "has": { "stopBy": "neighbor", "regex": "^\\+$" } },
+                                {
+                                  "has": {
+                                    "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                                    "kind": "number",
+                                    "pattern": "$N"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [{ "kind": "number" }, { "kind": "unary_expression", "matches": "signed" }],
+                "pattern": "$N",
+                "matches": "in-array"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "each": "N",
+        "code": "@typescript-eslint/no-magic-numbers",
+        "message": "Magic number `$N`: give it a named constant.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-magic-numbers"] } }
+      }
+    }
+  ]
+}

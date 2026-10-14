@@ -1,0 +1,245 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-unsafe-declaration-merging",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-unsafe-declaration-merging` rule (https://typescript-eslint.io/rules/no-unsafe-declaration-merging). Reports the name of a class declaration when an interface of the same name is declared in the same scope, and the name of an interface without type parameters (an interface with them is read in a scope of its own) when a class of the same name is declared in the same scope: TypeScript merges the two without checking that the class implements the interface's members. The scope is matched structurally: the nearest program, block (a function, namespace, module, `declare global` or static block body), switch body, `with` statement, or loop whose head declares a let or const binding above the declaration, reached through `export`, `declare` and `case` wrappers and through statement bodies that open no scope (if, else, while, do, labels, and loops whose head declares no let or const binding).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "merged-class-and-interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "has": {
+              "field": "name",
+              "pattern": "$NAME"
+            },
+            "any": [
+              {
+                "matches": "class-declaration",
+                "inside": {
+                  "matches": "scope-with-interface"
+                }
+              },
+              {
+                "kind": "interface_declaration",
+                "not": {
+                  "has": {
+                    "field": "type_parameters",
+                    "kind": "type_parameters"
+                  }
+                },
+                "inside": {
+                  "matches": "scope-with-class"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "class-declaration": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                }
+              ]
+            },
+            "scope-block": {
+              "any": [
+                {
+                  "kind": "program"
+                },
+                {
+                  "kind": "statement_block"
+                },
+                {
+                  "kind": "switch_body"
+                },
+                {
+                  "kind": "for_statement",
+                  "has": {
+                    "field": "initializer",
+                    "kind": "lexical_declaration"
+                  }
+                },
+                {
+                  "kind": "for_in_statement",
+                  "has": {
+                    "field": "kind",
+                    "regex": "^(?:let|const)$"
+                  }
+                },
+                {
+                  "kind": "with_statement"
+                }
+              ]
+            },
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "export_statement"
+                },
+                {
+                  "kind": "ambient_declaration"
+                },
+                {
+                  "kind": "switch_case"
+                },
+                {
+                  "kind": "switch_default"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "else_clause"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "do_statement"
+                },
+                {
+                  "kind": "labeled_statement"
+                },
+                {
+                  "kind": "for_statement",
+                  "has": {
+                    "field": "initializer",
+                    "any": [
+                      {
+                        "kind": "variable_declaration"
+                      },
+                      {
+                        "kind": "empty_statement"
+                      },
+                      {
+                        "precedes": {
+                          "pattern": ";"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "for_in_statement",
+                  "has": {
+                    "field": "left",
+                    "follows": {
+                      "any": [
+                        {
+                          "pattern": "("
+                        },
+                        {
+                          "pattern": "var"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "member-interface": {
+              "any": [
+                {
+                  "kind": "interface_declaration",
+                  "has": {
+                    "field": "name",
+                    "pattern": "$OTHER"
+                  },
+                  "compare": {
+                    "left": "OTHER",
+                    "op": "eq",
+                    "right": "NAME"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "has": {
+                    "matches": "member-interface"
+                  }
+                }
+              ]
+            },
+            "member-class": {
+              "any": [
+                {
+                  "matches": "class-declaration",
+                  "has": {
+                    "field": "name",
+                    "pattern": "$OTHER"
+                  },
+                  "compare": {
+                    "left": "OTHER",
+                    "op": "eq",
+                    "right": "NAME"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "has": {
+                    "matches": "member-class"
+                  }
+                }
+              ]
+            },
+            "scope-with-interface": {
+              "any": [
+                {
+                  "matches": "scope-block",
+                  "has": {
+                    "matches": "member-interface"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "inside": {
+                    "matches": "scope-with-interface"
+                  }
+                }
+              ]
+            },
+            "scope-with-class": {
+              "any": [
+                {
+                  "matches": "scope-block",
+                  "has": {
+                    "matches": "member-class"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "inside": {
+                    "matches": "scope-with-class"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "@typescript-eslint/no-unsafe-declaration-merging",
+        "message": "Unsafe declaration merging between classes and interfaces.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-unsafe-declaration-merging"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

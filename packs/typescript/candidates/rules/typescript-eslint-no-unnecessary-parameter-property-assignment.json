@@ -1,0 +1,497 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-unnecessary-parameter-property-assignment",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `no-unnecessary-parameter-property-assignment` rule (https://typescript-eslint.io/rules/no-unnecessary-parameter-property-assignment). Inside a constructor (or an arrow function called directly there), flags `this.x = x`, `this.x ||= x`, `this.x &&= x` or `this.x ??= x` when `x` is a parameter and the constructor declares `x` as a parameter property, so TypeScript already makes that assignment. It is not flagged when, earlier in the constructor and within the same class body, the parameter was written or the member was compound-assigned (`+=` and the like), or when a class field initializer of the same class assigns the member. As upstream decides whether a name is the parameter by the first reference to that name in the enclosing scope, a parameter or write is ignored when that first reference is a type reference, as in `constructor(private config: config.Settings)`.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "unnecessary-assign",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  { "kind": "assignment_expression" },
+                  {
+                    "kind": "augmented_assignment_expression",
+                    "has": { "field": "operator", "regex": "^(\\|\\||&&|\\?\\?)=$" }
+                  }
+                ]
+              },
+              { "has": { "field": "right", "matches": "bare-param" } },
+              { "has": { "field": "left", "matches": { "this-member": { "N": "$R" } } } },
+              { "matches": "context" },
+              {
+                "inside": {
+                  "stopBy": { "kind": "method_definition" },
+                  "pattern": "$F",
+                  "has": {
+                    "field": "parameters",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              { "kind": "accessibility_modifier" },
+                              { "kind": "override_modifier" },
+                              { "regex": "^readonly$", "not": { "kind": "identifier" } }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "pattern",
+                            "kind": "identifier",
+                            "pattern": "$P",
+                            "compare": { "left": "P", "op": "eq", "right": "R", "text": "name" }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    { "follows": { "stopBy": "end", "matches": "holds-write" } },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "method_definition" },
+                        "any": [
+                          { "matches": "write" },
+                          { "follows": { "stopBy": "end", "matches": "holds-write" } }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": { "kind": "class_body" },
+                    "kind": "class_body",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "public_field_definition",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^(accessor|abstract)$",
+                          "not": { "kind": "property_identifier" }
+                        }
+                      },
+                      "any": [
+                        {
+                          "not": { "inside": { "stopBy": "end", "matches": "fn" } },
+                          "has": { "stopBy": { "matches": "fn-or-class" }, "matches": "field-write" }
+                        },
+                        { "has": { "field": "value", "matches": "iife-call" } }
+                      ]
+                    }
+                  }
+                }
+              },
+              { "not": { "has": { "field": "right", "matches": "type-first-id" } } }
+            ]
+          },
+          "utils": {
+            "fn": {
+              "any": [
+                { "kind": "function_declaration" },
+                { "kind": "generator_function_declaration" },
+                { "kind": "function_expression" },
+                { "kind": "generator_function" },
+                { "kind": "arrow_function" },
+                { "kind": "method_definition" }
+              ]
+            },
+            "fn-or-class": { "any": [{ "matches": "fn" }, { "kind": "class_body" }] },
+            "ctor": {
+              "kind": "method_definition",
+              "inside": { "stopBy": "neighbor", "kind": "class_body" },
+              "has": { "field": "name", "regex": "^(constructor|'constructor'|\"constructor\")$" },
+              "not": { "has": { "stopBy": "neighbor", "regex": "^static$" } }
+            },
+            "iife": {
+              "kind": "arrow_function",
+              "inside": {
+                "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                "any": [
+                  { "kind": "call_expression", "has": { "field": "arguments", "kind": "arguments" } },
+                  { "kind": "arguments", "inside": { "stopBy": "neighbor", "kind": "call_expression" } }
+                ]
+              }
+            },
+            "context": {
+              "all": [
+                {
+                  "inside": {
+                    "stopBy": { "matches": "fn" },
+                    "any": [
+                      { "matches": "ctor", "pattern": "$F" },
+                      {
+                        "matches": "iife",
+                        "inside": { "stopBy": { "matches": "fn" }, "matches": "ctor", "pattern": "$F" }
+                      }
+                    ]
+                  }
+                },
+                { "inside": { "stopBy": { "kind": "class_body" }, "kind": "class_body", "pattern": "$CB" } }
+              ]
+            },
+            "this-object": {
+              "any": [
+                { "kind": "this" },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "this-object" }
+                }
+              ]
+            },
+            "this-member": {
+              "params": ["N"],
+              "rule": {
+                "any": [
+                  {
+                    "any": [{ "kind": "member_expression" }, { "kind": "subscript_expression" }],
+                    "all": [
+                      { "has": { "field": "object", "matches": "this-object" } },
+                      { "has": { "stopBy": "neighbor", "matches": { "key-of": { "N": "$N" } } } }
+                    ]
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": { "stopBy": "neighbor", "matches": { "this-member": { "N": "$N" } } }
+                  }
+                ]
+              }
+            },
+            "bare-param": {
+              "any": [
+                { "kind": "identifier", "pattern": "$R", "resolves": { "binding": { "form": "parameter" } } },
+                {
+                  "any": [
+                    { "kind": "parenthesized_expression" },
+                    { "kind": "as_expression" },
+                    { "kind": "non_null_expression" }
+                  ],
+                  "has": { "stopBy": "neighbor", "matches": "bare-param" }
+                }
+              ]
+            },
+            "param-write": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$W",
+                  "compare": { "left": "W", "op": "eq", "right": "R", "text": "name" },
+                  "resolves": { "binding": { "form": "parameter" } }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "param-write" }
+                }
+              ]
+            },
+            "write": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "any": [
+                        { "kind": "assignment_expression" },
+                        { "kind": "augmented_assignment_expression" }
+                      ],
+                      "all": [
+                        { "has": { "field": "left", "matches": "param-write" } },
+                        { "not": { "has": { "field": "left", "matches": "type-first-id" } } }
+                      ]
+                    },
+                    {
+                      "kind": "augmented_assignment_expression",
+                      "not": { "has": { "field": "operator", "regex": "^(\\|\\||&&|\\?\\?)=$" } },
+                      "has": { "field": "left", "matches": { "this-member": { "N": "$R" } } }
+                    }
+                  ]
+                },
+                { "matches": "context" }
+              ]
+            },
+            "holds-write": {
+              "any": [{ "matches": "write" }, { "has": { "stopBy": "end", "matches": "write" } }]
+            },
+            "field-write": {
+              "any": [{ "kind": "assignment_expression" }, { "kind": "augmented_assignment_expression" }],
+              "has": { "field": "left", "matches": { "this-member": { "N": "$R" } } }
+            },
+            "iife-arrow": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "iife-arrow" }
+                },
+                {
+                  "kind": "arrow_function",
+                  "has": { "stopBy": { "matches": "fn-or-class" }, "matches": "field-write" }
+                }
+              ]
+            },
+            "iife-call": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "iife-call" }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": { "field": "arguments", "kind": "arguments" },
+                  "any": [
+                    { "has": { "field": "function", "matches": "iife-arrow" } },
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": { "stopBy": "neighbor", "matches": "iife-arrow" }
+                      }
+                    }
+                  ],
+                  "not": { "matches": "optional-spine" }
+                }
+              ]
+            },
+            "key-of": {
+              "params": ["N"],
+              "rule": {
+                "any": [
+                  {
+                    "any": [{ "kind": "property_identifier" }, { "kind": "string" }],
+                    "pattern": "$K",
+                    "compare": { "left": "K", "op": "eq", "right": "N", "text": "name" }
+                  },
+                  {
+                    "kind": "template_string",
+                    "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                    "pattern": "$K",
+                    "compare": { "left": "K", "op": "eq", "right": "N", "text": "unquoted" }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": { "stopBy": "neighbor", "matches": { "key-of": { "N": "$N" } } }
+                  }
+                ]
+              }
+            },
+            "optional-spine": {
+              "any": [
+                {
+                  "any": [
+                    { "kind": "call_expression" },
+                    { "kind": "member_expression" },
+                    { "kind": "subscript_expression" }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [{ "kind": "optional_chain" }, { "regex": "^\\?\\.$" }]
+                  }
+                },
+                { "kind": "call_expression", "has": { "field": "function", "matches": "optional-spine" } },
+                {
+                  "any": [{ "kind": "member_expression" }, { "kind": "subscript_expression" }],
+                  "has": { "field": "object", "matches": "optional-spine" }
+                },
+                {
+                  "kind": "non_null_expression",
+                  "has": { "stopBy": "neighbor", "matches": "optional-spine" }
+                }
+              ]
+            },
+            "scope-node": {
+              "any": [
+                { "matches": "fn" },
+                { "kind": "statement_block", "not": { "inside": { "stopBy": "neighbor", "matches": "fn" } } },
+                { "kind": "for_statement", "has": { "field": "initializer", "kind": "lexical_declaration" } },
+                { "kind": "for_in_statement", "has": { "field": "kind", "regex": "^(let|const)$" } },
+                { "kind": "switch_body" },
+                { "kind": "catch_clause" },
+                { "kind": "class_static_block" },
+                { "inside": { "stopBy": "neighbor", "field": "value", "kind": "public_field_definition" } }
+              ]
+            },
+            "nested-scope": {
+              "any": [
+                { "matches": "scope-node" },
+                { "kind": "class_declaration" },
+                { "kind": "class" },
+                { "kind": "abstract_class_declaration" },
+                { "kind": "decorator" },
+                { "kind": "function_type" },
+                { "kind": "constructor_type" },
+                { "kind": "call_signature" },
+                { "kind": "construct_signature" },
+                { "kind": "method_signature" },
+                { "kind": "enum_declaration" },
+                { "kind": "index_signature", "has": { "stopBy": "neighbor", "kind": "mapped_type_clause" } },
+                {
+                  "any": [{ "kind": "type_alias_declaration" }, { "kind": "interface_declaration" }],
+                  "has": { "field": "type_parameters", "kind": "type_parameters" }
+                }
+              ]
+            },
+            "type-ref": {
+              "any": [
+                {
+                  "kind": "type_identifier",
+                  "pattern": "$T",
+                  "compare": { "left": "T", "op": "eq", "right": "R", "text": "name" },
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "any": [
+                        { "kind": "type_alias_declaration" },
+                        { "kind": "interface_declaration" },
+                        { "kind": "type_parameter" },
+                        { "kind": "nested_type_identifier" }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$T",
+                  "compare": { "left": "T", "op": "eq", "right": "R", "text": "name" },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [{ "kind": "nested_type_identifier" }, { "kind": "nested_identifier" }]
+                  }
+                }
+              ]
+            },
+            "value-ref": {
+              "any": [
+                { "kind": "identifier" },
+                { "kind": "shorthand_property_identifier" },
+                { "kind": "shorthand_property_identifier_pattern" }
+              ],
+              "pattern": "$V",
+              "compare": { "left": "V", "op": "eq", "right": "R", "text": "name" },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    { "kind": "nested_type_identifier" },
+                    { "kind": "nested_identifier" },
+                    {
+                      "any": [
+                        { "kind": "required_parameter" },
+                        { "kind": "optional_parameter" },
+                        { "kind": "variable_declarator" }
+                      ],
+                      "not": { "has": { "field": "value", "not": { "kind": "comment" } } }
+                    }
+                  ]
+                }
+              }
+            },
+            "holds-value": {
+              "any": [
+                { "matches": "value-ref" },
+                {
+                  "not": { "matches": "nested-scope" },
+                  "has": { "stopBy": { "matches": "nested-scope" }, "matches": "value-ref" }
+                }
+              ]
+            },
+            "value-before": {
+              "any": [
+                { "follows": { "stopBy": "end", "matches": "holds-value" } },
+                {
+                  "inside": {
+                    "stopBy": { "matches": "scope-node" },
+                    "not": { "matches": "scope-node" },
+                    "any": [
+                      { "follows": { "stopBy": "end", "matches": "holds-value" } },
+                      {
+                        "any": [
+                          {
+                            "kind": "type_annotation",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                { "kind": "required_parameter" },
+                                { "kind": "optional_parameter" },
+                                { "kind": "variable_declarator" }
+                              ]
+                            }
+                          },
+                          { "kind": "type_arguments" }
+                        ],
+                        "precedes": { "stopBy": "end", "matches": "holds-value" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "type-first": {
+              "inside": {
+                "stopBy": { "matches": "scope-node" },
+                "matches": "scope-node",
+                "has": {
+                  "stopBy": { "matches": "nested-scope" },
+                  "all": [
+                    { "matches": "type-ref" },
+                    {
+                      "not": {
+                        "any": [
+                          { "matches": "cond-part" },
+                          { "inside": { "stopBy": "end", "matches": "cond-part" } }
+                        ]
+                      }
+                    },
+                    { "not": { "matches": "value-before" } }
+                  ]
+                }
+              }
+            },
+            "cond-part": {
+              "inside": { "stopBy": "neighbor", "kind": "conditional_type" },
+              "not": {
+                "inside": { "stopBy": "neighbor", "field": "alternative", "kind": "conditional_type" }
+              }
+            },
+            "type-first-id": {
+              "any": [
+                { "kind": "identifier", "matches": "type-first" },
+                {
+                  "any": [
+                    { "kind": "parenthesized_expression" },
+                    { "kind": "as_expression" },
+                    { "kind": "non_null_expression" }
+                  ],
+                  "has": { "stopBy": "neighbor", "matches": "type-first-id" }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-unnecessary-parameter-property-assignment",
+        "message": "This member is already assigned by the constructor's parameter property; the assignment is redundant.",
+        "suppress": {
+          "eslint": { "rules": ["@typescript-eslint/no-unnecessary-parameter-property-assignment"] }
+        }
+      }
+    }
+  ]
+}

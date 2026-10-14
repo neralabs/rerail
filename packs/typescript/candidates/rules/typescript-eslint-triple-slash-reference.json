@@ -1,0 +1,146 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-triple-slash-reference",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `triple-slash-reference` rule (https://typescript-eslint.io/rules/triple-slash-reference) at its default options (lib: always, path: never, types: prefer-import). Looks only at the line comments that come before the file's first token (a shebang may precede them). Every `/// <reference path=\"...\" />` directive there is reported. A `/// <reference types=\"...\" />` directive there is reported once for each import declaration or `import x = require(...)` anywhere in the file whose module string has the same value. A comment counts as leading when the first child of the program that is either a code node or the comment itself turns out to be that comment. Because that test is stated positively, the rule still runs on files with syntax errors. The directive regexes list ECMAScript's whitespace characters (which include U+FEFF but not U+0085) instead of using the engine's Unicode `\\s`, so they accept exactly the spacing upstream's JavaScript regex accepts.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "leading-comment": {
+            "pattern": "$COMMENT",
+            "inside": {
+              "kind": "program",
+              "stopBy": "neighbor",
+              "has": {
+                "stopBy": "neighbor",
+                "pattern": "$FIRST",
+                "any": [
+                  {
+                    "regex": "^([^/#]|/[^/*]|#[^!])"
+                  },
+                  {
+                    "compare": {
+                      "left": "FIRST",
+                      "op": "eq",
+                      "right": "COMMENT",
+                      "text": "node"
+                    }
+                  }
+                ]
+              }
+            },
+            "compare": {
+              "left": "FIRST",
+              "op": "eq",
+              "right": "COMMENT",
+              "text": "node"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "path-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "regex": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*path[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'](?<MODULE>.*)[\"|']",
+            "matches": "leading-comment"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/triple-slash-reference",
+        "message": "Do not use a triple slash reference for $MODULE, use `import` style instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/triple-slash-reference"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "types-reference",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "pattern": "$C",
+            "regex": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*types[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'].*[\"|']",
+            "matches": "leading-comment",
+            "inside": {
+              "kind": "program",
+              "stopBy": "neighbor",
+              "has": {
+                "stopBy": "end",
+                "kind": "string",
+                "pattern": "$SOURCE",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "import_require_clause"
+                    }
+                  ],
+                  "field": "source",
+                  "stopBy": "neighbor"
+                },
+                "compare": {
+                  "left": "MODULE",
+                  "op": "eq",
+                  "right": "SPECIFIER"
+                }
+              }
+            }
+          },
+          "transform": {
+            "MODULE": {
+              "replace": {
+                "source": "$C",
+                "replace": "^///[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*<reference[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*types[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*=[\\t\\n\\x0B\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*[\"|'](.*)[\"|'][\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "SPECIFIER": {
+              "substring": {
+                "source": "$SOURCE",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/triple-slash-reference",
+        "message": "Do not use a triple slash reference for $MODULE, use `import` style instead.",
+        "each": "SOURCE",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/triple-slash-reference"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

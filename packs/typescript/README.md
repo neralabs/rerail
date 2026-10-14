@@ -34,3 +34,19 @@ Scoring one rule with every false positive and false negative printed:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack typescript --rule typescript-eslint-no-namespace --fixtures
 ```
+
+## Not ported: `no-restricted-types`
+
+Every typescript-eslint 8.70.1 rule that needs no type information has a port here, shipped or candidate, except
+`no-restricted-types`. It reports only the types a project lists in its `types` option, and that list is empty by
+default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
+writes its own code rule.
+
+## `init-declarations` can't pass Gate 5
+
+typescript-eslint declares `'always'` as `init-declarations`' default. Its wrapper around ESLint's core rule has no
+`meta.defaultOptions`, so with no options ESLint 10 passes the core rule no mode, and it reports nothing. Every upstream
+test that expects a finding sets the option, so upstream's own tests never notice. Gate 5 runs each case at the rule's
+default options, sees no upstream finding at all, and fails the rule whatever its document says. The candidate ports the
+declared default, `'always'`. With that option set, it agrees with typescript-eslint on every upstream test case and on
+the vscode corpus.

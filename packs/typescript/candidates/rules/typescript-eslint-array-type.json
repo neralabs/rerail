@@ -1,0 +1,770 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-array-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `array-type` rule (https://typescript-eslint.io/rules/array-type) at its default option `array` (for mutable and readonly arrays alike). Flags a type reference named `Array` or `ReadonlyArray` with exactly one type argument, and `Readonly<T[]>`, which should be written `T[]` or `readonly T[]`. As upstream walks the scope chain from the reference, any declaration of that name, value or type, in a scope on the chain other than the global one leaves the reference alone. The chain is built in the order upstream's scope manager opens scopes: a class member's computed key lies outside the member's own scope, and a scope opened inside a class decorator, a class method's parameter decorator, a switch discriminant, an interface method's computed key or a conditional type's false branch skips the scope that holds that position. No fix is offered.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "generic-array-type",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "generic_type",
+            "has": {
+              "kind": "type_identifier",
+              "stopBy": "neighbor",
+              "pattern": "$N",
+              "any": [
+                {
+                  "regex": "^(Array|ReadonlyArray)$"
+                },
+                {
+                  "regex": "^Readonly$",
+                  "precedes": {
+                    "kind": "type_arguments",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "matches": "array-type",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                }
+              ]
+            },
+            "all": [
+              {
+                "has": {
+                  "kind": "type_arguments",
+                  "stopBy": "neighbor",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[<>,]$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "extends_type_clause"
+                      },
+                      {
+                        "kind": "implements_clause"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "array-type": {
+              "any": [
+                {
+                  "kind": "array_type"
+                },
+                {
+                  "kind": "parenthesized_type",
+                  "has": {
+                    "matches": "array-type",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "binder": {
+              "pattern": "$N",
+              "binds": {}
+            },
+            "binds-in": {
+              "any": [
+                {
+                  "matches": "binder"
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "object_pattern"
+                          },
+                          {
+                            "kind": "array_pattern"
+                          },
+                          {
+                            "kind": "pair_pattern"
+                          },
+                          {
+                            "kind": "object_assignment_pattern"
+                          },
+                          {
+                            "kind": "assignment_pattern"
+                          },
+                          {
+                            "kind": "rest_pattern"
+                          }
+                        ]
+                      }
+                    },
+                    "matches": "binder"
+                  }
+                }
+              ]
+            },
+            "function-like": {
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "method_definition"
+                }
+              ]
+            },
+            "scope-maker": {
+              "any": [
+                {
+                  "matches": "function-like"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "class"
+                    },
+                    {
+                      "kind": "class_declaration"
+                    },
+                    {
+                      "kind": "abstract_class_declaration"
+                    },
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    },
+                    {
+                      "kind": "abstract_method_signature"
+                    },
+                    {
+                      "kind": "method_signature"
+                    },
+                    {
+                      "kind": "call_signature"
+                    },
+                    {
+                      "kind": "construct_signature"
+                    },
+                    {
+                      "kind": "function_type"
+                    },
+                    {
+                      "kind": "constructor_type"
+                    },
+                    {
+                      "kind": "conditional_type"
+                    }
+                  ]
+                },
+                {
+                  "kind": "index_signature",
+                  "has": {
+                    "kind": "mapped_type_clause",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "pre-scope": {
+              "any": [
+                {
+                  "kind": "decorator",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "class"
+                      },
+                      {
+                        "kind": "class_declaration"
+                      },
+                      {
+                        "kind": "abstract_class_declaration"
+                      },
+                      {
+                        "kind": "export_statement"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "kind": "decorator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "stopBy": "neighbor",
+                      "inside": {
+                        "kind": "method_definition",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "kind": "switch_statement",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "conditional_type",
+                    "stopBy": "neighbor",
+                    "field": "alternative"
+                  }
+                },
+                {
+                  "kind": "computed_property_name",
+                  "inside": {
+                    "kind": "method_signature",
+                    "stopBy": "neighbor",
+                    "not": {
+                      "inside": {
+                        "kind": "class_body",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "region": {
+              "any": [
+                {
+                  "matches": "pre-scope"
+                },
+                {
+                  "kind": "computed_property_name",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "abstract_method_signature"
+                      },
+                      {
+                        "kind": "method_signature"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "declared-above": {
+              "inside": {
+                "stopBy": {
+                  "matches": "region"
+                },
+                "matches": "scope-declares"
+              }
+            },
+            "boundary": {
+              "any": [
+                {
+                  "matches": "scope-maker"
+                },
+                {
+                  "matches": "region"
+                }
+              ]
+            },
+            "direct-pre": {
+              "inside": {
+                "stopBy": {
+                  "matches": "boundary"
+                },
+                "matches": "pre-scope",
+                "not": {
+                  "matches": "scope-maker"
+                },
+                "any": [
+                  {
+                    "matches": "declared-above"
+                  },
+                  {
+                    "inside": {
+                      "kind": "export_statement",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "scope-declares"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "shadowed": {
+              "any": [
+                {
+                  "matches": "declared-above"
+                },
+                {
+                  "matches": "direct-pre"
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "boundary"
+                    },
+                    "matches": "region",
+                    "not": {
+                      "matches": "pre-scope"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "direct-pre"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "region",
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope-maker"
+                      },
+                      "all": [
+                        {
+                          "matches": "scope-maker"
+                        },
+                        {
+                          "not": {
+                            "matches": "region"
+                          }
+                        },
+                        {
+                          "matches": "declared-above"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "declares": {
+              "any": [
+                {
+                  "matches": "binder"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "function_signature"
+                    },
+                    {
+                      "kind": "class_declaration"
+                    },
+                    {
+                      "kind": "abstract_class_declaration"
+                    },
+                    {
+                      "kind": "interface_declaration"
+                    },
+                    {
+                      "kind": "type_alias_declaration"
+                    },
+                    {
+                      "kind": "enum_declaration"
+                    },
+                    {
+                      "kind": "enum_assignment"
+                    },
+                    {
+                      "kind": "internal_module"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "pattern": "$N"
+                  }
+                },
+                {
+                  "kind": "import_alias",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "binder"
+                  }
+                },
+                {
+                  "kind": "import_statement",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "binder"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "lexical_declaration"
+                    },
+                    {
+                      "kind": "variable_declaration"
+                    }
+                  ],
+                  "has": {
+                    "kind": "variable_declarator",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "field": "name",
+                      "any": [
+                        {
+                          "pattern": "$N"
+                        },
+                        {
+                          "matches": "binds-in"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    },
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "switch_body"
+                    },
+                    {
+                      "kind": "switch_case"
+                    },
+                    {
+                      "kind": "switch_default"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "declares"
+                  }
+                }
+              ]
+            },
+            "scope-declares": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "kind": "statement_block"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    },
+                    {
+                      "kind": "enum_body"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "declares"
+                  }
+                },
+                {
+                  "matches": "function-like",
+                  "has": {
+                    "kind": "statement_block",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "declares"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "index_signature"
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "binder"
+                  }
+                },
+                {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "formal_parameters"
+                      },
+                      {
+                        "kind": "type_parameters"
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "has": {
+                            "field": "pattern",
+                            "matches": "binds-in"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "matches": "binder"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "mapped_type_clause"
+                      },
+                      {
+                        "kind": "object_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "matches": "binds-in"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "initializer",
+                    "matches": "declares"
+                  }
+                },
+                {
+                  "kind": "conditional_type",
+                  "has": {
+                    "kind": "infer_type",
+                    "stopBy": {
+                      "kind": "conditional_type"
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "binder"
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "matches": "function-like"
+                    },
+                    {
+                      "kind": "class_static_block"
+                    },
+                    {
+                      "kind": "internal_module"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "statement_block"
+                          },
+                          {
+                            "kind": "if_statement"
+                          },
+                          {
+                            "kind": "else_clause"
+                          },
+                          {
+                            "kind": "for_statement"
+                          },
+                          {
+                            "kind": "for_in_statement"
+                          },
+                          {
+                            "kind": "while_statement"
+                          },
+                          {
+                            "kind": "do_statement"
+                          },
+                          {
+                            "kind": "try_statement"
+                          },
+                          {
+                            "kind": "catch_clause"
+                          },
+                          {
+                            "kind": "finally_clause"
+                          },
+                          {
+                            "kind": "switch_statement"
+                          },
+                          {
+                            "kind": "switch_body"
+                          },
+                          {
+                            "kind": "switch_case"
+                          },
+                          {
+                            "kind": "switch_default"
+                          },
+                          {
+                            "kind": "labeled_statement"
+                          },
+                          {
+                            "kind": "with_statement"
+                          }
+                        ]
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "variable_declaration",
+                        "has": {
+                          "kind": "variable_declarator",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "field": "name",
+                            "matches": "binds-in"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "for_in_statement",
+                        "has": {
+                          "field": "kind",
+                          "regex": "^var$"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "field": "left",
+                              "matches": "binds-in"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "enum_body",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "enum-string"
+                      },
+                      {
+                        "kind": "enum_assignment",
+                        "has": {
+                          "field": "name",
+                          "matches": "enum-string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "enum-string": {
+              "kind": "string",
+              "has": {
+                "kind": "string_fragment",
+                "stopBy": "neighbor",
+                "pattern": "$N"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/array-type",
+        "message": "Use `T[]` (or `readonly T[]`) instead of the generic array type.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/array-type"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

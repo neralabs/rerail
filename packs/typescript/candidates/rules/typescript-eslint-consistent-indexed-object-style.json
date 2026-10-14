@@ -1,0 +1,883 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-consistent-indexed-object-style",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `consistent-indexed-object-style` rule (https://typescript-eslint.io/rules/consistent-indexed-object-style) at its default option `record`. Flags an interface or object type literal whose only member is an index signature, and a mapped type that does not use its key and whose constraint is not a bare `keyof`, unless the type refers back to the type alias or interface that declares it (directly or through other local type declarations). Fixes to a `Record` type where upstream does; no fix when a comment would be lost, for `-readonly`, for an interface with `extends` or under `export default`, when an interface's type parameter holds a comma and the parameters are not already joined by `, ` on one line (upstream re-joins them), or when the key or value type continues on a line indented with spaces or holds a multi-line string (the engine re-indents multi-line text, upstream copies it as is).",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "deep": {
+            "any": [
+              {
+                "kind": "type_identifier",
+                "pattern": "$N"
+              },
+              {
+                "kind": "type_identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "deep"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "union_type"
+                  },
+                  {
+                    "kind": "intersection_type"
+                  },
+                  {
+                    "kind": "conditional_type"
+                  },
+                  {
+                    "kind": "lookup_type"
+                  },
+                  {
+                    "kind": "parenthesized_type"
+                  },
+                  {
+                    "kind": "generic_type"
+                  },
+                  {
+                    "kind": "type_arguments"
+                  },
+                  {
+                    "kind": "type_annotation"
+                  },
+                  {
+                    "kind": "opting_type_annotation"
+                  },
+                  {
+                    "kind": "omitting_type_annotation"
+                  },
+                  {
+                    "kind": "adding_type_annotation"
+                  }
+                ],
+                "has": {
+                  "matches": "deep"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "object_type"
+                  },
+                  {
+                    "kind": "interface_body"
+                  }
+                ],
+                "has": {
+                  "kind": "index_signature",
+                  "has": {
+                    "field": "type",
+                    "matches": "deep"
+                  }
+                }
+              },
+              {
+                "kind": "type_alias_declaration",
+                "has": {
+                  "field": "value",
+                  "matches": "deep"
+                }
+              },
+              {
+                "kind": "interface_declaration",
+                "has": {
+                  "field": "body",
+                  "matches": "deep"
+                }
+              }
+            ]
+          },
+          "cross": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "type_annotation",
+                  "inside": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "index_signature",
+                          "has": {
+                            "kind": "mapped_type_clause"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "required_parameter"
+                            },
+                            {
+                              "kind": "optional_parameter"
+                            }
+                          ],
+                          "inside": {
+                            "kind": "tuple_type"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "function_type",
+                  "field": "return_type"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "constructor_type"
+                    },
+                    {
+                      "kind": "type_predicate"
+                    }
+                  ],
+                  "field": "type"
+                }
+              }
+            ]
+          },
+          "decl": {
+            "not": {
+              "matches": "cross"
+            },
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "type_alias_declaration"
+                  },
+                  {
+                    "matches": "cross"
+                  }
+                ]
+              },
+              "kind": "type_alias_declaration",
+              "has": {
+                "field": "name",
+                "pattern": "$N",
+                "binds": {
+                  "referenced": true
+                }
+              }
+            }
+          },
+          "single": {
+            "count": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "property_signature"
+                  },
+                  {
+                    "kind": "method_signature"
+                  },
+                  {
+                    "kind": "call_signature"
+                  },
+                  {
+                    "kind": "construct_signature"
+                  },
+                  {
+                    "kind": "index_signature"
+                  }
+                ]
+              },
+              "max": 1
+            }
+          },
+          "one-sig": {
+            "all": [
+              {
+                "matches": "single"
+              },
+              {
+                "has": {
+                  "kind": "index_signature",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "type",
+                        "kind": "type_annotation"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "literal": {
+            "matches": "one-sig",
+            "not": {
+              "all": [
+                {
+                  "matches": "decl"
+                },
+                {
+                  "matches": "deep"
+                }
+              ]
+            }
+          },
+          "mapped": {
+            "all": [
+              {
+                "matches": "single"
+              },
+              {
+                "has": {
+                  "kind": "index_signature",
+                  "has": {
+                    "kind": "mapped_type_clause",
+                    "pattern": "$MC",
+                    "not": {
+                      "has": {
+                        "field": "type",
+                        "kind": "index_type_query"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "type_identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "pattern": "$S",
+                          "compare": {
+                            "left": "S",
+                            "op": "eq",
+                            "right": "MC",
+                            "text": "node"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "matches": "decl"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_type"
+                          }
+                        },
+                        "matches": "deep",
+                        "not": {
+                          "kind": "parenthesized_type"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "interface": {
+            "all": [
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$N"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "matches": "one-sig"
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "binds": {
+                          "referenced": true
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "body",
+                        "matches": "deep"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "bare": {
+            "params": [
+              "X"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_type"
+                      },
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "\\n +"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "kind": "string_fragment"
+                            },
+                            {
+                              "kind": "escape_sequence"
+                            }
+                          ],
+                          "regex": "\\n"
+                        }
+                      }
+                    ]
+                  },
+                  "pattern": "$X"
+                },
+                {
+                  "kind": "parenthesized_type",
+                  "not": {
+                    "has": {
+                      "kind": "comment"
+                    }
+                  },
+                  "has": {
+                    "matches": {
+                      "bare": {
+                        "X": "$X"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "parts": {
+            "not": {
+              "has": {
+                "kind": "comment"
+              }
+            },
+            "has": {
+              "kind": "index_signature",
+              "all": [
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "kind": "comment"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "sign",
+                          "regex": "^-$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "index_type",
+                        "all": [
+                          {
+                            "matches": {
+                              "bare": {
+                                "X": "$K"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "mapped_type_clause",
+                        "all": [
+                          {
+                            "not": {
+                              "has": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "type",
+                              "all": [
+                                {
+                                  "matches": {
+                                    "bare": {
+                                      "X": "$K"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "field": "alias",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "field": "type",
+                    "not": {
+                      "has": {
+                        "kind": "comment"
+                      }
+                    },
+                    "has": {
+                      "matches": {
+                        "bare": {
+                          "X": "$V"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "regex": "^readonly$",
+                        "not": {
+                          "kind": "identifier"
+                        },
+                        "pattern": "$$RO"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "regex": "^readonly$",
+                          "not": {
+                            "kind": "identifier"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "type",
+                        "has": {
+                          "regex": "\\?:$",
+                          "pattern": "$$OPT"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "type",
+                        "kind": "type_annotation"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "interface-fix": {
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "extends_type_clause"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "export_statement",
+                    "has": {
+                      "regex": "^default$"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "matches": "parts"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "not": {
+                      "has": {
+                        "kind": "type_parameters"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "type_parameters",
+                      "pattern": "$TP",
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "comment"
+                        }
+                      },
+                      "any": [
+                        {
+                          "not": {
+                            "has": {
+                              "kind": "type_parameter",
+                              "regex": ","
+                            }
+                          }
+                        },
+                        {
+                          "regex": "^<[^\\s,]([^\\n]*[^\\s,])?>$",
+                          "not": {
+                            "regex": "\\s,|,([^ ]| \\s)"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "interface-at": {
+            "any": [
+              {
+                "kind": "interface_declaration",
+                "matches": "interface",
+                "inside": {
+                  "not": {
+                    "kind": "ambient_declaration"
+                  }
+                }
+              },
+              {
+                "kind": "ambient_declaration",
+                "has": {
+                  "kind": "interface_declaration",
+                  "matches": "interface"
+                }
+              }
+            ]
+          },
+          "interface-fixed": {
+            "any": [
+              {
+                "kind": "interface_declaration",
+                "matches": "interface-fix"
+              },
+              {
+                "kind": "ambient_declaration",
+                "not": {
+                  "has": {
+                    "kind": "comment"
+                  }
+                },
+                "has": {
+                  "kind": "interface_declaration",
+                  "matches": "interface-fix"
+                }
+              }
+            ]
+          },
+          "object-at": {
+            "kind": "object_type",
+            "any": [
+              {
+                "matches": "literal"
+              },
+              {
+                "matches": "mapped"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "interface-at"
+              },
+              {
+                "matches": "interface-fixed"
+              }
+            ]
+          },
+          "transform": {
+            "LW": {
+              "replace": {
+                "source": "$RO",
+                "replace": "^readonly$",
+                "by": "Readonly<Record",
+                "default": "Record"
+              }
+            },
+            "RC": {
+              "replace": {
+                "source": "$RO",
+                "replace": "^readonly$",
+                "by": ">",
+                "default": ""
+              }
+            },
+            "G1": {
+              "replace": {
+                "source": "$TP",
+                "replace": "\\s*,\\s*",
+                "by": ", "
+              }
+            },
+            "G2": {
+              "replace": {
+                "source": "$G1",
+                "replace": "^<\\s+",
+                "by": "<"
+              }
+            },
+            "G": {
+              "replace": {
+                "source": "$G2",
+                "replace": "(, )?\\s*>$",
+                "by": ">"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/consistent-indexed-object-style",
+        "message": "Use a `Record` type here instead of an object type whose only member is an index signature.",
+        "fix": "type $N$G = $LW<$K, $V>$RC;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/consistent-indexed-object-style"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "interface-unfixed",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "interface-at"
+              },
+              {
+                "not": {
+                  "matches": "interface-fixed"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/consistent-indexed-object-style",
+        "message": "Use a `Record` type here instead of an object type whose only member is an index signature.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/consistent-indexed-object-style"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "object-type",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "object-at"
+              },
+              {
+                "matches": "parts"
+              }
+            ]
+          },
+          "transform": {
+            "RW": {
+              "replace": {
+                "source": "$RO",
+                "replace": "^readonly$",
+                "by": "Readonly<",
+                "default": ""
+              }
+            },
+            "RC": {
+              "replace": {
+                "source": "$RO",
+                "replace": "^readonly$",
+                "by": ">",
+                "default": ""
+              }
+            },
+            "O1": {
+              "replace": {
+                "source": "$OPT",
+                "replace": "^-\\?:$",
+                "by": "Required<Record",
+                "default": "Record"
+              }
+            },
+            "OW": {
+              "replace": {
+                "source": "$O1",
+                "replace": "^\\+?\\?:$",
+                "by": "Partial<Record"
+              }
+            },
+            "OC": {
+              "replace": {
+                "source": "$OPT",
+                "replace": "^.+$",
+                "by": ">",
+                "default": ""
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/consistent-indexed-object-style",
+        "message": "Use a `Record` type here instead of an object type whose only member is an index signature.",
+        "fix": "$RW$OW<$K, $V>$OC$RC",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/consistent-indexed-object-style"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "object-type-unfixed",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "object-at"
+              },
+              {
+                "not": {
+                  "matches": "parts"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/consistent-indexed-object-style",
+        "message": "Use a `Record` type here instead of an object type whose only member is an index signature.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/consistent-indexed-object-style"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

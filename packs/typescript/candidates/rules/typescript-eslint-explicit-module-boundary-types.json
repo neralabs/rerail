@@ -1,0 +1,2098 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-explicit-module-boundary-types",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of typescript-eslint's `explicit-module-boundary-types` rule (https://typescript-eslint.io/rules/explicit-module-boundary-types). Flags functions that cross the module boundary without explicit types: functions, classes' public members and object members reached from an export (named, default, `export =`, or a local binding an export names, followed to its declaration and its writes within the reference's own scope), plus functions they return directly, that lack a return type, and their parameters that are untyped or typed `any`. Typed contexts, returned-into-typed functions, `as const` arrow bodies, higher-order functions (unless an export before them reaches them, which ESLint checks before it has seen their returns), constructors and setters are exempt from the return type; reports sit on the function head and on each parameter. Default options; they are declared in the `options` define.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "allowArgumentsExplicitlyTypedAsAny": {
+            "type": "boolean",
+            "default": false
+          },
+          "allowDirectConstAssertionInArrowFunctions": {
+            "type": "boolean",
+            "default": true
+          },
+          "allowedNames": {
+            "type": "array",
+            "items": "string",
+            "default": []
+          },
+          "allowHigherOrderFunctions": {
+            "type": "boolean",
+            "default": true
+          },
+          "allowOverloadFunctions": {
+            "type": "boolean",
+            "default": false
+          },
+          "allowTypedFunctionExpressions": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "function-value": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              }
+            ]
+          },
+          "function": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "unparen-function": {
+            "any": [
+              {
+                "matches": "function-value"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "unparen-function"
+                }
+              }
+            ]
+          },
+          "has-return-type": {
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "type_annotation"
+                },
+                {
+                  "kind": "asserts_annotation"
+                },
+                {
+                  "kind": "type_predicate_annotation"
+                }
+              ]
+            }
+          },
+          "accessor": {
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^accessor$",
+              "not": {
+                "kind": "property_identifier"
+              }
+            }
+          },
+          "class-field": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_body"
+            },
+            "has": {
+              "field": "value",
+              "stopBy": "neighbor",
+              "not": {
+                "kind": "comment"
+              }
+            }
+          },
+          "field": {
+            "matches": "class-field",
+            "not": {
+              "matches": "accessor"
+            }
+          },
+          "private": {
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "accessibility_modifier",
+                  "regex": "^private$"
+                },
+                {
+                  "kind": "private_property_identifier"
+                }
+              ]
+            }
+          },
+          "early-enough": {
+            "params": [
+              "X"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "not": {
+                    "compare": {
+                      "left": "X",
+                      "op": "eq",
+                      "right": "X",
+                      "text": "node"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "export_statement",
+                    "layout": {
+                      "after": {
+                        "to": "capture.X",
+                        "breaks": {
+                          "min": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "export-root": {
+            "matches": {
+              "early-enough": {
+                "X": "$LATE"
+              }
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "kind": "ambient_declaration"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "export_statement",
+                  "field": "value"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "kind": "ambient_declaration"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "export_statement",
+                  "field": "declaration"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "kind": "ambient_declaration"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "export_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^=$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "kind": "ambient_declaration"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "variable_declarator",
+                  "field": "value",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "export_statement"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "scope": {
+            "any": [
+              {
+                "matches": "function"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "switch_statement"
+                  },
+                  {
+                    "kind": "catch_clause"
+                  },
+                  {
+                    "kind": "class_body"
+                  },
+                  {
+                    "kind": "class_static_block"
+                  },
+                  {
+                    "kind": "program"
+                  }
+                ]
+              },
+              {
+                "kind": "for_statement",
+                "has": {
+                  "field": "initializer",
+                  "stopBy": "neighbor",
+                  "kind": "lexical_declaration"
+                }
+              },
+              {
+                "kind": "for_in_statement",
+                "has": {
+                  "field": "kind",
+                  "stopBy": "neighbor",
+                  "regex": "^(let|const)$"
+                }
+              },
+              {
+                "kind": "statement_block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "function"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "var-scope": {
+            "any": [
+              {
+                "matches": "function"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "program"
+                  },
+                  {
+                    "kind": "class_static_block"
+                  }
+                ]
+              },
+              {
+                "kind": "statement_block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "internal_module"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "declaration": {
+            "any": [
+              {
+                "kind": "lexical_declaration"
+              },
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "class_declaration"
+              },
+              {
+                "kind": "abstract_class_declaration"
+              }
+            ]
+          },
+          "binding-scope": {
+            "params": [
+              "S"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "declaration"
+                    },
+                    "kind": "variable_declaration",
+                    "inside": {
+                      "stopBy": {
+                        "matches": "var-scope"
+                      },
+                      "matches": "var-scope",
+                      "pattern": "$S"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "declaration"
+                    },
+                    "matches": "declaration",
+                    "not": {
+                      "kind": "variable_declaration"
+                    },
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope"
+                      },
+                      "matches": "scope",
+                      "pattern": "$S"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "same-scope": {
+            "params": [
+              "S"
+            ],
+            "rule": {
+              "inside": {
+                "stopBy": {
+                  "matches": "scope"
+                },
+                "matches": "scope",
+                "pattern": "$N",
+                "compare": {
+                  "left": "N",
+                  "op": "eq",
+                  "right": "S",
+                  "text": "node"
+                }
+              }
+            }
+          },
+          "write": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "assignment_expression"
+                  },
+                  {
+                    "kind": "augmented_assignment_expression"
+                  }
+                ]
+              },
+              {
+                "kind": "for_in_statement",
+                "not": {
+                  "has": {
+                    "field": "kind",
+                    "stopBy": "neighbor",
+                    "regex": "^(var|let|const)$"
+                  }
+                }
+              }
+            ]
+          },
+          "pattern-part": {
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "non_null_expression"
+              },
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "array_pattern"
+              },
+              {
+                "kind": "object_pattern"
+              },
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "kind": "rest_pattern"
+              },
+              {
+                "kind": "assignment_pattern"
+              },
+              {
+                "kind": "object_assignment_pattern"
+              },
+              {
+                "matches": "type-assertion"
+              }
+            ]
+          },
+          "write-site": {
+            "any": [
+              {
+                "matches": "write"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "assignment_pattern"
+                  },
+                  {
+                    "kind": "object_assignment_pattern"
+                  }
+                ],
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "pattern-part"
+                    }
+                  },
+                  "matches": "write",
+                  "field": "left"
+                }
+              }
+            ]
+          },
+          "write-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "matches": "pattern-part"
+                }
+              },
+              "matches": "write",
+              "field": "left"
+            },
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "matches": "pattern-part"
+                  }
+                },
+                "any": [
+                  {
+                    "kind": "assignment_pattern"
+                  },
+                  {
+                    "kind": "object_assignment_pattern"
+                  }
+                ],
+                "field": "right"
+              }
+            }
+          },
+          "exported-class-member": {
+            "not": {
+              "matches": "private"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_body",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "matches": "exported"
+              }
+            }
+          },
+          "exported": {
+            "any": [
+              {
+                "matches": "value-of-exported"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "pair"
+                        },
+                        {
+                          "kind": "ambient_declaration"
+                        }
+                      ]
+                    }
+                  },
+                  "matches": "class-field",
+                  "field": "value",
+                  "all": [
+                    {
+                      "matches": "exported-class-member"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "method_definition"
+                  },
+                  {
+                    "kind": "method_signature"
+                  },
+                  {
+                    "kind": "abstract_method_signature"
+                  }
+                ],
+                "matches": "exported-class-member"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "stopBy": "neighbor",
+                  "matches": "followed-name-2"
+                }
+              }
+            ]
+          },
+          "checked": {
+            "any": [
+              {
+                "matches": "exported"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "arrow_function",
+                  "field": "body",
+                  "matches": "checked-higher-order"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "return_statement",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "statement_block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "body",
+                      "matches": "checked-higher-order"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "checked-higher-order": {
+            "all": [
+              {
+                "matches": "function"
+              },
+              {
+                "matches": "returns-function"
+              },
+              {
+                "matches": "checked"
+              }
+            ]
+          },
+          "returns-function-body": {
+            "kind": "arrow_function",
+            "has": {
+              "field": "body",
+              "stopBy": "neighbor",
+              "matches": "unparen-function"
+            }
+          },
+          "returns-functions": {
+            "has": {
+              "stopBy": {
+                "matches": "function"
+              },
+              "kind": "return_statement"
+            },
+            "not": {
+              "has": {
+                "stopBy": {
+                  "matches": "function"
+                },
+                "kind": "return_statement",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "unparen-function"
+                  }
+                }
+              }
+            }
+          },
+          "returns-function": {
+            "any": [
+              {
+                "matches": "returns-function-body"
+              },
+              {
+                "matches": "returns-functions"
+              }
+            ]
+          },
+          "late-checked": {
+            "pattern": "$LATE",
+            "matches": "exported"
+          },
+          "type-assertion": {
+            "regex": "^<",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "type_arguments",
+              "nthChild": 1
+            }
+          },
+          "jsx-container": {
+            "any": [
+              {
+                "kind": "jsx_expression"
+              },
+              {
+                "kind": "spread_element",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "jsx_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "jsx_opening_element"
+                      },
+                      {
+                        "kind": "jsx_self_closing_element"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "typed-parent": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "any": [
+                {
+                  "kind": "as_expression"
+                },
+                {
+                  "matches": "type-assertion"
+                },
+                {
+                  "matches": "jsx-container"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "variable_declarator"
+                    },
+                    {
+                      "kind": "required_parameter"
+                    },
+                    {
+                      "kind": "optional_parameter"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation"
+                  }
+                },
+                {
+                  "kind": "public_field_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_annotation"
+                  },
+                  "not": {
+                    "matches": "accessor"
+                  }
+                },
+                {
+                  "kind": "arguments",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call_expression"
+                  }
+                }
+              ]
+            }
+          },
+          "typed-object": {
+            "kind": "object",
+            "any": [
+              {
+                "matches": "typed-parent"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "pair",
+                  "field": "value",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "typed-object"
+                  }
+                }
+              }
+            ]
+          },
+          "typed-function": {
+            "any": [
+              {
+                "matches": "typed-parent"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "new_expression"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "arguments",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "new_expression"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "pair",
+                  "field": "value",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "typed-object"
+                  }
+                }
+              },
+              {
+                "kind": "method_definition",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-object"
+                }
+              }
+            ]
+          },
+          "returned-scope": {
+            "any": [
+              {
+                "matches": "function",
+                "all": [
+                  {
+                    "matches": "has-return-type"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "variable_declarator"
+                  },
+                  {
+                    "kind": "expression_statement"
+                  }
+                ]
+              },
+              {
+                "matches": "field"
+              }
+            ]
+          },
+          "typed-returned-scope": {
+            "any": [
+              {
+                "matches": "function",
+                "all": [
+                  {
+                    "matches": "has-return-type"
+                  }
+                ]
+              },
+              {
+                "matches": "returned-scope",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_annotation"
+                },
+                "not": {
+                  "kind": "expression_statement"
+                }
+              }
+            ]
+          },
+          "returned-into-typed": {
+            "inside": {
+              "stopBy": {
+                "matches": "returned-scope"
+              },
+              "matches": "typed-returned-scope"
+            }
+          },
+          "ancestor-has-return-type": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "kind": "return_statement"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "kind": "arrow_function",
+                          "field": "body"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "returned-into-typed"
+                  }
+                ]
+              },
+              {
+                "kind": "arrow_function",
+                "not": {
+                  "has": {
+                    "field": "body",
+                    "stopBy": "neighbor",
+                    "kind": "statement_block"
+                  }
+                },
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "pair",
+                  "field": "value"
+                },
+                "any": [
+                  {
+                    "matches": "has-return-type"
+                  },
+                  {
+                    "matches": "returned-into-typed"
+                  }
+                ]
+              }
+            ]
+          },
+          "exempt": {
+            "any": [
+              {
+                "matches": "typed-function"
+              },
+              {
+                "matches": "ancestor-has-return-type"
+              }
+            ]
+          },
+          "const-assertion": {
+            "any": [
+              {
+                "kind": "as_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^const$"
+                }
+              },
+              {
+                "matches": "type-assertion",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_arguments",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^const$"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "const-assertion"
+                }
+              }
+            ]
+          },
+          "constructor-or-setter": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^set$",
+                  "not": {
+                    "kind": "property_identifier"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "class_body"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^static$",
+                    "not": {
+                      "kind": "property_identifier"
+                    }
+                  }
+                },
+                "has": {
+                  "field": "name",
+                  "stopBy": "neighbor",
+                  "regex": "^(constructor|'constructor'|\"constructor\")$"
+                }
+              }
+            ]
+          },
+          "missing-return-type": {
+            "not": {
+              "any": [
+                {
+                  "matches": "has-return-type"
+                },
+                {
+                  "matches": "returns-function-body"
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "returns-functions"
+                    },
+                    {
+                      "not": {
+                        "matches": "late-checked"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matches": "constructor-or-setter"
+                },
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "stopBy": "neighbor",
+                    "matches": "const-assertion"
+                  }
+                }
+              ]
+            }
+          },
+          "checked-function": {
+            "all": [
+              {
+                "matches": "function"
+              },
+              {
+                "matches": "checked"
+              },
+              {
+                "not": {
+                  "matches": "exempt"
+                }
+              }
+            ]
+          },
+          "report": {
+            "all": [
+              {
+                "matches": "checked-function"
+              },
+              {
+                "matches": "missing-return-type"
+              }
+            ]
+          },
+          "unparen-report": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "function-value"
+                  },
+                  {
+                    "matches": "report"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "unparen-report"
+                }
+              }
+            ]
+          },
+          "one-parameter": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "parameter",
+                  "stopBy": "neighbor",
+                  "kind": "identifier"
+                }
+              },
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "parameters",
+                  "stopBy": "neighbor",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "required_parameter"
+                        },
+                        {
+                          "kind": "optional_parameter"
+                        },
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "object_pattern"
+                        },
+                        {
+                          "kind": "array_pattern"
+                        },
+                        {
+                          "kind": "assignment_pattern"
+                        },
+                        {
+                          "kind": "rest_pattern"
+                        }
+                      ]
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "one-parameter"
+                }
+              }
+            ]
+          },
+          "head-in-property": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "pair",
+                  "field": "value"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "field",
+                  "field": "value"
+                }
+              }
+            ]
+          },
+          "signature": {
+            "any": [
+              {
+                "kind": "method_signature"
+              },
+              {
+                "kind": "abstract_method_signature"
+              }
+            ],
+            "matches": "exported"
+          },
+          "any-type": {
+            "any": [
+              {
+                "kind": "predefined_type",
+                "regex": "^any$"
+              },
+              {
+                "kind": "parenthesized_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "any-type"
+                }
+              }
+            ]
+          },
+          "reference-0": {
+            "any": [
+              {
+                "kind": "identifier",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "export_specifier",
+                  "field": "name"
+                },
+                "matches": {
+                  "early-enough": {
+                    "X": "$LATE"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier"
+                  }
+                ],
+                "matches": "export-root"
+              }
+            ]
+          },
+          "followed-name-0": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "matches": {
+              "binding-scope": {
+                "S": "$DS0"
+              }
+            },
+            "binds": {
+              "occurrence": {
+                "all": [
+                  {
+                    "matches": "reference-0"
+                  },
+                  {
+                    "matches": {
+                      "same-scope": {
+                        "S": "$DS0"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "declarator-root-0": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "kind": "variable_declarator",
+              "field": "value",
+              "has": {
+                "field": "name",
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "followed-name-0"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "followed-name-0"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "write-root-0": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "matches": "write-site",
+              "field": "right",
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "matches": "pattern-part"
+                  }
+                },
+                "matches": "write-target",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "matches": "reference-0"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "reference-1": {
+            "any": [
+              {
+                "matches": "reference-0"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "shorthand_property_identifier"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "matches": "declarator-root-0"
+                      },
+                      {
+                        "matches": "write-root-0"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "followed-name-1": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "matches": {
+              "binding-scope": {
+                "S": "$DS1"
+              }
+            },
+            "binds": {
+              "occurrence": {
+                "all": [
+                  {
+                    "matches": "reference-1"
+                  },
+                  {
+                    "matches": {
+                      "same-scope": {
+                        "S": "$DS1"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "declarator-root-1": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "kind": "variable_declarator",
+              "field": "value",
+              "has": {
+                "field": "name",
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "followed-name-1"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "followed-name-1"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "write-root-1": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "matches": "write-site",
+              "field": "right",
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "matches": "pattern-part"
+                  }
+                },
+                "matches": "write-target",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "matches": "reference-1"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "reference-2": {
+            "any": [
+              {
+                "matches": "reference-0"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "shorthand_property_identifier"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "matches": "declarator-root-1"
+                      },
+                      {
+                        "matches": "write-root-1"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "followed-name-2": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "matches": {
+              "binding-scope": {
+                "S": "$DS2"
+              }
+            },
+            "binds": {
+              "occurrence": {
+                "all": [
+                  {
+                    "matches": "reference-2"
+                  },
+                  {
+                    "matches": {
+                      "same-scope": {
+                        "S": "$DS2"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "declarator-root-2": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "kind": "variable_declarator",
+              "field": "value",
+              "has": {
+                "field": "name",
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "followed-name-2"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "followed-name-2"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "write-root-2": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "object"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ]
+                }
+              },
+              "matches": "write-site",
+              "field": "right",
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "matches": "pattern-part"
+                  }
+                },
+                "matches": "write-target",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "matches": "reference-2"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "value-of-exported": {
+            "any": [
+              {
+                "matches": "export-root"
+              },
+              {
+                "matches": "declarator-root-2"
+              },
+              {
+                "matches": "write-root-2"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-return-type",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "regex": "^(?:@(?:\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\)|[\\w$]+(?:\\s*\\.\\s*[\\w$]+)*(?:\\s*<(?:=>|[^<>]|<(?:=>|[^<>]|<(?:=>|[^<>])*>)*>)*>)?(?:\\s*\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\))?)(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)*(?<HEAD>(?:'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[(?:[^\\[\\]'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[[^\\]]*\\])*\\]|/\\*[\\s\\S]*?\\*/|//[^\\n]*|[^('\"`\\[/]|/)*?(?:\\((?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)*(?:async\\b(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)?(?:function\\b(?:/\\*[\\s\\S]*?\\*/|//[^\\n]*|[^(/]|/)*?|<[^(]*)?)\\(",
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      }
+                    ],
+                    "matches": "report",
+                    "not": {
+                      "matches": "head-in-property"
+                    }
+                  },
+                  {
+                    "kind": "method_definition",
+                    "matches": "report"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "pair"
+                      },
+                      {
+                        "matches": "field"
+                      }
+                    ],
+                    "has": {
+                      "field": "value",
+                      "stopBy": "neighbor",
+                      "matches": "unparen-report",
+                      "not": {
+                        "matches": "one-parameter"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "regex": "^=>$",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "arrow_function",
+                  "matches": "report",
+                  "not": {
+                    "matches": "head-in-property"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HEAD",
+        "code": "@typescript-eslint/explicit-module-boundary-types",
+        "message": "Exported function is missing an explicit return type.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/explicit-module-boundary-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-return-type-one-parameter",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "pair"
+              },
+              {
+                "matches": "field"
+              }
+            ],
+            "regex": "^(?:@(?:\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\)|[\\w$]+(?:\\s*\\.\\s*[\\w$]+)*(?:\\s*<(?:=>|[^<>]|<(?:=>|[^<>]|<(?:=>|[^<>])*>)*>)*>)?(?:\\s*\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\))?)(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)*(?<HEAD>(?:'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[(?:[^\\[\\]'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[[^\\]]*\\])*\\]|/\\*[\\s\\S]*?\\*/|//[^\\n]*|[^('\"`\\[/:=]|/)*[:=](?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*(?:\\((?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)*?(?:async\\b(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)?(?:<(?:=>|[^<>]|<(?:=>|[^<>]|<(?:=>|[^<>])*>)*>)*>(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)?)(?:\\((?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)?(?:[\\w$]+(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*[,)?:=]|[{\\[]|\\.\\.\\.)",
+            "has": {
+              "field": "value",
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "matches": "unparen-report"
+                },
+                {
+                  "matches": "one-parameter"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HEAD",
+        "code": "@typescript-eslint/explicit-module-boundary-types",
+        "message": "Exported function is missing an explicit return type.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/explicit-module-boundary-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-return-type-signature",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "method_signature"
+              },
+              {
+                "kind": "abstract_method_signature"
+              }
+            ],
+            "matches": "exported",
+            "regex": "^(?:'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[(?:[^\\[\\]'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\[[^\\]]*\\])*\\]|[^('\"`\\[<])*(?<HEAD>[<(][\\s\\S]*)$",
+            "not": {
+              "any": [
+                {
+                  "matches": "has-return-type"
+                },
+                {
+                  "matches": "constructor-or-setter"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HEAD",
+        "code": "@typescript-eslint/explicit-module-boundary-types",
+        "message": "Exported function is missing an explicit return type.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/explicit-module-boundary-types"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "untyped-argument",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "required_parameter"
+                  },
+                  {
+                    "kind": "optional_parameter"
+                  }
+                ],
+                "regex": "^(?:@(?:\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\)|[\\w$]+(?:\\s*\\.\\s*[\\w$]+)*(?:\\s*<(?:=>|[^<>]|<(?:=>|[^<>]|<(?:=>|[^<>])*>)*>)*>)?(?:\\s*\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`|\\((?:[^()'\"`]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|`(?:[^`\\\\]|\\\\[\\s\\S])*`)*\\))*\\))*\\))*\\))*\\))*\\))?)(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)*)*(?:(?:public|private|protected|readonly|override)(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\n]*)+)*(?<ARG>[\\s\\S]+)$",
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_annotation",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "any-type"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "checked-function"
+                      },
+                      {
+                        "matches": "signature"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "arrow_function",
+                  "field": "parameter",
+                  "matches": "checked-function"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "object_pattern"
+                  },
+                  {
+                    "kind": "array_pattern"
+                  },
+                  {
+                    "kind": "rest_pattern"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "checked-function"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ARG",
+        "code": "@typescript-eslint/explicit-module-boundary-types",
+        "message": "Exported function argument is untyped or typed as `any`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/explicit-module-boundary-types"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
