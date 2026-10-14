@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,9 +36,6 @@ class FakeUpdater implements SnapshotUpdater {
   #status(): UpdateStatus {
     const previous = this.previous === undefined ? {} : { previous: { version: this.previous, packageRoot: `/v/${this.previous}` } };
     return { channel: "latest", current: { version: this.current, packageRoot: `/v/${this.current}` }, ...previous };
-  }
-  async status(): Promise<UpdateStatus> {
-    return this.#status();
   }
   async update(version?: string): Promise<UpdateResult> {
     if (version === "broken") throw new Error("Installed package identity mismatch");
@@ -311,5 +308,128 @@ describe("rerail update and rerail update rollback", () => {
     await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
     expect(stopped).toEqual([]);
     expect(readFileSync(path)).toEqual(bytes);
+  });
+
+  // Review of #49 (B1): the record is used once. A rollback after it, and another rollback back again, find no copy to
+  // put back, and an earlier rollback's saved database is never replaced.
+  it("puts a copy back once, and never replaces the database an earlier rollback saved", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(existsSync(preUpdateSnapshotPath(path))).toBe(false);
+    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(updater.current).toBe("2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const working = repositoryKeys(path);
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    expect(updater.current).toBe("1.0.0");
+    expect(stopped).toEqual([]);
+    expect(repositoryKeys(path)).toEqual(working);
+    expect(repositoryKeys(`${path}.before-rollback`)).toEqual(["after", "before"]);
+
+    // A later update's restore keeps its own saved database beside the first.
+    const again = await database();
+    const second = new FakeUpdater();
+    await updateWithSnapshot(second, again, "2.0.0");
+    migrate(again, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    await rollbackWithSnapshot(second, again, async () => undefined);
+    await updateWithSnapshot(second, again, "3.0.0");
+    const latest = new Database(again);
+    latest.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('latest', 'latest', 0, 0)");
+    latest.close();
+    migrate(again, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    await rollbackWithSnapshot(second, again, async () => undefined);
+    expect(repositoryKeys(`${again}.before-rollback`)).toEqual(["after", "before"]);
+    expect(repositoryKeys(`${again}.before-rollback.2`)).toEqual(["after", "before", "latest"]);
+    expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining(`What changed since the update is in ${again}.before-rollback.2.`));
+  });
+
+  // Review of #49 (F2, F3): a version change without a kept copy leaves no record of an earlier change to match, and
+  // failing to keep the copy does not fail the update.
+  it.each([
+    ["the copy fails", (path: string) => mkdirSync(`${preUpdateSnapshotPath(path)}.${process.pid}.tmp`)],
+    ["recording it fails", (path: string) => mkdirSync(`${preUpdateSnapshotPath(path)}.json.tmp`)],
+  ])("keeps no copy of an earlier change when %s on a version change", async (_, fail) => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path);
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(true);
+    fail(path);
+    await expect(updateWithSnapshot(updater, path, "2.0.0")).resolves.toMatchObject({ changed: true, current: { version: "2.0.0" } });
+    expect(existsSync(preUpdateSnapshotPath(path))).toBe(false);
+    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
+    openRerailDatabase(path, { migrations: [afterUpdate(), { id: "raise", floor: RERAIL_BASELINE_SCHEMA_VERSION + 1, up: () => {} }] }).$client.close();
+    const keys = repositoryKeys(path);
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    expect(stopped).toEqual([]);
+    expect(repositoryKeys(path)).toEqual(keys);
+  });
+
+  // Review of #49 (F4): only another connection holding the file is "sessions still have it open".
+  it("reports a journal switch that fails for another reason as that reason", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const pragma = Database.prototype.pragma;
+    vi.spyOn(Database.prototype, "pragma").mockImplementation(function (this: Database.Database, source: string, options?: Database.PragmaOptions) {
+      if (source === "journal_mode = DELETE") throw new Database.SqliteError("disk I/O error", "SQLITE_IOERR");
+      return pragma.call(this, source, options);
+    });
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
+      `could not put back ${preUpdateSnapshotPath(path)} for the rolled-back version: disk I/O error.`,
+    ));
+    expect(vi.mocked(process.stderr.write)).not.toHaveBeenCalledWith(expect.stringContaining("still have it open"));
+  });
+
+  // Review of #49 (F7): an opener's brief read can make the first backup step copy nothing; it is tried again.
+  it("tries the copy again when a backup step found the file busy", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const backup = vi.spyOn(Database.prototype, "backup").mockResolvedValueOnce({ totalPages: 0, remainingPages: 0 });
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(backup).toHaveBeenCalledTimes(2);
+    expect(repositoryKeys(path)).toEqual(["before"]);
+    expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining("now holds the copy"));
+  });
+
+  // Review of #49 (N3): the copy holds every repository's history, like the saved database.
+  it("keeps the pre-update copy readable only by its owner", async () => {
+    const path = await database();
+    const umask = process.umask(0o022);
+    try {
+      await updateWithSnapshot(new FakeUpdater(), path, "2.0.0");
+    } finally {
+      process.umask(umask);
+    }
+    expect(statSync(preUpdateSnapshotPath(path)).mode & 0o777).toBe(0o600);
+  });
+
+  // Review of #49 (F8): the versions recorded are the updater's own, read under its lock; another update between a
+  // separate read and this one would have recorded a change that never happened.
+  it("records the version change the updater made, even when another update ran first", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    const update = updater.update.bind(updater);
+    updater.update = async version => {
+      await update("1.5.0");
+      return update(version);
+    };
+    await updateWithSnapshot(updater, path, "2.0.0");
+    expect(JSON.parse(readFileSync(`${preUpdateSnapshotPath(path)}.json`, "utf8"))).toMatchObject({ from: "1.5.0", to: "2.0.0" });
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(updater.current).toBe("1.5.0");
+    expect(repositoryKeys(path)).toEqual(["before"]);
   });
 });
