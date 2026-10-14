@@ -788,7 +788,22 @@
    "require-valid-default-prop/rerail-export-default-as-const.vue",
    "require-valid-default-prop/rerail-define-component-as-argument.vue",
    "require-valid-default-prop/rerail-export-default-parenthesized.vue",
-   "no-unused-vars/rerail-native-tag-descendant.vue"
+   "no-unused-vars/rerail-native-tag-descendant.vue",
+   "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "no-template-shadow/rerail-local-define-component.vue",
+   "no-template-shadow/rerail-other-define-component.vue",
+   "no-template-shadow/rerail-vue-define-component.vue",
+   "no-dupe-keys/rerail-local-define-component.vue",
+   "no-dupe-keys/rerail-other-define-component.vue",
+   "no-dupe-keys/rerail-vue-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-local-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-other-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-vue-define-component.vue",
+   "no-unused-refs/rerail-local-define-component.vue",
+   "no-unused-refs/rerail-other-define-component.vue",
+   "no-unused-refs/rerail-vue-define-component.vue"
   ]
  },
  "findings": [
@@ -869,6 +884,60 @@
    "path": "attribute-hyphenation/invalid-023.vue",
    "line": 1,
    "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
   },
   {
    "rule": "vue/no-unused-vars",
@@ -1931,6 +2000,12 @@
    "path": "no-dupe-keys/invalid-022.vue",
    "line": 5,
    "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 21
   },
   {
    "rule": "vue/return-in-computed-property",
@@ -3745,6 +3820,12 @@
    "column": 7
   },
   {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 11
+  },
+  {
    "rule": "vue/no-side-effects-in-computed-properties",
    "path": "no-side-effects-in-computed-properties/invalid-000.vue",
    "line": 5,
@@ -4627,6 +4708,12 @@
    "column": 23
   },
   {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/rerail-vue-define-component.vue",
+   "line": 7,
+   "column": 23
+  },
+  {
    "rule": "vue/require-v-for-key",
    "path": "no-template-shadow/valid-002.vue",
    "line": 1,
@@ -4948,6 +5035,18 @@
    "rule": "vue/no-unused-refs",
    "path": "no-unused-refs/invalid-004.vue",
    "line": 3,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/rerail-local-define-component.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/rerail-other-define-component.vue",
+   "line": 7,
    "column": 20
   },
   {
@@ -5705,6 +5804,60 @@
    "path": "no-v-text-v-html-on-component/invalid-007.vue",
    "line": 4,
    "column": 13
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
   },
   {
    "rule": "vue/no-v-html",
@@ -6671,6 +6824,60 @@
    "path": "v-on-event-hyphenation/invalid-005.vue",
    "line": 5,
    "column": 23
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
   },
   {
    "rule": "vue/attribute-hyphenation",

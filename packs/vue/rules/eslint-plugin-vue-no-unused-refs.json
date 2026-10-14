@@ -324,7 +324,89 @@
                         "any": [
                           {
                             "kind": "identifier",
-                            "regex": "^(defineNuxtComponent|component|createApp|defineComponent)$"
+                            "regex": "^defineNuxtComponent$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "regex": "^(component|createApp|defineComponent)$",
+                            "not": {
+                              "resolves": {
+                                "binding": {
+                                  "only": true,
+                                  "site": {
+                                    "any": [
+                                      {
+                                        "kind": "import_specifier",
+                                        "not": {
+                                          "inside": {
+                                            "stopBy": "end",
+                                            "kind": "import_statement",
+                                            "has": {
+                                              "field": "source",
+                                              "kind": "string",
+                                              "value": {
+                                                "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "kind": "function_declaration"
+                                      },
+                                      {
+                                        "kind": "generator_function_declaration"
+                                      },
+                                      {
+                                        "kind": "class_declaration"
+                                      },
+                                      {
+                                        "kind": "catch_clause"
+                                      },
+                                      {
+                                        "kind": "variable_declarator",
+                                        "all": [
+                                          {
+                                            "has": {
+                                              "field": "name",
+                                              "kind": "object_pattern"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "value",
+                                              "kind": "call_expression",
+                                              "all": [
+                                                {
+                                                  "has": {
+                                                    "field": "function",
+                                                    "kind": "identifier",
+                                                    "regex": "^require$"
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "has": {
+                                                      "field": "arguments",
+                                                      "has": {
+                                                        "kind": "string",
+                                                        "value": {
+                                                          "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
                           },
                           {
                             "kind": "member_expression",

@@ -403,4 +403,215 @@ export default ({
 </template>
 `,
   },
+  {
+    rule: "attribute-hyphenation",
+    name: "self-closing-in-foreign-namespace",
+    code: `<template>
+  <div>
+    <svg>
+      <circle fooBar="1" @fooBar="x" v-text="a" />
+      <circle fooBar="1" @fooBar="x" v-text="a"></circle>
+    </svg>
+    <math>
+      <mi fooBar="1" @fooBar="x" v-text="a" />
+      <mrow fooBar="1" @fooBar="x" v-text="a"></mrow>
+    </math>
+    <circle fooBar="1" @fooBar="x" v-text="a" />
+    <foo-bar fooBar="1" @fooBar="x" v-text="a" />
+    <math><annotation-xml><div fooBar="1" @fooBar="x" v-text="a" /></annotation-xml></math>
+  </div>
+</template>
+`,
+  },
+  {
+    rule: "v-on-event-hyphenation",
+    name: "self-closing-in-foreign-namespace",
+    code: `<template>
+  <div>
+    <svg>
+      <circle fooBar="1" @fooBar="x" v-text="a" />
+      <circle fooBar="1" @fooBar="x" v-text="a"></circle>
+    </svg>
+    <math>
+      <mi fooBar="1" @fooBar="x" v-text="a" />
+      <mrow fooBar="1" @fooBar="x" v-text="a"></mrow>
+    </math>
+    <circle fooBar="1" @fooBar="x" v-text="a" />
+    <foo-bar fooBar="1" @fooBar="x" v-text="a" />
+    <math><annotation-xml><div fooBar="1" @fooBar="x" v-text="a" /></annotation-xml></math>
+  </div>
+</template>
+`,
+  },
+  {
+    rule: "no-v-text-v-html-on-component",
+    name: "self-closing-in-foreign-namespace",
+    code: `<template>
+  <div>
+    <svg>
+      <circle fooBar="1" @fooBar="x" v-text="a" />
+      <circle fooBar="1" @fooBar="x" v-text="a"></circle>
+    </svg>
+    <math>
+      <mi fooBar="1" @fooBar="x" v-text="a" />
+      <mrow fooBar="1" @fooBar="x" v-text="a"></mrow>
+    </math>
+    <circle fooBar="1" @fooBar="x" v-text="a" />
+    <foo-bar fooBar="1" @fooBar="x" v-text="a" />
+    <math><annotation-xml><div fooBar="1" @fooBar="x" v-text="a" /></annotation-xml></math>
+  </div>
+</template>
+`,
+  },
+  {
+    // `defineComponent` defines a component only when global or imported from vue (a local or other-package lookalike does not).
+    rule: "no-template-shadow",
+    name: "local-define-component",
+    code: `<script>
+function defineComponent(options) { return options }
+defineComponent({
+  props: ['item']
+})
+</script>
+<template><div v-for="item in items" :key="item"></div></template>
+`,
+  },
+  {
+    rule: "no-template-shadow",
+    name: "other-define-component",
+    code: `<script>
+import { defineComponent } from 'elsewhere'
+defineComponent({
+  props: ['item']
+})
+</script>
+<template><div v-for="item in items" :key="item"></div></template>
+`,
+  },
+  {
+    rule: "no-template-shadow",
+    name: "vue-define-component",
+    code: `<script>
+import { defineComponent } from 'vue'
+defineComponent({
+  props: ['item']
+})
+</script>
+<template><div v-for="item in items" :key="item"></div></template>
+`,
+  },
+  {
+    // `defineComponent` defines a component only when global or imported from vue (a local or other-package lookalike does not).
+    rule: "no-dupe-keys",
+    name: "local-define-component",
+    code: `<script>
+function defineComponent(options) { return options }
+defineComponent({
+  props: ['a'],
+  data() { return { a: 1 } }
+})
+</script>
+`,
+  },
+  {
+    rule: "no-dupe-keys",
+    name: "other-define-component",
+    code: `<script>
+import { defineComponent } from 'elsewhere'
+defineComponent({
+  props: ['a'],
+  data() { return { a: 1 } }
+})
+</script>
+`,
+  },
+  {
+    rule: "no-dupe-keys",
+    name: "vue-define-component",
+    code: `<script>
+import { defineComponent } from 'vue'
+defineComponent({
+  props: ['a'],
+  data() { return { a: 1 } }
+})
+</script>
+`,
+  },
+  {
+    // `defineComponent` defines a component only when global or imported from vue (a local or other-package lookalike does not).
+    rule: "no-setup-props-reactivity-loss",
+    name: "local-define-component",
+    code: `<script>
+function defineComponent(options) { return options }
+defineComponent({
+  setup(props) {
+    const { a } = props
+  }
+})
+</script>
+`,
+  },
+  {
+    rule: "no-setup-props-reactivity-loss",
+    name: "other-define-component",
+    code: `<script>
+import { defineComponent } from 'elsewhere'
+defineComponent({
+  setup(props) {
+    const { a } = props
+  }
+})
+</script>
+`,
+  },
+  {
+    rule: "no-setup-props-reactivity-loss",
+    name: "vue-define-component",
+    code: `<script>
+import { defineComponent } from 'vue'
+defineComponent({
+  setup(props) {
+    const { a } = props
+  }
+})
+</script>
+`,
+  },
+  {
+    // `defineComponent` defines a component only when global or imported from vue (a local or other-package lookalike does not).
+    rule: "no-unused-refs",
+    name: "local-define-component",
+    code: `<script>
+function defineComponent(options) { return options }
+defineComponent({
+  setup() { return { r: 1 } }
+})
+</script>
+<template><div ref="r"></div></template>
+`,
+  },
+  {
+    rule: "no-unused-refs",
+    name: "other-define-component",
+    code: `<script>
+import { defineComponent } from 'elsewhere'
+defineComponent({
+  setup() { return { r: 1 } }
+})
+</script>
+<template><div ref="r"></div></template>
+`,
+  },
+  {
+    rule: "no-unused-refs",
+    name: "vue-define-component",
+    code: `<script>
+import { defineComponent } from 'vue'
+defineComponent({
+  setup() { return { r: 1 } }
+})
+</script>
+<template><div ref="r"></div></template>
+`,
+  },
 ];
