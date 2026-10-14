@@ -102,34 +102,6 @@
       "match": "line+column"
     },
     {
-      "id": "next-next-script-for-ga",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/next-script-for-ga"
-      },
-      "policy": "rules/next-next-script-for-ga.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-no-unwanted-polyfillio",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-unwanted-polyfillio"
-      },
-      "policy": "rules/next-no-unwanted-polyfillio.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "next-no-assign-module-variable",
       "upstream": {
         "tool": "eslint-plugin-next",
@@ -184,54 +156,12 @@
       "match": "line+column"
     },
     {
-      "id": "next-no-title-in-document-head",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-title-in-document-head"
-      },
-      "policy": "rules/next-no-title-in-document-head.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "next-no-script-component-in-head",
       "upstream": {
         "tool": "eslint-plugin-next",
         "rule": "@next/next/no-script-component-in-head"
       },
       "policy": "rules/next-no-script-component-in-head.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-inline-script-id",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/inline-script-id"
-      },
-      "policy": "rules/next-inline-script-id.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-no-async-client-component",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-async-client-component"
-      },
-      "policy": "rules/next-no-async-client-component.json",
       "capabilities": [
         "syntax",
         "value",
@@ -268,19 +198,6 @@
       "match": "line+column"
     },
     {
-      "id": "next-no-typos",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-typos"
-      },
-      "policy": "rules/next-no-typos.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "next-no-head-element",
       "upstream": {
         "tool": "eslint-plugin-next",
@@ -303,6 +220,89 @@
       "capabilities": [
         "syntax",
         "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-next-script-for-ga",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/next-script-for-ga"
+      },
+      "policy": "candidates/rules/next-next-script-for-ga.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-no-unwanted-polyfillio",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-unwanted-polyfillio"
+      },
+      "policy": "candidates/rules/next-no-unwanted-polyfillio.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-no-title-in-document-head",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-title-in-document-head"
+      },
+      "policy": "candidates/rules/next-no-title-in-document-head.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-inline-script-id",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/inline-script-id"
+      },
+      "policy": "candidates/rules/next-inline-script-id.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-no-async-client-component",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-async-client-component"
+      },
+      "policy": "candidates/rules/next-no-async-client-component.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-no-typos",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-typos"
+      },
+      "policy": "candidates/rules/next-no-typos.json",
+      "capabilities": [
+        "syntax",
         "suppression"
       ],
       "match": "line+column"

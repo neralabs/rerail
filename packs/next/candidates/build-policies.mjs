@@ -182,8 +182,8 @@ policy("no-head-element", "a <head> opening element, unless the file's path cont
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
     message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-head-element`,
   },
-// A candidate although it passes its fixtures here: the V1 rule validation gates evaluate each upstream case at its own
-// file name, and the plugin's invalid[1] is JSX at pages/index.ts, which the engine reads as TypeScript and reports nothing on.
+// A candidate, though it now passes every rule gate: they no longer score the plugin's invalid[1], JSX at pages/index.ts
+// that upstream's own parser rejects. Promoting it is for review.
 ], { candidate: true });
 
 policy("no-sync-scripts", "a <script> opening element with a src attribute and neither async nor defer.", [
@@ -268,7 +268,9 @@ policy("next-script-for-ga", "a <script> with a literal src containing the Googl
     },
     message: `Prefer \`@next/third-parties/google\` when using the inline script for Google Analytics and Tag Manager. See: ${DOCS}/next-script-for-ga`,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 97 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 
 const POLYFILLED = ["Array.prototype.@@iterator", "Array.prototype.at", "Array.prototype.copyWithin", "Array.prototype.fill", "Array.prototype.find", "Array.prototype.findIndex", "Array.prototype.flatMap", "Array.prototype.flat", "Array.from", "Array.prototype.includes", "Array.of", "Function.prototype.name", "fetch", "Map", "Number.EPSILON", "Number.Epsilon", "Number.isFinite", "Number.isNaN", "Number.isInteger", "Number.isSafeInteger", "Number.MAX_SAFE_INTEGER", "Number.MIN_SAFE_INTEGER", "Number.parseFloat", "Number.parseInt", "Object.assign", "Object.entries", "Object.fromEntries", "Object.getOwnPropertyDescriptor", "Object.getOwnPropertyDescriptors", "Object.hasOwn", "Object.is", "Object.keys", "Object.values", "Reflect", "Set", "Symbol", "Symbol.asyncIterator", "String.prototype.codePointAt", "String.prototype.endsWith", "String.fromCodePoint", "String.prototype.includes", "String.prototype.@@iterator", "String.prototype.padEnd", "String.prototype.padStart", "String.prototype.repeat", "String.raw", "String.prototype.startsWith", "String.prototype.trimEnd", "String.prototype.trimStart", "URL", "URL.prototype.toJSON", "URLSearchParams", "WeakMap", "WeakSet", "Promise", "Promise.prototype.finally", "es2015", "es2016", "es2017", "es2018", "es2019", "es5", "es6", "es7"];
 const featureAlternation = POLYFILLED.map(feature => feature.replaceAll(".", "\\.").replaceAll("@", "(?:@|%40)")).join("|");
@@ -294,7 +296,9 @@ policy("no-unwanted-polyfillio", "a <script> (or the first local name an import 
     },
     message: `No duplicate polyfills from Polyfill.io are allowed. See: ${DOCS}/no-unwanted-polyfillio`,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 97 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 
 policy("no-assign-module-variable", "a variable declaration with a declarator whose identifier is `module`.", [
   {
@@ -346,7 +350,9 @@ policy("no-title-in-document-head", "the first <title> element child of a <Head>
     },
     message: `Do not use \`<title>\` element with \`<Head />\` component from \`next/document\`. Titles should defined at the page-level using \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-title-in-document-head`,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 97 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 
 policy("no-script-component-in-head", "a <Head> element with a direct <Script> element child, in a file that imports next/head.", [
   {
@@ -387,7 +393,9 @@ policy("inline-script-id", "an element named by the first local an import from n
     },
     message: `\`next/script\` components with inline content must specify an \`id\` attribute. See: ${DOCS}/inline-script-id`,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 97 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 
 const USE_CLIENT = { kind: "expression_statement", has: { kind: "string", value: { eq: "use client" } } };
 const DEFAULT_EXPORT_OF_N_AFTER_USE_CLIENT = inProgram({ kind: "export_statement", all: [{ has: { kind: "identifier", pattern: "$N" } }, { follows: { stopBy: "end", ...USE_CLIENT } }] });
@@ -426,7 +434,9 @@ policy("no-async-client-component", "after a top-level \"use client\" statement:
     },
     message: ASYNC_CLIENT_MESSAGE,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 98 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 // ---- third batch ---------------------------------------------------------------------------------------------------
 policy("no-before-interactive-script-outside-document", "an opening element named by the default import of next/script with a plain strategy=\"beforeInteractive\", unless the path contains `/app/` or its segment after the first `pages` has a name starting with `_document`.", [
   {
@@ -506,7 +516,9 @@ policy("no-typos", "an exported function or variable whose name is one edit away
     anchor: "capture.E",
     message: `A data-fetching export may be a typo of getStaticProps, getStaticPaths or getServerSideProps.`,
   },
-]);
+// A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 11 of
+// its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
+], { candidate: true });
 
 const GOOGLE_FONT_LINK = { all: [OPEN, named("link"), hasAttribute("href", literalString({ startsWith: "https://fonts.googleapis.com/css" }))] };
 /** The ancestor no-page-custom-font accepts as the default-exported component. */
@@ -590,8 +602,8 @@ policy(
       message: LOCATION_MESSAGE,
     },
   ],
-  // A candidate although it passes its fixtures here: the V1 rule validation gates drop the browser globals the plugin's
-  // RuleTester declares, so upstream reports none of the 29 findings this port reproduces.
+  // A candidate although it passes its fixtures here: the rule gates fail it through engine-reads-goldens, on all 98 of
+  // its real-code goldens, Next.js corpus files the engine cannot fully read (NER-1764).
   { candidate: true },
 );
 
