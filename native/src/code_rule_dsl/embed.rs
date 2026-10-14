@@ -5,8 +5,8 @@
 //! The registry declares an embedding (`embeds: [{ language, via }]`); `build.rs` generates the
 //! `Via` of each supported one, `GrammarDialect::embeds` (the embedded dialects per host dialect)
 //! and `with_embedder!`, which dispatches a `Via` to the type of the same name here. A new `via`
-//! is one module and one re-export below: for Vue's, `embed/script_block.rs` holding
-//! `pub(crate) struct ScriptBlock;` implementing `Embedder`; the build fails until it exists.
+//! is one module and one re-export below (Vue's is `embed/script_block.rs`, `ScriptBlock`); the
+//! build fails until it exists.
 //!
 //! An embedder builds, from a file's tree and source, at most one program: a file holds at most
 //! one program per `via` its dialect embeds (Blade's and Vue's, one each). A program is
@@ -32,6 +32,7 @@
 //! as complete as the program's own syntax leaves it (`soundness::SyntaxErrors`).
 
 mod compiled_view;
+mod script_block;
 pub(crate) mod segments;
 #[cfg(test)]
 pub(crate) mod test_script;
@@ -39,6 +40,7 @@ pub(crate) mod test_script;
 mod tests;
 
 pub(crate) use compiled_view::CompiledView;
+pub(crate) use script_block::ScriptBlock;
 #[cfg(test)]
 pub(crate) use test_script::TestScript;
 
@@ -76,8 +78,9 @@ pub(crate) trait Embedder {
 }
 
 /// Whether an embedder wrote a token of `node`, an embedded program's, that the host does not
-/// spell (Blade's `@unless(c)` `!(`, a `:` after a directive): the node is then not the code its
-/// host bytes are, and what reads its tokens (structure, names, references) does not know it.
+/// spell (Blade's `@unless(c)` `!(`, a `:` after a directive; the parentheses and `;` Vue's view
+/// wraps an interpolation in): the node is then not the code its host bytes are, and what reads
+/// its tokens (structure, names, references) does not know it.
 /// Every token a program copies, and every one it writes over the same text (Blade's `@isset(`
 /// `isset(`), spells its own kind.
 pub(crate) fn rewritten<D: Doc>(node: &Node<'_, D>) -> bool {

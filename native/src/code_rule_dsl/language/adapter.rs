@@ -16,6 +16,7 @@ mod scope;
 mod sql;
 mod syntax;
 mod value;
+mod vue;
 
 pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
@@ -25,6 +26,7 @@ pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use sql::Sql;
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
+pub(crate) use vue::Vue;
 
 use super::{Family, GrammarDialect, language_not_supported};
 use crate::code_rule_dsl::identifier::python_name;
