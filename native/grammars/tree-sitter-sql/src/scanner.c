@@ -35,13 +35,27 @@ void tree_sitter_sql_external_scanner_destroy(void *payload) {
   free(payload);
 }
 
-// Reads `$tag$` at the lookahead into `tag`: its code points, none of them `$` or white space.
+// Rerail patch 23: a tag is empty or an identifier, as PostgreSQL's scanner (scan.l, dolqdelim)
+// reads it: a first code point from `[A-Za-z_]` or any non-ASCII one (scan.l takes every byte from
+// `\200` up), then those or digits. `$1,$2` is then two parameters, not a tag `1,` whose body runs
+// to the next `$1,$`, and a candidate that is no tag fails at its first other code point without
+// reading on to look for its close.
+static bool is_tag_start(int32_t c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c >= 0x80;
+}
+
+static bool is_tag_char(int32_t c) {
+  return is_tag_start(c) || (c >= '0' && c <= '9');
+}
+
+// Reads `$tag$` at the lookahead into `tag`: its code points.
 static bool scan_dollar_string_tag(TSLexer *lexer, Tag *tag) {
   if (lexer->lookahead != '$') return false;
   lexer->advance(lexer, false);
   tag->length = 0;
-  while (lexer->lookahead != '$' && !iswspace(lexer->lookahead) && !lexer->eof(lexer)) {
-    if (tag->length == MAX_TAG_LENGTH) return false;
+  if (lexer->lookahead != '$' && !is_tag_start(lexer->lookahead)) return false;
+  while (lexer->lookahead != '$' && !lexer->eof(lexer)) {
+    if (tag->length == MAX_TAG_LENGTH || !is_tag_char(lexer->lookahead)) return false;
     tag->chars[tag->length++] = lexer->lookahead;
     lexer->advance(lexer, false);
   }

@@ -863,4 +863,70 @@ mod tests {
             assert_eq!(decoded(source), [Value::Str(body.into())], "{source}");
         }
     }
+
+    /// A dollar-quote tag is empty or an identifier (grammar patch 23), so `$1,$2` is two
+    /// positional parameters: the tag `1,` used to open a string that ran to the next `$1,$`.
+    #[test]
+    fn positional_parameters_are_not_dollar_quote_tags() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_language::LanguageExt;
+        let source = "INSERT INTO t VALUES ($1,$2);\nSELECT 1 FROM t WHERE a = NULL;\n\
+                      INSERT INTO t VALUES ($1,$2);\nSELECT $_x1$a$1,$_x1$, $é1$b$é1$;\n";
+        let grep = GrammarDialect::Sql.ast_grep(source);
+        assert!(!grep.root().get_inner_node().has_error(), "{source}");
+        let parameters = grep.root().dfs().filter(|n| n.kind() == "parameter").count();
+        assert_eq!(parameters, 4);
+        assert_eq!(
+            decoded(source),
+            [
+                Value::int(1),
+                Value::None,
+                Value::Str("a$1,".into()),
+                Value::Str("b".into())
+            ]
+        );
+    }
+
+    /// The review's repro, through the SQL pack's CV05 port: the file parses clean, so the
+    /// `= NULL` on line 2 is reported rather than the file skipped as incomplete.
+    #[test]
+    fn cv05_reports_beside_positional_parameters() {
+        use crate::code_rule_dsl::CodeRuleDslRuntime;
+        use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
+        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../packs/sql/rules/sqlfluff-cv05-convention-is-null.json");
+        let document = std::fs::read_to_string(rule).expect("CV05 rule");
+        let compiled =
+            CodeRuleDslRuntime::compile(document, "json".to_owned(), CAPABILITIES.to_owned())
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+        let source = "INSERT INTO t (a, b) VALUES ($1,$2);\nSELECT 1 FROM t WHERE a = NULL;\n\
+                      INSERT INTO t (a, b) VALUES ($1,$2);\n";
+        let result = evaluate_file(&compiled, "sql", "q.sql", source);
+        assert_eq!(result["failures"], serde_json::json!([]), "{result}");
+        let violations = result["violations"].as_array().expect("violations");
+        assert_eq!(violations.len(), 1, "{result}");
+        // `startLine` counts from 0: line 2.
+        assert_eq!(violations[0]["span"]["startLine"], 1, "{result}");
+    }
+
+    /// A `$` that starts no tag fails at once: upstream read `$1,$`, `$2),($` and so on as tags
+    /// and scanned each to the end of the file for its close, quadratic in the parameters.
+    #[test]
+    fn many_positional_parameters_parse_in_linear_time() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_language::LanguageExt;
+        let rows: Vec<String> = (0..10_000)
+            .map(|i| format!("(${},${})", 2 * i + 1, 2 * i + 2))
+            .collect();
+        let source = format!("INSERT INTO t VALUES {};\n", rows.join(","));
+        let started = std::time::Instant::now();
+        let grep = GrammarDialect::Sql.ast_grep(&source);
+        let elapsed = started.elapsed();
+        assert!(!grep.root().get_inner_node().has_error());
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "{} bytes took {elapsed:?}",
+            source.len()
+        );
+    }
 }

@@ -23,7 +23,7 @@ declared divergence or scored as a syntax-error file.
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
 | `src/grammar.json` | generated from the patched `grammar.js` |
-| `src/scanner.c` | upstream, with patches 11 and 22 |
+| `src/scanner.c` | upstream, with patches 11, 22 and 23 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
 | `rerail.patch` | the patches: `git diff` of `grammar.js`, `src/scanner.c` and `test/corpus/` |
 
@@ -38,7 +38,7 @@ cd tree-sitter-sql
 git checkout 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8
 git apply <rerail>/native/grammars/tree-sitter-sql/rerail.patch
 tree-sitter generate   # tree-sitter-cli 0.27.0
-tree-sitter test       # 429 of 429 (3 error-recovery cases skipped, below)
+tree-sitter test       # 429 of 429 (4 cases skipped, below)
 ```
 
 then copy `src/grammar.json`, `src/scanner.c` and `src/tree_sitter/*.h` here.
@@ -102,8 +102,17 @@ them all.
     serializes), compared by length and content; the closing tag is matched one code point at a time,
     a failed candidate leaving a `$` it stopped at to start the next. The scanner state is a fixed
     struct, serialized as a flag byte and the tag's code points.
+23. **A dollar-quote tag is empty or an identifier** (`scanner.c`, `scan_dollar_string_tag`), as
+    PostgreSQL's scanner reads it (`scan.l`'s `dolqdelim`: `[A-Za-z_]` or any non-ASCII code point,
+    then those or digits). Upstream took any code points but `$` and white space, so `VALUES ($1,$2)`
+    opened a string with the tag `1,` that ran to the next `$1,$` in the file, and each such tag with no
+    close scanned on to the end of the file, so many parameters made a file quadratic. A candidate that
+    is no tag now fails at its first other code point, before any body is read; `$1` stays a
+    `parameter`.
 
-Three upstream error-recovery cases (`errors.txt`: `Function body with a $$ string literal with the same
-name`, `... a unbalanced $$`, `... a tag name contains whitespace`) are marked `:skip`: they assert the
-shape of the `ERROR` nodes upstream's parser recovers with, which the patched grammar recovers differently;
-each still parses with an `ERROR`.
+Four upstream cases are marked `:skip`. Three error-recovery cases (`errors.txt`: `Function body with a
+$$ string literal with the same name`, `... a unbalanced $$`, `... a tag name contains whitespace`) assert
+the shape of the `ERROR` nodes upstream's parser recovers with, which the patched grammar recovers
+differently; each still parses with an `ERROR`. `functions.txt`'s `Function body with non alphabetic
+dollar quoted tags` reads `$.$text$.$` as a string, which PostgreSQL rejects (patch 23); it now parses
+with an `ERROR`.
