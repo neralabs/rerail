@@ -36,7 +36,7 @@ In addition to the team-wide blockers:
 
 ## Reviewer settings
 
-Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. Generated paths don't count toward the 3,000-line threshold for a summary-only review; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
+Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-ci review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
 
 ```json reviewer
 {
