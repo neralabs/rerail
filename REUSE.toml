@@ -671,9 +671,11 @@ path = [
   "packs/python/upstream/ruff/fixtures/flake8_pyi/**",
   "packs/python/upstream/ruff/fixtures/flake8_return/**",
   "packs/python/upstream/ruff/fixtures/flake8_simplify/**",
+  "packs/python/upstream/ruff/fixtures/isort/**",
   "packs/python/upstream/ruff/fixtures/pep8_naming/**",
   "packs/python/upstream/ruff/fixtures/pycodestyle/**",
   "packs/python/upstream/ruff/fixtures/ruff/**",
+  "packs/python/upstream/ruff/fixtures/ruff_notebook/**",
   "packs/python/upstream/ruff/fixtures/syntax_errors/**",
 ]
 precedence = "override"
