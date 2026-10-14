@@ -544,22 +544,23 @@ function finalAssistantText(events: { kind: string; payload: unknown }[]): strin
     .join("\n");
 }
 
+/** Resolves a filesystem read to undefined when the path is absent; any other error still throws. */
+async function unlessMissing<T>(read: Promise<T>): Promise<T | undefined> {
+  try {
+    return await read;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 async function readDeliveries(storageRoot: string): Promise<unknown[]> {
   const ledger: unknown[] = [];
   // A session that died before its first hook (a harness that never started) leaves no storage root.
-  const entries = await readdir(storageRoot, { withFileTypes: true }).catch((error: unknown) => {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
-    throw error;
-  });
-  for (const entry of entries) {
+  for (const entry of (await unlessMissing(readdir(storageRoot, { withFileTypes: true }))) ?? []) {
     if (!entry.isDirectory()) continue;
-    try {
-      const text = await readFile(join(storageRoot, entry.name, "events.jsonl"), "utf8");
-      for (const line of text.split("\n")) if (line.trim()) ledger.push(JSON.parse(line));
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
-      throw error;
-    }
+    const text = await unlessMissing(readFile(join(storageRoot, entry.name, "events.jsonl"), "utf8"));
+    for (const line of text?.split("\n") ?? []) if (line.trim()) ledger.push(JSON.parse(line));
   }
   return ledger.filter(
     (entry) => entry !== null && typeof entry === "object" && "type" in entry && entry.type === "delivery",
@@ -582,17 +583,22 @@ export function hasCompletedViolation(events: readonly { kind: string; payload: 
 }
 
 /**
- * With the Codex set-call helper in the workspace, its log is the proof the violating text reached disk: Rerail
- * records no exit status for a Codex Bash result, so a mis-quoted or failed command still looks like a completed call.
+ * Whether the violating text reached api/route.py, judged without Rerail's records. With the Codex set-call helper
+ * in the workspace, only its log counts: Rerail records no exit status for a Codex Bash result, so a mis-quoted
+ * command still looks completed. Edit-tool hosts have no such log; a completed edit, or the forbidden call still in
+ * the file, counts.
  */
-async function violationWritten(project: string): Promise<boolean> {
-  const log = await readFile(join(project, SET_CALL_LOG), "utf8").catch(() => undefined);
-  if (log !== undefined) return log.split("\n").includes("cursor.execute");
-  return !(await stat(join(project, SET_CALL_SCRIPT)).then(() => true, () => false));
+async function violationReachedFile(project: string, route: string | undefined, recorded: boolean): Promise<boolean> {
+  if ((await unlessMissing(stat(join(project, SET_CALL_SCRIPT)))) !== undefined) {
+    const log = await unlessMissing(readFile(join(project, SET_CALL_LOG), "utf8"));
+    return log?.split("\n").includes("cursor.execute") ?? false;
+  }
+  return recorded || (route?.includes("cursor.execute") ?? false);
 }
 
-/** Failures that follow from the model never landing the violation: no code-rule verdict was possible. */
+/** Failures that follow from the violation never reaching the file: no code-rule verdict was possible. */
 const AFTER_VIOLATION: Record<string, true> = {
+  "violation reached the file": true,
   "real violation evidence": true,
   "executable policy delivered": true,
   "final file corrected": true,
@@ -601,12 +607,13 @@ const AFTER_VIOLATION: Record<string, true> = {
 
 /**
  * An attempt is inconclusive, and worth another session, only when everything Rerail could be held to passed: the
- * failures are a harness timeout (a stalled provider) or follow from the model never completing the violation.
- * A violation that landed without its diagnostic, a crash, an extension error or a lost delivery stays FAILED.
+ * failures are a harness timeout (a stalled provider) or follow from the violation never reaching the file. A
+ * violation that reached the file without Rerail's record or diagnostic, a crash, an extension error or a lost
+ * delivery stays FAILED.
  */
 export function isInconclusive(assertions: readonly Assertion[], exitCode: number): boolean {
   const failed = assertions.filter((assertion) => !assertion.passed);
-  const violationMissing = failed.some((assertion) => assertion.name === "real violation evidence");
+  const violationMissing = failed.some((assertion) => assertion.name === "violation reached the file");
   return failed.length > 0 && failed.every((assertion) =>
     assertion.name === "harness exited cleanly" ? exitCode === 124 : violationMissing && AFTER_VIOLATION[assertion.name] === true);
 }
@@ -642,12 +649,12 @@ export async function inspectOutcome(
     errors.length === 0,
     errors.length === 0 ? "no extension errors or handler timeouts on the harness console" : [...new Set(errors)].slice(0, 3).join(" | "),
   );
+  const route = await unlessMissing(readFile(join(project, "api", "route.py"), "utf8"));
   if (acceptanceMode === "full") {
-    const route = await readFile(join(project, "api", "route.py"), "utf8").catch(() => "");
     append(
       assertions,
       "final file corrected",
-      !route.includes("cursor.execute") && /transaction/i.test(route),
+      route !== undefined && !route.includes("cursor.execute") && /transaction/i.test(route),
       "api/route.py removes the forbidden call and uses a transaction helper",
     );
   }
@@ -673,11 +680,18 @@ export async function inspectOutcome(
     !audits.some((event) => contains(event.payload, "budget-exceeded")),
     "no evaluation reported reason=budget-exceeded",
   );
+  const recorded = hasCompletedViolation(normalized);
+  append(
+    assertions,
+    "violation reached the file",
+    await violationReachedFile(project, route, recorded),
+    "the forbidden call was written to api/route.py",
+  );
   append(
     assertions,
     "real violation evidence",
-    hasCompletedViolation(normalized) && (await violationWritten(project)),
-    "the forbidden invocation has a matching completed native tool-result and reached api/route.py",
+    recorded,
+    "the forbidden invocation has a matching completed native tool-result",
   );
   if (acceptanceMode === "full") {
     const assistantText = finalAssistantText(normalized);

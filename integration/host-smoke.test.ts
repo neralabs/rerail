@@ -74,7 +74,7 @@ it("counts extension errors from this package's extension or engine and ignores 
   expect(await silent("Extension error (/elsewhere/other-extension.js): unrelated failure")).toBe(true);
 });
 
-it("trusts a Codex shell violation only once the set-call helper logged writing it", async () => {
+it("counts a Codex shell violation as written only once the set-call helper logged writing it", async () => {
   const project = await mkdtemp(join(tmpdir(), "rerail-smoke-helper-"));
   temporaryDirectories.push(project);
   vi.stubEnv("RERAIL_HOME", join(project, "home"));
@@ -97,34 +97,42 @@ it("trusts a Codex shell violation only once the set-call helper logged writing 
   } finally {
     store.close();
   }
-  const evidence = async (): Promise<boolean | undefined> => {
+  const outcome = async (): Promise<Record<string, boolean>> => {
     const assertions: Parameters<typeof inspectOutcome>[2] = [];
     await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr: "" }, "transport");
-    return assertions.find((assertion) => assertion.name === "real violation evidence")?.passed;
+    return Object.fromEntries(assertions.map((assertion) => [assertion.name, assertion.passed]));
   };
-  expect(await evidence()).toBe(false);
+  // Rerail recorded a completed call either way; only the helper's log says whether the file changed.
+  expect(await outcome()).toMatchObject({ "real violation evidence": true, "violation reached the file": false });
   await writeFile(join(project, "tools", "set_call.log"), "transaction.fetch_value\n");
-  expect(await evidence()).toBe(false);
+  expect(await outcome()).toMatchObject({ "violation reached the file": false });
   await writeFile(join(project, "tools", "set_call.log"), "cursor.execute\ntransaction.fetch_value\n");
-  expect(await evidence()).toBe(true);
+  expect(await outcome()).toMatchObject({ "violation reached the file": true });
 });
 
 it("retries only attempts where the provider, not Rerail, kept the violation from being judged", () => {
-  const outcome = (...failed: string[]) => [
+  const transport = [
     "harness exited cleanly", "extension stayed silent", "one session, opened once", "policies evaluated within budget",
-    "real violation evidence", "single authoritative delivery", "executable policy delivered",
-  ].map((name) => ({ name, passed: !failed.includes(name), detail: "" }));
-  // The model never landed the violation: mis-quoted command (exit 0) or a stalled provider (timeout).
-  expect(isInconclusive(outcome("real violation evidence", "executable policy delivered"), 0)).toBe(true);
-  expect(isInconclusive(outcome("harness exited cleanly", "real violation evidence", "executable policy delivered"), 124)).toBe(true);
+    "violation reached the file", "real violation evidence", "single authoritative delivery", "executable policy delivered",
+  ];
+  const full = [...transport, "final file corrected", "real final assistant output"];
+  const outcome = (names: readonly string[], ...failed: string[]) =>
+    names.map((name) => ({ name, passed: !failed.includes(name), detail: "" }));
+  const missing = ["violation reached the file", "real violation evidence", "executable policy delivered"];
+  // The violation never reached the file: a mis-quoted command (exit 0) or a stalled provider (timeout).
+  expect(isInconclusive(outcome(transport, ...missing), 0)).toBe(true);
+  expect(isInconclusive(outcome(transport, "harness exited cleanly", ...missing), 124)).toBe(true);
+  expect(isInconclusive(outcome(full, ...missing, "real final assistant output"), 0)).toBe(true);
   // A stall after every transport assertion already passed.
-  expect(isInconclusive(outcome("harness exited cleanly"), 124)).toBe(true);
-  // The violation landed and Rerail never delivered its diagnostic.
-  expect(isInconclusive(outcome("executable policy delivered"), 0)).toBe(false);
-  expect(isInconclusive(outcome("harness exited cleanly", "executable policy delivered"), 124)).toBe(false);
+  expect(isInconclusive(outcome(transport, "harness exited cleanly"), 124)).toBe(true);
+  // The violation reached the file and Rerail lost its record or never delivered its diagnostic.
+  expect(isInconclusive(outcome(transport, "real violation evidence", "executable policy delivered"), 0)).toBe(false);
+  expect(isInconclusive(outcome(transport, "executable policy delivered"), 0)).toBe(false);
+  expect(isInconclusive(outcome(transport, "harness exited cleanly", "executable policy delivered"), 124)).toBe(false);
+  expect(isInconclusive(outcome(full, "real violation evidence", "executable policy delivered", "final file corrected"), 0)).toBe(false);
   // Rerail-owned failures stay red even when the violation is also missing; so does a crash.
-  expect(isInconclusive(outcome("real violation evidence", "single authoritative delivery"), 0)).toBe(false);
-  expect(isInconclusive(outcome("real violation evidence", "extension stayed silent"), 0)).toBe(false);
-  expect(isInconclusive(outcome("harness exited cleanly", "real violation evidence"), 1)).toBe(false);
-  expect(isInconclusive(outcome(), 0)).toBe(false);
+  expect(isInconclusive(outcome(transport, ...missing, "single authoritative delivery"), 0)).toBe(false);
+  expect(isInconclusive(outcome(transport, ...missing, "extension stayed silent"), 0)).toBe(false);
+  expect(isInconclusive(outcome(transport, "harness exited cleanly", ...missing), 1)).toBe(false);
+  expect(isInconclusive(outcome(transport), 0)).toBe(false);
 });
