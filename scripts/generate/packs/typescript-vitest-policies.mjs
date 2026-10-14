@@ -1,9 +1,9 @@
-// Builds the TypeScript pack's @vitest/eslint-plugin 1.6.27 candidates: packs/typescript/candidates/rules/vitest-*.json.
-// The JSON files are the committed artifacts; this script is their source. It spells once the test-function check the
-// three ports share and writes each document the utilities it needs. Run offline by a maintainer, never in CI; the
-// output is deterministic.
+// Writes the TypeScript pack's @vitest/eslint-plugin 1.6.27 candidates: packs/typescript/candidates/rules/vitest-*.json
+// (listed in scripts/generate/README.md; edit this script, not the JSON). It spells once the checks the three ports
+// share (which calls are Vitest's, upstream's valid chains, where findings sit) and writes each document the utilities
+// it needs. It reads no tools; run offline by a maintainer, never in CI; the output is deterministic.
 //
-// Usage (from the repository root): node packs/typescript/candidates/build-vitest-policies.mjs
+// Usage (from the repository root): node scripts/generate/packs/typescript-vitest-policies.mjs
 //
 // Upstream reports a call only when parseVitestFnCall classifies it, and that reads the chain's head identifier
 // through scope (resolveVitestFn and resolveScope in src/utils/parse-vitest-fn-call.ts). The head is Vitest's when:
@@ -20,7 +20,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RULES = join(dirname(fileURLToPath(import.meta.url)), "rules");
+const RULES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "typescript", "candidates", "rules");
 
 const SCOPE = {
   include: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"],
