@@ -5,11 +5,13 @@
 # CI results; it never builds, runs or pushes anything. It approves only PRs that pass every low-risk rule
 # (neralabs/reviewer SPEC.md: no blockers, CI green, within REVIEW.md's size limits, no high-risk paths,
 # not from a fork or a bot, low risk), and its approval counts toward this repo's required review.
+# Approving subscribes the PR: each later push withdraws the approval at once and re-reviews the new
+# commits. "@neralabs-ci stop", or removing the `reviewer: subscribed` label, withdraws it too.
 name: reviewer
 
 on:
   pull_request:
-    types: [review_requested, synchronize, closed]
+    types: [review_requested, synchronize, unlabeled, closed]
   issue_comment:
     types: [created]
   pull_request_review_comment:
