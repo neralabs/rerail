@@ -217,6 +217,8 @@
    "mysql/RF01/test_pass_mysql_comma_multi_table_update_alias_correlated_subquery.sql",
    "ansi/RF01/test_pass_redundantly_bracketed_join_target_alias.sql",
    "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
+   "rerail/postgres/RF01/pass_insert_select_on_conflict_excluded.sql",
+   "rerail/postgres/RF01/pass_insert_select_on_conflict_excluded_lower.sql",
    "ansi/RF04/test_pass_valid_identifier.sql",
    "ansi/RF04/test_fail_keyword_as_identifier_column.sql",
    "ansi/RF04/test_fail_keyword_as_identifier_column_alias.sql",

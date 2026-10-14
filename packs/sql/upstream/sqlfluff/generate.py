@@ -85,6 +85,12 @@ RERAIL_CASES: dict[str, list[tuple[str, str, list[tuple[int, int]]]]] = {
         ("pass_left_join_lateral", "SELECT * FROM t LEFT JOIN LATERAL (SELECT 1) AS s ON TRUE;\n", []),
         ("pass_cross_join_lateral", "SELECT * FROM t CROSS JOIN LATERAL (SELECT 1) AS s;\n", []),
     ],
+    "RF01": [
+        ("pass_insert_select_on_conflict_excluded",
+         "INSERT INTO t (x, y) SELECT s.a, s.b FROM s ON CONFLICT (x) DO UPDATE SET y = EXCLUDED.y;\n", []),
+        ("pass_insert_select_on_conflict_excluded_lower",
+         "INSERT INTO t (x, y) SELECT s.a, s.b FROM s ON CONFLICT (x) DO UPDATE SET y = excluded.y;\n", []),
+    ],
     "RF04": [
         ("fail_postgres_and_mysql_unreserved_column_names",
          "CREATE TABLE t (hash bigint NOT NULL, list text, PRIMARY KEY (hash));\n", [(1, 17), (1, 39)]),

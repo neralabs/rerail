@@ -59,9 +59,9 @@ SQL, and a port's reading is PostgreSQL's wherever the dialects differ. Corpus f
 | `sqlfluff-cv04-convention-count-rows` | CV04 | 3/0/0 | 0/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | no |
 | `sqlfluff-cv05-convention-is-null` | CV05 | 7/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 | `sqlfluff-cv08-convention-left-join` | CV08 | 9/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-pg01-postgres-excessive-locks` | PG01 | 8/0/0 (1 div.) | 55/0/56 | 148/0/118 | 0/0/0 (3 div.) | 0/0/0 | yes |
+| `sqlfluff-pg01-postgres-excessive-locks` | PG01 | 10/0/0 (1 div.) | 55/0/56 | 148/0/118 | 0/0/0 (3 div.) | 0/0/0 | yes |
 | `sqlfluff-pg02-postgres-not-valid-foreign-key` | PG02 | 1/0/0 | 0/0/1 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-rf01-references-from` | RF01 | 22/0/0 (6 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/7 | yes |
+| `sqlfluff-rf01-references-from` | RF01 | 26/0/0 (6 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/7 | yes |
 | `sqlfluff-rf04-references-keywords` | RF04 | 4/0/0 (3 div.) | 28/0/78 | 55/0/87 | 0/0/1 (1 div.) | 0/0/0 | yes |
 | `sqlfluff-rf05-references-special-chars` | RF05 | 10/0/0 (4 div.) | 0/0/9 | 0/0/0 | 10/0/0 | 0/0/0 | yes |
 | `sqlfluff-rf06-references-quoting` | RF06 | 19/0/0 (47 div.) | 23/0/13 | 4/0/1 | 0/0/0 | 0/0/0 | yes |
@@ -81,7 +81,7 @@ others run around the errors (`source-partial`). Per source:
 
 | Source | Files | Left out (SQLFluff could not analyse them) | Scored | With a syntax error, skipped | Parsed cleanly |
 |---|---|---|---|---|---|
-| fixtures | 281 | 0 | 281 | 13 | 268 (95%) |
+| fixtures | 283 | 0 | 283 | 13 | 270 (95%) |
 | postgres | 629 | 342 | 287 | 202 | 85 (30%) |
 | mattermost | 560 | 0 | 560 | 262 | 298 (53%) |
 | anki | 112 | 15 | 97 | 33 | 64 (66%) |

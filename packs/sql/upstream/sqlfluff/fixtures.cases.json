@@ -3124,6 +3124,34 @@
    }
   },
   {
+   "file": "rerail/postgres/RF01/pass_insert_select_on_conflict_excluded.sql",
+   "rule": "RF01",
+   "case": "pass_insert_select_on_conflict_excluded",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "rerail": true
+  },
+  {
+   "file": "rerail/postgres/RF01/pass_insert_select_on_conflict_excluded_lower.sql",
+   "rule": "RF01",
+   "case": "pass_insert_select_on_conflict_excluded_lower",
+   "dialect": "postgres",
+   "expect": "pass",
+   "upstreamViolations": null,
+   "upstreamLineNumbers": null,
+   "reference": {
+    "tool": "libpg_query (PostgreSQL 18.6)",
+    "accepts": true
+   },
+   "rerail": true
+  },
+  {
    "file": "ansi/RF04/test_pass_valid_identifier.sql",
    "rule": "RF04",
    "case": "test_pass_valid_identifier",
