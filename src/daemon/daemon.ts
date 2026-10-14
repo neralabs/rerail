@@ -278,15 +278,16 @@ export class RerailDaemon {
       }
       return daemon;
     } catch (error) {
+      // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE).
+      await Promise.allSettled([
+        server?.listening === true ? closeHttpServer(server) : Promise.resolve(),
+        Promise.resolve().then(() => nativeServer?.close()),
+        Promise.resolve().then(() => engineService?.close()),
+      ]);
       try {
-        if (server?.listening === true) await closeHttpServer(server);
-      } finally {
-        try {
-          await nativeServer?.close();
-          await engineService?.close();
-        } finally {
-          stores.close();
-        }
+        stores.close();
+      } catch {
+        // The start's own error is the one to report.
       }
       throw error;
     }
