@@ -14,6 +14,7 @@ pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
 pub(crate) mod python;
+pub(crate) mod sql;
 pub(crate) mod usage;
 
 pub(crate) use lookup::Lookup;
@@ -61,6 +62,9 @@ pub(crate) enum ScopeKind {
     /// The scope that holds a named TypeScript function expression's own name, around its function
     /// scope (eslint-scope's `function-expression-name`).
     FunctionName,
+    /// A SQL query block: a `SELECT`, `UPDATE`, `DELETE` or `INSERT` and its clauses, or the
+    /// wrapper of a `WITH` statement that binds its CTE names (`scope/sql.rs`).
+    Query,
 }
 
 /// How a name is bound: the construct its site is.
@@ -110,6 +114,12 @@ pub(crate) enum Form {
     Method,
     /// A private getter or setter (`get #a()`, `set #a(v)`).
     Accessor,
+    /// A SQL `FROM`/`JOIN` relation: its alias, else its table name's last part.
+    Relation,
+    /// A SQL CTE name (`WITH c AS (...)`).
+    Cte,
+    /// A SQL `UPDATE`, `DELETE` or `INSERT` target table.
+    Target,
 }
 
 /// Where and how a binding binds its name.
@@ -406,6 +416,9 @@ pub(crate) struct ScopeTable {
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
     /// PHP: what reaches each read of a variable.
     pub(crate) php: Option<Box<php::Flow>>,
+    /// SQL: the file's query blocks, relations and qualified references, which resolve a
+    /// reference and decide a relation's usage (`scope/sql.rs`).
+    pub(crate) sql: Option<Box<sql::SqlScopes>>,
 }
 
 /// How a table reads its file, beyond the grammar: tables of one file under different readings
@@ -530,6 +543,7 @@ impl ScopeTable {
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),
                 php: None,
+                sql: None,
             },
             current: 0,
             position: None,
