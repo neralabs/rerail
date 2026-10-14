@@ -1,0 +1,146 @@
+name: Rule gates (nightly)
+
+# Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
+# no longer matches the pinned upstream (gates:record --check), then judges every rule again with the result cache
+# off. Pull requests judge rules against the committed recordings (rule-gates.yml); this job keeps them honest.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rule-gates-nightly
+  cancel-in-progress: false
+
+jobs:
+  # As in ci.yml: dist/ and the release native engine, reused from main's build when its inputs are unchanged.
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # The release engine depends only on the engine's sources, the language registry (build.rs generates
+      # its tables from languages/), the lockfile, the workspace profile, the toolchain and the napi CLI.
+      # Most pull requests change none of them and reuse main's build.
+      - id: napi
+        name: Read the napi CLI version
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
+
+      - id: native-cache
+        name: Restore the release native engine
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+
+      - name: Install pinned Rust toolchain
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo artifacts
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the native engine
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: npm run build:native
+
+      - name: Build the package
+        run: npm run build:js
+
+      - name: Upload the built package
+        uses: actions/upload-artifact@v7
+        with:
+          name: built
+          path: |
+            dist/
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          if-no-files-found: error
+          retention-days: 1
+
+  record-check:
+    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pack: python
+            tool: ruff
+          - pack: python
+            tool: bandit
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed lockfiles.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Restore the upstream runtimes, checkouts and corpus
+        uses: actions/cache@v6
+        with:
+          path: |
+            .rerail/gates/runtimes
+            .rerail/gates/upstream
+            .rerail/gates/corpus
+          key: rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/gates/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/gates/corpus-tasks.json') }}
+          restore-keys: |
+            rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-
+
+      - name: Check the committed recording against a fresh one
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --check
+
+  gates:
+    name: Rule gates, uncached
+    needs: build
+    uses: ./.github/workflows/rule-gates.yml
+    with:
+      no-cache: true

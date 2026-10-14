@@ -1,0 +1,111 @@
+# Rule gates
+
+The rule gates decide whether a ported rule is good enough to ship. Every rule a pack ships (`packs/<id>/rules/`)
+must pass them, and CI fails when one does not. Every candidate (`packs/<id>/candidates/`) runs through the same gates,
+but its results are only reported, so CI shows how far each candidate got and why it stopped.
+
+The gates sit on top of the [pack validation contract](pack-format.md#the-validation-contract) (checks 1 to 6) and the
+conformance check (`npm run test:conformance`), which stay as they are. They are the V1 validation gates that
+nera-rule-validation ran by hand (its ADR 0006), brought into rerail so that nobody needs a second repository to
+validate a rule. The gates' code is NRV's, ported as it was; what changed is where it runs and what it reads.
+
+## The gates
+
+A rule's verdict is the first blocking gate it fails, in this order. Every gate still runs on every rule, so the
+report shows every failure, not only the first.
+
+| Gate | What it checks | Blocks |
+| --- | --- | --- |
+| `loads` | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and its scope covers every file type upstream lints. | yes |
+| `not-overfit` | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. | yes |
+| `compact` | A document over 15 KiB is inspected: it fails when a third or more of its clauses is the same structure written out over and over, or one node kind nests three or more times along one path. Catches rules that list cases instead of expressing the logic. | yes |
+| `matches-upstream-tests` | Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing (`stays-silent`); and agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`). | yes |
+| `matches-real-code` | The rule and upstream run on real code: the SWE Atlas and SWE-Evo tasks' reference solutions and the corpora the pack pins in `conformance.json`. It never stops a rule by itself; every file where they differ becomes a golden that `matches-upstream-tests` judges in the same run. | through goldens |
+| `upstream-status` | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
+
+Goldens: a golden is a real-code file where the rule and upstream once differed (`packs/<id>/upstream/<tool>/goldens.tsv`:
+the rule, the task or corpus, the path and the file's sha256). Goldens are never removed; they stay as regression
+tests. When the engine could not fully read a golden (a parse failure, or its work budget ran out), the difference is
+an engine gap, not the rule's: the rule still fails, through `engine-reads-goldens`, and the report lists it under
+"Blocked by engine gaps" so the fix goes to the engine (NER-1764), not the rule.
+
+Each check's detail says why it failed, in a sentence: the first differing upstream test file and positions, the words
+`not-overfit` found, the size metrics.
+
+From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `compact`, 5 `matches-upstream-tests`,
+6 `matches-real-code`.
+
+## Which packs are gated
+
+A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is gated when it has
+`packs/<id>/upstream/<tool>/gates.yaml`.
+
+- **Gated:** `python/ruff`, `python/bandit`.
+- **Pending:** the ESLint-family tool-packs (javascript, typescript, react, next), listed in
+  `conformance/gates/pending.json`. Their recorder is the next step; until then they are still validated in
+  nera-rule-validation, and the gates report them as pending without blocking.
+- **Not gated:** packs with no upstream adapter (node, php, blade, complexity). Their current shipped rules are frozen in
+  `conformance/gates/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
+  pack has an adapter. Both lists may only shrink: CI compares them with the pull request's base.
+
+Each rule's upstream rule comes from the pack's `conformance.json`. A shipped rule missing from it fails.
+
+## Run them
+
+```sh
+npm run gates -- --pack python --tool bandit   # one tool-pack; reports in .rerail/reports/gates/
+npm run gates -- --pack python                 # every gated tool-pack of a pack
+npm run gates -- summary .rerail/reports/gates # the merged summary CI writes
+```
+
+The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code corpus into
+`.rerail/gates/` (pinned, about 400 MB); later runs reuse it and the results of every rule whose inputs did not change.
+`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
+
+## Read the report
+
+CI writes the summary to the run's job summary and uploads the full reports as artifacts. Top to bottom:
+
+1. The headline: shipped rules passing, blocking failures, candidates passing every gate.
+2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why.
+3. **Blocked by engine gaps:** shipped rules that fail only because the engine could not read a golden.
+4. **Not gated and pending** packs, and any new or stale entry.
+5. **Candidates:** where candidates stop, gate by gate, and why each one stopped. Candidates that pass every gate are
+   listed as promotable: passing the gates is necessary to ship, not sufficient; reviewers still decide.
+6. **On or off:** shipped rules whose `on` in pack.json disagrees with `upstream-status`.
+7. Per tool-pack details: each gate on its own, run integrity notes.
+
+A rule that fails: fix the rule (the check's detail names the first difference), or move it to `candidates/` (out of
+`pack.json`, its `conformance.json` path updated).
+
+## What the gates read
+
+Upstream linters never run in pull request CI. The gates read what a recorder wrote into the pack:
+
+```text
+packs/<id>/upstream/<tool>/
+├── gates.yaml          upstream pins, recommended configurations, known parser gaps, and the team's decisions for the tool
+├── gates.json          the recording: upstream's facts per rule, its test cases and expected findings (start and end)
+├── gates-corpus.json   upstream's findings on the real-code corpus
+├── goldens.tsv         the rule's goldens
+└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
+```
+
+Record again after adding a port, changing a tool's pins or adding a corpus; it needs `uv`, the network, and the pinned
+upstream runtimes (`conformance/recorders/gates/runtimes/`):
+
+```sh
+npm run gates:record -- --pack python --tool ruff
+```
+
+`rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
+matches the pinned upstream, then judges every rule again with the cache off.
+
+One difference from V1: `not-overfit` runs a rule's regexes over the copied test files only, where V1 read every
+upstream test file; the test words it judges names against are still all of upstream's.
+
+## CI
+
+`ci.yml` calls `rule-gates.yml` after its build job when a pull request touches `packs/`, `conformance/`, the engine
+or the workflows, and on every push to main: one job per gated tool-pack, then a report job that writes the summary
+and fails when anything blocking failed.

@@ -1,0 +1,175 @@
+name: Rule gates
+
+# The rule gates (docs/rule-gates.md): every rule a pack ships must pass them; candidates run through them and are
+# only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine), and by
+# rule-gates-nightly.yml with the result cache off. The gates read each pack's recordings
+# (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code corpora are
+# fetched, and they are cached by their pins.
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: The commit the change is judged against (the pull request's base, or the push's previous head); the not-gated list may only shrink against it.
+        type: string
+        default: ""
+      no-cache:
+        description: Judge every rule again instead of reusing the results of unchanged rules.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Rule gates (${{ matrix.pack }} · ${{ matrix.tool }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml.
+        include:
+          - pack: python
+            tool: ruff
+          - pack: python
+            tool: bandit
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # The corpus is keyed by its pins; a partial match is reused, since every checkout in it is keyed by commit.
+      - name: Restore the real-code corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: .rerail/gates/corpus
+          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack)) }}
+          restore-keys: |
+            rule-gates-corpus-${{ matrix.pack }}-
+
+      # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read.
+      - name: Restore earlier rule results
+        if: ${{ !inputs.no-cache }}
+        uses: actions/cache/restore@v6
+        with:
+          path: .rerail/gates/results
+          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-
+
+      - id: gates
+        name: Run the gates
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          NO_CACHE: ${{ inputs.no-cache && '--no-cache' || '' }}
+        run: |
+          set +e
+          npm run gates -- --pack "$PACK" --tool "$TOOL" --out "$RUNNER_TEMP/gates" $NO_CACHE
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .rerail/gates/corpus
+          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack)) }}
+        continue-on-error: true
+
+      - name: Save the rule results
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .rerail/gates/results
+          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+        continue-on-error: true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rule-gates-${{ matrix.pack }}-${{ matrix.tool }}
+          path: ${{ runner.temp }}/gates/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 1: a shipped rule failed a gate (the report job says which and why). 2: the run itself failed.
+      - name: Fail when a shipped rule failed
+        if: steps.gates.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.gates.outputs.status }}
+        run: exit "$STATUS"
+
+  report:
+    name: Rule gates report
+    needs: gates
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Download the reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: rule-gates-*
+          path: ${{ runner.temp }}/gates
+          merge-multiple: true
+
+      # The not-gated list may only shrink against the base. The checkout keeps no credentials, so the base commit is
+      # fetched here with the token, as the lfs action fetches; if it is still missing the summary fails closed.
+      - name: Fetch the base commit
+        if: inputs.base != '' && inputs.base != '0000000000000000000000000000000000000000'
+        env:
+          BASE: ${{ inputs.base }}
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE" || true
+
+      - id: summary
+        name: Summarize, and check the packs without an upstream adapter
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          set +e
+          # A push that creates a branch has no previous head.
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
+          npm run gates -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"}
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rule-gates-summary
+          path: |
+            ${{ runner.temp }}/gates/summary.md
+            ${{ runner.temp }}/gates/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when anything blocking failed
+        if: steps.summary.outputs.status != '0' || needs.gates.result != 'success'
+        env:
+          STATUS: ${{ steps.summary.outputs.status }}
+          GATES: ${{ needs.gates.result }}
+        run: |
+          echo "::error::Rule gates failed (summary exit ${STATUS}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
+          exit 1

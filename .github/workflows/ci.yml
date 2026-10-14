@@ -83,6 +83,7 @@ jobs:
       pull-requests: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
+      gates: ${{ steps.filter.outputs.gates }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -104,6 +105,21 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
+            # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
+            gates:
+              - 'packs/**'
+              - 'conformance/**'
+              - 'native/**'
+              - 'languages/**'
+              - 'src/engine/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/rule-gates.yml'
+              - '.github/actions/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
@@ -236,6 +252,16 @@ jobs:
             native/index.d.ts
           if-no-files-found: error
           retention-days: 1
+
+  # Every rule a pack ships must pass the rule gates; candidates are only reported (docs/rule-gates.md). Pushes to main
+  # run them always (the filter step is skipped and the output is empty).
+  rule-gates:
+    name: Rule gates
+    needs: [changes, build]
+    if: needs.changes.outputs.gates != 'false'
+    uses: ./.github/workflows/rule-gates.yml
+    with:
+      base: ${{ github.event.pull_request.base.sha || github.event.before }}
 
   unit:
     name: Unit tests (${{ matrix.shard }}/2)

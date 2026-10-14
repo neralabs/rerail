@@ -12,6 +12,7 @@
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
 - [pack-format.md](pack-format.md): the pack layout and its validation contract
+- [rule-gates.md](rule-gates.md): the rule gates every shipped ported rule must pass, and how to read their report
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
 ## Repository
