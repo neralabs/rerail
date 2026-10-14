@@ -222,3 +222,140 @@ fn module_paths_follow_the_file_layout() {
     assert_eq!(module_of("tests/it.rs"), None);
     assert_eq!(module_of("src/bin/tool.rs"), None);
 }
+
+/// What each call of a one-file crate (`src/lib.rs`) calls, by the call's source text.
+fn calls_of(source: &str) -> Vec<(String, Option<Callee>)> {
+    let root = GrammarDialect::Rust.ast_grep(source);
+    let table = build_for_test(source);
+    let module = Vec::new();
+    let known = Known::new(
+        definitions(&root.root(), &module, &table)
+            .into_iter()
+            .map(|(name, _)| name),
+        trait_names(&root.root(), &module, &table),
+    );
+    let entries: HashMap<usize, Callee> = callees(&root.root(), &module, &table, &known)
+        .into_iter()
+        .collect();
+    root.root()
+        .dfs()
+        .filter(|node| node.kind() == "call_expression")
+        .map(|call| {
+            let function = call.field("function").expect("callee");
+            let at = function
+                .field("name")
+                .unwrap_or_else(|| function.clone())
+                .range()
+                .start;
+            (call.text().to_string(), entries.get(&at).cloned())
+        })
+        .collect()
+}
+
+#[test]
+fn a_local_binding_shadows_a_function_item() {
+    // rustc: the call reads the closure `let f` binds, not the function.
+    assert_eq!(
+        calls_of("fn f() {}\nfn main() { let f = || {}; f(); }\n"),
+        [("f()".to_owned(), Some(Callee::Open))]
+    );
+}
+
+#[test]
+fn use_path_heads_resolve_through_their_lexical_bindings() {
+    let modules = "mod a { pub fn f() {} }\nmod b { pub fn f() {} }\n";
+    // `a` in `use a::f` is the alias the block's first `use` binds: `f` is `b::f`.
+    assert_eq!(
+        calls_of(&format!(
+            "{modules}fn main() {{ use crate::b as a; use a::f; f(); }}\n"
+        )),
+        [(
+            "f()".to_owned(),
+            Some(Callee::Path("crate::b::f".to_owned()))
+        )]
+    );
+    // Through a chain of aliases, and from an outer scope.
+    assert_eq!(
+        calls_of(&format!(
+            "{modules}use crate::b as c;\nfn main() {{ use c as a; {{ use a::f; f(); }} }}\n"
+        )),
+        [(
+            "f()".to_owned(),
+            Some(Callee::Path("crate::b::f".to_owned()))
+        )]
+    );
+    // Aliases naming each other end open, not in a loop.
+    assert_eq!(
+        calls_of("use b as a;\nuse a as b;\nuse a::f;\nfn main() { f(); }\n"),
+        [("f()".to_owned(), Some(Callee::Open))]
+    );
+}
+
+#[test]
+fn prelude_constructors_a_glob_may_shadow_stay_open() {
+    // `use m::*` brings `m::Some`, which shadows the prelude's variant: the call calls it.
+    assert_eq!(
+        calls_of("mod m { pub fn Some() {} }\nuse m::*;\nfn main() { Some(); }\n"),
+        [("Some()".to_owned(), Some(Callee::Open))]
+    );
+    // Without a glob, `Some(1)` builds a value.
+    assert_eq!(
+        calls_of("fn main() { Some(1); }\n"),
+        [("Some(1)".to_owned(), None)]
+    );
+}
+
+#[test]
+fn a_path_attribute_leaves_the_crates_links_open() {
+    use super::super::closure::Graph;
+    use super::super::names::Name;
+    use super::summary;
+    use crate::code_rule_dsl::language::Family;
+    use std::sync::Arc;
+    let summarize = |path: &str, source: &str| {
+        let root = GrammarDialect::Rust.ast_grep(source);
+        let table = build_for_test(source);
+        Arc::new(summary(&root.root(), path, Some(&table), false))
+    };
+    let caller = ("src/c.rs", "pub fn run() { crate::a::hit(); }\n");
+    let files = |lib: &str| {
+        [
+            ("src/lib.rs", lib),
+            ("src/a.rs", "pub fn hit() {}\n"),
+            ("src/b.rs", "pub fn hit() {}\n"),
+            caller,
+        ]
+        .into_iter()
+        .map(|(path, source)| (Arc::<str>::from(path), summarize(path, source)))
+        .collect::<Vec<_>>()
+    };
+    let plain = "mod a;\nmod b;\nmod c;\n";
+    // `crate::a` is `src/b.rs`: its file name does not tell it.
+    let swapped = "#[path = \"b.rs\"]\nmod a;\n#[path = \"a.rs\"]\nmod b;\nmod c;\n";
+    let hit = Name::new(Family::Rust, "crate::a::hit");
+    let mut graph = Graph::link(files(plain));
+    let (defs, open) = graph.link_of(&hit);
+    assert!(!open);
+    assert_eq!(
+        defs.iter()
+            .map(|def| graph.path(def.file()).expect("path").to_string())
+            .collect::<Vec<_>>(),
+        ["src/a.rs"]
+    );
+    // Declaring the swap relinks the unchanged caller's call.
+    graph.update([(
+        Arc::from("src/lib.rs"),
+        Some(summarize("src/lib.rs", swapped)),
+    )]);
+    let (defs, open) = graph.link_of(&hit);
+    assert!(open && defs.is_empty());
+    let graph = Graph::link(files(swapped));
+    let (defs, open) = graph.link_of(&hit);
+    assert!(open && defs.is_empty());
+    // An attribute a `cfg_attr` applies counts too.
+    let graph = Graph::link(files(
+        "#[cfg_attr(unix, path = \"b.rs\")]\nmod a;\nmod b;\nmod c;\n",
+    ));
+    let (defs, open) = graph.link_of(&hit);
+    assert!(open && defs.is_empty());
+}

@@ -47,6 +47,17 @@ pub(crate) fn resolve_index(
     reference: &Reference,
     name: &str,
 ) -> Option<(u32, usize)> {
+    resolve_except(table, reference, name, None)
+}
+
+/// `resolve_index`, passing over the binding `except` (its scope and index): a `use` path's head
+/// does not name the binding its own `use` makes (`use log::log;`).
+fn resolve_except(
+    table: &ScopeTable,
+    reference: &Reference,
+    name: &str,
+    except: Option<(u32, usize)>,
+) -> Option<(u32, usize)> {
     let mut current = Some(reference.scope);
     let mut items_only = false;
     let mut macros_only = false;
@@ -60,8 +71,9 @@ pub(crate) fn resolve_index(
             let found = chain
                 .iter()
                 .enumerate()
-                .filter(|(_, binding)| {
-                    binding.spaces & reference.spaces != 0
+                .filter(|(position, binding)| {
+                    except != Some((index, *position))
+                        && binding.spaces & reference.spaces != 0
                         && binding.offset <= reference.start
                         && (!items_only
                             || is_item(binding, scope.range.start)
@@ -120,9 +132,134 @@ pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
     false
 }
 
+/// What the first segment of a `use` path names, once `use_path` has followed it.
+pub(crate) enum UseHead<'t> {
+    /// `crate`, `self` or `super`.
+    Keyword,
+    /// An extern crate: the path is global (`::serde`) or its head an `extern crate` item's name,
+    /// which the path's first segment now spells as the crate's.
+    Extern,
+    /// A binding of the file that imports nothing: a module, a type, an enum.
+    Item(&'t Binding),
+    /// No binding of the file: an extern crate's name, or a glob import's.
+    Unbound,
+}
+
+/// What a `use` path leads to: its segments, the head followed through the `use` bindings it names
+/// where the `use` stands (`use crate::b as a; use a::f;` imports `crate::b::f`), and what that
+/// head then names.
+pub(crate) struct UsePath<'t> {
+    pub(crate) segments: Vec<String>,
+    pub(crate) head: UseHead<'t>,
+}
+
+/// The longest chain of `use` bindings `use_path` follows.
+const MAX_USE_HOPS: usize = 64;
+
+/// The path the `use` or `extern crate` binding `name` (`at`, its scope and index) imports, its
+/// head resolved in the type namespace from the scope the binding is made in, as rustc resolves a
+/// `use` path's first segment: each head bound by another `use` is replaced with that one's path,
+/// read from its own scope. `is_extern` tells an `extern crate` item's binding. `None` for a
+/// binding that imports no path, and where the `use` bindings name each other in a cycle.
+pub(crate) fn use_path<'t>(
+    table: &'t ScopeTable,
+    at: (u32, usize),
+    name: &str,
+    is_extern: impl Fn(&Binding) -> bool,
+) -> Option<UsePath<'t>> {
+    let mut current = at;
+    let mut current_name = name.to_owned();
+    let binding = table.scopes[at.0 as usize].bindings.get(name)?.get(at.1)?;
+    let Some(Import::Qualified(path)) = &binding.import else {
+        return None;
+    };
+    if let Some(global) = path.strip_prefix("::") {
+        return Some(UsePath {
+            segments: global.split("::").map(str::to_owned).collect(),
+            head: UseHead::Extern,
+        });
+    }
+    let mut segments: Vec<String> = path.split("::").map(str::to_owned).collect();
+    if is_extern(binding) {
+        return Some(UsePath {
+            segments,
+            head: UseHead::Extern,
+        });
+    }
+    let mut followed = vec![(at, current_name.clone())];
+    loop {
+        let first = segments.first()?.clone();
+        if matches!(first.as_str(), "crate" | "self" | "super") {
+            return Some(UsePath {
+                segments,
+                head: UseHead::Keyword,
+            });
+        }
+        let scope = &table.scopes[current.0 as usize];
+        let probe = Reference {
+            start: scope.range.start,
+            end: scope.range.start,
+            scope: current.0,
+            spaces: TYPE,
+            at: scope.range.start,
+            deferred: false,
+            forward: false,
+            type_scope: false,
+            write: false,
+            mutates: false,
+            access: super::Access::Load,
+        };
+        let except = (first == current_name).then_some(current);
+        let Some(found) = resolve_except(table, &probe, &first, except) else {
+            return Some(UsePath {
+                segments,
+                head: UseHead::Unbound,
+            });
+        };
+        let binding = &table.scopes[found.0 as usize].bindings[first.as_str()][found.1];
+        let path = match &binding.import {
+            Some(Import::Qualified(path)) if binding.site.form == Form::Import => path,
+            _ => {
+                return Some(UsePath {
+                    segments,
+                    head: UseHead::Item(binding),
+                });
+            }
+        };
+        let rest = segments.split_off(1);
+        if let Some(global) = path.strip_prefix("::") {
+            segments = global.split("::").map(str::to_owned).collect();
+            segments.extend(rest);
+            return Some(UsePath {
+                segments,
+                head: UseHead::Extern,
+            });
+        }
+        segments = path.split("::").map(str::to_owned).collect();
+        segments.extend(rest);
+        if is_extern(binding) {
+            return Some(UsePath {
+                segments,
+                head: UseHead::Extern,
+            });
+        }
+        if followed.len() >= MAX_USE_HOPS
+            || followed
+                .iter()
+                .any(|(seen, seen_name)| *seen == found && *seen_name == first)
+        {
+            return None;
+        }
+        followed.push((found, first.clone()));
+        current = found;
+        current_name = first;
+    }
+}
+
 /// The path a read at `node` names (`resolves.import`), as rustc resolves its first segment: an
 /// identifier or a path, its head bound by a `use` declaration or `extern crate` item replaced
-/// with the path that imports it, joined with the rest by `::`. `crate::`, `self::` and `super::`
+/// with the path that imports it (that path's own head followed the same way, `use_path`), joined
+/// with the rest by `::`. `crate::`, `self::` and `super::`
 /// are normalised to `crate::` paths of the module the read sits in (the file's module, which
 /// `file` gives under a crate's `src/`, and the inline `mod` blocks around the read); an unbound
 /// head of a longer path is an extern crate's name (`std::process::exit`), as a path that starts
@@ -180,15 +317,15 @@ pub(crate) fn import_path<D: Doc>(
             _ => {
                 let reference = table.reference(&head.range())?;
                 match resolve_index(table, reference, &name) {
-                    Some((scope, index)) => {
-                        let binding = table.scopes[scope as usize].bindings.get(name.as_ref())?;
-                        match &binding.get(index)?.import {
-                            Some(Import::Qualified(path)) => {
-                                let path = path.strip_prefix("::").unwrap_or(path);
-                                path.split("::").map(str::to_owned).collect()
-                            }
-                            _ => return None,
-                        }
+                    Some(at) => {
+                        let root = node.root().root();
+                        let is_extern = |binding: &Binding| {
+                            binding.site.node.is_some_and(|site| {
+                                site.find(root.clone())
+                                    .is_some_and(|site| site.kind() == "extern_crate_declaration")
+                            })
+                        };
+                        use_path(table, at, &name, is_extern)?.segments
                     }
                     None if rest.is_empty() => return None,
                     None if glob_visible(table, reference)
@@ -727,8 +864,10 @@ impl Visitor<'_, '_> {
                 if self.pattern_path(&name, pattern.range().start) {
                     self.builder.reference(pattern.range(), VALUE);
                 } else if self.bound_here(&name, offset) {
-                    // A later alternative of an or-pattern names the binding the first made.
-                    self.builder.reference(pattern.range(), VALUE);
+                    // A later alternative of an or-pattern names the binding the first made: an
+                    // occurrence of it, which reads nothing.
+                    self.builder
+                        .push_reference(pattern.range(), VALUE, true, false);
                 } else {
                     let mut binding = self.binding(pattern, site, VALUE, form, offset);
                     binding.site.value = value.map(NodeRef::of);
@@ -738,7 +877,8 @@ impl Visitor<'_, '_> {
             }
             "shorthand_field_identifier" => {
                 if self.bound_here(&pattern.text(), offset) {
-                    self.builder.reference(pattern.range(), VALUE);
+                    self.builder
+                        .push_reference(pattern.range(), VALUE, true, false);
                 } else {
                     self.bind(pattern, site, VALUE, form, offset);
                 }
@@ -799,7 +939,8 @@ impl Visitor<'_, '_> {
     }
 
     /// Whether an identifier pattern is a path rustc reads: it names a constant, a static, a unit
-    /// or tuple struct of this file visible here, or a prelude unit variant.
+    /// or tuple struct of this file visible here, or a prelude unit variant. A function's name is
+    /// no such path: a pattern binds over it.
     fn pattern_path(&self, name: &str, at: usize) -> bool {
         if PRELUDE_PATTERN_PATHS.contains(&name) {
             return true;
@@ -820,8 +961,14 @@ impl Visitor<'_, '_> {
         resolve_index(&self.builder.table, &probe, name).is_some_and(|(scope, index)| {
             let binding = &self.builder.table.scopes[scope as usize].bindings[name][index];
             let start = self.builder.table.scopes[scope as usize].range.start;
-            matches!(binding.site.form, Form::Static | Form::Definition)
-                || (binding.site.form == Form::Assignment && binding.offset == start)
+            match binding.site.form {
+                Form::Static => true,
+                // A unit or tuple struct is bound in both namespaces, a function in values only.
+                Form::Definition => binding.spaces & TYPE != 0,
+                // A `const` item is bound at its scope's start, a `let` after its declaration.
+                Form::Assignment => binding.offset == start,
+                _ => false,
+            }
         })
     }
 

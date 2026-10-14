@@ -163,3 +163,47 @@ fn rust_usedness_agrees_with_rustc_unused_lints() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn repeated_or_pattern_binders_are_no_reads() {
+    let used = |text: &str| {
+        let root = GrammarDialect::Rust.ast_grep(text);
+        let root = root.root();
+        let table = build_for_test(text);
+        let mut steps = Steps {
+            cost: 0,
+            cap: usize::MAX,
+            deadline: &|| false,
+        };
+        let usage = Usage::rust(&table, &root, &mut steps).expect("usage");
+        let (scope, index) = table
+            .scopes
+            .iter()
+            .enumerate()
+            .find_map(|(scope, entry)| {
+                entry
+                    .bindings
+                    .get("x")
+                    .map(|chain| (scope, chain.len() - 1))
+            })
+            .expect("a binding of x");
+        usage
+            .facts(BindingId {
+                scope: scope as u32,
+                name: "x",
+                index,
+            })
+            .used
+    };
+    // rustc 1.99: "unused variable: `x`" at both binders.
+    let arm = |body: &str| {
+        format!(
+            "fn main() {{ let v: Result<i32, i32> = Ok(1); match v {{ Ok(x) | Err(x) => {{{body}}} }} }}\n"
+        )
+    };
+    assert_eq!(used(&arm("")), Some(false));
+    assert_eq!(used(&arm(" let _ = x; ")), Some(true));
+    let fields = "struct P { x: i32 }\nstruct Q { x: i32 }\nenum E { P(P), Q(Q) }\n\
+        fn main() { let e = E::P(P { x: 1 }); match e { E::P(P { x }) | E::Q(Q { x }) => {} } }\n";
+    assert_eq!(used(fields), Some(false));
+}

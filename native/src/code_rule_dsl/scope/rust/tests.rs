@@ -256,3 +256,93 @@ fn rust_references_resolve_as_rust_analyzer_resolves_them() {
         failures.join("\n")
     );
 }
+
+/// The name start of the binding the reference at byte `at` of `source` (spelling `name`)
+/// resolves to.
+fn resolved_at(source: &str, at: usize, name: &str) -> Option<usize> {
+    let table = build_for_test(source);
+    let reference = table
+        .reference(&Range {
+            start: at,
+            end: at + name.len(),
+        })
+        .expect("a recorded reference");
+    let (scope, index) = resolve_index(&table, reference, name)?;
+    table.scopes[scope as usize].bindings[name][index]
+        .name
+        .map(|name| name.start as usize)
+}
+
+#[test]
+fn a_pattern_binds_over_a_function_name() {
+    let source = "fn f() {}\nfn main() { let f = || {}; f(); }\n";
+    let local = source.find("let f").expect("let") + 4;
+    assert_eq!(
+        resolved_at(source, source.rfind("f()").expect("call"), "f"),
+        Some(local)
+    );
+    // A unit struct's name is a path the pattern reads.
+    let source = "struct S;\nfn main() { let S = S; S; }\n";
+    assert_eq!(
+        resolved_at(source, source.rfind('S').expect("read"), "S"),
+        Some(7)
+    );
+}
+
+#[test]
+fn import_paths_follow_use_aliases() {
+    use super::import_path;
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use ast_grep_core::tree_sitter::LanguageExt;
+    let path_at = |source: &str, call: &str| {
+        let root = GrammarDialect::Rust.ast_grep(source);
+        let table = build_for_test(source);
+        let at = source.rfind(call).expect("call");
+        let node = root
+            .root()
+            .dfs()
+            .find(|node| {
+                node.range().start == at
+                    && matches!(node.kind().as_ref(), "identifier" | "scoped_identifier")
+                    && node.text() == call
+            })
+            .expect("node");
+        import_path(&table, &node, Some("src/lib.rs"))
+    };
+    let modules = "mod a { pub fn f() {} }\nmod b { pub fn f() {} }\n";
+    assert_eq!(
+        path_at(
+            &format!("{modules}fn main() {{ use crate::b as a; use a::f; f(); }}\n"),
+            "f"
+        )
+        .as_deref(),
+        Some("crate::b::f")
+    );
+    assert_eq!(
+        path_at(
+            &format!("{modules}use crate::b as c;\nfn main() {{ c::f(); }}\n"),
+            "c::f"
+        )
+        .as_deref(),
+        Some("crate::b::f")
+    );
+    // An `extern crate` alias names the crate.
+    assert_eq!(
+        path_at(
+            "extern crate serde as s;\nuse s::de;\nfn main() { de(); }\n",
+            "de"
+        )
+        .as_deref(),
+        Some("serde::de")
+    );
+    // `use log::log;`: the head is not the `use` itself.
+    assert_eq!(
+        path_at("use log::log;\nfn main() { log(); }\n", "log").as_deref(),
+        Some("log::log")
+    );
+    // Aliases naming each other name no path.
+    assert_eq!(
+        path_at("use b as a;\nuse a as b;\nfn main() { a::f(); }\n", "a::f"),
+        None
+    );
+}

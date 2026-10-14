@@ -8,8 +8,8 @@
 use super::names::Name;
 use super::summary::{self, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
-use crate::code_rule_dsl::scope::rust::resolve_index;
-use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeTable};
+use crate::code_rule_dsl::scope::rust::{UseHead, UsePath, glob_visible, resolve_index, use_path};
+use crate::code_rule_dsl::scope::{Binding, Form, Reference, ScopeTable};
 use ast_grep_core::{Doc, Node};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -91,7 +91,7 @@ impl Known {
 /// crate root (`[]`), `src/a.rs` and `src/a/mod.rs` are `["a"]`, `src/a/b.rs` is `["a", "b"]`.
 /// `None` for a file outside `src/`, outside Rust, or under `src/bin/` (each file there is a
 /// crate root of its own). A module declared with `#[path]` is named by its declaration, not its
-/// file: the caller must not ask for it.
+/// file: `summary` names such a crate opaque, so no call into it is linked by these names.
 pub(crate) fn module_of(path: &str) -> Option<Vec<String>> {
     let rest = path.strip_prefix("src/")?;
     let stem = rest.strip_suffix(".rs")?;
@@ -363,7 +363,9 @@ fn graph_name(dir: &str, qualified: &str) -> String {
 /// what each body calls by crate path, and whether a call needs types to tell. A library call names
 /// nothing; a call that builds a value is none. Without `table` (it could not be built) the
 /// summary holds nothing and is open. The module is the crate's directory and the file's module,
-/// which `callee_at` reads back.
+/// which `callee_at` reads back. A file that declares a module with a `#[path]` attribute names
+/// its crate opaque (`crate_root`): the crate's module paths are not its files' (`module_of`), so
+/// no call into it is linked.
 pub(crate) fn summary<D: Doc>(
     root: &Node<'_, D>,
     path: &str,
@@ -406,6 +408,11 @@ pub(crate) fn summary<D: Doc>(
         open: has_errors || table.is_none(),
         ..Summary::default()
     };
+    if declares_path_module(root) {
+        summary
+            .opaque
+            .push(names.intern(&graph_name(&dir, "crate")));
+    }
     let Some(table) = table else {
         return names.finish(summary);
     };
@@ -435,6 +442,40 @@ pub(crate) fn summary<D: Doc>(
         }
     }
     names.finish(summary)
+}
+
+/// The crate root's graph name of a crate path's graph name (`dir/crate` of `dir/crate::a::f`),
+/// which a summary names opaque where the crate's module paths are not its files'.
+pub(crate) fn crate_root(name: &str) -> &str {
+    name.split_once("::").map_or(name, |(root, _)| root)
+}
+
+/// Whether a `mod` item of the file carries a `path` attribute (`#[path = "x.rs"]`, or one a
+/// `cfg_attr` may apply): the module's file, and those of the modules inside it, are not where
+/// its path would put them.
+fn declares_path_module<D: Doc>(root: &Node<'_, D>) -> bool {
+    root.dfs()
+        .filter(|node| node.kind() == "mod_item")
+        .any(|module| {
+            std::iter::successors(module.prev(), Node::prev)
+                .take_while(|sibling| {
+                    matches!(
+                        sibling.kind().as_ref(),
+                        "attribute_item" | "line_comment" | "block_comment"
+                    )
+                })
+                .filter(|sibling| sibling.kind() == "attribute_item")
+                .any(|attribute| {
+                    let text: String = attribute
+                        .text()
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect();
+                    let inner = text.strip_prefix("#[").unwrap_or(&text);
+                    inner.starts_with("path=")
+                        || (inner.starts_with("cfg_attr(") && inner.contains("path="))
+                })
+        })
 }
 
 /// Interns a summary's names.
@@ -613,7 +654,13 @@ impl<'a> Reader<'a> {
     fn bare_call<D: Doc>(&self, name: &Node<'_, D>) -> Outcome {
         let text = name.text();
         match self.denote(name, &text) {
-            Denoted::Unbound if PRELUDE_CONSTRUCTORS.contains(&text.as_ref()) => {
+            // A glob import may bind the name to a function (`use m::*` of a `pub fn Some()`).
+            Denoted::Unbound
+                if PRELUDE_CONSTRUCTORS.contains(&text.as_ref())
+                    && !self
+                        .reference_at(name)
+                        .is_some_and(|reference| glob_visible(self.table, reference)) =>
+            {
                 Outcome::Constructor
             }
             Denoted::Unbound => Outcome::Callee(Callee::Open),
@@ -770,73 +817,94 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The scope binding the reference at `name` resolves to.
-    fn binding_of<D: Doc>(&self, name: &Node<'_, D>, text: &str) -> Option<&'a Binding> {
+    /// The reference the scope table records at `name`.
+    fn reference_at<D: Doc>(&self, name: &Node<'_, D>) -> Option<&'a Reference> {
         let start = name.range().start;
         let position = self
             .table
             .references
             .partition_point(|reference| reference.start < start);
-        let reference = self.table.references.get(position)?;
-        if reference.start != start {
-            return None;
-        }
+        self.table
+            .references
+            .get(position)
+            .filter(|reference| reference.start == start)
+    }
+
+    /// The scope binding the reference at `name` resolves to, with its scope and index.
+    fn binding_of<D: Doc>(
+        &self,
+        name: &Node<'_, D>,
+        text: &str,
+    ) -> Option<((u32, usize), &'a Binding)> {
+        let reference = self.reference_at(name)?;
         let (scope, index) = resolve_index(self.table, reference, text)?;
-        self.table.scopes[scope as usize]
+        let binding = self.table.scopes[scope as usize]
             .bindings
             .get(text)?
-            .get(index)
+            .get(index)?;
+        Some(((scope, index), binding))
     }
 
     /// What the name at `name` denotes, by its lexical binding.
     fn denote<D: Doc>(&self, name: &Node<'_, D>, text: &str) -> Denoted {
-        let Some(binding) = self.binding_of(name, text) else {
+        let Some((at, binding)) = self.binding_of(name, text) else {
             return Denoted::Unbound;
         };
         match binding.site.form {
-            Form::Definition => {
-                let offset = binding.name.map(|name| name.start as usize);
-                if let Some(name) = offset.and_then(|offset| self.items.functions.get(&offset)) {
-                    return Denoted::Crate(name.clone());
-                }
-                match offset.and_then(|offset| self.items.types.get(&offset)) {
-                    Some((name, kind)) => Denoted::Item(name.clone(), *kind),
-                    None => Denoted::Opaque,
-                }
-            }
+            Form::Definition => self.item(binding),
             Form::Import => {
-                let offset = binding.name.map(|name| name.start as usize);
-                match &binding.import {
-                    Some(Import::Qualified(path)) => {
-                        if offset.is_some_and(|offset| self.items.externs.contains(&offset)) {
-                            Denoted::External(path.to_string())
-                        } else {
-                            self.normalise(path)
-                        }
-                    }
-                    _ => Denoted::Opaque,
+                let is_extern = |binding: &Binding| {
+                    binding
+                        .name
+                        .is_some_and(|name| self.items.externs.contains(&(name.start as usize)))
+                };
+                match use_path(self.table, at, text, is_extern) {
+                    Some(used) => self.imported(used),
+                    None => Denoted::Opaque,
                 }
             }
             _ => Denoted::Opaque,
         }
     }
 
-    /// A `use` path against the current module: `crate::`, `self::` and `super::` as written, a
-    /// library path as is, any other path relative to the module (a name of the module or an
-    /// extern crate: the crate's definitions tell).
-    fn normalise(&self, path: &str) -> Denoted {
-        let mut segments = path.split("::");
+    /// What a definition binding of the file denotes: a function, a module or type, else nothing
+    /// a path reaches.
+    fn item(&self, binding: &Binding) -> Denoted {
+        let offset = binding.name.map(|name| name.start as usize);
+        if let Some(name) = offset.and_then(|offset| self.items.functions.get(&offset)) {
+            return Denoted::Crate(name.clone());
+        }
+        match offset.and_then(|offset| self.items.types.get(&offset)) {
+            Some((name, kind)) => Denoted::Item(name.clone(), *kind),
+            None => Denoted::Opaque,
+        }
+    }
+
+    /// What a `use` path (`use_path`) denotes: `crate::`, `self::` and `super::` paths against the
+    /// current module, a library or extern crate's path as is, a path through an item of the
+    /// file from that item, and any other path relative to the module (a name of the module the
+    /// crate's definitions tell; no definition gives one where it is an extern crate's).
+    fn imported(&self, used: UsePath<'_>) -> Denoted {
+        let mut segments = used.segments.iter();
         let Some(first) = segments.next() else {
             return Denoted::Opaque;
         };
-        let mut denoted = match first {
-            "crate" => Denoted::Crate(String::from("crate")),
-            "self" => Denoted::Crate(qualify(self.module)),
-            "super" => self.parent_module(),
-            library if LIBRARY_ROOTS.contains(&library) => {
-                return Denoted::External(path.to_owned());
+        let mut denoted = match used.head {
+            UseHead::Extern => return Denoted::External(used.segments.join("::")),
+            UseHead::Item(binding) => match self.item(binding) {
+                // A function heads no path.
+                Denoted::Crate(_) => Denoted::Opaque,
+                item => item,
+            },
+            UseHead::Keyword => match first.as_str() {
+                "crate" => Denoted::Crate(String::from("crate")),
+                "self" => Denoted::Crate(qualify(self.module)),
+                _ => self.parent_module(),
+            },
+            UseHead::Unbound if LIBRARY_ROOTS.contains(&first.as_str()) => {
+                return Denoted::External(used.segments.join("::"));
             }
-            _ => Denoted::Crate(format!("{}::{first}", qualify(self.module))),
+            UseHead::Unbound => Denoted::Crate(format!("{}::{first}", qualify(self.module))),
         };
         for segment in segments {
             denoted = descend(denoted, segment);

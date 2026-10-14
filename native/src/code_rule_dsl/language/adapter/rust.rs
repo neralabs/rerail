@@ -778,8 +778,8 @@ impl CallRules for Rust {
         Cow::Borrowed(name.text())
     }
 
-    fn link(graph: &Graph, name: &Name, _: u32, _: &mut Vec<Name>) -> Link {
-        graph.link_rust(name)
+    fn link(graph: &Graph, name: &Name, _: u32, followed: &mut Vec<Name>) -> Link {
+        graph.link_rust(name, followed)
     }
 }
 
