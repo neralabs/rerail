@@ -20,12 +20,19 @@ mod tests;
 mod workspaces;
 
 pub(crate) use compression::compress;
+pub(crate) use connection::BusyRetries;
+pub(crate) use connection::OperationDeadline;
 pub use schema::STORE_FILE_NAME;
 
 #[cfg(test)]
+pub(crate) use connection::{
+    BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE, BUSY_WAIT_HOOK,
+    operation_waited,
+};
+#[cfg(test)]
 pub(crate) use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
-use connection::ThreadConnection;
+use connection::{ThreadConnection, retry_busy};
 use read_cache::{CachedBacking, DecompressedReadCache};
 use results::LocalResultCache;
 use rusqlite::{Connection, OpenFlags};
@@ -199,7 +206,14 @@ pub enum StoreError {
     Io(std::io::Error),
     Invalid(String),
     Corrupt(String),
+    /// Another writer holds the store. A write's attempts are retried until the write deadline
+    /// (`connection::retry_busy`; one deadline for all the writes of an `OperationDeadline`), so
+    /// a write returns it only once that passed. The store is a cache, so a caller may proceed
+    /// without it.
     Busy,
+    /// A row a publication had resolved vanished before the publication used it, under a
+    /// concurrent collection. Never a reason to proceed without the store.
+    Vanished(&'static str),
 }
 
 impl fmt::Display for StoreError {
@@ -210,6 +224,10 @@ impl fmt::Display for StoreError {
             Self::Invalid(message) => write!(formatter, "invalid content store input: {message}"),
             Self::Corrupt(message) => write!(formatter, "corrupt content store: {message}"),
             Self::Busy => formatter.write_str("content store writer is busy"),
+            Self::Vanished(row) => write!(
+                formatter,
+                "content store {row} vanished under a concurrent collection"
+            ),
         }
     }
 }
@@ -491,24 +509,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
-        connection.set_prepared_statement_cache_capacity(128);
-        connection.busy_timeout(Duration::from_millis(250))?;
-        let mut initialized = false;
-        for attempt in 0..20 {
-            match Self::initialize(&mut connection) {
-                Ok(()) => {
-                    initialized = true;
-                    break;
-                }
-                Err(StoreError::Busy) if attempt < 19 => {
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        if !initialized {
-            return Err(StoreError::Busy);
-        }
+        // Only creating or migrating the schema takes the write lock (`initialize`).
+        retry_busy(&mut BusyRetries::default(), || {
+            Self::initialize(&mut connection)
+        })?;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {

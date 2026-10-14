@@ -4,6 +4,7 @@ import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm 
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
+  AuditorCloseOptions,
   CodeRuleEdit,
   CodeRuleEditBatch,
   CodeRuleAuditor,
@@ -80,6 +81,8 @@ interface SourceDiscovery {
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
   error: string | undefined;
+  /** A boundary answered while the current walk was running; closing before it finishes says so again. */
+  pendingReported: boolean;
 }
 
 /**
@@ -184,6 +187,17 @@ export function isCommandTool(toolName: string): boolean {
   return /bash|shell|exec|terminal|command|cmd/iu.test(toolName);
 }
 
+/**
+ * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
+ * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
+ * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
+ * per-event timeout.
+ */
+export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
+
+/** A boundary answered while a source walk was still running: its shell writes are checked later, or never for `close`. */
+export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
+
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
 export class CodeRuleBridge {
   readonly #cwd: string;
@@ -199,6 +213,8 @@ export class CodeRuleBridge {
   #revision = 0;
   #queue: Promise<void> = Promise.resolve();
   #discovery: SourceDiscovery | undefined;
+  readonly #discoveryWaitMs: number;
+  readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
 
   constructor(
     cwd: string,
@@ -206,15 +222,21 @@ export class CodeRuleBridge {
     options: {
       onRevision?(sessionId: string, revision: number, paths: readonly string[]): void;
       observations?: SourceObservationCache;
+      /** How long a boundary waits for a source walk; `BOUNDARY_DISCOVERY_WAIT_MS` by default. */
+      discoveryWaitMs?: number;
+      /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
+      onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
     this.#auditor = auditor;
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
+    this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
+    this.#onDiscoveryPending = options.onDiscoveryPending;
   }
 
-  /** Resolves once the evaluator is open; the baseline walk runs behind it and blocks only the next checkpoint or command result. */
+  /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
   async openWorkspace(sessionId: string): Promise<void> {
     await this.#enqueue(async () => {
       const startedAt = await filesystemClock();
@@ -234,7 +256,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        versions: new Map(), baselineRoots: new Set(), error: undefined,
+        versions: new Map(), baselineRoots: new Set(), error: undefined, pendingReported: false,
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -281,10 +303,13 @@ export class CodeRuleBridge {
     });
   }
 
-  /** Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary. */
+  /**
+   * Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary; a walk
+   * that outlasts the boundary's wait is reported pending, and what it finds reaches a later boundary.
+   */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    await this.#requestDiscovery(discovery, checkpoint);
+    await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     this.#assertDiscovery(discovery);
     return this.#discoveryResponse(discovery);
   }
@@ -292,7 +317,7 @@ export class CodeRuleBridge {
   async #reconcile(discovery: SourceDiscovery): Promise<readonly CodeRuleResponse[]> {
     const revision = this.#revision;
     this.refreshCodeRules();
-    await this.#requestDiscovery(discovery, "edit");
+    await this.#awaitDiscovery(discovery, "edit", "command");
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
@@ -331,16 +356,19 @@ export class CodeRuleBridge {
     });
     return await work;
   }
-  interrupt(): void {
-    this.#auditor.interrupt?.();
+  interrupt(options?: AuditorCloseOptions): void {
+    this.#auditor.interrupt?.(options);
   }
 
 
-  async close(): Promise<void> {
+  async close(options?: AuditorCloseOptions): Promise<void> {
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return;
-    // Cancel before joining the operation queue: a blocked filesystem read is not shutdown work.
+    // Cancel before reporting and before joining the operation queue: neither the report nor a blocked filesystem read
+    // may keep the walk going.
     discovery.cancelled = true;
+    // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked.
+    if (discovery.idle !== undefined && discovery.pendingReported) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
@@ -348,7 +376,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#discovery = undefined;
-      await this.#auditor.close();
+      await this.#auditor.close(options);
     });
   }
   async #capturePreimages(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
@@ -394,6 +422,34 @@ export class CodeRuleBridge {
     return discovery.idle;
   }
 
+  /** A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`. */
+  async #awaitDiscovery(
+    discovery: SourceDiscovery,
+    checkpoint: DiscoveryCheckpoint,
+    boundary: Exclude<DiscoveryPendingBoundary, "close">,
+  ): Promise<void> {
+    const budget = Promise.withResolvers<boolean>();
+    const timer = setTimeout(() => budget.resolve(false), this.#discoveryWaitMs);
+    try {
+      const walked = await Promise.race([this.#requestDiscovery(discovery, checkpoint).then(() => true), budget.promise]);
+      if (!walked && !discovery.cancelled) {
+        discovery.pendingReported = true;
+        this.#reportDiscoveryPending(boundary);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Recording a boundary that answered before its shell-write check is best-effort: it never fails the boundary. */
+  #reportDiscoveryPending(boundary: DiscoveryPendingBoundary): void {
+    try {
+      this.#onDiscoveryPending?.(boundary);
+    } catch (error) {
+      process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+
   async #runDiscovery(discovery: SourceDiscovery): Promise<void> {
     try {
       while (!discovery.cancelled && discovery.requested !== undefined) {
@@ -406,6 +462,7 @@ export class CodeRuleBridge {
       }
     } finally {
       discovery.idle = undefined;
+      discovery.pendingReported = false;
     }
   }
 

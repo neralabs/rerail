@@ -4,6 +4,26 @@ import { parseConversationRule, type ConversationRule } from "../engine/catalog/
 export const MATCH_ENTRY_TYPE = "rerail.match";
 export const MUTATION_ENTRY_TYPE = "rerail.mutation";
 export const TURN_ENTRY_TYPE = "rerail.turn";
+/** A host session's marker for events Rerail never received; see {@link DroppedEvents}. */
+export const EVENTS_DROPPED_ENTRY_TYPE = "rerail.events-dropped";
+
+/**
+ * One stretch of session events a host could not hand to Rerail: the daemon was not answering, or the
+ * session was failing to attach. The session's history is incomplete over it. `id` names the stretch, so a
+ * record that is sent again (its first acknowledgement was lost) is stored once.
+ */
+export interface DroppedEvents {
+  id: string;
+  count: number;
+  /** Dropped events by event kind (`user-prompt`, `call`, ...). */
+  kinds: Record<string, number>;
+  /** Null when the host had not given the event an id before dropping it. */
+  firstEventId: string | null;
+  lastEventId: string | null;
+  /** Epoch milliseconds. */
+  firstDroppedAt: number;
+  lastDroppedAt: number;
+}
 
 export type RuleMutation =
   | { operation: "upsert"; rule: ConversationRule; replace: boolean }

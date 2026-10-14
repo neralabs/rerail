@@ -14,6 +14,7 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, FileInput, Query, package_marker_directory,
     python_module_in,
 };
+use crate::content_store::StoreError;
 use napi::Result;
 use serde::Deserialize;
 use serde_json::Value;
@@ -215,6 +216,8 @@ pub(super) fn make_file(
         restored_local_results: 0,
         restored_result_ids: HashSet::new(),
         transient_failure: false,
+        unpublished: false,
+        results_only: false,
         candidates,
         witnesses: Default::default(),
         failures: BTreeMap::new(),
@@ -432,7 +435,28 @@ fn refresh_package_context(
     let mut refreshed = BTreeSet::new();
     for (path, mut input, module) in stale {
         if input.source.is_empty() {
-            input.source = Arc::clone(&documents::load(state, &path)?.1.source);
+            match documents::load(state, &path) {
+                Ok((_, document)) => input.source = Arc::clone(&document.source),
+                Err(error) => {
+                    // A file freed while the store was busy that nothing can supply again keeps
+                    // its module and reports its clauses incomplete: a busy store costs reuse,
+                    // never the apply.
+                    let Some(file) = state.files.get_mut(&path).filter(|file| file.results_only)
+                    else {
+                        return Err(error);
+                    };
+                    let clauses = file
+                        .candidates
+                        .regex
+                        .iter()
+                        .chain(&file.candidates.ast)
+                        .copied()
+                        .collect::<Vec<_>>();
+                    file.fail_released_source(clauses);
+                    refreshed.insert(path);
+                    continue;
+                }
+            }
         }
         input.module = module;
         inputs.push(input);
@@ -457,10 +481,13 @@ fn refresh_package_context(
     Ok(refreshed)
 }
 
+/// Applies `request` to `state`: the paths outside it whose module context it refreshed, and
+/// whether the store is busy for this apply: deleting its removals found it busy past the write
+/// deadline, or an earlier apply did and its window is still open (`store_cooling_down`).
 pub(super) fn apply_request(
     state: &mut WorkspaceState,
     request: Request,
-) -> Result<BTreeSet<String>> {
+) -> Result<(BTreeSet<String>, bool)> {
     check_revision(state, request.revision)?;
     let unhosted = request
         .files
@@ -476,11 +503,25 @@ pub(super) fn apply_request(
         .collect::<Result<Vec<_>>>()?;
     let refreshed = refresh_package_context(state, &mut inputs, &unhosted, &request.removed)?;
     let mut released_candidates = false;
-    if let Some(storage) = &state.storage {
-        storage
-            .store
-            .remove_overlay_files(storage.workspace_id, &request.removed)
-            .map_err(|error| invalid(error.to_string()))?;
+    let mut store_busy = false;
+    if state.storage.is_some() {
+        if state.store_cooling_down() {
+            store_busy = true;
+        } else if let Some(storage) = &state.storage {
+            match storage
+                .store
+                .remove_overlay_files(storage.workspace_id, &request.removed)
+            {
+                Ok(()) => {}
+                // A removed file's overlay row only keeps its objects from collection, so a busy
+                // store keeps it until a later apply deletes it (`pending_removals`).
+                Err(StoreError::Busy) => store_busy = true,
+                Err(error) => return Err(invalid(error.to_string())),
+            }
+            if store_busy {
+                state.note_store_busy("while removing files");
+            }
+        }
     }
     for path in request.removed {
         state.versions.remove(&path);
@@ -490,6 +531,9 @@ pub(super) fn apply_request(
             released_candidates = true;
         }
         state.dirty_files.remove(&path);
+        if store_busy {
+            state.pending_removals.insert(path);
+        }
     }
     for input in inputs {
         if !file_needs_update(state, &input) {
@@ -517,7 +561,7 @@ pub(super) fn apply_request(
     if released_candidates {
         reclaim_candidate_sets(&mut state.candidate_sets);
     }
-    Ok(refreshed)
+    Ok((refreshed, store_busy))
 }
 
 /// Whether a file is a package marker new to the workspace, which changes its siblings' modules

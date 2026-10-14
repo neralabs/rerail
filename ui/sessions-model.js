@@ -208,6 +208,24 @@ export function lastEventAt(s) {
   return last ? last.observedAt : s.endedAt ?? s.startedAt;
 }
 
+/** Session events its host never delivered, from the `events-dropped` gaps it recorded, when its transcript is loaded. */
+export function droppedEvents(s) {
+  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
+  return events.reduce((total, e) => total + (e.kind === "events-dropped" ? Number(e.payload?.count ?? 0) : 0), 0);
+}
+
+/** Boundaries that answered before the session's shell-write check finished, when its transcript is loaded. */
+export function uncheckedBoundaries(s) {
+  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
+  return events.filter(e => e.kind === "source-discovery-pending").length;
+}
+
+/** Boundaries that answered before the session's code-rule evaluator had opened, when its transcript is loaded. */
+export function codeRulesPendingBoundaries(s) {
+  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
+  return events.filter(e => e.kind === "code-rules-pending").length;
+}
+
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */
 export function openState(s) {

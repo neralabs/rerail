@@ -714,6 +714,8 @@ pub(super) struct Metrics {
     pub(super) ast_matcher_calls: usize,
     pub(super) storage_retries: usize,
     pub(super) storage_retry_wait_nanoseconds: u64,
+    pub(super) storage_unpublished_files: usize,
+    pub(super) storage_released_files: usize,
     pub(super) storage_transaction_nanoseconds: u64,
     pub(super) storage_object_transaction_nanoseconds: u64,
     pub(super) storage_relationship_transaction_nanoseconds: u64,
@@ -749,6 +751,8 @@ impl Metrics {
         self.ast_matcher_calls += other.ast_matcher_calls;
         self.storage_retries += other.storage_retries;
         self.storage_retry_wait_nanoseconds += other.storage_retry_wait_nanoseconds;
+        self.storage_unpublished_files += other.storage_unpublished_files;
+        self.storage_released_files += other.storage_released_files;
         self.storage_transaction_nanoseconds += other.storage_transaction_nanoseconds;
         self.storage_object_transaction_nanoseconds += other.storage_object_transaction_nanoseconds;
         self.storage_relationship_transaction_nanoseconds +=

@@ -129,6 +129,8 @@ pub(super) fn profile_result(
             "astMatcherCalls": metrics.ast_matcher_calls,
             "storageRetries": metrics.storage_retries,
             "storageRetryWaitNanoseconds": metrics.storage_retry_wait_nanoseconds,
+            "storageUnpublishedFiles": metrics.storage_unpublished_files,
+            "storageReleasedFiles": metrics.storage_released_files,
             "storageTransactionNanoseconds": metrics.storage_transaction_nanoseconds,
             "storageObjectTransactionNanoseconds": metrics.storage_object_transaction_nanoseconds,
             "storageRelationshipTransactionNanoseconds": metrics.storage_relationship_transaction_nanoseconds,
@@ -847,7 +849,7 @@ mod tests {
 
     #[test]
     fn coverage_reports_a_broken_files_partial_clause_cold_warm_and_paged() {
-        let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+        let _slot = WORKSPACE_TEST_SLOT.lock();
         let directory = std::env::temp_dir().join(format!(
             "rerail-coverage-{}-{:?}",
             std::process::id(),
@@ -906,7 +908,7 @@ mod tests {
     #[test]
     fn an_edit_renders_only_its_file_and_keeps_result_order() {
         use super::{RESULT_RENDERS, RESULT_SORTS};
-        let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+        let _slot = WORKSPACE_TEST_SLOT.lock();
         let code_rule = json!({
             "format": "rerail.policy/v1", "id": "rendered", "revision": 1,
             "mode": "steer",

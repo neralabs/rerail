@@ -228,7 +228,8 @@ async function healthItems(
   const items = nativeOk ? [] : ["engine unavailable"];
   try {
     if (run !== null && await realpath(run.workspaceRoot) !== workspace) throw new Error("Mismatched audit identity");
-    if (run?.status === "failed" || (run !== null && run.failureCount > 0)) items.push("audit failed");
+    // A completed audit may still list files it read only in part; only a failed one is trouble.
+    if (run?.status === "failed") items.push("audit failed");
   } catch {
     items.push("audit unavailable");
   }

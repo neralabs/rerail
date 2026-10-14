@@ -24,9 +24,13 @@ import {
   type CodeRuleSourceLanguage,
   type RuleSteerDelivery,
   type RepositoryAuditHooks,
+  type AuditorCloseOptions,
 } from "./code-rule.js";
 import {
   AUDIT_COVERAGE_STATUSES,
+  BINARY_SOURCE_MESSAGE,
+  isSourceGap,
+  omittedFailuresSummary,
   type ClauseCoverage,
   type AuditFailure,
   type AuditRecorder,
@@ -210,7 +214,9 @@ type ScopeAuditCompletion = {
   /** The native repository index produced the results; a complete one is recorded for reuse. */
   indexed: boolean;
 };
-type ScopeAuditSources = { sourcePaths: string[]; stopped: boolean };
+type ScopeAuditSources = { sourcePaths: string[]; stopped: boolean; files: number };
+/** What a finished scope audit reports to the daemon log. */
+type ScopeAuditSummary = { resultPagesMilliseconds: number; violations: number; failures: number; status: AuditResult["status"] };
 /** A repository audit's run of this checkout, and the checkouts nested in it that it left to their own rules. */
 export interface RepositoryAuditReport {
   readonly auditId: string | undefined;
@@ -270,11 +276,31 @@ function failure(
 function auditBudgetFailure(message: string): AuditFailure {
   return failure("scan", "budget-exceeded", message, undefined, "scan");
 }
-const AUDIT_FAILURES_STOPPED = `Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`;
-/** At most `AUDIT_MAX_FAILURES` failures, then one budget failure saying the scan stopped there. */
-function cappedAuditFailures(failures: AuditFailure[]): AuditFailure[] {
-  if (failures.length <= AUDIT_MAX_FAILURES) return failures;
-  return [...failures.slice(0, AUDIT_MAX_FAILURES), auditBudgetFailure(AUDIT_FAILURES_STOPPED)];
+/** Failures that count towards the failure limit that stops a scan: any but a scan-level one or a `isSourceGap`. */
+function limitedFailures(failures: readonly AuditFailure[]): number {
+  let count = 0;
+  for (const item of failures) if (item.stage !== "scan" && !isSourceGap(item)) count += 1;
+  return count;
+}
+/**
+ * A cap on one audit's failure list, over the lists it is given in turn (the failures before evaluation, then each
+ * result page): every scan-level failure (what stopped the walk), at most `AUDIT_MAX_FAILURES` that fail the audit and
+ * at most `AUDIT_MAX_FAILURES` source gaps, so files read only in part never crowd out what failed it. What it drops
+ * is counted: `omitted()` is the one entry, for the end of the list, that says how many, or nothing when none was.
+ */
+function auditFailureCap(): { keep(failures: readonly AuditFailure[]): AuditFailure[]; omitted(): AuditFailure[] } {
+  let failing = 0;
+  let gaps = 0;
+  let dropped = 0;
+  return {
+    keep: (failures) => failures.filter((item) => {
+      if (item.stage === "scan") return true;
+      const kept = isSourceGap(item) ? gaps++ < AUDIT_MAX_FAILURES : failing++ < AUDIT_MAX_FAILURES;
+      if (!kept) dropped += 1;
+      return kept;
+    }),
+    omitted: () => (dropped === 0 ? [] : [omittedFailuresSummary(dropped)]),
+  };
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -291,6 +317,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #presentPath: (path: string) => string;
   /** Folders below the workspace root that are checkouts of their own, as the owner of this lane decides. */
   readonly #nestedCheckouts: () => readonly string[];
+  readonly #timingLog: ((line: string) => void) | undefined;
   #scope: AuditScope;
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
@@ -321,6 +348,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #closed = false;
   readonly #scopeAudits = new Set<Promise<unknown>>();
   readonly #generatedEditAudits = new Set<Promise<unknown>>();
+  /** Audits this evaluator started and has not finished: all it may end when the session-wide interrupt is not its to make. */
+  readonly #runningAudits = new Set<string>();
   #reportableViolations: CodeRuleViolation[] = [];
   #responseMode: AuditMode;
   #evaluation = emptyEvaluation();
@@ -339,6 +368,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * skip them. Any other folder is walked, whether or not it holds a `.git` entry. None by default.
        */
       nestedCheckouts?: () => readonly string[];
+      /** Receives the storage-attach and repository-audit timing lines (the daemon passes its log); without it they are not written. */
+      timingLog?: (line: string) => void;
     },
   ) {
     this.#catalog = catalog;
@@ -349,6 +380,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#responseMode = this.#mode;
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
+    this.#timingLog = options.timingLog;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -426,10 +458,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
   /**
    * Synchronous, so the bridge's next `acceptsPath` already answers with the refreshed scopes: the replacement
-   * registers its code rules now and attaches storage off the JS thread before its first apply.
+   * registers its code rules now and attaches storage off the JS thread before its first apply. Before the workspace
+   * opens there is nothing to replace: opening prepares from the catalog as it is then.
    */
   refreshCodeRules(): void {
-    if (this.#closing) return;
+    if (this.#closing || this.#sessionId === undefined) return;
     try {
       this.#catalog.refresh();
       this.#reportQuarantined();
@@ -443,6 +476,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"),
       );
     }
+  }
+
+  /** Digest of the compiled rule catalog as of now: what a repository audit started now records as its `catalogRevision`. */
+  catalogRevision(): string {
+    this.refreshCodeRules();
+    return this.#catalog.status.version;
   }
 
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {
@@ -528,7 +567,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (options.scope === "touched-files" && paths.length === 0)
       throw new Error("Touched-files policy scan requires paths");
     if (options.scope === "repository") {
-      if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot)) return [];
+      if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot, this.catalogRevision())) return [];
       const { auditId } = await this.auditRepository(sessionId, options.mode);
       options.audit?.finish(this.#workspaceRoot, auditId);
       return auditId === undefined ? [] : [auditId];
@@ -554,21 +593,31 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return { auditId, nestedCheckouts: [...new Set(nestedCheckouts)].sort(compareDeterministicStrings) };
   }
 
-  interrupt(): void {
+  interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     for (const [path, stored] of this.#pending) {
       // Cancelled before evaluation: preserve the work without claiming a compiled-rule revision.
       stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
     }
     this.#closing = true;
-    if (this.#sessionId !== undefined) this.#record(() => this.#audits.interrupt(this.#sessionId!));
+    if (this.#sessionId !== undefined) {
+      if (options?.interruptAudits === false) this.#interruptOwnAudits();
+      else this.#record(() => this.#audits.interrupt(this.#sessionId!));
+    }
     this.#workspace?.workspace.close();
     this.#replacement?.workspace.close();
   }
-  async close(): Promise<void> {
+
+  /** Ends the audits this evaluator started and left running, without touching the session's other audits. */
+  #interruptOwnAudits(): void {
+    for (const auditId of this.#runningAudits)
+      this.#record(() => this.#audits.finish(auditId, { status: "interrupted", violations: [], failures: [] }));
+    this.#runningAudits.clear();
+  }
+  async close(options?: AuditorCloseOptions): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.interrupt();
+    this.interrupt(options);
     await this.#pump;
     await Promise.allSettled(this.#scopeAudits);
     await Promise.allSettled(this.#storing);
@@ -618,7 +667,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason }) => {
+      const attachStartedAt = performance.now();
+      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+        this.#timingLog?.(
+          `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
+        );
         // Reuse is a cache: losing it costs time, never results, so a cause Git reports is logged, not raised.
         if (!attached && reason && reason !== this.#reuseDisabledReport) {
           this.#reuseDisabledReport = reason;
@@ -827,6 +880,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     /** Receives the nested checkouts the walk reached and skipped. */
     reached: string[] = [],
   ): Promise<string | undefined> {
+    const startedAt = performance.now();
     this.refreshCodeRules();
     const revision = this.#revision;
     let auditId: string | undefined;
@@ -840,11 +894,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       workspace = prepared.workspace;
       auditId = this.#startAudit(scope, mode, revision, paths, prepared);
       const indexed = scope === "repository" && (await prepared.storage);
+      const indexStartedAt = performance.now();
       const walked = indexed
         ? await this.#indexRepository(workspace, auditId, failures, nested)
         : await this.#walkAuditSources(workspace, auditId, paths, failures, nested);
+      const indexMilliseconds = performance.now() - indexStartedAt;
       if (this.#closing) return auditId;
-      await this.#finishScopeAudit({
+      const summary = await this.#finishScopeAudit({
         workspace,
         auditId,
         revision,
@@ -856,18 +912,38 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         generatedEdit,
         indexed,
       });
+      if (scope === "repository" && summary !== undefined)
+        this.#logRepositoryAudit(summary.status, startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
       return auditId;
     } catch (error) {
+      const message = errorMessage(error);
+      if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, failures.length + 1);
       this.#finishAudit(
         auditId,
         "failed",
         [],
-        [...failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")],
+        [...failures, failure("scan", "adapter-error", message, undefined, "scan")],
       );
       return auditId;
     } finally {
       if (workspace !== undefined) this.#disposeWorkspace(workspace);
     }
+  }
+
+  /** One line per repository audit in the daemon log: where its time went, so a slow audit can be told from a stuck one. */
+  #logRepositoryAudit(
+    status: AuditResult["status"],
+    startedAt: number,
+    indexMilliseconds: number,
+    resultPagesMilliseconds: number,
+    files: number,
+    violations: number,
+    failures: number,
+  ): void {
+    const totalMilliseconds = performance.now() - startedAt;
+    this.#timingLog?.(
+      `rerail: repository audit ${status} in ${Math.round(totalMilliseconds)} ms (index ${Math.round(indexMilliseconds)} ms, result pages ${Math.round(resultPagesMilliseconds)} ms): ${files} files, ${violations} violations, ${failures} failures\n`,
+    );
   }
 
   /**
@@ -884,15 +960,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     nested: NestedCheckoutWalk,
   ): Promise<ScopeAuditSources> {
     const deadline = Date.now() + AUDIT_MAX_DURATION_MS;
+    let files = 0;
     while (!this.#closing) {
       if (Date.now() >= deadline) {
         failures.push(auditBudgetFailure("Repository scan exceeded its five-minute work budget"));
-        return { sourcePaths: [], stopped: true };
+        return { sourcePaths: [], stopped: true, files };
       }
       await this.#waitForEvaluationIdle();
       if (this.#closing) break;
       const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested)));
       this.#workspaceRevisions.set(workspace, chunk.revision);
+      files = chunk.discoveredFiles;
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
       const evaluation = chunk.evaluation;
       if (evaluation !== null && auditId !== undefined)
@@ -904,19 +982,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         );
       if (chunk.overBudget) {
         failures.push(auditBudgetFailure("Repository scan exceeded its 100,000-file or 512 MiB source budget"));
-        return { sourcePaths: [], stopped: true };
+        return { sourcePaths: [], stopped: true, files };
       }
-      if (failures.length >= AUDIT_MAX_FAILURES) {
+      if (limitedFailures(failures) >= AUDIT_MAX_FAILURES) {
         failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
-        return { sourcePaths: [], stopped: true };
+        return { sourcePaths: [], stopped: true, files };
       }
       if (chunk.done) {
         nested.reached.push(...chunk.nestedCheckouts);
-        return { sourcePaths: [], stopped: false };
+        return { sourcePaths: [], stopped: false, files };
       }
       await yieldToHost();
     }
-    return { sourcePaths: [], stopped: true };
+    return { sourcePaths: [], stopped: true, files };
   }
 
   /** One index chunk, retried while an interactive apply holds the evaluation slot. */
@@ -952,7 +1030,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       nested,
     };
     for await (const file of this.#auditFiles(workspace, paths, failures, budget)) {
-      if (this.#closing) return { sourcePaths, stopped: true };
+      if (this.#closing) return { sourcePaths, stopped: true, files: sourcePaths.length };
       files.push(file);
       sourcePaths.push(file.path);
       bytes += Buffer.byteLength(file.source);
@@ -963,7 +1041,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
     }
     if (files.length > 0) await this.#flushAuditBatch(workspace, auditId, failures, files);
-    return { sourcePaths, stopped: budget.stopped };
+    return { sourcePaths, stopped: budget.stopped, files: sourcePaths.length };
   }
 
   async #flushAuditBatch(
@@ -985,7 +1063,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await yieldToHost();
   }
 
-  async #finishScopeAudit(completion: ScopeAuditCompletion): Promise<void> {
+  async #finishScopeAudit(completion: ScopeAuditCompletion): Promise<ScopeAuditSummary | undefined> {
     const { workspace, auditId, revision, scope, mode, sourcePaths, failures, stopped, generatedEdit, indexed } =
       completion;
     await this.#waitForEvaluationIdle();
@@ -1002,9 +1080,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         process.stderr.write(`rerail: repository reuse was not recorded: ${errorMessage(error)}\n`);
       });
     if (this.#closing) return;
+    const resultPagesStartedAt = performance.now();
     const streamed = await this.#resultPages(workspace, auditId, mode === "log" && !generatedEdit, failures);
+    const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
+    // Files read only in part are listed, but only a repository audit tolerates them: a touched-files scan of such a file failed.
+    const failsAudit = (item: AuditFailure): boolean => scope !== "repository" || !isSourceGap(item);
     const result: Evaluation = {
-      status: streamed.failures.length === 0 ? "completed" : "failed",
+      status: streamed.failures.some(failsAudit) ? "failed" : "completed",
       violations: streamed.violations,
       failures: streamed.failures,
       metrics: { files: 0, visitedNodes: 0, witnesses: streamed.violations.length },
@@ -1013,10 +1095,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       ...failures,
       ...result.failures.map((item) => ({ ...item, stage: "evaluate" as const })),
     ];
-    const allFailures = cappedAuditFailures(unboundedFailures);
-    const status = allFailures.length > 0 ? "failed" : "completed";
+    const cap = auditFailureCap();
+    const allFailures = [...cap.keep(unboundedFailures), ...cap.omitted()];
+    const status = unboundedFailures.some(failsAudit) ? "failed" : "completed";
     if (streamed.paged && auditId !== undefined) {
-      this.#finishResultPages(auditId, streamed.pageCount, status, unboundedFailures.length > AUDIT_MAX_FAILURES);
+      this.#record(() => this.#audits.finishResultPages?.(auditId, status));
+      this.#runningAudits.delete(auditId);
     } else {
       this.#finishAudit(auditId, status, result.violations, allFailures);
     }
@@ -1026,6 +1110,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#evaluation = { ...result, failures: allFailures };
     }
     await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.violations, mode, generatedEdit);
+    return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
   }
 
   async #waitForEvaluationIdle(): Promise<void> {
@@ -1050,7 +1135,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       const absolute = stack.pop()!;
       const file = await this.#auditFileAtPath(workspace, canonicalRoot, absolute, stack, seen, failures, state.nested);
-      if (failures.length >= AUDIT_MAX_FAILURES) {
+      if (limitedFailures(failures) >= AUDIT_MAX_FAILURES) {
         failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
         state.stopped = true;
         return;
@@ -1156,7 +1241,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const source = await readFile(absolute);
     if (this.#closing) return undefined;
     if (source.includes(0)) {
-      failures.push(failure("source", "source-incomplete", "Binary source cannot be evaluated", path, "read"));
+      failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
       return undefined;
     }
     return { path, language, source: source.toString("utf8"), ...this.#module(language, path) };
@@ -1176,7 +1261,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     auditId: string | undefined,
     allowPersistentPaging: boolean,
     precedingFailures: readonly AuditFailure[],
-  ): Promise<Pick<Evaluation, "violations" | "failures"> & { paged: boolean; pageCount: number }> {
+  ): Promise<Pick<Evaluation, "violations" | "failures"> & { paged: boolean; pageCount: number; violationCount: number }> {
     const paged =
       allowPersistentPaging &&
       auditId !== undefined &&
@@ -1185,29 +1270,30 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#audits.finishResultPages !== undefined;
     const violations: CodeRuleViolation[] = [];
     const failures: AuditFailure[] = [];
-    let remainingFailures = Math.max(0, AUDIT_MAX_FAILURES - precedingFailures.length);
+    // A paged audit keeps no violations in memory; the count is all the timing line needs.
+    let violationCount = 0;
+    const cap = auditFailureCap();
     let cursor = 0;
     let pageIndex = 0;
     if (paged && precedingFailures.length > 0) {
       this.#record(() =>
         this.#audits.appendResultPage?.(auditId!, pageIndex, {
           violations: [],
-          failures: precedingFailures.slice(0, AUDIT_MAX_FAILURES),
+          failures: cap.keep(precedingFailures),
         }),
       );
       pageIndex += 1;
     }
     while (true) {
       const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      violationCount += page.violations.length;
       if (paged) {
-        const pageFailures = page.failures
-          .slice(0, remainingFailures)
-          .map((item) => ({ ...item, stage: "evaluate" as const }));
-        remainingFailures -= pageFailures.length;
+        // The last page closes the list, so it is where the count of what the cap dropped is recorded.
+        const pageFailures = cap.keep(page.failures.map((item) => ({ ...item, stage: "evaluate" as const })));
         this.#record(() =>
           this.#audits.appendResultPage?.(auditId!, pageIndex, {
             violations: page.violations,
-            failures: pageFailures,
+            failures: page.done ? [...pageFailures, ...cap.omitted()] : pageFailures,
           }),
         );
       } else {
@@ -1215,7 +1301,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       failures.push(...page.failures);
       pageIndex += 1;
-      if (page.done) return { violations: violations, failures, paged, pageCount: pageIndex };
+      if (page.done) return { violations: violations, failures, paged, pageCount: pageIndex, violationCount };
       if (page.cursor <= cursor) throw new Error("Native result stream did not advance");
       cursor = page.cursor;
       await yieldToHost();
@@ -1390,6 +1476,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         ruleProvenance: prepared === null ? [] : [...provenance],
       });
       if (this.#closing) this.#audits.finish(auditId, { status: "interrupted", violations: [], failures: [] });
+      else this.#runningAudits.add(auditId);
     });
     return auditId;
   }
@@ -1404,25 +1491,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     return stored.auditId;
   }
-  /** Closes a paged audit, first adding the page that says the scan stopped at the failure limit when it did. */
-  #finishResultPages(auditId: string, pageCount: number, status: AuditResult["status"], stoppedAtLimit: boolean): void {
-    if (stoppedAtLimit)
-      this.#record(() =>
-        this.#audits.appendResultPage?.(auditId, pageCount, {
-          violations: [],
-          failures: [auditBudgetFailure(AUDIT_FAILURES_STOPPED)],
-        }),
-      );
-    this.#record(() => this.#audits.finishResultPages?.(auditId, status));
-  }
   #finishAudit(
     auditId: string | undefined,
     status: AuditResult["status"],
     violations: CodeRuleViolation[],
     failures: AuditFailure[],
   ): void {
-    if (auditId !== undefined && !this.#closing)
-      this.#record(() => this.#audits.finish(auditId, { status, violations: violations, failures }));
+    if (auditId === undefined) return;
+    this.#runningAudits.delete(auditId);
+    if (!this.#closing) this.#record(() => this.#audits.finish(auditId, { status, violations: violations, failures }));
   }
   #recordImmediate(
     scope: AuditScope,

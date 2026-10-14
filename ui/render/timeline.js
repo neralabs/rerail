@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { data, ui, sinceFor, rangeLabel, titleOf } from "../state.js";
-import { openState, lastEventAt, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
 
 const EF = () => (ui.showAll ? ui.evFilter : "corrections");
 /** Folded away as noise, unless a correction hangs off it: that one must show, whatever its level. */
@@ -233,15 +233,25 @@ export function renderTimeline(tl, rail, sess, turns, cs, loaded) {
   if (t === null || tl.firstChild !== t.empty) build(tl);
   const quietEmpty = !ui.showAll && cs.length === 0;
   setAttr(t.empty, "hidden", !(loaded && quietEmpty));
-  setText(t.empty.querySelector("p"), findingsCover(sess)
-    ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
-    : `No violations logged ${rangeLabel()} · change the range on Rules`);
+  const dropped = droppedEvents(sess);
+  const unchecked = uncheckedBoundaries(sess);
+  const rulesPending = codeRulesPendingBoundaries(sess);
+  const gaps = [
+    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
+    ...(unchecked === 0 ? [] : [`shell edits were not yet checked at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
+    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
+  ].join("; ");
+  setText(t.empty.querySelector("p"), !findingsCover(sess)
+    ? `No violations logged ${rangeLabel()} · change the range on Rules`
+    : gaps === ""
+      ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
+      : `Rerail logged no violations in the ${fmt(sess.eventCount)} events it audited; ${gaps}.`);
   setAttr(t.loading, "hidden", loaded);
   setAttr(rail, "hidden", quietEmpty || !loaded);
   setAttr(t.start, "hidden", quietEmpty || !loaded);
   setAttr(t.end, "hidden", quietEmpty || !loaded);
   const st = openState(sess);
-  setText(t.end, endLabel(st, sess));
+  setText(t.end, gaps === "" ? endLabel(st, sess) : `${endLabel(st, sess)} · ${gaps}`);
   syncChildren(t.turns, quietEmpty ? [] : turns.filter(turnVisible), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
   placeTicks(rail, tl);
 }

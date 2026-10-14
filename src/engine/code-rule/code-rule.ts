@@ -1276,8 +1276,11 @@ export interface AuditSettings {
 
 /** A repository audit records one per checkout: each checkout's audit is claimed first and reported when it ends. */
 export interface RepositoryAuditHooks {
-  /** False when another live session is already auditing `checkoutRoot`; that checkout is then skipped. */
-  claim(checkoutRoot: string): boolean;
+  /**
+   * False when another live session is already auditing `checkoutRoot`; that checkout is then skipped. `catalogRevision`
+   * is the compiled catalog the audit would run against.
+   */
+  claim(checkoutRoot: string, catalogRevision: string): boolean;
   finish(checkoutRoot: string, auditId: string | undefined): void;
 }
 
@@ -1303,11 +1306,20 @@ export interface CodeRuleAuditor {
     paths?: string[];
     audit?: RepositoryAuditHooks;
   }): Promise<readonly string[]>;
-  /** Stop outstanding evaluation promptly when its session closes. */
-  interrupt?(): void;
+  /**
+   * Stop outstanding evaluation promptly when its session closes. Every audit the session still runs ends interrupted
+   * unless `interruptAudits` is false: an evaluator whose session id was reopened meanwhile must leave the new
+   * session's audits alone, and ends only the audits it started itself.
+   */
+  interrupt?(options?: AuditorCloseOptions): void;
   /** Wait until every accepted generated edit and audit has completed. */
   settle?(): Promise<void>;
-  close(): Promise<void>;
+  close(options?: AuditorCloseOptions): Promise<void>;
+}
+
+export interface AuditorCloseOptions {
+  /** False ends only the audits this evaluator started, leaving the rest of the session's running audits as they are; true by default. */
+  readonly interruptAudits?: boolean;
 }
 
 function violationLocation(violation: CodeRuleViolation): string {

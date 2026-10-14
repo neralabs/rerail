@@ -3,11 +3,14 @@
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
 use rusqlite::{Connection, TransactionBehavior};
+use std::collections::HashSet;
+use std::sync::LazyLock;
 
 // `user_version` is the compatibility floor: a binary refuses a store whose floor is newer than
 // its SCHEMA_VERSION, so the floor moves only when an older binary would corrupt or misread the
-// store. Every open applies SCHEMA, which is idempotent, so additive changes that older SQL
-// ignores, such as indexes, need no floor raise: older binaries tolerate them.
+// store. An open that finds any SCHEMA object missing applies SCHEMA, which is idempotent, so
+// additive changes that older SQL ignores, such as indexes, need no floor raise: older binaries
+// tolerate them.
 //
 // The managed installation's store is one file per machine (`~/.cache/rerail/`), shared by
 // every installed version; a build running from a checkout keeps its own in `<checkout>/.rerail/`.
@@ -238,16 +241,18 @@ END;
 "#;
 
 impl ContentStore {
+    /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
+    /// every SCHEMA object is only read, so opening it never waits for another process's writer;
+    /// creation, a floor raise or a missing object (an index this build added) takes the
+    /// exclusive lock and applies SCHEMA.
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<()> {
         configure_connection(connection)?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-        let version: i64 =
-            transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > SCHEMA_VERSION {
-            return Err(StoreError::Invalid(format!(
-                "database schema version {version} is newer than supported version {SCHEMA_VERSION}: update Rerail"
-            )));
+        if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
+            return Ok(());
         }
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+        // Another open may have created the store since the read above.
+        let version = compatible_version(&transaction)?;
         if version == 0 {
             transaction.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         }
@@ -258,4 +263,44 @@ impl ContentStore {
         transaction.commit()?;
         Ok(())
     }
+}
+
+/// The store's floor, refused when it is newer than this build's.
+fn compatible_version(connection: &Connection) -> StoreResult<i64> {
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version > SCHEMA_VERSION {
+        return Err(StoreError::Invalid(format!(
+            "database schema version {version} is newer than supported version {SCHEMA_VERSION}: update Rerail"
+        )));
+    }
+    Ok(version)
+}
+
+/// Whether the store holds every table, index, trigger and virtual table SCHEMA creates.
+fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
+    let present = schema_object_names(connection)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let expected = SCHEMA_OBJECTS
+        .as_ref()
+        .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
+    Ok(expected.iter().all(|object| present.contains(object)))
+}
+
+/// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
+/// database, so it cannot drift from SCHEMA.
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
+    let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+    connection
+        .execute_batch(SCHEMA)
+        .map_err(|error| error.to_string())?;
+    schema_object_names(&connection).map_err(|error| error.to_string())
+});
+
+fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {
+    connection
+        .prepare("SELECT type,name FROM sqlite_schema")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StoreError::from)
 }

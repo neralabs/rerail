@@ -2,7 +2,7 @@
 //! Production code in this module never executes an external Git process.
 
 use crate::content_store::{
-    ContentStore, GitTree, GitTreeEntry, HashKey, SnapshotId, SourceId, WorkspaceId,
+    ContentStore, GitTree, GitTreeEntry, HashKey, SnapshotId, SourceId, StoreResult, WorkspaceId,
     WorkspaceRegistration,
 };
 use gix::bstr::ByteSlice;
@@ -463,7 +463,8 @@ impl GitWorkspace {
     }
 
     /// Persist the reusable Git tree graph and register `workspace` over its snapshot, in the
-    /// snapshot's own transaction.
+    /// snapshot's own transaction. The store's own error is kept, so a caller can tell a busy
+    /// store (a cache miss) from a failure.
     pub fn publish_snapshot(
         &self,
         store: &ContentStore,
@@ -471,17 +472,15 @@ impl GitWorkspace {
         grammar_set: HashKey,
         tape_format_version: i64,
         workspace: &WorkspaceRegistration<'_>,
-    ) -> Result<(SnapshotId, WorkspaceId), DiscoveryError> {
-        store
-            .publish_snapshot(
-                &self.trees,
-                self.root_tree,
-                scanner_version,
-                grammar_set,
-                tape_format_version,
-                workspace,
-            )
-            .map_err(|error| discovery_error("cannot persist Git snapshot", error))
+    ) -> StoreResult<(SnapshotId, WorkspaceId)> {
+        store.publish_snapshot(
+            &self.trees,
+            self.root_tree,
+            scanner_version,
+            grammar_set,
+            tape_format_version,
+            workspace,
+        )
     }
 
     /// Return a committed blob alias without reading bytes only when the path was clean at
@@ -1485,7 +1484,7 @@ mod tests {
     /// publication: its workspace re-registers over it.
     fn assert_published_snapshot_attaches(
         store: &ContentStore,
-        published: Result<(SnapshotId, WorkspaceId), DiscoveryError>,
+        published: StoreResult<(SnapshotId, WorkspaceId)>,
     ) {
         let (snapshot, workspace) = match published {
             Ok(published) => published,

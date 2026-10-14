@@ -121,6 +121,8 @@ pub(crate) fn evaluation_json(
                 "astMatcherCalls": evaluation.metrics.ast_matcher_calls,
                 "storageRetries": evaluation.metrics.storage_retries,
                 "storageRetryWaitNanoseconds": evaluation.metrics.storage_retry_wait_nanoseconds,
+                "storageUnpublishedFiles": evaluation.metrics.storage_unpublished_files,
+                "storageReleasedFiles": evaluation.metrics.storage_released_files,
                 "storageTransactionNanoseconds": evaluation.metrics.storage_transaction_nanoseconds,
                 "storageObjectTransactionNanoseconds": evaluation.metrics.storage_object_transaction_nanoseconds,
                 "storageRelationshipTransactionNanoseconds": evaluation.metrics.storage_relationship_transaction_nanoseconds,
