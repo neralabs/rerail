@@ -21,7 +21,7 @@ an explained FN against the pack.
 
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
-| fixtures (Clippy's UI tests and Rerail's probes) | 34 | 350 | 0 | 0 | 0 | 11 |
+| fixtures (Clippy's UI tests and Rerail's probes) | 34 | 393 | 0 | 0 | 0 | 11 |
 | ripgrep corpus | 34 | 614 | 0 | 0 | 11 | 6 |
 | tokio corpus | 34 | 553 | 0 | 0 | 98 | 95 |
 
@@ -39,7 +39,7 @@ Per rule (TP / FP / FN, explained points in parentheses):
 |---|---|---|---|
 | `clippy-precedence` | 30 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-precedence-bits` | 24 / 0 / 0 | 0 / 0 / 0 | 2 / 0 / 0 |
-| `clippy-double-parens` | 16 / 0 / 0 (5) | 0 / 0 / 0 | 0 / 0 / 0 |
+| `clippy-double-parens` | 20 / 0 / 0 (5) | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-int-plus-one` | 14 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-redundant-static-lifetimes` | 31 / 0 / 0 | 32 / 0 / 0 (2) | 0 / 0 / 0 |
 | `clippy-needless-arbitrary-self-type` | 9 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
@@ -70,7 +70,7 @@ Per rule (TP / FP / FN, explained points in parentheses):
 | `clippy-single-component-path-imports` | 5 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-many-single-char-names` | 3 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-allow-attributes` | 25 / 0 / 0 (1) | 14 / 0 / 0 (1) | 140 / 0 / 0 (48) |
-| `clippy-allow-attributes-without-reason` | 45 / 0 / 0 (1) | 16 / 0 / 0 (1) | 176 / 0 / 0 (77) |
+| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) | 16 / 0 / 0 (1) | 176 / 0 / 0 (77) |
 
 ## Recording and scoring
 
