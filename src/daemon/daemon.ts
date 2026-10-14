@@ -195,70 +195,77 @@ export class RerailDaemon {
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const modelPath = bundledModelPath();
-    const engineService = await startEngineService({
-      socketPath: kernelSocketPath,
-      storageRoot,
-      modelPath,
-      databasePath,
-      workspaceRoot,
-    });
-    const nativeToken = randomBytes(32).toString("hex");
-    const nativeServer = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
     let daemon: RerailDaemon | undefined;
+    // Open the database before binding anything: a refused open (a rollback holding it) must leave no engine
+    // socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
     });
-    const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
-    const app = new Hono();
-    app.use("*", hostAllowlist(publicHosts));
-    app.get("/healthz", context => context.json(daemon!.health()));
-
-    app.post("/native/session", async (context) => {
-      // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
-      if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
-      if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
-      if (context.req.header("authorization") !== `Bearer ${nativeToken}`) {
-        return context.json({ error: "native-authorization-invalid" }, 403);
-      }
-      let body: unknown;
-      try {
-        body = await context.req.json();
-      } catch {
-        return context.json({ error: "native-request-invalid" }, 400);
-      }
-      if (body === null || typeof body !== "object" || Array.isArray(body)
-        || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
-        return context.json({ error: "native-request-invalid" }, 400);
-      }
-      if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
-      try {
-        return context.json(await nativeServer.handle(body));
-      } catch (error) {
-        return context.json({
-          error: "native-request-invalid",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
-      }
-    });
-    app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
-    app.all("/mcp", (context) => mcp(context.req.raw));
-    app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
-    app.all("*", (context) => {
-      if (context.req.method !== "GET" && context.req.method !== "HEAD") {
-        return context.json({ error: "method-not-allowed" }, 405);
-      }
-      if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
-      return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
-    });
-    app.onError((error, context) => context.json({ error: "internal", message: error.message }, 500));
-    const listener = getRequestListener(app.fetch);
-    const server = createServer((request, response) => void listener(request, response));
+    let engineService: EngineService | undefined;
+    let nativeServer: NativeSessionServer | undefined;
+    let server: Server | undefined;
     try {
+      engineService = await startEngineService({
+        socketPath: kernelSocketPath,
+        storageRoot,
+        modelPath,
+        databasePath,
+        workspaceRoot,
+      });
+      const nativeToken = randomBytes(32).toString("hex");
+      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
+      nativeServer = sessions;
+      const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
+      const app = new Hono();
+      app.use("*", hostAllowlist(publicHosts));
+      app.get("/healthz", context => context.json(daemon!.health()));
+
+      app.post("/native/session", async (context) => {
+        // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
+        if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+        if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
+        if (context.req.header("authorization") !== `Bearer ${nativeToken}`) {
+          return context.json({ error: "native-authorization-invalid" }, 403);
+        }
+        let body: unknown;
+        try {
+          body = await context.req.json();
+        } catch {
+          return context.json({ error: "native-request-invalid" }, 400);
+        }
+        if (body === null || typeof body !== "object" || Array.isArray(body)
+          || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
+          return context.json({ error: "native-request-invalid" }, 400);
+        }
+        if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
+        try {
+          return context.json(await sessions.handle(body));
+        } catch (error) {
+          return context.json({
+            error: "native-request-invalid",
+            message: error instanceof Error ? error.message : String(error),
+          }, 400);
+        }
+      });
+      app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
+      app.all("/mcp", (context) => mcp(context.req.raw));
+      app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
+      app.all("*", (context) => {
+        if (context.req.method !== "GET" && context.req.method !== "HEAD") {
+          return context.json({ error: "method-not-allowed" }, 405);
+        }
+        if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
+        return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
+      });
+      app.onError((error, context) => context.json({ error: "internal", message: error.message }, 500));
+      const listener = getRequestListener(app.fetch);
+      server = createServer((request, response) => void listener(request, response));
       await listenPreferred(server, options.port, bindHost);
       daemon = new RerailDaemon({
-        server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
+        server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
+        nativeServer: sessions, nativeToken,
       });
       if (options.stateFile !== undefined) {
         const temporaryStateFile = `${options.stateFile}.${process.pid}.tmp`;
@@ -272,11 +279,11 @@ export class RerailDaemon {
       return daemon;
     } catch (error) {
       try {
-        if (server.listening) await closeHttpServer(server);
+        if (server?.listening === true) await closeHttpServer(server);
       } finally {
         try {
-          await nativeServer.close();
-          await engineService.close();
+          await nativeServer?.close();
+          await engineService?.close();
         } finally {
           stores.close();
         }
