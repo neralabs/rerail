@@ -127,7 +127,7 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
     return evaluate([...manifests, ...ecmaPaths.map(path => ({ path, language: languageFor(path), source: sources[path]! }))]);
   };
   return {
-    audit, edit, snapshot, derived, steers, revisions,
+    audit, edit, snapshot, derived, steers, revisions, enforcer,
     acceptsPath: (path: string) => enforcer.acceptsPath(path),
     close: () => enforcer.close(),
   };
@@ -370,6 +370,44 @@ describe("a package.json edit alone", () => {
       // The manifest's refresh of the source is a revision of it, so an earlier steer for it is stale.
       expect(revisions).toContainEqual({ revision: 2, paths: ["lib/plain.js"] });
     } finally {
+      await close();
+    }
+  });
+
+  it("sends a source again when the manifest edit that refreshed it is superseded before it publishes", async () => {
+    const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": "module.exports = require('x');\n" };
+    const root = await repository(false, sources);
+    const { edit, revisions, enforcer, close } = await enforcerFor(root, CODE_RULE, sources);
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const applyBufferAsync = prototype.applyBufferAsync;
+    try {
+      expect(await edit([{ path: "lib/plain.js", language: "javascript", generatedText: sources["lib/plain.js"]! }])).toEqual({
+        "lib/plain.js PROGRAM": 1,
+        "lib/plain.js REQUIRE": 1,
+      });
+      // Revision 2 makes the package a module, which refreshes the source; revision 3 edits the manifest again while
+      // revision 2's request is in flight, so revision 2 never publishes. Revision 3 leaves the facts as 2 set them.
+      await writeFile(join(root, "package.json"), '{ "type": "module" }\n');
+      let queued: Promise<unknown> | undefined;
+      const spy = vi.spyOn(prototype, "applyBufferAsync").mockImplementation(function (this: unknown, ...args: unknown[]) {
+        queued ??= enforcer.auditGeneratedEdits("package-facts", {
+          revision: 3, checkpoints: ["edit"],
+          edits: [{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }],
+        });
+        return Reflect.apply(applyBufferAsync, this, args);
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 2, checkpoints: ["edit"],
+        edits: [{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }],
+      });
+      await enforcer.settle();
+      await queued;
+      spy.mockRestore();
+      await enforcer.settle();
+      // The superseded revision recorded nothing it sent, so revision 3 sends the source again and reports it.
+      expect(revisions).toContainEqual({ revision: 3, paths: ["lib/plain.js"] });
+    } finally {
+      vi.restoreAllMocks();
       await close();
     }
   });

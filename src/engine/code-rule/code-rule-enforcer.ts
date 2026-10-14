@@ -965,9 +965,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
     this.#readFailures.delete(path);
     this.#readFailures.delete("worker");
-    const { evaluation, repackaged } = await this.#apply(prepared.workspace, edit);
+    const { evaluation, repackaged, sent } = await this.#apply(prepared.workspace, edit);
     this.#replaceAppliedEdit(path, stored, edit);
-    await this.#finishPendingEvaluation(path, stored, edit, evaluation, repackaged);
+    await this.#finishPendingEvaluation(path, stored, edit, evaluation, repackaged, sent);
   }
 
   #readFailureForEdit(path: string, edit: CodeRuleEdit): AuditFailure | undefined {
@@ -987,12 +987,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
+  /**
+   * Publishes an evaluation's findings, unless a later revision of its file or a workspace replacement supersedes it.
+   * Only a published evaluation records the `package` facts it sent (`commitSent`): a superseded one leaves the old
+   * facts in place, so the next edit that reaches its sources sends them again and their findings are reported.
+   */
   async #finishPendingEvaluation(
     path: string,
     stored: StoredEdit,
     edit: CodeRuleEdit,
     result: Evaluation,
     repackaged: readonly string[],
+    commitSent: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
     const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
@@ -1009,6 +1015,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       scopeFailure === undefined ? failures : [...failures, scopeFailure],
     );
     if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) return;
+    commitSent();
     this.#evaluation = result;
     let readyViolations = this.#readyViolations.get(stored.revision);
     if (readyViolations === undefined) {
@@ -1522,7 +1529,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     workspace: NativeCodeRuleDslWorkspace,
     edit: CodeRuleEdit,
     pass?: SourceFactsCache,
-  ): Promise<{ evaluation: Evaluation; repackaged: string[] }> {
+  ): Promise<{ evaluation: Evaluation; repackaged: string[]; sent: () => void }> {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
     const serverGraph = workspace.readsServerGraph();
@@ -1570,10 +1577,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
     });
     if (edit.deleted) packages.delete(edit.path);
-    for (const file of files)
-      if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
-    if (pass === undefined) workspace.evictInactive();
-    return { evaluation, repackaged };
+    // The `package` facts sent, recorded once the evaluation is published (`#finishPendingEvaluation`).
+    const sent = () => {
+      for (const file of files)
+        if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+    };
+    // A replacement pass publishes nothing of its own, so it records what it sent at once.
+    if (pass !== undefined) sent();
+    else workspace.evictInactive();
+    return { evaluation, repackaged, sent };
   }
 
   /**
