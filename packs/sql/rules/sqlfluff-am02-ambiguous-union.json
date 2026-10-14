@@ -3,7 +3,7 @@
   "id": "sqlfluff-am02-ambiguous-union",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's AM02 (ambiguous.union): in dialects supporting UNION DISTINCT, flag a UNION not immediately followed by DISTINCT or ALL.",
+  "description": "Port of SQLFluff 4.4.0's AM02 (ambiguous.union): in dialects supporting UNION DISTINCT, flag a UNION not immediately followed by DISTINCT or ALL. Not for PostgreSQL, and it starts off: Rerail reads every .sql file in one dialect, and SQLFluff skips AM02 in its postgres dialect (it runs in ANSI, MySQL and the other dialects with UNION DISTINCT; not SQLite), so a bare UNION in a PostgreSQL file would be a false positive. Turn it on for a repository whose SQL is MySQL or ANSI.",
   "scope": { "include": ["**/*.sql"], "exclude": [] },
   "clauses": [
     {

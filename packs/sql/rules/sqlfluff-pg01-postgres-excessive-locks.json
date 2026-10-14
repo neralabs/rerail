@@ -3,7 +3,7 @@
   "id": "sqlfluff-pg01-postgres-excessive-locks",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's PG01 (postgres.excessive_locks), force_enable=true: CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each statement is anchored at its start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
+  "description": "Port of SQLFluff 4.4.0's PG01 (postgres.excessive_locks), force_enable=true. For PostgreSQL only, and it starts off: Rerail reads every .sql file in one dialect, and advice to use CONCURRENTLY is wrong for MySQL and SQLite files, where that syntax does not exist. Turn it on for a repository whose SQL is PostgreSQL. CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each statement is anchored at its start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
   "scope": {
     "include": [
       "**/*.sql"

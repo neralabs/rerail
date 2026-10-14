@@ -18,6 +18,14 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`) |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
+## Rules that start off
+
+PG01, PG02 and AM02 depend on SQLFluff's dialect, and Rerail reads every `.sql` file in one dialect, so each starts off
+(`"on": false` in `pack.json`; turn it on per repository or checkout). PG01 and PG02 are PostgreSQL-only: on a MySQL or
+SQLite file they would advise `CONCURRENTLY` or `NOT VALID`, which those databases lack. AM02 is the reverse: SQLFluff
+skips it for PostgreSQL, so on a PostgreSQL file a bare `UNION` would be a false positive; turn it on for MySQL or ANSI
+SQL. The other 19 rules start on. The scores below still cover all 22.
+
 ## How the rules read SQL
 
 The engine parses every `.sql` file with one generic grammar and reads it as PostgreSQL does: a naked identifier folds
@@ -33,8 +41,9 @@ dialect gates for PG01 and AM02) and 2 are `rerail-unknown` (grammar gaps in RF0
 ## Scores
 
 TP/FP/FN against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
-findings a declared divergence explains. Every port has no false positive anywhere and no false negative on the
-fixtures outside its divergences. Corpus false negatives do not fail the gate.
+findings a declared divergence explains. On the recorded fixtures and the four pinned corpora, every port has no
+false positive and no false negative on the fixtures outside its declared divergences; that says nothing about other
+SQL, and a port's reading is PostgreSQL's wherever the dialects differ. Corpus false negatives do not fail the gate.
 
 | Port | SQLFluff rule | Fixtures | postgres | mattermost | anki | application-services | Skips files with syntax errors |
 |---|---|---|---|---|---|---|---|

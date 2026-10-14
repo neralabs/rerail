@@ -50,7 +50,8 @@
       "id": "sqlfluff-am02-ambiguous-union",
       "document": "rules/sqlfluff-am02-ambiguous-union.json",
       "title": "SQLFluff AM02: ambiguous.union",
-      "group": "SQLFluff"
+      "group": "SQLFluff",
+      "on": false
     },
     {
       "id": "sqlfluff-am05-ambiguous-join",
@@ -92,13 +93,15 @@
       "id": "sqlfluff-pg01-postgres-excessive-locks",
       "document": "rules/sqlfluff-pg01-postgres-excessive-locks.json",
       "title": "SQLFluff PG01: postgres.excessive_locks",
-      "group": "SQLFluff"
+      "group": "SQLFluff",
+      "on": false
     },
     {
       "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
       "document": "rules/sqlfluff-pg02-postgres-not-valid-foreign-key.json",
       "title": "SQLFluff PG02: postgres.not_valid_foreign_key",
-      "group": "SQLFluff"
+      "group": "SQLFluff",
+      "on": false
     },
     {
       "id": "sqlfluff-rf01-references-from",
