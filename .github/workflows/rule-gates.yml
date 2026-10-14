@@ -35,6 +35,8 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: next
+            tool: eslint-plugin-next
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

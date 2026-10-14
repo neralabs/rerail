@@ -214,3 +214,4 @@ Paths are relative to the pack directory, `packs/next/`.
 | `upstream/eslint-plugin-next/fixtures/no-unwanted-polyfillio/invalid-001.js` | `test/unit/eslint-plugin-next/no-unwanted-polyfillio.test.ts` | extracted from invalid[1] (its `code`, verbatim) |
 | `upstream/eslint-plugin-next/fixtures/no-unwanted-polyfillio/invalid-002.js` | `test/unit/eslint-plugin-next/no-unwanted-polyfillio.test.ts` | extracted from invalid[2] (its `code`, verbatim) |
 | `upstream/eslint-plugin-next/fixtures/no-unwanted-polyfillio/invalid-003.js` | `test/unit/eslint-plugin-next/no-unwanted-polyfillio.test.ts` | extracted from invalid[3] (its `code`, verbatim) |
+| `upstream/eslint-plugin-next/fixtures/no-head-element/2a7f549f6c61.ts` | `test/unit/eslint-plugin-next/no-head-element.test.ts` | derived |
