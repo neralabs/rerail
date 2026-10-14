@@ -108,6 +108,8 @@
     "test:watch": "vitest --dir test",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
+    "gates": "node --import tsx conformance/gates/cli.ts",
+    "gates:record": "node --import tsx conformance/recorders/gates/cli.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "package:check": "npm run build && npm pack --dry-run",
@@ -144,11 +146,13 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "24.10.0",
     "@vitest/coverage-v8": "^5.0.0",
+    "apache-arrow": "21.2.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
-    "vitest": "5.0.0"
+    "vitest": "5.0.0",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": ">=24"
