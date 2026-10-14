@@ -4,7 +4,7 @@
 //! template Forte does not parse) are byte ranges the tape keeps beside its records.
 use crate::code_rule_dsl::blade::forte::tree::{BladeTree, parse_tree};
 use crate::code_rule_dsl::blade::view::View;
-use crate::code_rule_dsl::embed::Program;
+use crate::code_rule_dsl::embed::{CompiledView, Embedder, Program};
 use crate::code_rule_dsl::language::{Embedded, GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::lines::LineTable;
 #[cfg(test)]
@@ -19,8 +19,8 @@ use std::sync::Arc;
 use tree_sitter::{Language, Node as TsNode};
 
 const WIDTH: usize = 6;
-pub(super) const TAPE_FORMAT_VERSION: u32 = 4;
-const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE4";
+pub(super) const TAPE_FORMAT_VERSION: u32 = 5;
+const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE5";
 const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
@@ -112,9 +112,21 @@ pub(super) struct TapeImage {
     /// Syntax errors no record stands for, as `start..end` byte ranges in source order: a Blade
     /// template's (`BladeTree::error_ranges`).
     syntax_errors: Vec<(u32, u32)>,
+    /// The programs the tape embeds (`embed`), by preorder index of their roots.
+    programs: Vec<EmbeddedProgram>,
     language: GrammarDialect,
     source_len: usize,
     source_digest: [u8; 32],
+}
+
+/// A program a tape embeds (`embed`): its root, a child of the tape's root; the dialect it is
+/// read as, which its kind codes do not tell (TypeScript, TSX and JavaScript share them:
+/// `KindCatalog`); and whether it stands apart from the host's tree (`Embedder::APART`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct EmbeddedProgram {
+    pub(crate) root: u32,
+    pub(crate) dialect: GrammarDialect,
+    pub(crate) apart: bool,
 }
 
 #[derive(Clone)]
@@ -319,6 +331,40 @@ fn overflow_value(entries: &[(u32, u32)], index: u32, sentinel: u16) -> Result<u
         .ok()
         .map(|slot| entries[slot].1)
         .ok_or_else(|| "missing rec6 overflow".into())
+}
+
+/// Appends `program`, read with `embedded`, as the root's next child, and records it with its
+/// dialect and whether it stands `apart` from the host's tree (`EmbeddedProgram`).
+fn encode_program<P: Program>(
+    nodes: &mut Vec<Pending>,
+    programs: &mut Vec<EmbeddedProgram>,
+    program: &P,
+    embedded: &Embedded,
+    apart: bool,
+    budget: &impl Fn() -> bool,
+) -> Result<(), String> {
+    let root = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+    encode_tree(
+        nodes,
+        program.root(),
+        Some(0),
+        embedded.grammar,
+        Some(embedded),
+        Some(program),
+        budget,
+    )?;
+    if nodes
+        .get(root as usize)
+        .is_none_or(|node| node.parent != Some(0))
+    {
+        return Err("an embedded program's root is a placeholder".into());
+    }
+    programs.push(EmbeddedProgram {
+        root,
+        dialect: program.dialect(),
+        apart,
+    });
+    Ok(())
 }
 
 /// Appends `root`'s tree to `nodes` in preorder under `parent`. `language` is the tree's grammar
@@ -559,7 +605,22 @@ impl TapeImage {
             u64::try_from(alias_bytes).map_err(|_| "kind alias length overflow")?,
             u64::try_from(self.kind_overrides.len()).map_err(|_| "kind override count overflow")?,
             u64::try_from(self.syntax_errors.len()).map_err(|_| "syntax error count overflow")?,
+            u64::try_from(self.programs.len()).map_err(|_| "embedded program count overflow")?,
         ];
+        // Each program's dialect as its index among the grammars the language embeds.
+        let embeddings = self.language.kinds().embeddings();
+        let programs = self
+            .programs
+            .iter()
+            .map(|program| {
+                let embedding = embeddings
+                    .iter()
+                    .position(|embedded| embedded.dialect == program.dialect)
+                    .and_then(|index| u8::try_from(index).ok())
+                    .ok_or("an embedded program's dialect is not one the language embeds")?;
+                Ok((program.root, embedding, u8::from(program.apart)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let payload = self
             .rec
             .len()
@@ -571,11 +632,12 @@ impl TapeImage {
             .and_then(|value| value.checked_add(self.error.len().checked_mul(4)?))
             .and_then(|value| value.checked_add(self.missing.len().checked_mul(4)?))
             .and_then(|value| value.checked_add(self.syntax_errors.len().checked_mul(8)?))
+            .and_then(|value| value.checked_add(programs.len().checked_mul(6)?))
             .and_then(|value| value.checked_add(alias_bytes))
             .and_then(|value| value.checked_add(self.kind_overrides.len().checked_mul(6)?))
             .ok_or("tape image length overflow")?;
         let mut bytes = Vec::with_capacity(
-            152_usize
+            160_usize
                 .checked_add(payload)
                 .ok_or("tape image length overflow")?,
         );
@@ -607,6 +669,11 @@ impl TapeImage {
         for &(start, end) in &self.syntax_errors {
             bytes.extend_from_slice(&start.to_le_bytes());
             bytes.extend_from_slice(&end.to_le_bytes());
+        }
+        for (root, embedding, apart) in programs {
+            bytes.extend_from_slice(&root.to_le_bytes());
+            bytes.push(embedding);
+            bytes.push(apart);
         }
         for (name, named) in &self.kind_aliases {
             bytes.push(u8::from(*named));
@@ -654,6 +721,7 @@ impl TapeImage {
         let alias_bytes = reader.length()?;
         let override_count = reader.length()?;
         let syntax_error_count = reader.length()?;
+        let program_count = reader.length()?;
         let rec = reader.take(rec_len)?.to_vec();
         let spans = reader.take(spans_len)?.to_vec();
         let checkpoints = reader.take(checkpoints_len)?.to_vec();
@@ -669,6 +737,35 @@ impl TapeImage {
                 .any(|&(start, end)| start > end || end as usize > source_len)
         {
             return Err("noncanonical tape syntax error ranges".into());
+        }
+        let embeddings = grammar.kinds.embeddings();
+        let programs = reader
+            .take(
+                program_count
+                    .checked_mul(6)
+                    .ok_or("embedded program count overflow")?,
+            )?
+            .chunks_exact(6)
+            .map(|entry| {
+                let root = u32::from_le_bytes(entry[..4].try_into().expect("u32 width"));
+                let dialect = embeddings
+                    .get(usize::from(entry[4]))
+                    .ok_or("an embedded program's dialect is not one the language embeds")?
+                    .dialect;
+                let apart = match entry[5] {
+                    0 => false,
+                    1 => true,
+                    _ => return Err("noncanonical embedded program flag".to_owned()),
+                };
+                Ok(EmbeddedProgram {
+                    root,
+                    dialect,
+                    apart,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if programs.windows(2).any(|pair| pair[0].root >= pair[1].root) {
+            return Err("noncanonical embedded programs".into());
         }
         let aliases_end = reader
             .offset
@@ -743,6 +840,7 @@ impl TapeImage {
             kind_aliases,
             kind_overrides,
             syntax_errors,
+            programs,
             language,
             source_len,
             source_digest,
@@ -813,35 +911,29 @@ impl TapeImage {
             None::<&View>,
             budget,
         )?;
-        // An embedding dialect's tape holds each program its embedders build from the tree as the
-        // root's next child, numbered as `KindCatalog` numbers the program's grammar. (Blade's
-        // compiled view is built from its Forte tree: `encode_blade`.)
+        // An embedding dialect's tape holds each program its embedders build from the tree as a
+        // child of the root after the tree's own, numbered as `KindCatalog` numbers the program's
+        // grammar: at most one per `via`. (Blade's compiled view is built from its Forte tree:
+        // `encode_blade`.)
+        let mut programs = Vec::new();
         let embeds = grammar.lang.embeds();
         for (index, &(via, _)) in embeds.iter().enumerate() {
             if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                 continue;
             }
             crate::code_rule_dsl::language::with_embedder!(via, E => {
-                if let Some(program) = <E as crate::code_rule_dsl::embed::Embedder>::build(root, source) {
+                if let Some(program) = <E as Embedder>::build(root, source) {
                     let dialect = program.dialect();
                     let embedded = embeds
                         .contains(&(via, dialect))
                         .then(|| grammar.kinds.embedding(dialect))
                         .flatten()
                         .ok_or("an embedder built a program in a dialect its host does not embed")?;
-                    encode_tree(
-                        &mut nodes,
-                        Program::root(&program),
-                        Some(0),
-                        embedded.grammar,
-                        Some(embedded),
-                        Some(&program),
-                        budget,
-                    )?;
+                    encode_program(&mut nodes, &mut programs, &program, embedded, E::APART, budget)?;
                 }
             });
         }
-        Self::finish(nodes, Vec::new(), grammar, source, budget)
+        Self::finish(nodes, Vec::new(), programs, grammar, source, budget)
     }
 
     /// The tape of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
@@ -873,14 +965,14 @@ impl TapeImage {
         let mut nodes = Vec::<Pending>::new();
         encode_blade_tree(&mut nodes, tree, grammar.kinds, budget)?;
         let reading = View::build(tree, source, budget)?;
+        let mut programs = Vec::new();
         if let Some(view) = &reading.view {
-            encode_tree(
+            encode_program(
                 &mut nodes,
-                view.root(),
-                Some(0),
-                embedded.grammar,
-                Some(embedded),
-                Some(view),
+                &mut programs,
+                view,
+                embedded,
+                CompiledView::APART,
                 budget,
             )?;
         }
@@ -891,13 +983,14 @@ impl TapeImage {
             .iter()
             .map(|range| (range.start as u32, range.end as u32))
             .collect::<Vec<_>>();
-        Self::finish(nodes, syntax_errors, grammar, source, budget)
+        Self::finish(nodes, syntax_errors, programs, grammar, source, budget)
     }
 
     /// The image of `nodes`, in preorder with their parents set.
     fn finish(
         mut nodes: Vec<Pending>,
         syntax_errors: Vec<(u32, u32)>,
+        programs: Vec<EmbeddedProgram>,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
@@ -1003,6 +1096,7 @@ impl TapeImage {
             kind_aliases,
             kind_overrides,
             syntax_errors,
+            programs,
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
@@ -1029,6 +1123,7 @@ impl TapeImage {
                 .sum::<usize>()
             + self.kind_overrides.capacity() * std::mem::size_of::<(u32, u16)>()
             + self.syntax_errors.capacity() * std::mem::size_of::<(u32, u32)>()
+            + self.programs.capacity() * std::mem::size_of::<EmbeddedProgram>()
             + std::mem::size_of::<Self>()
     }
 }
@@ -1060,6 +1155,7 @@ pub(super) struct TapeDoc {
     kind_aliases: Arc<Vec<(String, bool)>>,
     kind_overrides: Arc<Vec<(u32, u16)>>,
     syntax_errors: Arc<Vec<(u32, u32)>>,
+    programs: Arc<Vec<EmbeddedProgram>>,
 }
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
@@ -1302,6 +1398,13 @@ impl TapeDoc {
             nodes[parent].children += 1;
         }
         checked(budget)?;
+        if image.programs.iter().any(|program| {
+            nodes
+                .get(program.root as usize)
+                .is_none_or(|node| node.parent != 0)
+        }) {
+            return Err("an embedded program's root is not a child of the tape's root".into());
+        }
         Ok(Self {
             points: Arc::new(Points {
                 source: Arc::clone(&source),
@@ -1314,6 +1417,7 @@ impl TapeDoc {
             kind_aliases: Arc::new(image.kind_aliases.clone()),
             kind_overrides: Arc::new(image.kind_overrides.clone()),
             syntax_errors: Arc::new(image.syntax_errors.clone()),
+            programs: Arc::new(image.programs.clone()),
         })
     }
 
@@ -1337,6 +1441,24 @@ impl TapeDoc {
                 .map(|&(start, end)| start as usize..end as usize),
         );
         ranges
+    }
+
+    /// The programs the tape embeds (`embed`), in tape order.
+    pub(crate) fn programs(&self) -> &[EmbeddedProgram] {
+        &self.programs
+    }
+
+    /// Each embedded program's root kind code, and whether its subtree has an ERROR node or a
+    /// MISSING token of its own.
+    pub(super) fn program_syntax(&self) -> impl Iterator<Item = (u16, bool)> + '_ {
+        self.programs.iter().map(|program| {
+            let root = program.root as usize;
+            let subtree = &self.data[root..root + self.data[root].size as usize];
+            (
+                self.data[root].kind,
+                subtree.iter().any(|rec| rec.error || rec.missing),
+            )
+        })
     }
 
     #[cfg(test)]

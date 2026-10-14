@@ -115,8 +115,53 @@ fn persisted_image_round_trips_without_parsing() {
         .collect::<String>();
     assert_eq!(
         digest,
-        "6fe4a84d7213cb437802c2ed6f023ddc6f8a3c6531db28e16115908c3a4481a7"
+        "21fefd53319e756b295674fd8b80ec1b3b509d011d378a3e60dce52b7cbd4868"
     );
+}
+
+/// A persisted image keeps each embedded program's root, dialect and apartness (`EmbeddedProgram`),
+/// and rejects an entry that names no dialect the language embeds, a flag that is neither 0 nor
+/// 1, and a root that is no child of the tape's root.
+#[test]
+fn persisted_image_keeps_and_checks_its_embedded_programs() {
+    let source = "<script lang=\"tsx\">let x = <a />;</script>\n";
+    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    let image = TapeImage::parse(&grammar, source, &|| false)
+        .unwrap()
+        .unwrap();
+    let [program] = image.programs[..] else {
+        panic!("one program: {:?}", image.programs);
+    };
+    assert_eq!(program.dialect, GrammarDialect::Tsx);
+    assert!(program.apart);
+    let bytes = image.to_bytes().unwrap();
+    assert_eq!(
+        TapeImage::from_bytes(&bytes, &grammar).unwrap().programs,
+        image.programs
+    );
+    // The program entry follows the header and the tables before it.
+    let at = 160
+        + image.rec.len()
+        + image.spans.len()
+        + image.checkpoints.len()
+        + 8 * (image.par_overflow.len() + image.size_overflow.len())
+        + 4 * (image.extra.len() + image.error.len() + image.missing.len())
+        + 8 * image.syntax_errors.len();
+    assert_eq!(bytes[at..at + 4], program.root.to_le_bytes());
+    for (offset, byte) in [(4, 3), (5, 2)] {
+        let mut corrupt = bytes.clone();
+        corrupt[at + offset] = byte;
+        assert!(
+            TapeImage::from_bytes(&corrupt, &grammar).is_err(),
+            "{offset}"
+        );
+    }
+    let mut unknown = image.clone();
+    unknown.programs[0].dialect = GrammarDialect::Python;
+    assert!(unknown.to_bytes().is_err());
+    let mut nested = image.clone();
+    nested.programs[0].root += 1;
+    assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &nested, &|| false).is_err());
 }
 
 #[test]
