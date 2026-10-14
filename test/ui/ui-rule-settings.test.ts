@@ -225,6 +225,24 @@ describe("the page's rule setting writes", () => {
     await saving;
   });
 
+  // Self-review round 9: a rule's own setting, just written, outranks its pack's at the same owner and folder, so a pack
+  // change made before the page refreshes does not show on it.
+  it("weighs a change not yet refreshed when showing the next one", async () => {
+    let done = 0;
+    const answerPending = () => vi.waitFor(() => {
+      expect(writes().length).toBeGreaterThan(done);
+      for (const write of writes().slice(done)) write.answer(200, {});
+      done = writes().length;
+    });
+    const rule = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    expect(stored("eslint:no-var").folderStates.map(state => state.suppressionsSource)).toEqual([inRepository("", "rule"), inRepository("web", "rule")]);
+    const pack = page().setPackSuppressions("eslint", "honour", "Honoured for ESLint.");
+    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["ignore", "ignore"]);
+    while (done < 4) await answerPending();
+    await Promise.all([rule, pack]);
+    expect(stored("eslint:no-var").suppressions).toBe("ignore");
+  });
+
   it("puts the rule back as it was when the write fails", async () => {
     const saving = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));

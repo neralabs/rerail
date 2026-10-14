@@ -67,7 +67,7 @@ export function settingWrites({ toast, invalidate, owner }) {
     const rules = storedRules(ids);
     const by = owner();
     const decides = state => settingDecides(state, "rule", by, data.checkout?.checkoutPath);
-    return save(ruleTargets(rules), { suppressions }, rules, showSuppressions(suppressions, decides), label);
+    return save(ruleTargets(rules), { suppressions }, rules, showSuppressions(suppressions, decides, decider(by, "rule")), label);
   }
 
   /**
@@ -80,14 +80,26 @@ export function settingWrites({ toast, invalidate, owner }) {
     const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
     const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
     const folders = byFolder((data.attachedPacks.get(packId) ?? []).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(folders, { suppressions }, rules, showSuppressions(suppressions, decides), label);
+    return save(folders, { suppressions }, rules, showSuppressions(suppressions, decides, decider(by, "pack")), label);
   }
 
   return { setEnabled, setSuppressions, setPackSuppressions };
 }
 
-/** Show a suppressions change on a stored rule, in every folder it is added at that `changes` (all by default). */
-const showSuppressions = (suppressions, changes = () => true) => r => {
-  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions } : state));
+/**
+ * What decides a folder's suppressions once a setting on `target` written as `owner` lands there, as the API reports
+ * it, so a second change before the page refreshes weighs the first.
+ */
+const decider = (owner, target) => state => (owner === "checkout"
+  ? { by: "checkout", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }
+  : { by: "repository", folder: state.folder, target });
+
+/**
+ * Show a suppressions change on a stored rule, in every folder it is added at that `changes` (all by default), with
+ * what now decides it (`source`, from the folder's state).
+ */
+const showSuppressions = (suppressions, changes = () => true, source = state => state.suppressionsSource) => r => {
+  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));
   r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;
+  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
 };
