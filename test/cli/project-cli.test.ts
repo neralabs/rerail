@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, rollbackWithSnapshot, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
@@ -370,6 +370,22 @@ describe("rerail update and rerail update rollback", () => {
     await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(keys);
+  });
+
+  // Self-review round 15: when neither a new copy nor the old one's removal works (a folder this user cannot write),
+  // the update has still happened: it is reported, with what to remove by hand, not failed.
+  it("reports an old copy it cannot remove instead of failing the update", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    chmodSync(dirname(path), 0o500);
+    try {
+      await expect(updateWithSnapshot(updater, path, "3.0.0")).resolves.toMatchObject({ changed: true, current: { version: "3.0.0" } });
+    } finally {
+      chmodSync(dirname(path), 0o700);
+    }
+    const target = preUpdateSnapshotPath(path);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(`rerail: remove ${target} and ${target}.json yourself before rolling back:`));
   });
 
   // Review of #49 (F4): only another connection holding the file is "sessions still have it open".
