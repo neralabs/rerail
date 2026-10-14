@@ -1654,6 +1654,18 @@
           "members": [
             {
               "type": "SYMBOL",
+              "name": "_no_line_terminator_here"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
               "name": "_expressions"
             },
             {
@@ -2084,6 +2096,18 @@
                 {
                   "type": "STRING",
                   "value": "yield"
+                },
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "_no_line_terminator_here"
+                    },
+                    {
+                      "type": "BLANK"
+                    }
+                  ]
                 },
                 {
                   "type": "CHOICE",
@@ -7323,6 +7347,10 @@
     {
       "type": "SYMBOL",
       "name": "_jsx_closing_tag_lt"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_no_line_terminator_here"
     }
   ],
   "inline": [

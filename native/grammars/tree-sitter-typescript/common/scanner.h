@@ -17,6 +17,8 @@ enum TokenType {
     ARROW_BODY_END,
     // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
     JSX_CLOSING_TAG_LT,
+    // Never returned: valid right after `return` and `yield`, which take no operand after a line break.
+    NO_LINE_TERMINATOR_HERE,
 };
 
 static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
@@ -130,6 +132,30 @@ static bool scan_member_name_end(TSLexer *lexer) {
     return lexer->lookahead == ':' || lexer->lookahead == '?';
 }
 
+// At a `/` on the statement's line: whether a block comment starts here, ends, and holds a line terminator, which
+// ECMAScript reads as one (`a = 1 /*⏎*/ b = 2`, `return /*⏎*/ a`). Consumes the comment if so.
+static bool scan_block_comment_line_terminator(TSLexer *lexer) {
+    skip(lexer);
+    if (lexer->lookahead != '*') {
+        return false;
+    }
+    skip(lexer);
+    bool saw_line_terminator = false;
+    while (lexer->lookahead != 0) {
+        if (lexer->lookahead == '*') {
+            skip(lexer);
+            if (lexer->lookahead == '/') {
+                skip(lexer);
+                return saw_line_terminator;
+            }
+        } else {
+            saw_line_terminator |= is_line_terminator(lexer->lookahead);
+            skip(lexer);
+        }
+    }
+    return false;
+}
+
 static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
     lexer->result_symbol = AUTOMATIC_SEMICOLON;
     lexer->mark_end(lexer);
@@ -151,19 +177,45 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             }
             return true;
         }
+        if (lexer->lookahead == '/') {
+            if (!scan_block_comment_line_terminator(lexer)) {
+                return false;
+            }
+            *scanned_comment = true;
+            break;
+        }
         if (!is_space(lexer->lookahead)) {
             return false;
         }
         if (is_line_terminator(lexer->lookahead)) {
+            skip(lexer);
             break;
         }
         skip(lexer);
     }
 
-    skip(lexer);
+    // `return` and `yield` take no operand after a line break (ECMAScript's restricted productions), so there the
+    // statement ends before the tokens that would otherwise continue it as an operand: `return⏎[a]`, `yield⏎(a)`,
+    // `yield⏎/a/`. Before `,`, `;`, `=`, a binary operator or `?` it goes on, as before.
+    bool restricted = valid_symbols[NO_LINE_TERMINATOR_HERE];
 
     if (!scan_whitespace_and_comments(lexer, scanned_comment)) {
-        return false;
+        return restricted;
+    }
+
+    if (restricted) {
+        switch (lexer->lookahead) {
+            case '`':
+            case '<':
+            case '[':
+            case '(':
+            case '*':
+            case '+':
+            case '-':
+                return true;
+            default:
+                break;
+        }
     }
 
     // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
@@ -180,7 +232,6 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
         case ';':
         case '%':
         case '>':
-        case '<':
         case '=':
         case '?':
         case '^':
@@ -189,6 +240,13 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
         case '/':
         case ':':
             return false;
+
+            // A `<` after a line break never takes type arguments, as TypeScript reads it (its type references take
+            // them only on the same line): where no binary operator can come next, as after a type, it starts the
+            // next member or statement (`a: Promise<T>⏎<U>(x: U): U`). After an expression it is a comparison or a
+            // generic call, and the line goes on.
+        case '<':
+            return !valid_symbols[LOGICAL_OR];
 
         case '{':
             if (valid_symbols[FUNCTION_SIGNATURE_AUTOMATIC_SEMICOLON]) {

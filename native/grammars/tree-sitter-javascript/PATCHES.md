@@ -11,7 +11,7 @@ so Rerail carries its fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `src/scanner.c` | upstream, with Patches 2, 8, 9, 11 and 13 |
+| `src/scanner.c` | upstream, with Patches 2, 8, 9, 11, 13, 14 and 15 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
 | `src/grammar.json` | regenerated from the patched `grammar.js` |
 
@@ -512,8 +512,7 @@ come next, so it inserts a semicolon before one only where it cannot. A line tha
 where no binary operator can come next, as no `||` can (the test the scanner already makes for comments, and Patch 6
 in `grammars/tree-sitter-typescript/PATCHES.md` makes for members named `in`). `in` is left out: after `for (var a`,
 `in` continues the head, and no binary operator can come next there either. A `return` or `yield` followed by a line
-break and an operand (`return⏎[a]`) is unchanged: ECMAScript inserts a semicolon there, but the operand can continue
-the statement, so the scanner still reads one statement.
+break and an operand (`return⏎[a]`) is Patch 15's: there the operand's first token can continue the statement.
 
 Node kinds and field names are unchanged. The generated parser has 2,135 states instead of 1,885: the parse states
 the five tokens tell apart can no longer be merged.
@@ -837,8 +836,7 @@ the scanner ends a line for an automatic semicolon, a `//` comment, a block comm
 line. JSX text keeps its layout rule, with its whitespace spelled out as the C locale's `iswspace` reads it (ASCII
 alone), so a `jsx_text`'s range no longer depends on the locale and is the one the engine already built: a U+00A0 or
 U+3000 on a line of its own stays text, as React renders it. Node kinds, field names and the grammar are unchanged.
-A line break inside a block comment still inserts no semicolon where a binary operator could follow
-(`a = 1 /* c⏎ */ b = 2` is a parse error, as upstream's scanner reads it whatever the line terminator).
+A line break inside a block comment (`a = 1 /* c⏎ */ b = 2`) is Patch 14's.
 
 ## Patch 12: a JSX name may be a reserved word or start with `this`
 
@@ -1013,10 +1011,234 @@ still reads. A comment between the `/` and the name (`</ /* c */ a>`) already pa
 Node kinds and field names are unchanged. A closing tag with such a comment has the anonymous children `<` and `/`
 around a `comment`, where any other has `</`. The generated parser has 32 more states (2,207).
 
+## Patch 14: a block comment holding a line break ends the line
+
+Upstream issue: none open. Present at tag `v0.25.0` and at HEAD.
+
+Why: ECMAScript reads a multi-line comment as a line terminator for automatic semicolon insertion, so
+`a = 1 /*⏎*/ b = 2` is two statements and `x /*⏎*/ ++y` is `x; ++y;`. Upstream's scanner sees the line break inside a
+comment it looks past, but uses it only where no binary operator can come next, the comment condition. After an
+expression it reads on as if the comment held no line break. It returns no semicolon, the comment is lexed as an
+extra, and the line break inside it is lost to the scanner's next call. So `a = 1 /*⏎*/ b = 2` is a parse error, and
+so is `x /*⏎*/ ++y`.
+
+```diff
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -97,6 +97,8 @@ typedef enum {
+     REJECT,     // Semicolon is illegal, ie a syntax error occurred
+     NO_NEWLINE, // Unclear if semicolon will be legal, continue
+     ACCEPT,     // Semicolon is legal, assuming a comment was encountered
++    // A block comment holding a line terminator, which ECMAScript reads as one: semicolon legal as after a line break.
++    BLOCK_LINE_TERMINATOR,
+ } WhitespaceResult;
+ 
+ /**
+@@ -129,7 +131,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+                             *scanned_comment = true;
+ 
+                             if (lexer->lookahead != '/' && !consume) {
+-                                return saw_block_newline ? ACCEPT : NO_NEWLINE;
++                                return saw_block_newline ? BLOCK_LINE_TERMINATOR : NO_NEWLINE;
+                             }
+ 
+                             break;
+@@ -152,6 +154,8 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
+ 
+ static bool is_identifier_char(int32_t c) { return iswalnum(c) || c == '_' || c == '$'; }
+ 
++static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment);
++
+ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
+     bool comment_condition = !valid_symbols[LOGICAL_OR];
+     lexer->result_symbol = AUTOMATIC_SEMICOLON;
+@@ -168,9 +172,17 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+                 return false;
+             }
+ 
+-            if (result == ACCEPT && comment_condition && lexer->lookahead != ',' && lexer->lookahead != '=') {
++            bool block_line_terminator = result == BLOCK_LINE_TERMINATOR;
++            if ((result == ACCEPT || block_line_terminator) && comment_condition && lexer->lookahead != ',' &&
++                lexer->lookahead != '=') {
+                 return true;
+             }
++
++            // A block comment holding a line terminator is one, as ECMAScript reads it (`a = 1 /*⏎*/ b = 2`): the line
++            // ends there. (After a `//` comment, the scanner is called again at the line break it ends at.)
++            if (block_line_terminator) {
++                return scan_after_line_terminator(lexer, valid_symbols, scanned_comment);
++            }
+         }
+ 
+         if (lexer->lookahead == '}') {
+@@ -193,7 +205,11 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+     }
+ 
+     skip(lexer);
++    return scan_after_line_terminator(lexer, valid_symbols, scanned_comment);
++}
+ 
++// After a line terminator: whether the token starting the next line ends the statement before it.
++static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
+     if (scan_whitespace_and_comments(lexer, scanned_comment, true) == REJECT) {
+         return false;
+     }
+```
+
+Where a block comment holds a line terminator and the comment condition does not already decide, the scanner goes
+on as after a line break, with the rule for the token that starts the next line (`scan_after_line_terminator`, the
+second half of `scan_automatic_semicolon`). So the token decides as it does after a plain line break: `a /*⏎*/ [b]`
+and `a /*⏎*/ (b)` stay one expression, as in ECMAScript, and `a /*⏎*/ b` is two. A `//` comment keeps the old path:
+the scanner is called again at the line break the comment ends at, so the comment stays inside the statement before
+it. Upstream's corpus case `Regexps` (`/a///comment`) holds such a comment.
+
+Node kinds, field names and the grammar are unchanged. Where the semicolon goes in before such a comment, the comment
+is an extra between the two statements, as it was where the comment condition already inserted one
+(`var a /*⏎*/ +b`). The state count is unchanged.
+
+## Patch 15: no line terminator after `return` or `yield`
+
+Upstream issue: none open. Present at tag `v0.25.0` and at HEAD.
+
+Why: `return` and `yield` are restricted productions in ECMAScript: no line terminator may stand before the operand, so
+a line break there ends the statement. `return⏎[a]`, `return⏎(a)`, `return⏎-1`, `return⏎+a`, ``return⏎`t` ``,
+`return⏎/re/` and `return⏎<div/>` are `return;` followed by an expression statement. In a generator, `yield⏎(a)`,
+`yield⏎[a]` and `yield⏎-1` are `yield;` followed by one. Upstream's scanner inserts a semicolon there only before a
+token that cannot continue the statement, such as an identifier (`return⏎a` was already right). It read each of these
+as the operand, a silently wrong tree: the function returns `[a]` where ECMAScript returns `undefined`.
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -33,6 +33,9 @@ module.exports = grammar({
+     $._arrow_body_end,
+     // The `<` of a JSX closing tag whose `/` a comment follows (see jsx_closing_element).
+     $._jsx_closing_tag_lt,
++    // Never returned: marks where ECMAScript allows no line terminator before an operand, after `return` and
++    // `yield`, so that the scanner ends the statement at a line break there (`return⏎[a]` is `return; [a];`).
++    $._no_line_terminator_here,
+   ],
+ 
+   extras: $ => [
+@@ -499,6 +502,7 @@ module.exports = grammar({
+ 
+     return_statement: $ => seq(
+       'return',
++      optional($._no_line_terminator_here),
+       optional($._expressions),
+       $._semicolon,
+     ),
+@@ -610,7 +614,7 @@ module.exports = grammar({
+ 
+     yield_expression: $ => prec.right(choice(
+       // A `yield` with an operand outweighs a `yield` name before `++` or `--` (Patch 10): `yield++⏎x` is `yield ++x`.
+-      prec.dynamic(3, seq('yield', choice(seq('*', $.expression), $.expression))),
++      prec.dynamic(3, seq('yield', optional($._no_line_terminator_here), choice(seq('*', $.expression), $.expression))),
+       'yield',
+     )),
+ 
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -22,6 +22,9 @@ enum TokenType {
+     ARROW_BODY_END,
+     // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
+     JSX_CLOSING_TAG_LT,
++    // Never returned: valid right after `return` and `yield`, where ECMAScript allows no line terminator before the
++    // operand (see scan_after_line_terminator).
++    NO_LINE_TERMINATOR_HERE,
+ };
+ 
+ void *tree_sitter_javascript_external_scanner_create() { return NULL; }
+@@ -210,8 +213,14 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+ 
+ // After a line terminator: whether the token starting the next line ends the statement before it.
+ static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
++    // After `return` or `yield`, ECMAScript allows no line terminator before the operand: a line break there ends the
++    // statement before any token that can start an expression (`return⏎[a]`, `yield⏎(a)`, `return⏎/a/`). A token that
++    // cannot (`,`, `;`, `=`, a binary operator) goes on as before.
++    bool restricted = valid_symbols[NO_LINE_TERMINATOR_HERE];
++
+     if (scan_whitespace_and_comments(lexer, scanned_comment, true) == REJECT) {
+-        return false;
++        // A `/` that starts no comment: a regular expression where an operand may start.
++        return restricted;
+     }
+ 
+     // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
+@@ -222,13 +231,11 @@ static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols
+     }
+ 
+     switch (lexer->lookahead) {
+-        case '`':
+         case ',':
+         case ':':
+         case ';':
+         case '%':
+         case '>':
+-        case '<':
+         case '=':
+         case '?':
+         case '^':
+@@ -237,14 +244,19 @@ static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols
+         case '/':
+             return false;
+ 
++        // A template or a JSX element starts an operand.
++        case '`':
++        case '<':
++            return restricted;
++
+         // Insert a semicolon before a token that cannot continue the statement, as ECMAScript does:
+         // `var a⏎[b] = c`, a class field `a⏎*g() {}`. Where the token can, the line continues the statement.
+         case '[':
+-            return !valid_symbols[LEFT_BRACKET];
++            return restricted || !valid_symbols[LEFT_BRACKET];
+         case '(':
+-            return !valid_symbols[LEFT_PAREN];
++            return restricted || !valid_symbols[LEFT_PAREN];
+         case '*':
+-            return !valid_symbols[STAR];
++            return restricted || !valid_symbols[STAR];
+ 
+         // Insert a semicolon before decimals literals but not otherwise.
+         case '.':
+@@ -252,13 +264,13 @@ static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols
+             return iswdigit(lexer->lookahead);
+ 
+         // Insert a semicolon before `--` and `++`, and before a `+` or `-` that cannot continue the statement
+-        // (`var a⏎+b`), but not before binary `+` or `-`.
++        // (`var a⏎+b`) or starts a restricted operand (`return⏎-1`), but not before binary `+` or `-`.
+         case '+':
+             skip(lexer);
+-            return lexer->lookahead == '+' || !valid_symbols[PLUS];
++            return lexer->lookahead == '+' || restricted || !valid_symbols[PLUS];
+         case '-':
+             skip(lexer);
+-            return lexer->lookahead == '-' || !valid_symbols[MINUS];
++            return lexer->lookahead == '-' || restricted || !valid_symbols[MINUS];
+ 
+         // Don't insert a semicolon before `!=`, but do insert one before a unary `!`.
+         case '!':
+```
+
+A never-returned external token, `_no_line_terminator_here`, marks the place after `return` and after `yield` before its
+operand. After a line break there, the scanner inserts a semicolon before every token that can start an expression:
+`` ` ``, `<`, `[`, `(`, `*`, `+`, `-`, `.` before a digit and a `/` that starts no comment. Other tokens already got one.
+A token that cannot start one, such as `,`, `;`, `=`, `?` or a binary operator, goes on as before, so
+`x = yield⏎, b` stays a sequence and `return⏎;` one statement. `yield⏎*h()` is now a parse error, as in ECMAScript.
+
+`yield⏎(a)` in a script, where `yield` is a name, is a call in ECMAScript. Like Patch 10, the grammar reads the
+generator's `yield;` there. Before this patch it read neither: it gave a yield of `(a)`. `break⏎l` and `continue⏎l`, the
+other restricted productions with an operand, already ended at the line break: a label is an identifier, before which
+the scanner always inserts a semicolon. `a⏎++b` was already `a; ++b`. `throw⏎a`, which ECMAScript rejects, and
+`x⏎=> x`, which it rejects too, still parse as before.
+
+Node kinds and field names are unchanged. The generated parser has 26 more states (2,233).
+
 ## Corpus and tree comparison
 
-With all thirteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
-case's expectation changed and one case added per patch (Patch 2's taken from #388), 129 of 129 parse. Over the
+With all fifteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
+case's expectation changed and one case added per patch (Patch 2's taken from #388), 131 of 131 parse. Over the
 11,540 files above, 56 files that had syntax errors parse. They are all 13 Next.js plugin fixtures and 12
 next-examples files that failed, 5 eslint-plugin-react fixtures, a shadcn-ui test fixture, vscode's colorize
 `test.jsx` and 24 ESLint fixtures. No file gains an error. 9 trees change, each as a patch intends. 3 change by
@@ -1025,6 +1247,7 @@ Patch 4 (a `{` at statement start or as an arrow body). 5 change by Patch 9 (`ar
 `with-custom-babel-config/pages/index.js` (a Babel `do` expression), which has a syntax error before and after.
 espree 11.2.0 reads every changed case as the patched grammar does. Patches 10 to 13 change no tree but the 5 files
 they fix: `no-irregular-whitespace/192` and `193`, `test.jsx`, `jsx-no-undef/valid-006` and
-`jsx-no-comment-textnodes/valid-012`. Both comparisons parse in the C locale, as the engine does (Python sets a
-UTF-8 locale, under which the scanner's old `iswspace` hid Patch 11's failures). The files that still fail to parse
-are invalid JavaScript: Flow annotations, a Babel `do` expression, and truncated or deliberately broken fixtures.
+`jsx-no-comment-textnodes/valid-012`. Patches 14 and 15 change no tree of these files. Both comparisons parse in the C
+locale, as the engine does (Python sets a UTF-8 locale, under which the scanner's old `iswspace` hid Patch 11's
+failures). The files that still fail to parse are invalid JavaScript: Flow annotations, a Babel `do` expression,
+and truncated or deliberately broken fixtures.

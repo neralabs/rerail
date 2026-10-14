@@ -2502,4 +2502,136 @@ mod tests {
             assert!(root.root().get_inner_node().has_error(), "{source}");
         }
     }
+
+    /// A block comment holding a line break ends the line, as ECMAScript reads it, while one on
+    /// a single line does not (Patch 14 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn a_multi_line_javascript_comment_ends_the_line() {
+        let root =
+            javascript("a = 1 /*\n*/ b = 2\nx /*\n*/ ++y\nc /* one line */ [d]\ne /*\n*/ (f)\n");
+        assert_eq!(
+            named_children_text(&root, "program"),
+            [
+                "a = 1",
+                "/*\n*/",
+                "b = 2",
+                "x",
+                "/*\n*/",
+                "++y",
+                "c /* one line */ [d]",
+                "e /*\n*/ (f)",
+            ]
+        );
+    }
+
+    /// A line break right after `return` or `yield` ends the statement before any operand, as
+    /// ECMAScript's restricted productions read it; a token that cannot start an operand goes on
+    /// (Patch 15 in `grammars/tree-sitter-javascript/PATCHES.md`).
+    #[test]
+    fn javascript_return_and_yield_end_at_a_line_break() {
+        let root = javascript(
+            "function f() {\n  return\n  [a]\n  return\n  (b)\n  return /*\n  */ -1\n  return (\n    c\n  )\n}\n\
+             function* g() {\n  yield\n  (d)\n  x = yield\n  , e\n}\n",
+        );
+        assert_eq!(
+            named_children_text(&root, "statement_block"),
+            [
+                "return",
+                "[a]",
+                "return",
+                "(b)",
+                "return",
+                "/*\n  */",
+                "-1",
+                "return (\n    c\n  )",
+                "yield",
+                "(d)",
+                "x = yield\n  , e",
+            ]
+        );
+    }
+
+    /// A `<` after a line break starts the next type member, as TypeScript reads it: a call or
+    /// construct signature with type parameters follows another member with no separator, while a
+    /// comparison or a generic call after an expression goes on (Patch 23 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_typescript_call_signature_with_type_parameters_follows_a_member_at_a_line_break() {
+        let source = "interface ParseBody {\n  (request: Request): Promise<T>\n  \
+                      <T extends BodyData>(request: Request): Promise<T>\n  a: Foo\n  \
+                      <U>(x: U): void\n  m(): void\n  <V>(): V\n  b: string\n  new <W>(): W\n}\n\
+                      type O = { (): void\n<T>(): T; c: Foo<\nT> }\n";
+        for root in typescript_and_tsx(source) {
+            assert_eq!(
+                named_children_text(&root, "interface_body"),
+                [
+                    "(request: Request): Promise<T>",
+                    "<T extends BodyData>(request: Request): Promise<T>",
+                    "a: Foo",
+                    "<U>(x: U): void",
+                    "m(): void",
+                    "<V>(): V",
+                    "b: string",
+                    "new <W>(): W",
+                ]
+            );
+            assert_eq!(
+                named_children_text(&root, "object_type"),
+                ["(): void", "<T>(): T", "c: Foo<\nT>"]
+            );
+            let root = typescript_and_tsx("a\n< b;\nfoo\n<T>(x);\n")
+                .into_iter()
+                .next()
+                .expect("the TypeScript tree");
+            assert_eq!(
+                named_children_text(&root, "program"),
+                ["a\n< b;", "foo\n<T>(x);"]
+            );
+        }
+        // In TSX `<T>y` would be a JSX element, as in `tsc`.
+        let root = GrammarDialect::TypeScript.ast_grep("let x: Foo\n<T>y;\n");
+        assert!(!root.root().get_inner_node().has_error());
+        assert_eq!(
+            named_children_text(&root, "program"),
+            ["let x: Foo", "<T>y;"]
+        );
+    }
+
+    /// A line break right after `return` or `yield` ends the statement before an operand, and a
+    /// block comment holding a line break counts as one, as TypeScript reads them (Patch 24 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn typescript_return_and_yield_end_at_a_line_break() {
+        let source = "function* g(): Generator<number> {\n  yield\n  (d)\n  yield\n  [e]\n  \
+                      yield /*\n  */ f\n  x = yield\n  , h\n}\nfunction k(): void {\n  return /*\n  */ -1\n  \
+                      return\n  /a/g\n}\na = 1 /*\n*/ b = 2\nc = d /*\n*/ (e)\nlabel: for (;;) { break /*\n*/ label }\n";
+        for root in typescript_and_tsx(source) {
+            assert_eq!(
+                named_children_text(&root, "statement_block"),
+                [
+                    "yield",
+                    "(d)",
+                    "yield",
+                    "[e]",
+                    "yield",
+                    "/*\n  */",
+                    "f",
+                    "x = yield\n  , h",
+                    "return",
+                    "/*\n  */",
+                    "-1",
+                    "return",
+                    "/a/g",
+                    "break",
+                    "/*\n*/",
+                    "label",
+                ]
+            );
+            assert_eq!(
+                named_children_text(&root, "program")[2..5],
+                ["a = 1", "/*\n*/", "b = 2"]
+            );
+            assert_eq!(named_children_text(&root, "program")[5], "c = d /*\n*/ (e)");
+        }
+    }
 }
