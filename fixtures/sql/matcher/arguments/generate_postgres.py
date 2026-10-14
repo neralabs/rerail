@@ -7,7 +7,9 @@ corpora are not required and ``common.check_pins`` is intentionally not called.
 The source is parsed whole. Every FuncCall, CoalesceExpr, MinMaxExpr and NullIfExpr is
 recorded in source order. Argument positions are the expression's start; NamedArgExpr
 positions are the name and additionally carry the value position. A node without a
-location uses the first descendant location (a rare parser representation detail).
+location uses the first descendant location (a rare parser representation detail). An
+argument the parser supplies with no location at all is recorded as ``{"implicit": true}``:
+``substring(s FOR n)`` passes ``(s, 1, n)``, its start the constant 1 (``substr_list``).
 PostgreSQL's JSON tree does not retain quoting metadata for String nodes, so function
 name spelling is recovered from the source token at the node location: unquoted names
 are lower-cased, while quoted names are preserved (including doubled quotes decoded).
@@ -68,6 +70,8 @@ def arg_record(data: bytes, arg: dict) -> dict:
     location = body.get("location", -1)
     if location < 0:
         location = first_location(body)
+    if location < 0:
+        return {"implicit": True}
     line, column = position(data, location)
     result = {"line": line, "column": column}
     if kind == "NamedArgExpr":
