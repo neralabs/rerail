@@ -63,7 +63,11 @@ pub(crate) fn format_call<'r, D: Doc>(invocation: &Node<'r, D>) -> Option<Format
     let tree = invocation
         .children()
         .find(|child| child.kind() == "token_tree")?;
-    let tokens: Vec<Node<'r, D>> = tree.children().collect();
+    // A comment is no token of the call: rustc splits the arguments without it.
+    let tokens: Vec<Node<'r, D>> = tree
+        .children()
+        .filter(|token| !matches!(token.kind().as_ref(), "line_comment" | "block_comment"))
+        .collect();
     let inner = tokens.get(1..tokens.len().checked_sub(1)?)?;
     let mut segments = split_arguments(inner)?;
     if segments.len() <= leading {
@@ -84,7 +88,11 @@ pub(crate) fn format_call<'r, D: Doc>(invocation: &Node<'r, D>) -> Option<Format
     for segment in rest {
         let argument = call_argument(&segment)?;
         match &argument.name {
-            Some(name) => named.push(name.text().to_string()),
+            // A raw identifier names the argument without its `r#` (`r#type` is `type`).
+            Some(name) => {
+                let name = name.text();
+                named.push(name.strip_prefix("r#").unwrap_or(&name).to_string())
+            }
             None => well_ordered &= named.is_empty(),
         }
         arguments.push(argument);

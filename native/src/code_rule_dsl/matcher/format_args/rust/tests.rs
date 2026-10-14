@@ -571,3 +571,59 @@ fn std_paths_and_other_macros() {
     assert!(call_of(r#"println!(concat!("{}", "x"), 1)"#).is_none());
     assert!(call_of(r#"println!(b"{}", 1)"#).is_none());
 }
+
+/// The binding of the call `src` makes: its unused argument indices, its missing pieces and the
+/// variables it captures.
+fn bound(src: &str) -> (Vec<usize>, Vec<usize>, Vec<String>) {
+    let prefix = "fn main() { ";
+    let root = GrammarDialect::Rust.ast_grep(format!("{prefix}{src}; }}"));
+    let call = format_call(&invocation_at(&root.root(), prefix.len()).expect("a call"))
+        .expect("a format call");
+    let pieces = parse(&call.value).expect("a template");
+    let binding = bind(&pieces, call.positional, &call.named);
+    let captures = binding
+        .fields
+        .iter()
+        .flat_map(|f| [Some(&f.value), f.width.as_ref(), f.precision.as_ref()])
+        .flatten()
+        .filter_map(|slot| match slot {
+            Slot::Capture(variable) => Some(variable.clone()),
+            _ => None,
+        })
+        .collect();
+    (binding.unused.clone(), binding.missing.clone(), captures)
+}
+
+#[test]
+fn comments_are_no_arguments() {
+    // rustc 1.99.0: "invalid reference to positional argument 1 (there is 1 argument)", and
+    // "argument never used" for the `0`.
+    let (unused, missing, _) = bound(r#"println!(/* explanation */ "{1}", 0)"#);
+    assert_eq!((unused, missing), (vec![0], vec![0]));
+    // rustc 1.99.0 prints 2 and 3.
+    let (_, positional, named, arguments) =
+        call_of(r#"println!("{x}", /* c */ x = 2)"#).expect("a format call");
+    assert_eq!((positional, named), (0, vec!["x".to_string()]));
+    assert_eq!(arguments, vec!["2..2".to_string()]);
+    assert_eq!(
+        bound(r#"println!("{x}", /* c */ x = 2)"#),
+        (vec![], vec![], vec![])
+    );
+    assert_eq!(
+        bound("println!(\"{}\", // why\n 3)"),
+        (vec![], vec![], vec![])
+    );
+}
+
+#[test]
+fn raw_identifier_arguments_are_named_without_their_prefix() {
+    // rustc 1.99.0 accepts the call and prints 1.
+    let (_, _, named, arguments) =
+        call_of(r#"format!("{type}", r#type = 1)"#).expect("a format call");
+    assert_eq!(named, vec!["type".to_string()]);
+    assert_eq!(arguments, vec!["1..1".to_string()]);
+    assert_eq!(
+        bound(r#"format!("{type}", r#type = 1)"#),
+        (vec![], vec![], vec![])
+    );
+}
