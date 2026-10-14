@@ -264,7 +264,8 @@ class FlatConfigReader {
         // A code-running Node module is code wherever it is named: a value read from it can run code when coerced.
         const from = this.#imports.get(node.name)?.module;
         if (from !== undefined && CODE_MODULES.has(from.replace(/^node:/u, ""))) return node;
-        return given && this.#locals.has(node.name) ? node : undefined;
+        // A module named by path may be the config itself: handing its values to a call may change the export.
+        return given && (this.#locals.has(node.name) || (from !== undefined && isPathModule(from))) ? node : undefined;
       }
       case "TemplateLiteral":
         return all(node.expressions, given);
@@ -304,6 +305,7 @@ class FlatConfigReader {
         // anything.
         const trusted = helper ? "package" : this.#trustedCall(node);
         if (trusted === undefined) return node;
+        if (given && node.type === "CallExpression" && isRequire(node) && isPathModule(requiredModule(node))) return node;
         return (trusted === "global" ? undefined : this.#nonData(node.callee, true)) ?? all(node.arguments, given || !helper);
       }
       case "UnaryExpression":
@@ -326,7 +328,10 @@ class FlatConfigReader {
   }
 
   #import(statement: t.ImportDeclaration): void {
+    // A type-only import is erased before the file runs: its names are the globals of those names there.
+    if (statement.importKind === "type" || statement.importKind === "typeof") return;
     for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportSpecifier" && (specifier.importKind === "type" || specifier.importKind === "typeof")) continue;
       const imported = specifier.type === "ImportSpecifier"
         ? (specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value)
         : specifier.type === "ImportDefaultSpecifier" ? "default" : "*";

@@ -137,9 +137,10 @@ an object key JavaScript calls by itself (`toString`, `valueOf`, `toJSON`,
 `then`), an export named `then` and `export * from` a module named by path are
 code too, as is any global the file names other than in those calls, besides
 `process.env`, `__dirname`, `__filename`, `undefined`, `NaN` and `Infinity`
-(`require.cache`, `process.mainModule` and `globalThis` reach the config itself), and
-an exported object that may hold a `default` key (ESLint's loader may take that
-instead). A file with
+(`require.cache`, `process.mainModule` and `globalThis` reach the config itself),
+a value of a module named by path handed to a call (it may be the config itself),
+and an exported object that may hold a `default` key (ESLint's loader may take that
+instead). A type-only import is erased, so its names are the globals. A file with
 anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
