@@ -595,14 +595,11 @@ impl ValueRules for Rust {
     }
 
     /// `value/rust.rs`: `evaluate`, or `evaluate_following` through the file's table where the
-    /// reading follows names.
+    /// reading follows names; each node spends a step and a level of `context`.
     fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-        if !context.step() {
-            return Value::Unknown;
-        }
         match context.table() {
-            Some(table) => value(evaluate_following(node, &table)),
-            None => value(evaluate(node)),
+            Some(table) => value(evaluate_following(node, &table, context)),
+            None => value(evaluate(node, context)),
         }
     }
 

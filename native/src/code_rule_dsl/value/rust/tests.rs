@@ -204,12 +204,13 @@ fn upstream_value_oracle() {
         ));
         let actual = if items.is_some() {
             followed += 1;
-            evaluate_following(&value, &table)
+            evaluate_following(&value, &table, &mut Context::new(&mut || true))
         } else {
             // Without items there is no const to follow: both entry points agree.
-            let plain = evaluate(&value);
+            let plain = evaluate(&value, &mut Context::new(&mut || true));
+            let following = evaluate_following(&value, &table, &mut Context::new(&mut || true));
             // Compared as text: `0.0 / 0.0` is a NaN, which equals nothing.
-            if format!("{:?}", evaluate_following(&value, &table)) != format!("{plain:?}") {
+            if format!("{following:?}") != format!("{plain:?}") {
                 failures.push(format!(
                     "{source}: evaluate_following differs from evaluate"
                 ));
@@ -285,7 +286,7 @@ fn evaluated(source: &str) -> RustValue {
                 .flatten()
         })
         .expect("a let initializer");
-    evaluate(&value)
+    evaluate(&value, &mut Context::new(&mut || true))
 }
 
 fn int(value: &str, ty: IntTy) -> RustValue {
@@ -368,6 +369,76 @@ fn unsuffixed_operands_take_their_peers_type() {
     assert_eq!(evaluated("1.0f32 + 1"), RustValue::Unknown);
     assert_eq!(evaluated("1u8 == 256"), RustValue::Unknown);
     assert_eq!(evaluated("1u8 + (0 - 1 + 1)"), RustValue::Unknown);
+}
+
+/// The `let` initializer of `source` and the steps `evaluate` spent on it.
+fn evaluated_counting(source: &str) -> (RustValue, usize) {
+    let root = GrammarDialect::Rust.ast_grep(format!("fn f() {{ let _ = {source}; }}"));
+    let value = root
+        .root()
+        .dfs()
+        .find_map(|node| {
+            (node.kind().as_ref() == "let_declaration")
+                .then(|| node.field("value"))
+                .flatten()
+        })
+        .expect("a let initializer");
+    let mut steps = 0usize;
+    let mut spend = || {
+        steps += 1;
+        true
+    };
+    let value = evaluate(&value, &mut Context::new(&mut spend));
+    (value, steps)
+}
+
+#[test]
+fn deep_expressions_are_unknown_without_exhausting_a_small_stack() {
+    // A debug build on a 256 KiB thread: the nesting stops at `MAX_DEPTH`.
+    std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(|| {
+            let terms = vec!["1"; 3000].join(" + ");
+            assert_eq!(evaluated(&terms), RustValue::Unknown);
+            let parens = format!("{}1{}", "(".repeat(2000), ")".repeat(2000));
+            assert_eq!(evaluated(&parens), RustValue::Unknown);
+            // A right operand nested as deep: its type is read before the left is evaluated.
+            assert_eq!(evaluated(&format!("1u8 + {parens}")), RustValue::Unknown);
+            assert_eq!(evaluated(&format!("1 + {parens}")), RustValue::Unknown);
+            assert_eq!(
+                evaluated(&format!("{}1i32", "-".repeat(3000))),
+                RustValue::Unknown
+            );
+            // Within the bound the value is rustc's.
+            assert_eq!(
+                evaluated(&vec!["1"; 100].join(" + ")),
+                RustValue::Int {
+                    value: 100.into(),
+                    ty: None
+                }
+            );
+            assert_eq!(
+                evaluated(&format!("{}1u8{}", "(".repeat(200), ")".repeat(200))),
+                int("1", IntTy::U8)
+            );
+        })
+        .expect("thread")
+        .join()
+        .expect("no stack overflow");
+}
+
+#[test]
+fn an_operand_is_evaluated_once() {
+    // Each `+` gives its unknown left operand the type of its suffixed right one: read from the
+    // right operand's syntax, the left is not evaluated again, so the steps grow with the terms.
+    for terms in [50usize, 200] {
+        let source = format!("a{}", " + 1u8".repeat(terms));
+        let (value, steps) = evaluated_counting(&source);
+        assert_eq!(value, RustValue::Unknown);
+        assert!(steps <= 4 * terms, "{terms} terms: {steps} steps");
+    }
+    let (value, _) = evaluated_counting(&format!("0{}", " + 1u8".repeat(200)));
+    assert_eq!(value, int("200", IntTy::U8));
 }
 
 #[test]

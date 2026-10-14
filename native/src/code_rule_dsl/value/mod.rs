@@ -248,16 +248,6 @@ impl<'a> Context<'a> {
         self.table.as_mut()?()
     }
 
-    /// Spends one step of the budget for a decode that reads a node whole; `false` once it ran
-    /// out.
-    pub(crate) fn step(&mut self) -> bool {
-        if !self.enter() {
-            return false;
-        }
-        self.leave();
-        true
-    }
-
     /// Whether `name` at `range` is the unshadowed builtin or global.
     fn is_global(&mut self, range: Range<usize>, name: &str) -> bool {
         self.global

@@ -1,5 +1,6 @@
 //! Rust literal values as rustc evaluates them.
 
+use super::Context;
 use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
 use ast_grep_core::{Doc, Node};
@@ -377,9 +378,6 @@ const MAX_FOLLOW_DEPTH: usize = 16;
 /// Most `const` names one `evaluate_following` call resolves in all, so initializers that name
 /// several constants each (`A + A + A`) cannot multiply the work past a bound.
 const MAX_FOLLOWED_NAMES: usize = 4096;
-/// Most operands one evaluation evaluates again with the type of the other operand, so nested
-/// re-evaluations cannot multiply the work past a bound.
-const MAX_RETYPED_OPERANDS: usize = 4096;
 
 /// The type an enclosing `const` declares for an unsuffixed literal in its initializer: rustc
 /// infers the literal's type from it.
@@ -391,32 +389,22 @@ enum Hint {
 
 /// What an evaluation may read besides the expression itself.
 #[derive(Clone, Copy)]
-struct Context<'t> {
+struct Reading<'t> {
     /// The file's scopes, where names are followed to their `const` items; `None` reads no name.
     table: Option<&'t ScopeTable>,
     /// `const` names followed on the way to this expression.
     depth: usize,
     /// `const` names resolved so far in the whole evaluation.
     budget: &'t Cell<usize>,
-    /// Operands evaluated again with their peer's type so far in the whole evaluation.
-    retyped: &'t Cell<usize>,
 }
 
 /// The value rustc gives the expression `node` (tree-sitter-rust), folding literals through
 /// operators, casts, parentheses and constant `if`/block expressions; `RustValue::Unknown` for
-/// anything else (names, paths, calls, macros) and for every expression rustc rejects.
-pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
-    let (budget, retyped) = (Cell::new(0), Cell::new(0));
-    eval(
-        node,
-        Context {
-            table: None,
-            depth: 0,
-            budget: &budget,
-            retyped: &retyped,
-        },
-        None,
-    )
+/// anything else (names, paths, calls, macros) and for every expression rustc rejects. Each node
+/// read spends a step of `context`'s budget and a level of its nesting (`Context::enter`): an
+/// expression nested deeper than `MAX_DEPTH`, or one the budget runs out on, is `Unknown`.
+pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> RustValue {
+    run(node, None, context)
 }
 
 /// `evaluate`, but a bare name that resolves (`scope::rust::resolve_index`) to a `const` item of
@@ -424,18 +412,30 @@ pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
 /// unsuffixed integer takes the declared integer type, and a value of another type is `Unknown`.
 /// A chain of more than 16 names, a cycle, a `static`, a `let` binding (a run-time value), a path
 /// (`Self::C`, `m::C`) and a name no item of the file binds are `Unknown`.
-pub(crate) fn evaluate_following<D: Doc>(node: &Node<'_, D>, table: &ScopeTable) -> RustValue {
-    let (budget, retyped) = (Cell::new(0), Cell::new(0));
-    eval(
-        node,
-        Context {
-            table: Some(table),
-            depth: 0,
-            budget: &budget,
-            retyped: &retyped,
-        },
-        None,
-    )
+pub(crate) fn evaluate_following<D: Doc>(
+    node: &Node<'_, D>,
+    table: &ScopeTable,
+    context: &mut Context<'_>,
+) -> RustValue {
+    run(node, Some(table), context)
+}
+
+fn run<D: Doc>(
+    node: &Node<'_, D>,
+    table: Option<&ScopeTable>,
+    context: &mut Context<'_>,
+) -> RustValue {
+    let budget = Cell::new(0);
+    let reading = Reading {
+        table,
+        depth: 0,
+        budget: &budget,
+    };
+    let value = eval(node, reading, context, None);
+    if context.exhausted() {
+        return RustValue::Unknown;
+    }
+    value
 }
 
 /// The type a numeric value of a known type gives an unsuffixed peer.
@@ -447,128 +447,288 @@ fn typed(value: &RustValue) -> Option<Hint> {
     }
 }
 
-fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> RustValue {
+/// The expression kinds `eval` and `static_type` read.
+#[derive(Clone, Copy)]
+enum Expr {
+    Number,
+    Literal,
+    Name,
+    Parens,
+    Unary,
+    Binary,
+    Cast,
+    If,
+    Block,
+    Else,
+    Other,
+}
+
+fn expr_of<D: Doc>(node: &Node<'_, D>) -> Expr {
     match node.kind().as_ref() {
-        "integer_literal" | "float_literal" => hinted_literal(node, hint),
+        "integer_literal" | "float_literal" => Expr::Number,
         "boolean_literal" | "char_literal" | "string_literal" | "raw_string_literal" => {
-            literal(node)
+            Expr::Literal
         }
-        "identifier" => follow_const(node, ctx).unwrap_or(RustValue::Unknown),
-        "parenthesized_expression" => node
-            .children()
-            .find(|n| n.is_named())
-            .map_or(RustValue::Unknown, |n| eval(&n, ctx, hint)),
-        "unary_expression" => {
-            let Some(op) = node.field("operator").or_else(|| node.children().next()) else {
-                return RustValue::Unknown;
-            };
-            let Some(arg) = node
-                .field("argument")
-                .or_else(|| node.children().find(|n| n.is_named()))
-            else {
-                return RustValue::Unknown;
-            };
-            let operator = op.text();
-            let operand_hint = hint.filter(|_| matches!(operator.as_ref(), "-" | "+" | "!"));
-            let argument = eval(&arg, ctx, operand_hint);
-            let argument = if matches!(argument, RustValue::Unknown) && operator.as_ref() == "-" {
-                min_literal(&arg, operand_hint).unwrap_or(RustValue::Unknown)
-            } else {
-                argument
-            };
-            unary(operator.as_ref(), argument)
-        }
-        "binary_expression" => {
-            let (Some(left), Some(op), Some(right)) = (
-                node.field("left"),
-                node.field("operator"),
-                node.field("right"),
-            ) else {
-                return RustValue::Unknown;
-            };
-            let operator = op.text();
-            // An arithmetic or bitwise operator's operands have the type of its result; a shift's
-            // right operand and a comparison's or `&&`'s operands are typed on their own.
-            let (left_hint, right_hint) = match operator.as_ref() {
-                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" => (hint, hint),
-                "<<" | ">>" => (hint, None),
-                _ => (None, None),
-            };
-            // The operands of an arithmetic, bitwise or comparison operator have one type: an
-            // unsuffixed one takes its peer's (`0.1` is an f32 in `0.1f32 == 0.1`).
-            let peers = matches!(
-                operator.as_ref(),
-                "+" | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "&"
-                    | "|"
-                    | "^"
-                    | "=="
-                    | "!="
-                    | "<"
-                    | "<="
-                    | ">"
-                    | ">="
-            );
-            let left_value = eval(&left, ctx, left_hint);
-            let right_hint = right_hint.or(peers.then(|| typed(&left_value)).flatten());
-            let right_value = eval(&right, ctx, right_hint);
-            let left_value = match typed(&right_value) {
-                Some(peer)
-                    if peers
-                        && left_hint.is_none()
-                        && matches!(
-                            left_value,
-                            RustValue::Unknown
-                                | RustValue::Int { ty: None, .. }
-                                | RustValue::Float { ty: None, .. }
-                        ) =>
-                {
-                    if ctx.retyped.get() >= MAX_RETYPED_OPERANDS {
-                        return RustValue::Unknown;
-                    }
-                    ctx.retyped.set(ctx.retyped.get() + 1);
-                    eval(&left, ctx, Some(peer))
-                }
-                _ => left_value,
-            };
-            binary(operator.as_ref(), left_value, right_value)
-        }
-        "type_cast_expression" => {
-            let mut named = node.children().filter(|n| n.is_named());
-            let Some(value) = node.field("value").or_else(|| named.next()) else {
-                return RustValue::Unknown;
-            };
-            let Some(ty) = node.field("type").or_else(|| named.next()) else {
-                return RustValue::Unknown;
-            };
-            cast(eval(&value, ctx, None), ty.text().as_ref())
-        }
-        "if_expression" => {
-            let (Some(condition), Some(consequence)) =
-                (node.field("condition"), node.field("consequence"))
-            else {
-                return RustValue::Unknown;
-            };
-            match eval(&condition, ctx, None) {
-                RustValue::Bool(true) => eval_block(&consequence, ctx, hint),
-                RustValue::Bool(false) => node
-                    .field("alternative")
-                    .map_or(RustValue::Unknown, |n| eval_block(&n, ctx, hint)),
-                _ => RustValue::Unknown,
-            }
-        }
-        "block" => eval_block(node, ctx, hint),
+        "identifier" => Expr::Name,
+        "parenthesized_expression" => Expr::Parens,
+        "unary_expression" => Expr::Unary,
+        "binary_expression" => Expr::Binary,
+        "type_cast_expression" => Expr::Cast,
+        "if_expression" => Expr::If,
+        "block" => Expr::Block,
+        "else_clause" => Expr::Else,
+        _ => Expr::Other,
+    }
+}
+
+// `eval` and `static_type` recurse once per level of the expression: what a level reads besides
+// its operands is in functions of its own (`expr_of`, `unary_parts`, `binary_parts`), and a level
+// calls one reading through a function pointer (`reader`), so it holds a small frame even in a
+// debug build.
+
+/// How `eval` reads an expression of one kind.
+type Reader<D> = fn(&Node<'_, D>, Reading<'_>, &mut Context<'_>, Option<Hint>) -> RustValue;
+
+/// `node`'s value, one level deeper in `context`.
+fn eval<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+    hint: Option<Hint>,
+) -> RustValue {
+    if !context.enter() {
+        return RustValue::Unknown;
+    }
+    let value = reader::<D>(expr_of(node))(node, reading, context, hint);
+    context.leave();
+    value
+}
+
+fn reader<D: Doc>(expr: Expr) -> Reader<D> {
+    match expr {
+        Expr::Number => |node, _, _, hint| hinted_literal(node, hint),
+        Expr::Literal => |node, _, _, _| literal(node),
+        Expr::Name => |node, reading, context, _| {
+            follow_const(node, reading, context).unwrap_or(RustValue::Unknown)
+        },
+        Expr::Parens => |node, reading, context, hint| match first_named(node) {
+            Some(inner) => eval(&inner, reading, context, hint),
+            None => RustValue::Unknown,
+        },
+        Expr::Unary => eval_unary,
+        Expr::Binary => eval_binary,
+        Expr::Cast => |node, reading, context, _| eval_cast(node, reading, context),
+        Expr::If => eval_if,
+        Expr::Block => eval_block,
+        Expr::Else | Expr::Other => |_, _, _, _| RustValue::Unknown,
+    }
+}
+
+fn first_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+    node.children().find(|n| n.is_named())
+}
+
+fn last_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+    node.children().filter(|n| n.is_named()).last()
+}
+
+/// The operators `unary` and `binary` read, by their text; any other is `?`, which neither reads.
+fn operator<D: Doc>(node: &Node<'_, D>) -> &'static str {
+    const OPERATORS: &[&str] = &[
+        "-", "+", "!", "*", "/", "%", "&", "|", "^", "<<", ">>", "&&", "||", "==", "!=", "<", "<=",
+        ">", ">=",
+    ];
+    let text = node.text();
+    OPERATORS
+        .iter()
+        .find(|op| **op == text.as_ref())
+        .copied()
+        .unwrap_or("?")
+}
+
+/// A unary expression's operator and operand, and the hint its operand takes.
+fn unary_parts<'r, D: Doc>(
+    node: &Node<'r, D>,
+    hint: Option<Hint>,
+) -> Option<(&'static str, Node<'r, D>, Option<Hint>)> {
+    let op = node.field("operator").or_else(|| node.children().next())?;
+    let arg = node
+        .field("argument")
+        .or_else(|| node.children().find(|n| n.is_named()))?;
+    let op = operator(&op);
+    let operand_hint = hint.filter(|_| matches!(op, "-" | "+" | "!"));
+    Some((op, arg, operand_hint))
+}
+
+fn eval_unary<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+    hint: Option<Hint>,
+) -> RustValue {
+    let Some((op, arg, operand_hint)) = unary_parts(node, hint) else {
+        return RustValue::Unknown;
+    };
+    let argument = eval(&arg, reading, context, operand_hint);
+    negated(op, &arg, operand_hint, argument)
+}
+
+/// `unary` of the operand's value; a `-` of an unknown literal reads it as its type's minimum.
+fn negated<D: Doc>(
+    op: &str,
+    arg: &Node<'_, D>,
+    hint: Option<Hint>,
+    argument: RustValue,
+) -> RustValue {
+    let argument = if matches!(argument, RustValue::Unknown) && op == "-" {
+        min_literal(arg, hint).unwrap_or(RustValue::Unknown)
+    } else {
+        argument
+    };
+    unary(op, argument)
+}
+
+/// A binary expression's operands and operator, and the hints its operands take.
+struct BinaryParts<'r, D: Doc> {
+    left: Node<'r, D>,
+    right: Node<'r, D>,
+    op: &'static str,
+    /// An arithmetic or bitwise operator's operands have the type of its result; a shift's left
+    /// operand has it too; a shift's right operand and a comparison's or `&&`'s operands are
+    /// typed on their own.
+    left_hint: Option<Hint>,
+    right_hint: Option<Hint>,
+    /// The operands of an arithmetic, bitwise or comparison operator have one type: an unsuffixed
+    /// one takes its peer's (`0.1` is an f32 in `0.1f32 == 0.1`).
+    peers: bool,
+    /// The operator gives its result its operands' type (arithmetic and bitwise); a shift gives
+    /// it its left operand's.
+    arithmetic: bool,
+}
+
+fn binary_parts<'r, D: Doc>(node: &Node<'r, D>, hint: Option<Hint>) -> Option<BinaryParts<'r, D>> {
+    let (left, op, right) = (
+        node.field("left")?,
+        node.field("operator")?,
+        node.field("right")?,
+    );
+    let op = operator(&op);
+    let arithmetic = matches!(op, "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^");
+    let (left_hint, right_hint) = match op {
+        _ if arithmetic => (hint, hint),
+        "<<" | ">>" => (hint, None),
+        _ => (None, None),
+    };
+    Some(BinaryParts {
+        left,
+        right,
+        op,
+        left_hint,
+        right_hint,
+        peers: arithmetic || matches!(op, "==" | "!=" | "<" | "<=" | ">" | ">="),
+        arithmetic,
+    })
+}
+
+/// The right operand's type is read from its syntax before the left operand is evaluated, so
+/// neither is evaluated twice.
+fn eval_binary<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+    hint: Option<Hint>,
+) -> RustValue {
+    let Some(parts) = binary_parts(node, hint) else {
+        return RustValue::Unknown;
+    };
+    let left_hint = left_hint(&parts, reading, context);
+    let left = eval(&parts.left, reading, context, left_hint);
+    eval_right(&parts, left, reading, context)
+}
+
+/// The hint of a binary expression's left operand: its own, else its peer's type.
+fn left_hint<D: Doc>(
+    parts: &BinaryParts<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<Hint> {
+    match parts.left_hint {
+        None if parts.peers => static_type(&parts.right, reading, context),
+        left_hint => left_hint,
+    }
+}
+
+/// A binary expression's value from its left operand's.
+fn eval_right<D: Doc>(
+    parts: &BinaryParts<'_, D>,
+    left: RustValue,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> RustValue {
+    let right_hint = match parts.right_hint {
+        None if parts.peers => typed(&left),
+        right_hint => right_hint,
+    };
+    let right = eval(&parts.right, reading, context, right_hint);
+    binary(parts.op, left, right)
+}
+
+/// A cast's operand and the text of its type.
+fn cast_parts<'r, D: Doc>(node: &Node<'r, D>) -> Option<(Node<'r, D>, String)> {
+    let mut named = node.children().filter(|n| n.is_named());
+    let value = node.field("value").or_else(|| named.next())?;
+    let ty = node.field("type").or_else(|| named.next())?;
+    Some((value, ty.text().into_owned()))
+}
+
+fn eval_cast<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> RustValue {
+    let Some((value, ty)) = cast_parts(node) else {
+        return RustValue::Unknown;
+    };
+    cast(eval(&value, reading, context, None), &ty)
+}
+
+fn eval_if<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+    hint: Option<Hint>,
+) -> RustValue {
+    let (Some(condition), Some(consequence)) = (node.field("condition"), node.field("consequence"))
+    else {
+        return RustValue::Unknown;
+    };
+    match eval(&condition, reading, context, None) {
+        RustValue::Bool(true) => eval_block(&consequence, reading, context, hint),
+        RustValue::Bool(false) => match node.field("alternative") {
+            Some(alternative) => eval_block(&alternative, reading, context, hint),
+            None => RustValue::Unknown,
+        },
         _ => RustValue::Unknown,
     }
 }
 
-fn eval_block<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> RustValue {
+fn eval_block<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+    hint: Option<Hint>,
+) -> RustValue {
+    match block_value(node, reading) {
+        Some(last) => eval(&last, reading, context, hint),
+        None => RustValue::Unknown,
+    }
+}
+
+/// The expression a block's value is: its last named child; `None` where rustc rejects the block.
+fn block_value<'r, D: Doc>(node: &Node<'r, D>, reading: Reading<'_>) -> Option<Node<'r, D>> {
     // `let A = 9;` where `A` names a const or static is no binding but a refutable path pattern,
     // which rustc rejects (E0005): the block has no value.
-    let rejected = ctx.table.is_some_and(|table| {
+    let rejected = reading.table.is_some_and(|table| {
         node.children().any(|statement| {
             statement.kind() == "let_declaration"
                 && statement
@@ -577,12 +737,91 @@ fn eval_block<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) 
         })
     });
     if rejected {
-        return RustValue::Unknown;
+        return None;
     }
-    node.children()
-        .filter(|n| n.is_named())
-        .last()
-        .map_or(RustValue::Unknown, |n| eval(&n, ctx, hint))
+    last_named(node)
+}
+
+/// The numeric type `eval` gives `node` without a hint, read from its syntax alone: a suffix, a
+/// cast's type, a `const`'s declared type, through the operators that keep their operands' type.
+/// Where the value has a numeric type, it is this one, or rustc rejects the expression (an `if`
+/// whose branches differ) and an operation on it with a peer of this type is `Unknown`. Each node
+/// read spends a step and a level of `context`, as `eval` does.
+fn static_type<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<Hint> {
+    if !context.enter() {
+        return None;
+    }
+    let ty = match expr_of(node) {
+        Expr::Number => typed(&literal(node)),
+        Expr::Name => const_item(node, reading).and_then(|(_, declared)| declared.hint()),
+        Expr::Parens => first_named(node).and_then(|inner| static_type(&inner, reading, context)),
+        Expr::Unary => static_unary(node, reading, context),
+        Expr::Binary => static_binary(node, reading, context),
+        Expr::Cast => cast_parts(node).and_then(|(_, ty)| cast_type(&ty)),
+        Expr::If => static_if(node, reading, context),
+        Expr::Block | Expr::Else => {
+            last_named(node).and_then(|last| static_type(&last, reading, context))
+        }
+        Expr::Literal | Expr::Other => None,
+    };
+    context.leave();
+    ty
+}
+
+fn static_unary<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<Hint> {
+    let (op, arg, _) = unary_parts(node, None)?;
+    if !matches!(op, "-" | "+" | "!") {
+        return None;
+    }
+    static_type(&arg, reading, context)
+}
+
+fn static_binary<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<Hint> {
+    let parts = binary_parts(node, None)?;
+    if parts.arithmetic {
+        return static_type(&parts.left, reading, context)
+            .or_else(|| static_type(&parts.right, reading, context));
+    }
+    if matches!(parts.op, "<<" | ">>") {
+        return static_type(&parts.left, reading, context);
+    }
+    None
+}
+
+fn static_if<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<Hint> {
+    if let Some(ty) = node
+        .field("consequence")
+        .and_then(|consequence| static_type(&consequence, reading, context))
+    {
+        return Some(ty);
+    }
+    let alternative = node.field("alternative")?;
+    static_type(&alternative, reading, context)
+}
+
+/// The numeric type a cast to the type spelled `ty` gives its value.
+fn cast_type(ty: &str) -> Option<Hint> {
+    match ty {
+        "f32" => Some(Hint::Float(FloatTy::F32)),
+        "f64" => Some(Hint::Float(FloatTy::F64)),
+        _ => int_suffix(&format!("_{ty}")).1.map(Hint::Int),
+    }
 }
 
 /// A numeric literal, with the type `hint` gives it when it has no suffix; an integer the hinted
@@ -608,12 +847,31 @@ fn hinted_literal<D: Doc>(node: &Node<'_, D>, hint: Option<Hint>) -> RustValue {
 }
 
 /// The value of the `const` item the name `node` resolves to, as `evaluate_following` reads it.
-fn follow_const<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>) -> Option<RustValue> {
-    let table = ctx.table?;
-    if ctx.depth >= MAX_FOLLOW_DEPTH || ctx.budget.get() >= MAX_FOLLOWED_NAMES {
+fn follow_const<D: Doc>(
+    node: &Node<'_, D>,
+    reading: Reading<'_>,
+    context: &mut Context<'_>,
+) -> Option<RustValue> {
+    let (value, declared) = const_item(node, reading)?;
+    let inner = Reading {
+        depth: reading.depth + 1,
+        ..reading
+    };
+    let evaluated = eval(&value, inner, context, declared.hint());
+    Some(declared.convert(evaluated))
+}
+
+/// The initializer and declared type of the `const` item of this file the name `node` resolves
+/// to; `None` past `MAX_FOLLOW_DEPTH` names on the way or `MAX_FOLLOWED_NAMES` in the evaluation.
+fn const_item<'r, D: Doc>(
+    node: &Node<'r, D>,
+    reading: Reading<'_>,
+) -> Option<(Node<'r, D>, Declared)> {
+    let table = reading.table?;
+    if reading.depth >= MAX_FOLLOW_DEPTH || reading.budget.get() >= MAX_FOLLOWED_NAMES {
         return None;
     }
-    ctx.budget.set(ctx.budget.get() + 1);
+    reading.budget.set(reading.budget.get() + 1);
     let reference = table.reference(&node.range())?;
     let name = node.text();
     let (scope, index) = resolve_index(table, reference, name.as_ref())?;
@@ -630,13 +888,7 @@ fn follow_const<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>) -> Option<RustValu
     if value.parent()?.kind() != "const_item" {
         return None;
     }
-    let declared = Declared::of(&annotation)?;
-    let inner = Context {
-        depth: ctx.depth + 1,
-        ..ctx
-    };
-    let evaluated = eval(&value, inner, declared.hint());
-    Some(declared.convert(evaluated))
+    Some((value, Declared::of(&annotation)?))
 }
 
 /// The type a `const` declares, for the types a value of this module can have.
