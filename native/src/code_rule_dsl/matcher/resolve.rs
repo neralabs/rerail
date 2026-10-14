@@ -1382,17 +1382,17 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         let range = region.root.range();
         range.start <= at.start && at.end <= range.end
     };
-    let root = with_adapter!(Family::of(language), A => {
-        let mut regions = A::regions(&root, language);
-        regions.next().map(|first| {
+    let mut regions = crate::code_rule_dsl::language::adapter::regions(&root, language);
+    let root = regions
+        .next()
+        .map(|first| {
             if holds(&first) {
                 first
             } else {
                 regions.find(|region| holds(region)).unwrap_or(first)
             }
         })
-    })
-    .map_or(root, |region| region.root);
+        .map_or(root, |region| region.root);
     let build = |cap| PhpNames::build(root.clone(), cap, &budget::matcher_budget_exhausted);
     let clause = CURRENT_CLAUSE.get();
     let steps = UTIL_STEPS_LEFT.get();

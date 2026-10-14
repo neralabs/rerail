@@ -1,5 +1,7 @@
+use super::language::GrammarDialect;
 use super::lines::LineTable;
-use super::matcher::{AstMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::tape::TapeDoc;
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
 use std::collections::BTreeSet;
@@ -283,6 +285,10 @@ fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>
 /// Sorted by start; overlapping ranges are merged, so range ends never decrease.
 pub(super) struct SyntaxErrors {
     regions: Vec<Range<usize>>,
+    /// Where the document's regions (`adapter::regions`) are all embedded programs apart from
+    /// the host's tree (`Embedder::APART`): each one's root kind code, and whether it has syntax
+    /// errors of its own.
+    apart: Option<Vec<(u16, bool)>>,
 }
 
 impl SyntaxErrors {
@@ -319,7 +325,61 @@ impl SyntaxErrors {
                 _ => regions.push(range),
             }
         }
-        Self { regions }
+        Self {
+            regions,
+            apart: None,
+        }
+    }
+
+    /// The regions of a restored document, and its embedded programs where each stands apart
+    /// from the host's tree.
+    pub(super) fn of_doc(doc: &TapeDoc) -> Self {
+        let mut errors = Self::from_ranges(doc.syntax_error_ranges());
+        let programs = doc.programs();
+        if !errors.is_empty()
+            && !programs.is_empty()
+            && programs.iter().all(|program| program.apart)
+        {
+            errors.apart = Some(doc.program_syntax().collect());
+        }
+        errors
+    }
+
+    /// Whether the errors leave a clause of `grammar` incomplete: one not sound under them
+    /// (`sound_under_errors`), unless they spare every witness it may have (`spares`).
+    pub(super) fn incomplete(&self, grammar: &GrammarMatcher) -> bool {
+        !self.is_empty()
+            && !grammar.sound_under_errors
+            && !self.spares(grammar.anchors.root_kinds(), grammar.language)
+    }
+
+    /// Whether every witness of a clause whose witnesses are of `root_kinds` (`AnchorPlan`; `None`
+    /// where they may be of any) lies in an embedded program apart from the host's tree that has
+    /// no syntax error of its own: the witnesses' kinds are all the programs' (`language`'s
+    /// embedded kinds), but for a program's root, whose siblings are the host's. Such a program
+    /// holds what the host's recovered tree holds, as vue-eslint-parser's recovery leaves ESLint
+    /// what its tree holds.
+    fn spares(&self, root_kinds: Option<&BTreeSet<u16>>, language: GrammarDialect) -> bool {
+        let Some(programs) = &self.apart else {
+            return false;
+        };
+        programs.iter().all(|&(_, errors)| !errors)
+            && root_kinds.is_some_and(|kinds| {
+                kinds.iter().all(|&kind| {
+                    language.is_embedded_kind(kind)
+                        && programs.iter().all(|&(root, _)| root != kind)
+                })
+            })
+    }
+
+    /// Whether a binding may hide in an error region from the scope tables, which read the
+    /// document's regions (`adapter::regions`): from those of programs apart from the host's tree,
+    /// only in their own.
+    pub(super) fn hide_bindings(&self) -> bool {
+        match &self.apart {
+            Some(programs) => programs.iter().any(|&(_, errors)| errors),
+            None => !self.is_empty(),
+        }
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -417,10 +477,59 @@ mod tests {
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
     }
 
+    /// A host's syntax error spares a clause whose witnesses all lie in an embedded program apart
+    /// from the host (`Embedder::APART`, tests' HTML scripts) that has no syntax error of its own,
+    /// and hides none of its bindings; a program with errors of its own, a witness the host's
+    /// tree or the program's root may hold, and a program read through the host's errors (Blade's
+    /// compiled view) are spared nothing.
+    #[test]
+    fn errors_spare_witnesses_in_a_clean_program_apart_from_the_host() {
+        use crate::code_rule_dsl::embed::test_script::html;
+        use std::sync::Arc;
+        let host = GrammarDialect::Html;
+        let typescript = host.kinds().embedding(GrammarDialect::TypeScript).unwrap();
+        let code = |kind| {
+            BTreeSet::from([typescript.kind_code(typescript.grammar.id_for_node_kind(kind, true))])
+        };
+        let element = BTreeSet::from([host.kind_id("element")]);
+        let of = |source: &str| SyntaxErrors::of_doc(html(source).root().get_doc());
+
+        let clean = of("<script>let x = 1;</script>\n<div <p\n");
+        assert!(!clean.is_empty(), "the host has a syntax error");
+        assert!(clean.spares(Some(&code("identifier")), host));
+        assert!(!clean.spares(Some(&code("program")), host));
+        assert!(!clean.spares(Some(&element), host));
+        assert!(!clean.spares(None, host));
+        assert!(!clean.hide_bindings());
+
+        let broken = of("<script>let = ;</script>\n<div <p\n");
+        assert!(!broken.spares(Some(&code("identifier")), host));
+        assert!(broken.hide_bindings());
+
+        let grammar = crate::code_rule_dsl::tape::Grammar::new(GrammarDialect::Blade).unwrap();
+        let source = "{{ $a + }}\n";
+        let image =
+            crate::code_rule_dsl::tape::TapeImage::encode_template(&grammar, source, &|| false)
+                .unwrap();
+        let blade =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        let errors = SyntaxErrors::of_doc(&blade);
+        let php = GrammarDialect::Blade
+            .kinds()
+            .embedding(GrammarDialect::Php)
+            .unwrap();
+        let variable =
+            BTreeSet::from([php.kind_code(php.grammar.id_for_node_kind("variable_name", true))]);
+        assert!(!errors.is_empty(), "the view has a syntax error");
+        assert!(!errors.spares(Some(&variable), GrammarDialect::Blade));
+        assert!(errors.hide_bindings());
+    }
+
     #[test]
     fn syntax_error_regions_merge_and_treat_missing_as_a_point() {
         let errors = SyntaxErrors {
             regions: vec![4..4, 10..20],
+            apart: None,
         };
         assert!(
             errors.overlaps(&(0..4)),
