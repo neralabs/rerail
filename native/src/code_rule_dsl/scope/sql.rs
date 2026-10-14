@@ -643,9 +643,7 @@ impl Reader {
             // (PostgreSQL 18.6 `parse_clause.c`, `setTargetTable`, opens the table by name).
             cte: (kind == BindingKind::Table
                 && parts.len() == 1
-                && !site
-                    .parent()
-                    .is_some_and(|parent| parent.kind() == "update"))
+                && site.parent().is_none_or(|parent| parent.kind() != "update"))
             .then(|| folded(&last.text())),
             visible_from: 0,
         });
