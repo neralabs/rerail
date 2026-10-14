@@ -56,18 +56,6 @@
       "match": "line+column"
     },
     {
-      "id": "typescript-eslint-default-param-last",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/default-param-last"
-      },
-      "policy": "rules/typescript-eslint-default-param-last.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "typescript-eslint-no-array-constructor",
       "upstream": {
         "tool": "typescript-eslint",
@@ -76,60 +64,6 @@
       "policy": "rules/typescript-eslint-no-array-constructor.json",
       "capabilities": [
         "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-confusing-non-null-assertion",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-confusing-non-null-assertion"
-      },
-      "policy": "rules/typescript-eslint-no-confusing-non-null-assertion.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-dupe-class-members",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-dupe-class-members"
-      },
-      "policy": "rules/typescript-eslint-no-dupe-class-members.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "compare"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-duplicate-enum-values",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-duplicate-enum-values"
-      },
-      "policy": "rules/typescript-eslint-no-duplicate-enum-values.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "compare",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-empty-function",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-empty-function"
-      },
-      "policy": "rules/typescript-eslint-no-empty-function.json",
-      "capabilities": [
-        "syntax",
-        "value"
       ],
       "match": "line+column"
     },
@@ -158,44 +92,6 @@
       "match": "line+column"
     },
     {
-      "id": "typescript-eslint-no-namespace",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-namespace"
-      },
-      "policy": "rules/typescript-eslint-no-namespace.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-non-null-asserted-optional-chain",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-non-null-asserted-optional-chain"
-      },
-      "policy": "rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-non-null-assertion",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-non-null-assertion"
-      },
-      "policy": "rules/typescript-eslint-no-non-null-assertion.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "typescript-eslint-no-unnecessary-type-constraint",
       "upstream": {
         "tool": "typescript-eslint",
@@ -204,57 +100,6 @@
       "policy": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
       "capabilities": [
         "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-unsafe-function-type",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-unsafe-function-type"
-      },
-      "policy": "rules/typescript-eslint-no-unsafe-function-type.json",
-      "capabilities": [
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-unused-expressions",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-unused-expressions"
-      },
-      "policy": "rules/typescript-eslint-no-unused-expressions.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-useless-empty-export",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-useless-empty-export"
-      },
-      "policy": "rules/typescript-eslint-no-useless-empty-export.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-no-wrapper-object-types",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-wrapper-object-types"
-      },
-      "policy": "rules/typescript-eslint-no-wrapper-object-types.json",
-      "capabilities": [
-        "syntax",
-        "scope",
-        "suppression"
       ],
       "match": "line+column"
     },
@@ -291,18 +136,6 @@
         "rule": "@typescript-eslint/prefer-literal-enum-member"
       },
       "policy": "rules/typescript-eslint-prefer-literal-enum-member.json",
-      "capabilities": [
-        "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-prefer-namespace-keyword",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/prefer-namespace-keyword"
-      },
-      "policy": "rules/typescript-eslint-prefer-namespace-keyword.json",
       "capabilities": [
         "syntax"
       ],
@@ -386,6 +219,18 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-default-param-last",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/default-param-last"
+      },
+      "policy": "candidates/rules/typescript-eslint-default-param-last.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-explicit-function-return-type",
       "upstream": {
         "tool": "typescript-eslint",
@@ -448,6 +293,47 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-confusing-non-null-assertion",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-confusing-non-null-assertion"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-confusing-non-null-assertion.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-dupe-class-members",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-dupe-class-members"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-dupe-class-members.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-duplicate-enum-values",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-duplicate-enum-values"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-duplicate-enum-values.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-dynamic-delete",
       "upstream": {
         "tool": "typescript-eslint",
@@ -456,6 +342,19 @@
       "policy": "candidates/rules/typescript-eslint-no-dynamic-delete.json",
       "capabilities": [
         "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-empty-function",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-empty-function"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-empty-function.json",
+      "capabilities": [
+        "syntax",
+        "value"
       ],
       "match": "line+column"
     },
@@ -523,6 +422,44 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-namespace",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-namespace"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-namespace.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-asserted-optional-chain",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-non-null-asserted-optional-chain"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-assertion",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-non-null-assertion"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-non-null-assertion.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-redeclare",
       "upstream": {
         "tool": "typescript-eslint",
@@ -561,6 +498,31 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-unsafe-function-type",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unsafe-function-type"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-unsafe-function-type.json",
+      "capabilities": [
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unused-expressions",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unused-expressions"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-unused-expressions.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-unused-vars",
       "upstream": {
         "tool": "typescript-eslint",
@@ -590,6 +552,32 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-useless-empty-export",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-useless-empty-export"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-useless-empty-export.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-wrapper-object-types",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-wrapper-object-types"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-wrapper-object-types.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-parameter-properties",
       "upstream": {
         "tool": "typescript-eslint",
@@ -608,6 +596,18 @@
         "rule": "@typescript-eslint/prefer-function-type"
       },
       "policy": "candidates/rules/typescript-eslint-prefer-function-type.json",
+      "capabilities": [
+        "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-prefer-namespace-keyword",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/prefer-namespace-keyword"
+      },
+      "policy": "candidates/rules/typescript-eslint-prefer-namespace-keyword.json",
       "capabilities": [
         "syntax"
       ],
