@@ -1,0 +1,52 @@
+name: Version packs
+
+# With changesets pending, opens or updates the "Version packs" pull request, which runs `npm run version:packs`: each
+# pack's version and CHANGELOG.md, written by changesets (docs/pack-format.md, "Release"). Merging it is the release;
+# release-packs.yml publishes.
+#
+# Its own workflow, so it never waits behind a publish run, and only the latest push to main matters: each run
+# rewrites the whole pull request from main, so a newer push cancels an older run.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-packs
+  cancel-in-progress: true
+
+jobs:
+  # The Version packs pull request is opened with the neralabs-ci app's token, not GITHUB_TOKEN, so CI runs on it.
+  version:
+    name: Version packs pull request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Open or update the Version packs pull request
+        uses: changesets/action@66d7d1ddafddf1ef45f98ee51a7496f9cdadb2f4 # v2.1.2
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          version-script: npm run version:packs
+          commit-message: Version packs
+          pr-title: Version packs
