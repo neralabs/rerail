@@ -2,7 +2,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, re
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
-import type { UpdateResult, UpdateStatus } from "../setup/updater.js";
+import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory, rollbackRestoringPath } from "../engine/storage/database.js";
 import { RERAIL_SCHEMA_VERSION } from "../engine/storage/migrations.js";
@@ -98,12 +98,12 @@ export async function updateWithSnapshot(
   try {
     result = await updater.update(channel);
   } catch (error) {
-    if (staged !== undefined) rmSync(staged, { force: true });
+    if (staged !== undefined) removeQuietly(staged);
     throw error;
   }
   const from = result.previous?.version;
   if (!result.changed || result.current.version === from) {
-    if (staged !== undefined) rmSync(staged, { force: true });
+    if (staged !== undefined) removeQuietly(staged);
     return result;
   }
   if (staged === undefined || from === undefined) {
@@ -225,29 +225,58 @@ async function restoreInPlace(path: string, snapshot: string, keptBase: string, 
         throw error;
       }
       if (mode !== "delete") return "open";
-      // VACUUM INTO fills an empty file, keeping the mode it was created with.
+      // VACUUM INTO fills an empty file, keeping the mode it was created with; one it could not fill is not kept.
       kept = freshKeptPath(keptBase);
-      database.prepare("VACUUM INTO ?").run(kept);
+      try {
+        database.prepare("VACUUM INTO ?").run(kept);
+      } catch (error) {
+        removeQuietly(kept);
+        throw error;
+      }
     } finally {
       database.close();
     }
-    const source = new Database(snapshot, { readonly: true, fileMustExist: true });
     try {
-      for (let attempt = 1; ; attempt += 1) {
-        await source.backup(path);
-        if (schemaFloor(path) === floor || attempt === BACKUP_ATTEMPTS) break;
-        await sleep(BACKUP_RETRY_MS);
+      const source = new Database(snapshot, { readonly: true, fileMustExist: true });
+      try {
+        for (let attempt = 1; ; attempt += 1) {
+          await source.backup(path);
+          if (schemaFloor(path) === floor || attempt === BACKUP_ATTEMPTS) break;
+          await sleep(BACKUP_RETRY_MS);
+        }
+      } finally {
+        source.close();
       }
-    } finally {
-      source.close();
+      chmodSync(path, 0o600);
+      const written = schemaFloor(path);
+      if (written !== floor) throw new Error(`the copy did not reach the database, which is still at schema v${String(written)}`);
+    } catch (error) {
+      throw new Error(`${(error as Error).message} (the database as it was is saved in ${kept})`, { cause: error });
     }
-    chmodSync(path, 0o600);
-    const written = schemaFloor(path);
-    if (written !== floor) throw new Error(`the copy did not reach the database, which is still at schema v${String(written)}`);
     return { kept };
   } finally {
     rmSync(restoring, { force: true });
   }
+}
+
+/**
+ * After a rollback, a copy with no record of the change it was taken for: an older release's `rerail update` (such as
+ * 0.1.0-next.1's) wrote `rerail.sqlite.pre-update` without one. It is not put back without knowing which change it
+ * undoes, but when its schema floor is below the database's, the version rolled back to may refuse the database
+ * (0.1.0-next.1 reads only schema v1, and this release adopts its files at the baseline), so the person is told how to
+ * put it back by hand.
+ */
+function hintUnrecordedCopy(databasePath: string, version: string): void {
+  const snapshot = preUpdateSnapshotPath(databasePath);
+  if (!existsSync(snapshot)) return;
+  const current = schemaFloor(databasePath);
+  const copy = schemaFloor(snapshot);
+  if (current === undefined || copy === undefined || copy >= current) return;
+  process.stderr.write(
+    `rerail: ${databasePath} is at schema v${current}, and ${snapshot} (schema v${copy}) was taken by an update that `
+    + `recorded no version change, so Rerail does not put it back itself. If ${version} refuses the database, stop Rerail, `
+    + `keep ${databasePath} elsewhere if you need what changed since that update, then copy ${snapshot} to ${databasePath}.\n`,
+  );
 }
 
 /**
@@ -268,9 +297,11 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   const result = await updater.rollback();
   const leaving = result.previous?.version;
   const transition = snapshotTransition(databasePath);
-  if (leaving === undefined || transition === undefined || transition.from !== result.current.version || transition.to !== leaving) {
+  if (transition === undefined) {
+    hintUnrecordedCopy(databasePath, result.current.version);
     return result;
   }
+  if (leaving === undefined || transition.from !== result.current.version || transition.to !== leaving) return result;
   const snapshot = preUpdateSnapshotPath(databasePath);
   const current = schemaFloor(databasePath);
   const before = schemaFloor(snapshot);

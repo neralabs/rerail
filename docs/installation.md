@@ -330,7 +330,11 @@ change a rollback would undo.
 
 A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
 adopted: the first Rerail process that opens it records the baseline and stamps
-it 3, keeping everything in it. A database file written by a newer Rerail (a
+it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it, and its
+`rerail update` kept a copy with no record of the change, so `rerail update
+rollback` to it does not put the copy back itself: it prints how to (copy
+`rerail.sqlite.pre-update` over `rerail.sqlite` with Rerail stopped, keeping
+the current file if you need what changed since). A database file written by a newer Rerail (a
 floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
 an older shape) or by a development build (stamped 2) is refused with an error
 and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)

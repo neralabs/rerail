@@ -695,9 +695,13 @@ describe("Rerail daemon", () => {
     const stateFile = join(root, "daemon.json");
     await mkdir(stateFile);
     const close = vi.spyOn(NativeSessionServer.prototype, "close").mockRejectedValueOnce(new Error("close failed"));
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     await expect(start({ stateFile })).rejects.toThrow(/EISDIR|illegal operation on a directory/u);
     expect(close).toHaveBeenCalledTimes(1);
     expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
+    // Review of #49 (N5): the failed close is on record.
+    expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
+    stderr.mockRestore();
   });
 
   it("publishes every operation in the OpenAPI document", async () => {
