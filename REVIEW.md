@@ -36,7 +36,7 @@ In addition to the team-wide blockers:
 
 ## Reviewer settings
 
-Machine-readable. Size limits can only be tightened below the defaults (400 changed lines, 20 files), so they are left at the defaults here. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. Generated paths don't count toward the size limits or the 3,000-line threshold for a summary-only review; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
+Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. Generated paths don't count toward the 3,000-line threshold for a summary-only review; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
 
 ```json reviewer
 {
