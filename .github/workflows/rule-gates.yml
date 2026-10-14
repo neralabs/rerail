@@ -25,7 +25,9 @@ jobs:
   gates:
     name: Rule gates (${{ matrix.pack }} · ${{ matrix.tool }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
+    # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
