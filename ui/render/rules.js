@@ -4,7 +4,7 @@
  */
 import { h, setAttr, setText, setClass, chevron, icon, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
-import { isByRerail } from "../derive.js";
+import { isByRerail, isRunning } from "../derive.js";
 import { isMeasured, isAudited, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
 
 export const CREATE_COMMAND = "/rerail-create";
@@ -17,11 +17,12 @@ function createRow(stored) {
   const count = h("span.count.num");
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const origin = h("span.badge");
+  const stopped = h("span.badge", { hidden: true }, "Not running");
   const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
   const row = h("div.row", { "data-id": id },
-    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw), h("div.rmeta", null, origin, h("span.mono", null, id), folder, last)));
-  row._r = { title, count, sw, origin, folder, last };
+    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw), h("div.rmeta", null, origin, stopped, h("span.mono", null, id), folder, last)));
+  row._r = { title, count, sw, origin, stopped, folder, last };
   return row;
 }
 
@@ -36,7 +37,10 @@ function countContent(id) {
 
 function updateRow(row, stored) {
   const id = stored.rule.id, r = row._r, title = titleOf(stored);
-  setClass(row, "off", !stored.enabled);
+  setClass(row, "off", !isRunning(stored));
+  // Switched on, but its stored options no longer apply to its document: Rerail runs it nowhere.
+  setAttr(r.stopped, "hidden", isRunning(stored) || !stored.enabled);
+  setAttr(r.stopped, "title", stored.configError ? `Its options don't apply: ${stored.configError}` : null);
   setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
   const count = countContent(id);
@@ -72,7 +76,8 @@ function createBand(item) {
 
 function updateBand(node, { section, group }) {
   const open = groupIsOpen(section, group);
-  const onN = group.all.filter(r => r.enabled).length, total = group.all.length;
+  // The count is of rules that run; the switch shows how they are set.
+  const onN = group.all.filter(isRunning).length, switchedN = group.all.filter(r => r.enabled).length, total = group.all.length;
   setAttr(node, "data-open", String(open));
   const caret = node.querySelector(".caret");
   setAttr(caret, "aria-expanded", String(open));
@@ -87,7 +92,7 @@ function updateBand(node, { section, group }) {
   setClass(node.querySelector(".count b"), "zero", n === 0);
   setText(node.querySelector(".count .u"), counted ? `${plural(n, "violation")} logged` : "");
   setAttr(node.querySelector(".count"), "title", counted ? null : "Conversation rules are not counted here yet.");
-  const state = onN === 0 ? "false" : onN === total ? "true" : "mixed";
+  const state = switchedN === 0 ? "false" : switchedN === total ? "true" : "mixed";
   const sw = node.querySelector(".sw");
   setAttr(sw, "aria-checked", state);
   setAttr(sw, "aria-label", `Turn every rule in ${group.name} ${state === "true" ? "off" : "on"}`);
@@ -143,7 +148,7 @@ function listItems(section) {
 }
 
 function updateSection(node, section, total) {
-  const s = node._s, all = section.groups.flatMap(g => g.all), onN = all.filter(r => r.enabled).length;
+  const s = node._s, all = section.groups.flatMap(g => g.all), onN = all.filter(isRunning).length;
   const visible = !ui.hiddenSections.has(section.key) || filtering();
   setText(s.name, sectionTitle(section));
   setText(s.n2, all.length ? `${fmt(onN)} of ${fmt(all.length)} on` : "0");

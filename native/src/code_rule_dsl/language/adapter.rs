@@ -29,17 +29,19 @@ use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    file_eslint_directives, file_noqa, file_nosec, file_phpcs, file_phpstan, file_psalm,
+    file_biome_suppressions, file_eslint_directives, file_noqa, file_nosec, file_oxlint_directives,
+    file_phpcs, file_phpstan, file_psalm,
 };
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, Suppress,
-    parent_statement, root,
+    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
+    PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
 };
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
+use std::ops::Range;
 use std::path::Path;
 
 /// Python's family: Ruff's semantics.
@@ -97,15 +99,15 @@ pub(crate) trait Adapter: 'static {
     /// (Python only).
     fn module_path(file: &Path) -> Option<serde_json::Value>;
     /// Whether the family's inline suppression comments suppress `violation` (whose `suppress`
-    /// is `suppress`) at byte `at` of `source`, `node` placing the file and `witness` its byte
-    /// span.
+    /// is `suppress`) anchored over the bytes `anchored` of `source` (most linters read only its
+    /// start), `node` placing the file and `witness` its byte span.
     fn suppresses<D: Doc>(
         violation: &ViolationSpec,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         witness: (usize, usize),
     ) -> bool;
 }
@@ -144,9 +146,10 @@ impl Adapter for Python {
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         witness: (usize, usize),
     ) -> bool {
+        let at = anchored.start;
         // A project may run Ruff and Bandit together: either linter the violation names may
         // suppress it. Bandit reads `# nosec` on the reported line and on the lines of the node it
         // visited, here the witness.
@@ -189,18 +192,29 @@ impl Adapter for Ecma {
         None
     }
 
+    /// A project may run ESLint, oxlint (which also reads `eslint-` directives) or Biome: any
+    /// linter the violation names may suppress it. Oxlint and Biome ask about the anchored span:
+    /// an oxlint block covers a problem that overlaps it, a `biome-ignore-start` range one it
+    /// holds, a `biome-ignore` one that starts in what it covers.
     fn suppresses<D: Doc>(
         _: &ViolationSpec,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
         suppress.eslint.as_ref().is_some_and(|rules| {
             let directives = file_eslint_directives(|| EslintDirectives::read(node, source, lines));
-            directives.suppresses(rules, at, lines)
+            directives.suppresses(rules, anchored.start, lines)
+        }) || suppress.oxlint.as_ref().is_some_and(|rules| {
+            let directives = file_oxlint_directives(|| OxlintDirectives::read(&root(node), source));
+            directives.suppresses(rules, anchored.clone())
+        }) || suppress.biome.as_ref().is_some_and(|rules| {
+            let suppressions =
+                file_biome_suppressions(|| BiomeSuppressions::read(&root(node), source));
+            suppressions.suppresses(rules, anchored.clone())
         })
     }
 }
@@ -242,9 +256,10 @@ impl Adapter for Php {
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
+        let at = anchored.start;
         suppress.phpstan.as_ref().is_some_and(|identifiers| {
             let index = file_phpstan(|| PhpstanIndex::read(&root(node), source, lines));
             index.suppresses(&violation.code, identifiers, at, lines)
@@ -296,7 +311,7 @@ impl Adapter for Blade {
         _: &Node<'_, D>,
         _: &str,
         _: &LineTable,
-        _: usize,
+        _: Range<usize>,
         _: (usize, usize),
     ) -> bool {
         false

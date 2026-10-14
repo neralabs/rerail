@@ -1444,6 +1444,11 @@
             "rules": [
               "vitest/no-focused-tests"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-focused-tests"
+            ]
           }
         }
       }

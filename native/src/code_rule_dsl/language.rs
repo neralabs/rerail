@@ -749,6 +749,10 @@ pub(crate) enum Suppression {
     Nosec,
     /// ESLint's `eslint-disable` comments.
     Eslint,
+    /// Oxlint's `oxlint-disable` (and `eslint-disable`) comments.
+    Oxlint,
+    /// Biome's `biome-ignore` comments.
+    Biome,
     /// PHPStan's `@phpstan-ignore` comments.
     Phpstan,
     /// Psalm's `@psalm-suppress` tags.
@@ -985,6 +989,8 @@ mod tests {
             ("noqa", Suppression::Noqa),
             ("nosec", Suppression::Nosec),
             ("eslint", Suppression::Eslint),
+            ("oxlint", Suppression::Oxlint),
+            ("biome", Suppression::Biome),
             ("phpstan", Suppression::Phpstan),
             ("psalm", Suppression::Psalm),
             ("phpcs", Suppression::Phpcs),

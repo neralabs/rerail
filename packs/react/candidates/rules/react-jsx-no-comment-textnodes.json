@@ -44,6 +44,16 @@
             "rules": [
               "react/jsx-no-comment-textnodes"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-no-comment-textnodes"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noCommentText"
+            ]
           }
         }
       }

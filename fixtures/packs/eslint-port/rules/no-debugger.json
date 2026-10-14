@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "no-debugger",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of ESLint's `no-debugger`: every debugger statement.",
+  "scope": {
+    "include": [
+      "**/*.js"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "debugger-statement",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "debugger_statement"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-debugger",
+        "message": "Unexpected 'debugger' statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-debugger"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-debugger"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDebugger"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

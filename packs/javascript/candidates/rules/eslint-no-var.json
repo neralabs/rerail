@@ -53,6 +53,16 @@
             "rules": [
               "no-var"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-var"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noVar"
+            ]
           }
         }
       }

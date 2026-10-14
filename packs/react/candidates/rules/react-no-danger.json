@@ -56,6 +56,16 @@
             "rules": [
               "react/no-danger"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtml"
+            ]
           }
         }
       }

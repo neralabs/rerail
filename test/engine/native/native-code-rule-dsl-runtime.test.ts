@@ -2302,6 +2302,304 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+    it("honours oxlint's disable directives as oxlint 1.88.0 reads them, and biome-ignore as Biome 2.5.15 does", async () => {
+      const clause = {
+        violation: {
+          ...violation("RULES_OF_HOOKS"),
+          suppress: {
+            eslint: { rules: ["react-hooks/rules-of-hooks"] },
+            oxlint: { rules: ["rules-of-hooks"] },
+            biome: { rules: ["lint/correctness/useHookAtTopLevel"] },
+          },
+        },
+        forbid: {
+          ast: {
+            language: "typescript",
+            rule: { kind: "call_expression", has: { field: "function", kind: "identifier", regex: "^useEffect$" }, inside: { kind: "if_statement", stopBy: "end" } },
+          },
+        },
+        id: "conditional-hook",
+      };
+      const source = [
+        "import { useEffect } from \"react\";",
+        "// oxlint-disable react-hooks/rules-of-hooks",
+        "function Avatar({ x }) { if (x) useEffect(() => {}); return null; }",
+        "// oxlint-enable react-hooks/rules-of-hooks",
+        "function Badge({ x }) { if (x) useEffect(() => {}); return null; } // oxlint-disable-line react-hooks/rules-of-hooks",
+        "// oxlint-disable-next-line react-hooks/rules-of-hooks",
+        "function Chip({ x }) { if (x) useEffect(() => {}); return null; }",
+        "// biome-ignore lint/correctness/useHookAtTopLevel: intentional",
+        "function Dot({ x }) { if (x) useEffect(() => {}); return null; }",
+        "/* eslint-disable react-hooks/rules-of-hooks */",
+        "function Eslinted({ x }) { if (x) useEffect(() => {}); return null; }",
+        "/* eslint-enable react-hooks/rules-of-hooks */",
+        "function Plain({ x }) { if (x) useEffect(() => {}); return null; }",
+        "",
+      ].join("\n");
+      for (const [placement, expected] of [
+        // 1-based line 13 (Plain) only: `oxlint` 1.88.0 reports Plain and Dot (line 9), `biome lint` 2.5.15 every hook but Dot's.
+        [undefined, [13]],
+        [[{ folder: "", mode: "log", suppressions: "honour" }], [13]],
+        // The setting turns every linter's comments off.
+        [[{ folder: "", mode: "log", suppressions: "ignore" }], [3, 5, 7, 9, 11, 13]],
+      ] as const) {
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]), placement === undefined ? undefined : JSON.stringify(placement));
+          const actual = await applyWorkspace(nativeWorkspace, 1, [{ language: "tsx" as const, path: "src/avatar.tsx", source }]);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(actual.violations.map(item => item.span!.startLine + 1)).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    it("drops witnesses a rerail-ignore naming the code rule covers, whatever suppress and the suppressions setting", async () => {
+      const plain = {
+        violation: violation("DEBUGGER"),
+        forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+        id: "debugger",
+      };
+      const opted = { ...plain, violation: { ...violation("DEBUGGER"), suppress: { eslint: { rules: ["no-debugger"] } } } };
+      const file = {
+        language: "typescript" as const,
+        path: "a.ts",
+        source: [
+          "debugger; // rerail-ignore runtime-contract -- generated",
+          "debugger; // rerail-ignore other-rule",
+          "debugger; // eslint-disable-line no-debugger",
+          "debugger;",
+          "",
+        ].join("\n"),
+      };
+      // No `suppress`: only the directive naming the code rule silences, statelessly and in a workspace.
+      expect(evaluate(compileJson([plain]), snapshot([file])).violations.map(item => item.span!.startLine)).toEqual([1, 2, 3]);
+      for (const [clause, placement, expected] of [
+        [plain, undefined, [1, 2, 3]],
+        [opted, undefined, [1, 3]],
+        [opted, [{ folder: "", mode: "log", suppressions: "honour" }], [1, 3]],
+        // The setting governs only linters' comments: the eslint directive no longer silences, Rerail's still does.
+        [opted, [{ folder: "", mode: "log", suppressions: "ignore" }], [1, 2, 3]],
+      ] as const) {
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]), placement === undefined ? undefined : JSON.stringify(placement));
+          const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(actual.violations.map(item => item.span!.startLine)).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    // Review round 2: with a one-witness allowance, the stateless evaluator enumerated only as many `each` bindings
+    // as the allowance, so two bindings a comment suppresses left the third unread and nothing was reported. A
+    // suppressed binding spends no allowance on either path.
+    it.each([
+      ["rerail-ignore", "// rerail-ignore runtime-contract", undefined],
+      ["an eslint directive the violation opts into", "// eslint-disable-line no-console", { eslint: { rules: ["no-console"] } }],
+    ] as const)("reads every binding past ones %s suppresses under a one-witness allowance, statelessly and in a workspace", async (_name, directive, suppress) => {
+      const constrained = capabilities({ limits: { ...defaultLimits, maxWitnesses: 1 } });
+      const clause = {
+        violation: { ...violation("STATEMENT"), anchor: "capture.X", each: "X", ...(suppress === undefined ? {} : { suppress }) },
+        // Statements only: `$X` alone also binds the comments, which no directive covers.
+        forbid: { ast: { language: "typescript", rule: { kind: "program", has: { kind: "expression_statement", pattern: "$X" } } } },
+        id: "statement",
+      };
+      const file = { language: "typescript" as const, path: "a.ts", source: `first; ${directive}\nsecond; ${directive}\nthird;\n` };
+      const text = (item: { span?: { startByte: number; endByte: number } | undefined }) => file.source.slice(item.span!.startByte, item.span!.endByte);
+
+      const stateless = evaluate(compileJson([clause], constrained), snapshot([file]));
+      expect(stateless).toMatchObject({ status: "completed", failures: [] });
+      expect(stateless.violations.map(text)).toEqual(["third;"]);
+
+      const nativeWorkspace = workspace();
+      try {
+        nativeWorkspace.addCodeRule(compileJson([clause], constrained));
+        const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(text)).toEqual(["third;"]);
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
+    // Review round 3: the enumeration read every binding, but a regex capture's node groups were still cut to the
+    // remaining allowance before suppression, so the two suppressed groups filled a one-witness allowance and the
+    // third was never produced.
+    it.each([
+      ["rerail-ignore", "// rerail-ignore runtime-contract", undefined],
+      ["an eslint directive the violation opts into", "// eslint-disable-line no-console", { eslint: { rules: ["no-console"] } }],
+    ] as const)("reads every regex-capture group past ones %s suppresses under a one-witness allowance, statelessly and in a workspace", async (_name, directive, suppress) => {
+      const constrained = capabilities({ limits: { ...defaultLimits, maxWitnesses: 1 } });
+      const clause = {
+        violation: { ...violation("STATEMENT"), anchor: "capture.X", each: "X", ...(suppress === undefined ? {} : { suppress }) },
+        forbid: { ast: { language: "typescript", rule: { kind: "program", regex: "(?<X>first;|second;|third;)" } } },
+        id: "statement",
+      };
+      const file = { language: "typescript" as const, path: "a.ts", source: `first; ${directive}\nsecond; ${directive}\nthird;\n` };
+      const text = (item: { span?: { startByte: number; endByte: number } | undefined }) => file.source.slice(item.span!.startByte, item.span!.endByte);
+
+      const stateless = evaluate(compileJson([clause], constrained), snapshot([file]));
+      expect(stateless).toMatchObject({ status: "completed", failures: [] });
+      expect(stateless.violations.map(text)).toEqual(["third;"]);
+
+      const nativeWorkspace = workspace();
+      try {
+        nativeWorkspace.addCodeRule(compileJson([clause], constrained));
+        const actual = await applyWorkspace(nativeWorkspace, 1, [file]);
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(text)).toEqual(["third;"]);
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
+    // Review round 3: a covered node's range was matched with an inclusive end, so a leading directive over `a();`
+    // also silenced `b();`, which starts where `a();` ends.
+    it("silences only the covered node, not the sibling starting where it ends", () => {
+      const clause = {
+        violation: violation("STATEMENT"),
+        forbid: { ast: { language: "typescript", rule: { kind: "expression_statement" } } },
+        id: "statement",
+      };
+      for (const [source, expected] of [
+        ["function f() {\n// rerail-ignore runtime-contract\na();b();\n}\n", ["b();"]],
+        ["function f() {\n// rerail-ignore runtime-contract\na(); b();\n}\n", ["b();"]],
+        ["a();b(); // rerail-ignore runtime-contract\n", ["a();"]],
+      ] as const) {
+        const actual = evaluate(compileJson([clause]), snapshot([{ language: "typescript", path: "a.ts", source }]));
+        expect(actual).toMatchObject({ status: "completed", failures: [] });
+        expect(actual.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(expected);
+      }
+    });
+    // Review round 2 (engine): every clause's violation answered to a `rerail-ignore`, and a relation's evidence side
+    // cloned it, so a comment over evidence in one file removed the fact and reported a missing-evidence violation in
+    // another. A comment silences a violation where it is reported; it never removes a fact.
+    it("never drops a require_each's evidence under a rerail-ignore, while its subject honours one, statelessly and in a workspace", async () => {
+      const relation = (as: string, path: string) => ({
+        evidence: {
+          as,
+          paths: { include: [path] },
+          query: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+          project: { name: "file.name" },
+        },
+      });
+      const clause = {
+        id: "require",
+        violation: violation("MISSING"),
+        require_each: { subject: relation("subject", "subject.ts"), evidence: relation("evidence", "evidence.ts") },
+      };
+      const ignore = "// rerail-ignore runtime-contract -- ignore this node only\n";
+      for (const [evidenceSource, subjectSource, expected] of [
+        // The evidence under the comment still satisfies the subject.
+        [`${ignore}debugger;\n`, "debugger;\n", []],
+        ["debugger;\n", "debugger;\n", []],
+        // Without evidence the subject is reported, unless the comment covers it.
+        ["const x = 1;\n", "debugger;\n", ["subject.ts:0"]],
+        ["const x = 1;\n", `${ignore}debugger;\n`, []],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "evidence.ts", source: evidenceSource },
+          { language: "typescript" as const, path: "subject.ts", source: subjectSource },
+        ];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`);
+        const stateless = evaluate(compileJson([clause]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${evidenceSource} ${subjectSource}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${evidenceSource} ${subjectSource}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    // The same for a budget's rows: a comment over one leaves the count as it is, and silences the group's violation
+    // only at the row it is reported at (its first, in path order).
+    it("counts a budget's rows under a rerail-ignore, and silences its violation only at the reported row, statelessly and in a workspace", async () => {
+      const clause = {
+        id: "budget",
+        violation: violation("OVER"),
+        budget: {
+          query: { evidence: { as: "usage", query: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }, project: { directory: "file.directory" } } },
+          group_by: ["usage.directory"],
+          count: { lte: 1 },
+        },
+      };
+      const ignore = "// rerail-ignore runtime-contract\n";
+      for (const [first, second, expected] of [
+        ["debugger;\n", "debugger;\n", ["src/a.ts:0"]],
+        ["debugger;\n", `${ignore}debugger;\n`, ["src/a.ts:0"]],
+        [`${ignore}debugger;\n`, "debugger;\n", []],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "src/a.ts", source: first },
+          { language: "typescript" as const, path: "src/b.ts", source: second },
+        ];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`);
+        const stateless = evaluate(compileJson([clause]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${first} ${second}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${first} ${second}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+    // Review round 2 (engine): oxlint 1.88.0 and ESLint 9.39.1 read their directives in JavaScript's HTML-like comments
+    // (`<!--`, and `-->` first on its line) in a script; Biome 2.5.15 has none.
+    it("reads oxlint and ESLint directives in HTML-like comments, and no biome-ignore, statelessly and in a workspace", async () => {
+      const clause = (suppress: Record<string, unknown>) => ({
+        violation: { ...violation("DEBUGGER"), suppress },
+        forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+        id: "debugger",
+      });
+      for (const [suppress, directive] of [
+        [{ oxlint: { rules: ["no-debugger"] } }, "oxlint-disable-next-line no-debugger"],
+        [{ eslint: { rules: ["no-debugger"] } }, "eslint-disable-next-line no-debugger"],
+        [{ biome: { rules: ["lint/suspicious/noDebugger"] } }, "biome-ignore lint/suspicious/noDebugger: x"],
+      ] as const) {
+        const files = [
+          { language: "typescript" as const, path: "html.cts", source: `<!-- ${directive}\ndebugger;\ndebugger;\n` },
+          { language: "typescript" as const, path: "close.cts", source: `--> ${directive}\ndebugger;\ndebugger;\n` },
+        ];
+        const expected = "biome" in suppress ? ["close.cts:1", "close.cts:2", "html.cts:1", "html.cts:2"] : ["close.cts:2", "html.cts:2"];
+        const located = (result: EvaluationResult) => result.violations.map(item => `${item.path}:${item.span!.startLine}`).sort();
+        const stateless = evaluate(compileJson([clause(suppress)]), snapshot(files));
+        expect(stateless).toMatchObject({ status: "completed", failures: [] });
+        expect(located(stateless), `stateless ${directive}`).toEqual(expected);
+        const nativeWorkspace = workspace();
+        try {
+          nativeWorkspace.addCodeRule(compileJson([clause(suppress)]));
+          const actual = await applyWorkspace(nativeWorkspace, 1, files);
+          expect(actual).toMatchObject({ status: "completed", failures: [] });
+          expect(located(actual), `workspace ${directive}`).toEqual(expected);
+        } finally {
+          nativeWorkspace.close();
+        }
+      }
+    });
+
+    // Self-review round 3: rerail-ignore in either HTML-like comment form covers the node after it, as `//` does (the
+    // comment comes after code, so it is not the file-wide form).
+    it("reads rerail-ignore in HTML-like comments", () => {
+      const clause = { violation: violation("DEBUGGER"), forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }, id: "debugger" };
+      const files = ["<!--", "-->", "//"].map((opener, index) => ({
+        language: "typescript" as const,
+        path: `f${index}.cts`,
+        source: `debugger;\n${opener} rerail-ignore runtime-contract -- generated\ndebugger;\ndebugger;\n`,
+      }));
+      const result = evaluate(compileJson([clause]), snapshot(files));
+      expect(result).toMatchObject({ status: "completed", failures: [] });
+      expect(result.violations.map(item => `${item.path}:${item.span!.startLine}`).sort()).toEqual(["f0.cts:0", "f0.cts:3", "f1.cts:0", "f1.cts:3", "f2.cts:0", "f2.cts:3"]);
+    });
 
   });
 
