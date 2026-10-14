@@ -1,5 +1,5 @@
 /**
- * Three on-by-default Python ports must not steer an agent into rewriting idiomatic code (NER-1827). Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code (NER-1827). Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and
@@ -37,15 +37,15 @@ function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 
-/** The sorted 1-based lines `ruleId` reports in `source`, one entry per finding. */
-function reportedLines(ruleId: string, source: string): number[] {
+/** The sorted 1-based lines `rule` reports in `source`, one entry per finding. */
+function reportedLines(rule: NativeCompiledCodeRuleDsl, source: string): number[] {
   const input = JSON.stringify({
     format: "rerail.repository-snapshot/v1",
     revision: 0,
     facts: [],
     files: [{ language: "python", path: "src/module.py", source }],
   });
-  const result = evaluationSchema.parse(JSON.parse(compile(ruleId).evaluate(input, "report")));
+  const result = evaluationSchema.parse(JSON.parse(rule.evaluate(input, "report")));
   expect(result.failures).toEqual([]);
   return result.violations.map(violation => violation.span.startLine + 1).sort((a, b) => a - b);
 }
@@ -87,6 +87,9 @@ const B610: readonly Case[] = [
     py("class Q(models.QuerySet):", "    def f(self, w):", "        return self.extra(where=w)", "    def g(self, w):", "        return super().extra(where=w)"),
     [3, 5],
   ],
+  ["self in a Manager subclass", py("class M(BaseUserManager):", "    def f(self, w):", "        return self.extra(where=w)"), [3]],
+  ["self in a class whose base only ends in Manager", py("class S(contextlib.AbstractContextManager):", "    def f(self, w):", "        return self.extra(where=w)"), []],
+  ["self in a class whose bare base only ends in Manager", py("class P(Base, PluginManager):", "    def f(self, w):", "        return self.extra(where=w)"), []],
 ];
 
 const F722: readonly Case[] = [
@@ -106,7 +109,8 @@ describe.each([
   ["bandit-b610-django-extra-used", B610],
   ["ruff-f722-forward-annotation-syntax-error", F722],
 ] as const)("%s", (ruleId, cases) => {
+  const rule = compile(ruleId);
   it.each(cases)("%s", (_name, source, lines) => {
-    expect(reportedLines(ruleId, source)).toEqual(lines);
+    expect(reportedLines(rule, source)).toEqual(lines);
   });
 });
