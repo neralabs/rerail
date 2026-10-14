@@ -25,7 +25,8 @@
 //!   = dialect` on PostgreSQL: naked identifiers fold to lower case, quoted ones are exact.
 //!
 //! A CTE name binds in a wrapper block around its `WITH` statement, so the CTE bodies and the main
-//! query (its children) all see it; SQLFluff resolves a CTE only as a `FROM` table.
+//! query (its children) all see it. That binding is no RF01 target: SQLFluff resolves a CTE only as
+//! a `FROM` table, so `c.a` resolves through a relation over `c` and is unresolved without one.
 //!
 //! `visit` puts the blocks, bindings and qualified references into the file's `ScopeTable` (each
 //! block a `ScopeKind::Query` scope, each binding keyed by its folded name) and keeps the
@@ -491,7 +492,9 @@ impl Reader {
                         kind: BindingKind::Named,
                         aliased: false,
                         folded: folded(&text),
-                        targets: vec![vec![unquoted(&text)]],
+                        // RF01 resolves a qualifier against `FROM` relations only: the CTE
+                        // is a target once a relation selects from it, through that relation.
+                        targets: Vec::new(),
                         table: None,
                         visible_from: node.range().start,
                     });
@@ -818,18 +821,56 @@ mod tests {
     }
 
     #[test]
-    fn nested_blocks_see_their_parents_and_ctes_bind() {
-        let source = "WITH c AS (SELECT 1 FROM x) SELECT c.a FROM y AS t \
+    fn nested_blocks_see_their_parents() {
+        let source = "WITH c AS (SELECT 1 FROM x) SELECT c.a FROM c JOIN y AS t ON true \
                       WHERE EXISTS (SELECT 1 FROM z WHERE z.k = t.k)";
         let scopes = read_scopes(source);
         assert!(scopes.unresolved().is_empty());
         assert!(scopes.unused_aliases().is_empty());
+        // `c.a` resolves to the relation that selects from the CTE.
         assert_eq!(
             scopes.binding(&at(source, "c", 1)),
-            Some(at(source, "c", 0))
+            Some(at(source, "c", 2))
         );
         let source = "SELECT 1 FROM (SELECT t.a FROM x) AS d WHERE d.a = 1";
         assert_eq!(read_scopes(source).unresolved(), vec![at(source, "t", 0)]);
+    }
+
+    /// SQLFluff 4.4.0 RF01 (`sqlfluff lint --dialect postgres --rules RF01`) resolves a qualifier
+    /// against `FROM` relations only: a CTE the query does not select from is no target.
+    #[test]
+    fn ctes_are_targets_only_through_from() {
+        let source = "WITH c AS (SELECT 1 AS a) SELECT c.a FROM other_table";
+        assert_eq!(read_scopes(source).unresolved(), vec![at(source, "c", 1)]);
+        let source = "WITH c AS (SELECT 1 AS a) SELECT c.a FROM c";
+        assert!(read_scopes(source).unresolved().is_empty());
+        let source = "WITH c AS (SELECT 1 AS a) SELECT x FROM c WHERE EXISTS (SELECT c.a FROM d)";
+        assert!(read_scopes(source).unresolved().is_empty());
+    }
+
+    /// SQLFluff 4.4.0 RF01 compares the unquoted text case sensitively, on PostgreSQL too: it
+    /// reports `T` in `SELECT T.a FROM t` and `t` in `SELECT t.a FROM "T"`, not `T` in
+    /// `SELECT T.a FROM "T"` nor `"t"` in `SELECT "t".a FROM t`.
+    #[test]
+    fn qualifiers_compare_unquoted_text_case_sensitively() {
+        for (source, unresolved) in [
+            ("SELECT T.a FROM t", Some("T")),
+            ("SELECT t.a FROM T", Some("t")),
+            ("SELECT t.a FROM \"T\"", Some("t")),
+            ("SELECT \"T\".a FROM t", Some("\"T\"")),
+            ("SELECT S.T.a FROM s.t", Some("T")),
+            ("SELECT T.a FROM \"T\"", None),
+            ("SELECT \"t\".a FROM t", None),
+        ] {
+            let expected: Vec<_> = unresolved
+                .map(|needle| {
+                    let start = source.find(&format!("{needle}.a")).unwrap();
+                    start..start + needle.len()
+                })
+                .into_iter()
+                .collect();
+            assert_eq!(read_scopes(source).unresolved(), expected, "{source}");
+        }
     }
 
     #[test]
@@ -907,7 +948,7 @@ mod tests {
         }
         assert!(missing.is_empty(), "recorded, not reproduced: {missing:#?}");
         assert!(extra.is_empty(), "reproduced, not recorded: {extra:#?}");
-        assert_eq!(recorded.len(), 40, "RF01 28 + AL05 12 recorded");
-        assert_eq!(reproduced.len(), 46);
+        assert_eq!(recorded.len(), 44, "RF01 32 + AL05 12 recorded");
+        assert_eq!(reproduced.len(), 50);
     }
 }
