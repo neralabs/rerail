@@ -716,7 +716,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/php/rules/**"
+path = "packs/php/candidates/rules/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
@@ -747,7 +747,7 @@ SPDX-License-Identifier = "MIT"
 # annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
 # upstream licence is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/blade/rules/**"
+path = "packs/blade/candidates/rules/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

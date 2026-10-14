@@ -126,7 +126,7 @@ def write_licenses(checkout: pathlib.Path, copies: list[tuple]) -> None:
 
 Upstream: [stillat/blade-parser](https://github.com/stillat/blade-parser/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Johnathon Koster); [`license.md`](license.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `rules/`, the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running stillat/blade-parser {VERSION}.
+The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `candidates/rules/`, the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running stillat/blade-parser {VERSION}.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/blade-parser/generate.py fixtures`, which runs the test with the template captured as the parser receives it; a template several dataset rows of a test file build alike is written once, under the first.
 
