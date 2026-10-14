@@ -17,6 +17,18 @@ export function releaseTag(name: string, version: string): string;
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
 export function listPacks(packsDirectory?: string): ReleasePack[];
+export function assertCommitOnGitHub(sha: string): void;
+export function alreadyOnRegistry(output: string): boolean;
+export function releasePacks(
+  manifest: readonly { name: string; version: string; file: string }[],
+  tags: readonly string[],
+  steps: {
+    publish(file: string): { ok: boolean; output: string };
+    assertRestricted(name: string): Promise<void>;
+    tag(tag: string): void;
+    log(line: string): void;
+  },
+): Promise<void>;
 export function planPacks(packs: readonly ReleasePack[], tags: readonly string[]): { publish: string[]; first: string[] };
 export function syncPackLockfile<Lock extends { packages: Record<string, { version?: string }> }>(lock: Lock, packs: readonly ReleasePack[]): Lock;
 export function gateFailures(report: GateReport, ids: readonly string[], checkCount: number): string[];

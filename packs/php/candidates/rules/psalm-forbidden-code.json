@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "psalm-forbidden-code",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call.",
+  "description": "Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call. Divergence: a var_dump call is not reported when its output is the point, because removing it changes behaviour: when it is a statement that an earlier statement in the same block starts buffering with ob_start() and a later statement reads the buffer with ob_get_clean() or ob_get_contents(), or when it is inside a function or method named dump or dd, where it is the fallback dumper (NER-1809).",
   "scope": {
     "include": [
       "**/*.php"
@@ -32,12 +32,94 @@
                   }
                 },
                 "not": {
-                  "has": {
-                    "field": "arguments",
-                    "has": {
-                      "kind": "variadic_placeholder"
+                  "any": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "kind": "variadic_placeholder"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "field": "function",
+                            "resolves": {
+                              "import": [
+                                "var_dump"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "expression_statement",
+                                "all": [
+                                  {
+                                    "follows": {
+                                      "stopBy": "end",
+                                      "kind": "expression_statement",
+                                      "has": {
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "resolves": {
+                                            "import": [
+                                              "ob_start"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "precedes": {
+                                      "stopBy": "end",
+                                      "has": {
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "resolves": {
+                                            "import": [
+                                              "ob_get_clean",
+                                              "ob_get_contents"
+                                            ]
+                                          }
+                                        },
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "method_declaration"
+                                  }
+                                ],
+                                "has": {
+                                  "field": "name",
+                                  "regex": "^(?i:dump|dd)$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
                     }
-                  }
+                  ]
                 }
               },
               {
