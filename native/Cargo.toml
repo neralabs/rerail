@@ -39,7 +39,7 @@ serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
 sha2 = "0.10"
 tree-sitter-language = "=0.1.8"
-tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.0"
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.25"
