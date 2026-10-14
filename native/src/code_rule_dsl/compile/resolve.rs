@@ -496,6 +496,17 @@ fn compile_lexical_resolves<S: ScopeRules>(
             S::feature(ScopeFeature::StarImports),
         )?;
     }
+    // Keys a family without their counterpart refuses (`ScopeRules::feature`).
+    for (key, feature) in [
+        ("sloppyFunctions", ScopeFeature::SloppyFunctions),
+        ("declared", ScopeFeature::Declared),
+        ("relative", ScopeFeature::Relative),
+        ("seenBefore", ScopeFeature::SeenBefore),
+    ] {
+        if value.get(key).is_some() {
+            gate(&format!("{path}/{key}"), S::feature(feature))?;
+        }
+    }
     // Asking about every name needs the declared set: the query's settings or their defaults.
     let defaults = global_any || unresolved.is_some();
     let declared_python = defaults.then(|| S::ruff_options(python)).flatten();

@@ -1,0 +1,119 @@
+{
+ "tool": "sqlfluff",
+ "version": "4.4.0",
+ "source": {
+  "kind": "corpus",
+  "name": "application-services",
+  "repository": "https://github.com/mozilla/application-services",
+  "commit": "c19ea2c24eb2f116dae170f5f82054d325e94a42",
+  "rules": [
+   "AL04",
+   "AL05",
+   "AL08",
+   "AL09",
+   "AM01",
+   "AM02",
+   "AM05",
+   "AM09",
+   "CV02",
+   "CV04",
+   "CV05",
+   "CV08",
+   "PG01",
+   "PG02",
+   "RF01",
+   "RF04",
+   "RF05",
+   "RF06",
+   "ST01",
+   "ST02",
+   "ST08",
+   "ST10"
+  ],
+  "skipped": [
+   "components/autofill/sql/create_shared_schema.sql",
+   "components/autofill/sql/tests/create_v0_db.sql",
+   "components/autofill/sql/tests/create_v1_db.sql",
+   "components/autofill/sql/tests/create_v2_db.sql",
+   "components/autofill/sql/tests/create_v3_db.sql",
+   "components/places/sql/create_shared_schema.sql",
+   "components/places/sql/create_shared_triggers.sql",
+   "components/places/sql/create_sync_temp_tables.sql",
+   "components/places/sql/tests/create_v15_db.sql",
+   "components/places/sql/tests/create_v17_db.sql",
+   "components/push/src/internal/storage/schema.sql",
+   "components/push/src/internal/storage/test/schema_v2.sql",
+   "components/webext-storage/sql/create_schema.sql",
+   "components/webext-storage/sql/create_sync_temp_tables.sql",
+   "components/webext-storage/sql/tests/create_schema_v1.sql"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "AL08",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 36,
+   "column": 22
+  },
+  {
+   "rule": "AM05",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 45,
+   "column": 5
+  },
+  {
+   "rule": "AM05",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "CV02",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 56,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 58,
+   "column": 47
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 65,
+   "column": 11
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_main_triggers.sql",
+   "line": 65,
+   "column": 36
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 36,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 38,
+   "column": 22
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 47,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "components/places/sql/create_sync_triggers.sql",
+   "line": 65,
+   "column": 28
+  }
+ ]
+}

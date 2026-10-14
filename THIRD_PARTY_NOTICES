@@ -419,6 +419,22 @@ each parser.c from its grammar.json with tree-sitter-generate 0.27.0.
 
 ----------------------------------------------------------------------
 
+Bundled grammar: DerekStride/tree-sitter-sql 0.3.11, patched
+Files: native/grammars/tree-sitter-sql/ (LICENSE byte-identical to upstream; src/grammar.json
+  regenerated from the patched grammar; src/scanner.c upstream with Rerail's patch;
+  src/tree_sitter/{alloc,array,parser}.h written by tree-sitter-cli 0.27.0)
+Revision: 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8
+Source: https://github.com/DerekStride/tree-sitter-sql
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+Copyright (c) 2021 Derek Stride
+
+The patches, why each is carried and how grammar.json is regenerated are in
+native/grammars/tree-sitter-sql/PATCHES.md. native/build.rs generates parser.c from
+grammar.json with tree-sitter-generate 0.27.0.
+
+----------------------------------------------------------------------
+
 Adapted components: shadcn-ui/ui (development tool only, not in the published package)
 Files: playground/ui/src/components/ui/{badge,button,card,checkbox,select,tabs,textarea}.tsx,
   playground/ui/src/lib/utils.ts

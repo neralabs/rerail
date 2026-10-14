@@ -4,7 +4,7 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules,
+    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules, Sql,
     ValueRules, Vue, with_adapter,
 };
 use crate::code_rule_dsl::language::{
@@ -811,6 +811,117 @@ fn vue() {
                 ),
             ],
             reads: &[super::ScopeFeature::This, super::ScopeFeature::LastWrite],
+            unpackaged: None,
+        },
+    });
+}
+
+#[test]
+fn sql() {
+    kit::<Sql>(&Expect {
+        family: Family::Sql,
+        label: "sql",
+        terminators: Terminators::Newlines,
+        dialect: GrammarDialect::Sql,
+        name: "ﬁle",
+        regions: &[("SELECT 1;\n", &[("program", 0..10)])],
+        module: (".sql", None),
+        value: value_kit::Expect {
+            lang: Family::Sql,
+            string: Value::Str("é".to_owned()),
+            numbers: [Value::int(16), Value::int(u64::MAX)],
+            decoded: ("SELECT 0x10;\n", "literal", Value::int(16)),
+            name_kinds: &[],
+            str_type: Err(
+                "a SQL literal's type is its dialect's: PostgreSQL's pg_typeof and SQLite's typeof name different types (1.5 is numeric or real, 'a' unknown or text)",
+            ),
+            structure_parts: Err(
+                "the structural modes compare Python and PHP syntax; use tokens for SQL",
+            ),
+            spelled: ("SELECT 1;\n", true),
+            name: Some(("SELECT Foo;\n", "identifier", "foo")),
+        },
+        calls: super::calls::kit::Calls {
+            call_kinds: &[],
+            function_kinds: &[],
+            refusal: Some("calls follows Python and PHP calls only"),
+            seed_language: None,
+            taped: false,
+            subclasses: false,
+            summary: ("SELECT f();\n", &[]),
+            unread: None,
+            label: ("pkg.f", "pkg.f"),
+            keys: &[("pkg.f", 0, &[])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["invocation"],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; a SQL parameter may be passed by position or by name",
+                ),
+                Some(
+                    "`syntactic` finds arguments as Ruff's find_argument does; SQL's are bound as PostgreSQL binds them",
+                ),
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; SQL has none",
+                ),
+            ],
+            passed: ("SELECT f(1, b => 2);\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
+        },
+        syntax: super::syntax::kit::Expect {
+            dollar_names: false,
+            language_options: Some("`languageOptions` is not available for sql policies"),
+            compiled_options: None,
+            when: &[
+                ("{}", Ok(true)),
+                (
+                    r#"{"ecmaVersion": {"min": 2015}}"#,
+                    Err("unknown field `ecmaVersion` at /q/when"),
+                ),
+            ],
+            parse: [
+                Some("`percentFormat` parses Python literals"),
+                Some("`braceFormat` parses Python literals"),
+                Some("`annotation` parses Python literals"),
+                Some("`eslintDirective` parses TypeScript comments"),
+                Some("`printfFormat` parses PHP strings"),
+                Some("`scanfFormat` parses PHP strings"),
+                Some("`phpDoc` parses PHP doc comments"),
+            ],
+            embeds: &[("SELECT $A", false)],
+            php_comments: ("-- c\nSELECT 1;\n", 1),
+        },
+        scope: super::scope::kit::Expect {
+            flow: false,
+            declared: (None, None),
+            unresolved: &[
+                ("SELECT t.a FROM x AS u;\n", "t", true),
+                ("UPDATE x SET a = t.b;\n", "t", false),
+            ],
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &["identifier"],
+            name_kinds: &["identifier"],
+            resolves: (
+                "SELECT 1 FROM t AS u WHERE u.a = 1;\n",
+                "u",
+                Some(crate::code_rule_dsl::scope::Form::Relation),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::This,
+                    "`this` is JavaScript's; SQL has none",
+                ),
+                (
+                    super::ScopeFeature::Filter("latest"),
+                    "`latest` reads Python's binding order and declarations; SQL has none",
+                ),
+            ],
+            reads: &[super::ScopeFeature::Every],
             unpackaged: None,
         },
     });

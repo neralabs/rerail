@@ -13,6 +13,7 @@ mod format_args;
 #[cfg(test)]
 mod kit;
 mod scope;
+mod sql;
 mod syntax;
 mod value;
 mod vue;
@@ -22,6 +23,7 @@ pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
 pub(crate) use scope::{ScopeFeature, ScopeRules};
+pub(crate) use sql::Sql;
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 pub(crate) use vue::Vue;
