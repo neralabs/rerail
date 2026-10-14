@@ -1,0 +1,32 @@
+# Automated PR review by neralabs/reviewer, posted as neralabs-ci. See neralabs/reviewer SPEC.md.
+#
+# Nothing runs unless someone with write access requests the @neralabs/reviewer team as a reviewer, or
+# comments "@neralabs-ci review" ("@neralabs-ci help" lists the commands). The review reads the PR and its
+# CI results; it never builds, runs or pushes anything. Rollout phase 1: it comments and requests changes,
+# and never approves.
+name: reviewer
+
+on:
+  pull_request:
+    types: [review_requested, synchronize, closed]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+# Read-only. Writes go through a neralabs-ci token the reviewer mints per job, scoped to pull requests.
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+  actions: read
+
+jobs:
+  reviewer:
+    uses: neralabs/reviewer/.github/workflows/review.yml@main
+    with:
+      app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
+      reviewer_ref: main # keep equal to the @ref above
+      allow_approve: false
+    secrets: inherit
