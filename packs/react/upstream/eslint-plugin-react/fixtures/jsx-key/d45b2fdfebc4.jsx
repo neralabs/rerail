@@ -1,0 +1,2 @@
+<></>;
+// features: [fragment], parser: default

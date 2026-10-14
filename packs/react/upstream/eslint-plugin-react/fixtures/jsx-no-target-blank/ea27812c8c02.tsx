@@ -1,0 +1,2 @@
+<a href="foobar" {...someObject} target="_blank"></a>
+// features: [], parser: @typescript-eslint/parser, options: [{"enforceDynamicLinks":"always","warnOnSpreadAttributes":true}]
