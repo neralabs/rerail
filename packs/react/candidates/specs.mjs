@@ -1019,9 +1019,9 @@ export const SPECS = [
   // Ships off when promoted (NER-1797): its pack.json entry takes `"on": false`, mirroring plugin:react/jsx-runtime.
   // Under React 17's automatic JSX runtime (tsconfig `"jsx": "react-jsx"`, babel `runtime: "automatic"`, Next.js,
   // Vite) `React` need not be in scope, so the rule flags every JSX file and steers agents to add an unused
-  // `import React`. Upstream has no option for this either, and a policy cannot read the project's runtime. A repo turns
-  // it on when its ESLint config enables react/react-in-jsx-scope or it uses the classic runtime. Studies leave it
-  // detached.
+  // `import React`. Upstream has no option for this either, and a policy cannot read the project's runtime. A repo should
+  // turn it on itself when its ESLint config enables react/react-in-jsx-scope or it uses the classic runtime. Evaluation
+  // runs must not attach this candidate directly.
   {
     id: "react-react-in-jsx-scope",
     candidate: true,
