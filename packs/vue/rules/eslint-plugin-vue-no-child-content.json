@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-child-content",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment). Reported where the child content starts: the end of the start tag.",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment; the scanner keeps character references in the text, and one that decodes to a character `String.prototype.trim` strips, such as `&#32;` or `&nbsp;`, is whitespace as it is to the plugin). Reported where the child content starts: the end of the start tag.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -57,11 +57,16 @@
                       "kind": "style_element"
                     },
                     {
-                      "kind": "entity"
+                      "kind": "entity",
+                      "not": {
+                        "regex": "^&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?$"
+                      }
                     },
                     {
                       "kind": "text",
-                      "regex": "\\S"
+                      "not": {
+                        "regex": "^(?:\\s|&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?)*$"
+                      }
                     }
                   ]
                 }
@@ -129,11 +134,16 @@
                       "kind": "style_element"
                     },
                     {
-                      "kind": "entity"
+                      "kind": "entity",
+                      "not": {
+                        "regex": "^&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?$"
+                      }
                     },
                     {
                       "kind": "text",
-                      "regex": "\\S"
+                      "not": {
+                        "regex": "^(?:\\s|&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?)*$"
+                      }
                     }
                   ]
                 }

@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-unused-vars",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the view program: the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding references (`binds.referenced`; a component tag `<Comp>` is an identifier read in the view, as upstream's isUsedAsComponentTag). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the view program: the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: the view's read of a descendant component tag, never the `v-for` element's own, which is its arrow's first statement, read at the arrow's own tag name). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -206,7 +206,9 @@
                   "any": [
                     {
                       "binds": {
-                        "referenced": true
+                        "occurrence": {
+                          "matches": "real-ref"
+                        }
                       }
                     },
                     {
@@ -259,6 +261,172 @@
                   }
                 }
               ]
+            },
+            "tag-read": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "member_expression"
+                      }
+                    },
+                    "kind": "expression_statement"
+                  }
+                }
+              ]
+            },
+            "real-ref": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier"
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "binds": {
+                      "form": "parameter"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "tag-read"
+                  }
+                }
+              ]
+            },
+            "tag-used-name": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "arrow_function",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$TAGT",
+                    "compare": {
+                      "left": "NAME",
+                      "op": "eq",
+                      "right": "TAGT"
+                    },
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "expression_statement",
+                          "not": {
+                            "nthChild": 1
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "expression_statement",
+                          "nthChild": 1,
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "statement_block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "arrow_function",
+                              "not": {
+                                "matches": "declares-name"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "expression_statement",
+                          "nthChild": 1,
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "statement_block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "arrow_function",
+                              "matches": "declares-name",
+                              "not": {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "expression_statement",
+                          "nthChild": 1,
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "statement_block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "arrow_function",
+                              "matches": "declares-name",
+                              "pattern": "$OWNER",
+                              "compare": {
+                                "left": "OWN",
+                                "op": "ne",
+                                "right": "TAGT"
+                              },
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "sequence_expression"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "declares-name": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "formal_parameters",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "pattern": "$ZP",
+                  "compare": {
+                    "left": "NAME",
+                    "op": "eq",
+                    "right": "ZP",
+                    "text": "node"
+                  }
+                }
+              }
             }
           },
           "rule": {
@@ -269,13 +437,26 @@
               },
               {
                 "binds": {
-                  "form": "parameter",
-                  "referenced": false
+                  "form": "parameter"
+                }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "occurrence": {
+                      "matches": "real-ref"
+                    }
+                  }
                 }
               },
               {
                 "not": {
                   "matches": "cond-used-name"
+                }
+              },
+              {
+                "not": {
+                  "matches": "tag-used-name"
                 }
               },
               {
@@ -293,6 +474,15 @@
                 }
               }
             ]
+          },
+          "transform": {
+            "OWN": {
+              "replace": {
+                "source": "$OWNER",
+                "replace": "^<([^\\s/>]+)[\\s\\S]*$",
+                "by": "$1"
+              }
+            }
           }
         }
       },

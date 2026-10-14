@@ -244,6 +244,25 @@
                   "kind": "string_fragment",
                   "regex": "^setup$"
                 }
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "string",
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^setup$"
+                      }
+                    },
+                    {
+                      "kind": "template_string",
+                      "regex": "^`setup`$"
+                    }
+                  ]
+                }
               }
             ]
           },
@@ -376,10 +395,24 @@
               "regex": "^defineProps$"
             }
           },
-          "macro-call": {
+          "define-props-ref": {
             "any": [
               {
                 "matches": "define-props-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "define-props-ref"
+                }
+              }
+            ]
+          },
+          "macro-call": {
+            "any": [
+              {
+                "matches": "define-props-ref"
               },
               {
                 "kind": "call_expression",
@@ -403,11 +436,18 @@
                             }
                           }
                         },
-                        "matches": "define-props-call"
+                        "matches": "define-props-ref"
                       }
                     }
                   }
                 ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "macro-call"
+                }
               }
             ]
           },
@@ -439,7 +479,7 @@
                       "regex": "^<script\\b"
                     },
                     "kind": "empty_statement",
-                    "regex": "^<script\\b[^>]*\\bsetup\\b"
+                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
                   }
                 }
               }

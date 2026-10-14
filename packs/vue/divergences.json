@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "rule": "eslint-plugin-vue-no-unused-vars",
+    "source": "fixtures",
+    "path": "no-unused-vars/rerail-native-tag-descendant.vue",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "`<div v-for=\"div in list\"><div /></div>`: eslint-plugin-vue 10.11.1's isUsedAsComponentTag compares every descendant element's raw tag name with the variable's, a native `<div>` included, and does not report `div` (recorded in fixtures.expected.json: no finding at 2:15). The view program (native/src/code_rule_dsl/vue/view.rs) reads only a tag Vue compiles to a component (`is_component`: not a native or built-in tag), so a native descendant has no node a rule can match and the port reports `div`. It matters only for a v-for alias or slot parameter that is unused and spelled like an HTML tag."
+  }
+]

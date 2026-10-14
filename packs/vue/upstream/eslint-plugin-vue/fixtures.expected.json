@@ -756,7 +756,39 @@
    "require-valid-default-prop/invalid-053.vue",
    "require-valid-default-prop/invalid-054.vue",
    "require-valid-default-prop/invalid-055.vue",
-   "require-valid-default-prop/invalid-056.vue"
+   "require-valid-default-prop/invalid-056.vue",
+   "no-ref-as-operand/rerail-torefs-container.vue",
+   "no-export-in-script-setup/rerail-setup-in-attribute-value.vue",
+   "no-export-in-script-setup/rerail-setup-after-quoted-value.vue",
+   "no-export-in-script-setup/rerail-setup-attribute-with-value.vue",
+   "no-mutating-props/rerail-local-define-component.vue",
+   "no-mutating-props/rerail-other-package-define-component.vue",
+   "no-mutating-props/rerail-vue-define-component.vue",
+   "no-mutating-props/rerail-global-define-component.vue",
+   "no-mutating-props/rerail-required-define-component.vue",
+   "no-mutating-props/rerail-setup-arrow-bare-parameter.vue",
+   "no-child-content/rerail-whitespace-character-references.vue",
+   "require-valid-default-prop/rerail-local-define-component.vue",
+   "require-valid-default-prop/rerail-other-package-define-component.vue",
+   "require-valid-default-prop/rerail-vue-define-component.vue",
+   "require-valid-default-prop/rerail-global-define-component.vue",
+   "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "no-unused-vars/rerail-component-tag-names.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-method-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-pair-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-template-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-dynamic-key.vue",
+   "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "require-valid-default-prop/rerail-comment-before-define-props-argument.vue",
+   "require-valid-default-prop/rerail-comment-in-with-defaults.vue",
+   "require-valid-default-prop/rerail-comment-before-define-model-options.vue",
+   "require-valid-default-prop/rerail-comment-around-define-component-argument.vue",
+   "require-valid-default-prop/rerail-comment-before-new-vue-argument.vue",
+   "require-valid-default-prop/rerail-export-default-as-const.vue",
+   "require-valid-default-prop/rerail-define-component-as-argument.vue",
+   "require-valid-default-prop/rerail-export-default-parenthesized.vue",
+   "no-unused-vars/rerail-native-tag-descendant.vue"
   ]
  },
  "findings": [
@@ -1545,6 +1577,84 @@
    "path": "no-child-content/invalid-005.vue",
    "line": 1,
    "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 2,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 3,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 4,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 5,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 5,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 6,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 6,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 7,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 8,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 10,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 11,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 13,
+   "column": 19
   },
   {
    "rule": "vue/no-v-html",
@@ -2411,6 +2521,18 @@
    "column": 7
   },
   {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/rerail-setup-after-quoted-value.vue",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/rerail-setup-attribute-with-value.vue",
+   "line": 4,
+   "column": 1
+  },
+  {
    "rule": "vue/no-mutating-props",
    "path": "no-mutating-props/invalid-000.vue",
    "line": 4,
@@ -2909,6 +3031,24 @@
    "column": 24
   },
   {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-global-define-component.vue",
+   "line": 4,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-setup-arrow-bare-parameter.vue",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 20
+  },
+  {
    "rule": "vue/require-v-for-key",
    "path": "no-mutating-props/valid-001.vue",
    "line": 9,
@@ -3329,6 +3469,18 @@
    "column": 38
   },
   {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/rerail-torefs-container.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/rerail-torefs-container.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
    "rule": "vue/no-setup-props-reactivity-loss",
    "path": "no-setup-props-reactivity-loss/invalid-000.vue",
    "line": 4,
@@ -3543,6 +3695,54 @@
    "path": "no-setup-props-reactivity-loss/invalid-024.vue",
    "line": 5,
    "column": 29
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-method-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-pair-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-template-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 7,
+   "column": 7
   },
   {
    "rule": "vue/no-side-effects-in-computed-properties",
@@ -5051,6 +5251,138 @@
    "column": 68
   },
   {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 2,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 3,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 4,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 5,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 6,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 7,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 8,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 12,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 12,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 13,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 13,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 14,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 15,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 15,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 16,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 17,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 18,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-native-tag-descendant.vue",
+   "line": 2,
+   "column": 3
+  },
+  {
    "rule": "vue/require-v-for-key",
    "path": "no-unused-vars/valid-000.vue",
    "line": 1,
@@ -5453,6 +5785,102 @@
    "column": 50
   },
   {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 4,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 9,
+   "column": 18
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 21
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 16,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 19,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 19,
+   "column": 21
+  },
+  {
    "rule": "vue/valid-v-for",
    "path": "require-v-for-key/valid-003.vue",
    "line": 1,
@@ -5817,6 +6245,60 @@
    "path": "require-valid-default-prop/invalid-056.vue",
    "line": 3,
    "column": 52
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-around-define-component-argument.vue",
+   "line": 4,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-define-model-options.vue",
+   "line": 2,
+   "column": 59
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-define-props-argument.vue",
+   "line": 2,
+   "column": 59
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-new-vue-argument.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-in-with-defaults.vue",
+   "line": 2,
+   "column": 64
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-define-component-as-argument.vue",
+   "line": 4,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-export-default-parenthesized.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-global-define-component.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-vue-define-component.vue",
+   "line": 4,
+   "column": 40
   },
   {
    "rule": "vue/no-dupe-keys",

@@ -737,7 +737,7 @@
                             "has": {
                               "stopBy": "end",
                               "kind": "empty_statement",
-                              "regex": "^<script\\b[^>]*\\bsetup\\b"
+                              "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
                             }
                           },
                           {

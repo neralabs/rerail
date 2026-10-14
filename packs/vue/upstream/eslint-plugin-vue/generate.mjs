@@ -1,4 +1,4 @@
-// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack will port (../../conformance.json). Run offline by a
+// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run offline by a
 // maintainer, never in CI, with the tools of ../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
@@ -21,8 +21,9 @@
 // `fixtures/<rule>/<valid|invalid>-<index>.vue` when the case is a .vue file (a `.vue` filename, or none, which
 // vue-eslint-parser reads as an SFC); a script-only case (`filename: "*.js"`) is wrapped as
 // `<script>\n<code>\n</script>` and kept only if it still reproduces. `cases.json` lists every case with its fate.
-// Then every fixture is linted by every rule, and `fixtures.expected.json` records all findings (a fixture of one
-// rule may also be reported by another).
+// `authored.mjs` holds Rerail's own cases, inputs a port once misread; each is written as
+// `fixtures/<rule>/rerail-<name>.vue` and listed in `UPSTREAM.md` beside this file. Then every fixture is linted by every
+// rule, and `fixtures.expected.json` records all findings (a fixture of one rule may also be reported by another).
 //
 // `corpus` lints every `.vue` file of each corpus (the files T1 enumerates) and writes `corpus-<name>.expected.json`;
 // a file ESLint cannot parse (a fatal message) is `skipped`.
@@ -35,6 +36,7 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, w
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
+import { AUTHORED } from "./authored.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = toolsDirectory(HERE);
@@ -214,12 +216,37 @@ function fixtures(checkout) {
       }
     });
   }
+  // Rerail's own cases (authored.mjs): inputs the port once misread, scored against what the plugin reports on them.
+  const authored = [];
+  for (const { rule, name, code } of AUTHORED) {
+    const path = `${rule}/rerail-${name}.vue`;
+    const { fatal } = lint(code, path);
+    if (fatal !== undefined) throw new Error(`authored ${path} does not parse: ${fatal.message}`);
+    mkdirSync(join(root, rule), { recursive: true });
+    writeFileSync(join(root, path), code);
+    files.push(path);
+    authored.push(path);
+  }
   const findings = files.flatMap(path => lint(readFileSync(join(root, path), "utf8"), path).findings);
+  writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
   writeLicense(checkout, cases.filter(c => c.kept));
   write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
   const kept = cases.filter(c => c.kept).length;
   console.log(`cases: ${kept} kept of ${cases.length}`);
+}
+
+/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not eslint-plugin-vue's. */
+function writeAuthoredRecord(authored) {
+  const rows = authored.map(path => `| \`upstream/eslint-plugin-vue/fixtures/${path}\` | written by Rerail |`);
+  writeFileSync(join(HERE, "UPSTREAM.md"), `# eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}: cases Rerail wrote
+
+The fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\`licenses/eslint-plugin-vue/UPSTREAM.md\`). Each is an input a port once misread; \`authored.mjs\` holds them and \`generate.mjs fixtures\` records the plugin's findings on them in \`fixtures.expected.json\`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under \`licenses/\`. Paths are relative to the pack directory.
+
+| File | Origin |
+|---|---|
+${rows.join("\n")}
+`);
 }
 
 /** `packs/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
@@ -232,7 +259,7 @@ function writeLicense(checkout, kept) {
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack will port (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`cases.json\` and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
+The files listed below are the code of RuleTester cases of the rules the Vue pack ports (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`authored.mjs\`, \`cases.json\`, the fixtures \`rerail-*.vue\` (written by Rerail; \`upstream/eslint-plugin-vue/UPSTREAM.md\` lists them) and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
 
 This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to the pack directory (\`packs/vue/\`).
 

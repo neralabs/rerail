@@ -75,7 +75,7 @@
               "follows": {
                 "stopBy": "end",
                 "kind": "empty_statement",
-                "regex": "^<script\\b[^>]*\\bsetup\\b"
+                "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
               },
               "not": {
                 "follows": {
@@ -83,12 +83,12 @@
                   "kind": "empty_statement",
                   "regex": "^<script\\b",
                   "not": {
-                    "regex": "^<script\\b[^>]*\\bsetup\\b"
+                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
                   },
                   "follows": {
                     "stopBy": "end",
                     "kind": "empty_statement",
-                    "regex": "^<script\\b[^>]*\\bsetup\\b"
+                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
                   }
                 }
               }

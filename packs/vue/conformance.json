@@ -247,6 +247,7 @@
       "capabilities": [
         "syntax",
         "scope",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
