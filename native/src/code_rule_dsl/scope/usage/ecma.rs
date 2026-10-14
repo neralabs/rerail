@@ -452,18 +452,16 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
     }
 
     fn reference(&mut self, reference: super::super::Reference, node: &Node<'r, D>) {
-        let Some(name) = self
-            .text
-            .get(reference.start - self.base..reference.end - self.base)
-        else {
+        // The name as the family compares names: a Vue same-name shorthand's span is no name.
+        let Some(name) = self.table.reference_name(&reference, self.text, self.base) else {
             return;
         };
-        let Some((scope, _)) = self.table.resolve_lexical_index(&reference, name) else {
+        let Some((scope, _)) = self.table.resolve_lexical_index(&reference, &name) else {
             return;
         };
         let Some((key, _)) = self.table.scopes[scope as usize]
             .bindings
-            .get_key_value(name)
+            .get_key_value(name.as_ref())
         else {
             return;
         };

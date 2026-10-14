@@ -107,6 +107,40 @@ mod tests {
         }
     }
 
+    /// A same-name shorthand reads its camelized argument (`:aria-label` is `ariaLabel`), though
+    /// the tape spans its identifier over `aria-label`: the slot binding resolves and is used, as
+    /// vue-eslint-parser reads it (eslint-plugin-vue's no-unused-vars reports nothing).
+    #[test]
+    fn same_name_shorthand_reads_its_camelized_name() {
+        let source =
+            r#"<template><Comp v-slot="{ ariaLabel }"><div :aria-label></div></Comp></template>"#;
+        let doc = tape(source);
+        let table = ScopeTable::build(doc.root(), GrammarDialect::Vue, usize::MAX, &|| false)
+            .expect("table builds");
+        let read = source.find("aria-label").expect("the shorthand");
+        let reference = table
+            .reference(&(read..read + "aria-label".len()))
+            .expect("the shorthand is a reference");
+        let name = table.reference_name(reference, source, 0).expect("a name");
+        assert_eq!(name, "ariaLabel");
+        assert!(table.resolve(reference, &name).is_some(), "it resolves");
+        let scope = table
+            .scopes
+            .iter()
+            .position(|scope| scope.bindings.contains_key("ariaLabel"))
+            .expect("the slot binding") as u32;
+        let usage = Usage::build(&table, &doc.root(), usize::MAX, &|| false).expect("usage");
+        let facts = usage.facts(BindingId {
+            scope,
+            name: "ariaLabel",
+            index: 0,
+        });
+        assert_eq!(
+            (facts.referenced, facts.used, facts.references),
+            (Some(true), Some(true), 1)
+        );
+    }
+
     /// ast-grep walks a node's later siblings from the first sibling that ends after its start
     /// (`next_all`): a `v-for` parameter's are the parameters after it, the alias's parentheses
     /// standing for no bytes (eslint-plugin-vue no-unused-vars invalid-007 to 009: a parameter

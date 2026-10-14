@@ -18,7 +18,7 @@
 //! | `<template>` in HTML (no `lang` other than `html`, no `src`) | `{ ... }` holding the template's view | the template element |
 //! | `{{ E }}` | `(E);` | the interpolation |
 //! | a directive with a value: `:x="E"`, `v-bind:x`, `v-bind="E"`, `v-show`, `v-html`, `v-text`, `v-model`, `v-memo`, `v-on="{...}"`, a custom `v-foo` | `(E);` | the directive attribute |
-//! | `:x`, `v-bind:x`, `.x` without a value (Vue 3.4's same-name shorthand) | `(x);` (the argument camelized: copied, or written over the argument where camelizing changes it) | the directive attribute |
+//! | `:x`, `v-bind:x`, `.x` without a value (Vue 3.4's same-name shorthand) | `(x);` (the argument camelized: copied, or written over the argument where camelizing changes it, whose span a tape keeps: Vue's `Adapter::name` reads `aria-label` as `ariaLabel`) | the directive attribute |
 //! | a dynamic argument `v-x:[A]`, `:[A]`, `@[A]`, `#[A]` | `(A);` before the directive's own statement | the `[A]` |
 //! | `@x="E"`, `v-on:x` whose value is a member expression or a function (compiler-core's `isMemberExpression`, `isFnExpression`) | `(E);` | the directive attribute |
 //! | `@x="S"` whose value is anything else: inline statements | `(() => { S });` | the directive attribute |
@@ -344,7 +344,7 @@ fn decoded(text: &str) -> Cow<'_, str> {
 
 /// @vue/shared's `camelize`: each `-` and the character after it become that character in upper
 /// case.
-fn camelize(text: &str) -> String {
+pub(crate) fn camelize(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(char) = chars.next() {

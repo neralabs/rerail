@@ -49,8 +49,16 @@ impl Adapter for Vue {
     type Calls = Refused;
     type FormatArgs = Refused;
 
+    /// ECMAScript's, but for a same-name shorthand's identifier (`:aria-label`), the one
+    /// identifier the view writes over file bytes that are no identifier: the tape keeps its
+    /// span, `aria-label`, and the name Vue reads is the camelized argument, `ariaLabel`
+    /// (`vue::view`). No ECMAScript identifier holds a `-`.
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        <Ecma as Adapter>::name(text)
+        if text.contains('-') {
+            Cow::Owned(vue::view::camelize(&text))
+        } else {
+            <Ecma as Adapter>::name(text)
+        }
     }
 
     /// The program the component embeds (`vue::program`), read as the dialect its script's `lang`
