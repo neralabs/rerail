@@ -78,6 +78,12 @@ pub(crate) trait Adapter: 'static {
     /// Whether an ast query's `file` may ask for declaration files (`declaration`,
     /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
     const DECLARATION_FILES: bool;
+    /// Whether the program the family's documents embed (`regions`) is a tree apart from the
+    /// host's, which the host's syntax errors leave whole: a clause whose witnesses all lie in
+    /// such a program, free of syntax errors of its own, reads none of the host's
+    /// (`SyntaxErrors::of_doc`). Vue's is (`vue::view` reads only the template's recovered
+    /// expressions); Blade's compiled view is read from the template and carries its errors.
+    const PROGRAM_APART: bool = false;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;

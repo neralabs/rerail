@@ -411,18 +411,19 @@ impl<'a> Leaf<'a> {
                     return Ok(FileStep::Skipped);
                 };
                 let (doc, lines) = file_tape(grammar.language, file)?;
-                // From the tape: a Blade file's embedded PHP is part of it (`blade::view`).
-                let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
+                // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
+                // Vue file's program stands apart from the template (`SyntaxErrors::of_doc`).
+                let errors = SyntaxErrors::of_doc(&doc, grammar.language);
                 let mut partial = None;
                 if !errors.is_empty() {
-                    if !grammar.sound_under_errors {
+                    if errors.incomplete(grammar) {
                         return Ok(FileStep::Failed);
                     }
                     partial = Some(errors.partial_message(&lines));
                 }
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
-                    FileScopeSlot::install(Vec::new(), file.module.clone(), !errors.is_empty())
+                    FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())
                         .path(&file.path);
                 let _calls = crate::code_rule_dsl::calls::FileCallsSlot::for_path(&file.path);
                 let decided = match evaluate_file_clause(
@@ -610,8 +611,9 @@ pub(super) fn query_failure_path<'a>(
                 scope.matches(&file.path)
                     && grammar_matcher(matchers, file).is_some_and(|grammar| {
                         !grammar.sound_under_errors
-                            && file_tape(grammar.language, file)
-                                .is_ok_and(|(doc, _)| !doc.syntax_error_ranges().is_empty())
+                            && file_tape(grammar.language, file).is_ok_and(|(doc, _)| {
+                                SyntaxErrors::of_doc(&doc, grammar.language).incomplete(grammar)
+                            })
                     })
             })
             .map(|file| file.path.as_str()),

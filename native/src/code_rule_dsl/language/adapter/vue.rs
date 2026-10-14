@@ -43,6 +43,10 @@ impl Adapter for Vue {
     const TERMINATORS: Terminators = <Ecma as Adapter>::TERMINATORS;
     const PACKAGES: bool = <Ecma as Adapter>::PACKAGES;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
+    /// The program is a tree of its own beside the component's (`vue::program`): a template's
+    /// syntax error leaves a clause over a clean program complete, as vue-eslint-parser recovers
+    /// from it and ESLint reads the scripts.
+    const PROGRAM_APART: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Ecma;

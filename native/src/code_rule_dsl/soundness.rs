@@ -1,5 +1,8 @@
+use super::language::adapter::{Adapter, with_adapter};
+use super::language::{Family, GrammarDialect};
 use super::lines::LineTable;
-use super::matcher::{AstMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::tape::TapeDoc;
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
 use std::collections::BTreeSet;
@@ -283,6 +286,9 @@ fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>
 /// Sorted by start; overlapping ranges are merged, so range ends never decrease.
 pub(super) struct SyntaxErrors {
     regions: Vec<Range<usize>>,
+    /// The program a tape embeds apart from its host tree (`Adapter::PROGRAM_APART`): its kind
+    /// code, and whether it has syntax errors of its own (`TapeDoc::embedded_program`).
+    program: Option<(u16, bool)>,
 }
 
 impl SyntaxErrors {
@@ -319,11 +325,54 @@ impl SyntaxErrors {
                 _ => regions.push(range),
             }
         }
-        Self { regions }
+        Self {
+            regions,
+            program: None,
+        }
+    }
+
+    /// The regions of a restored document of `language`, and the program it embeds apart from
+    /// its host tree where its family's is (`Adapter::PROGRAM_APART`, Vue's).
+    pub(super) fn of_doc(doc: &TapeDoc, language: GrammarDialect) -> Self {
+        let mut errors = Self::from_ranges(doc.syntax_error_ranges());
+        if !errors.is_empty() && with_adapter!(Family::of(language), A => A::PROGRAM_APART) {
+            errors.program = doc.embedded_program();
+        }
+        errors
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.regions.is_empty()
+    }
+
+    /// Whether the errors leave a clause of `grammar` incomplete: one not sound under them
+    /// (`sound_under_errors`), unless each witness it may have lies in a program apart from the
+    /// host tree (`of_doc`) that has no syntax error of its own. Its root kinds (`AnchorPlan`) are
+    /// then the program's kinds, but for the program root itself, whose siblings are the host's.
+    /// The program holds the template expressions the host's recovered tree holds, as
+    /// vue-eslint-parser's recovery leaves ESLint those its tree holds.
+    pub(super) fn incomplete(&self, grammar: &GrammarMatcher) -> bool {
+        if self.is_empty() || grammar.sound_under_errors {
+            return false;
+        }
+        let Some((program, false)) = self.program else {
+            return true;
+        };
+        grammar.anchors.root_kinds().is_none_or(|kinds| {
+            kinds
+                .iter()
+                .any(|&kind| kind == program || !grammar.language.is_embedded_kind(kind))
+        })
+    }
+
+    /// Whether a binding may hide in an error region from the scope tables, which read the
+    /// regions of the document (`Adapter::regions`): a program apart from the host tree only
+    /// in its own.
+    pub(super) fn hide_bindings(&self) -> bool {
+        match self.program {
+            Some((_, errors)) => errors,
+            None => !self.is_empty(),
+        }
     }
 
     /// Whether `range` meets any region; a zero-width MISSING point meets a range that touches it.
@@ -421,6 +470,7 @@ mod tests {
     fn syntax_error_regions_merge_and_treat_missing_as_a_point() {
         let errors = SyntaxErrors {
             regions: vec![4..4, 10..20],
+            program: None,
         };
         assert!(
             errors.overlaps(&(0..4)),

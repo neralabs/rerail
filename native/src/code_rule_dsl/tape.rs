@@ -1339,6 +1339,28 @@ impl TapeDoc {
         ranges
     }
 
+    /// The embedded program the root's last child holds (a Vue tape's, `vue::program`), where it
+    /// is of a kind of the grammar the dialect embeds: its kind code, and whether its subtree has
+    /// an ERROR node or a MISSING token. `None` where the tape embeds no program.
+    pub(super) fn embedded_program(&self) -> Option<(u16, bool)> {
+        let root = self.data.first()?;
+        let mut child = root.first;
+        let mut last = NONE;
+        while child != NONE {
+            last = child;
+            child = self.data[child as usize].next;
+        }
+        let program = self.data.get(last as usize)?;
+        if !self.grammar.kinds.is_embedded_kind(program.kind) {
+            return None;
+        }
+        let subtree = &self.data[last as usize..last as usize + program.size as usize];
+        Some((
+            program.kind,
+            subtree.iter().any(|rec| rec.error || rec.missing),
+        ))
+    }
+
     #[cfg(test)]
     pub(super) fn restore(
         source: Arc<String>,

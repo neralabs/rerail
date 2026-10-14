@@ -457,11 +457,11 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
-    let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
+    let errors = SyntaxErrors::of_doc(&doc, language);
     if !errors.is_empty() {
         for &id in &file.candidates.ast {
             if !file.failures.contains_key(&id)
-                && !candidate_grammar(&code_rules[id.0], id.1, &file.input).sound_under_errors
+                && errors.incomplete(candidate_grammar(&code_rules[id.0], id.1, &file.input))
             {
                 file.failures
                     .insert(id, ("source-incomplete", "file has syntax errors"));
@@ -570,7 +570,7 @@ fn evaluate_ast_file(
                 .map(|(_, tables)| tables.clone())
                 .unwrap_or_default(),
             file.input.module.clone(),
-            !errors.is_empty(),
+            errors.hide_bindings(),
         )
         .path(&file.input.path);
         let match_started = Instant::now();
