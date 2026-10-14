@@ -35,7 +35,8 @@ export interface Summary {
   missingReports: string[];
   candidateFunnel: Record<string, Record<string, number>>;
   candidateRows: (BlockingRow & { toolPack: string })[];
-  promotable: { toolPack: string; rule: string }[];
+  /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
+  promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
   toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; integrity: string[]; gapCandidates: number; toolPackChecks: boolean }[];
   pass: boolean;
@@ -82,7 +83,7 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     candidateFunnel[report.toolPack] = Object.fromEntries([...BLOCKING_GATES.map((gate) => [gate.title, report.summary.stoppedAt.candidate[gate.id]] as const), ["passes every gate", report.summary.candidates.pass] as const]);
     for (const rule of report.rules.filter((item) => item.location === "candidate")) {
       const failure = firstFailure(rule);
-      if (failure === null) promotable.push({ toolPack: report.toolPack, rule: rule.id });
+      if (failure === null) promotable.push({ toolPack: report.toolPack, rule: rule.id, upstreamRule: rule.upstreamRule, startsOn: rule.defaultOn, startReason: rule.defaultOnReason });
       candidateRows.push({ toolPack: report.toolPack, pack: report.pack, rule: rule.id, ...(failure ?? { stoppedAt: "passes", check: "-", why: "-" }) });
     }
   }
@@ -127,11 +128,21 @@ export function renderSummary(summary: Summary): string {
   const lines = [
     "# Rule gates",
     "",
-    `**${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.candidates.pass} of ${summary.candidates.rules} candidates pass every gate.**`,
+    `**${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.promotable.length} candidate(s) ready to promote (${summary.candidates.pass} of ${summary.candidates.rules} pass every gate).**`,
     "",
     "## Blocking failures",
     "",
     ...(summary.blocking.length === 0 ? ["None."] : table(["Pack", "Rule", "Stopped at", "Check", "Why"], summary.blocking.map((row) => [row.pack, row.rule, row.stoppedAt, row.check, row.why]))),
+    "",
+    "## Ready to promote",
+    "",
+    ...(summary.promotable.length === 0
+      ? ["No candidate passes every gate yet."]
+      : [
+          `${summary.promotable.length} candidate(s) pass every gate: the signal to promote them into \`rules/\` and \`pack.json\`. Passing the gates is necessary, not sufficient; a reviewer still decides. "Starts" is what upstream-status sets for pack.json \`on\`.`,
+          "",
+          ...table(["Tool-pack", "Rule", "Upstream rule", "Starts", "Why"], summary.promotable.map((row) => [row.toolPack, row.rule, row.upstreamRule, row.startsOn ? "on" : "off", row.startReason])),
+        ]),
     "",
     "## Blocked by engine gaps",
     "",
@@ -151,7 +162,7 @@ export function renderSummary(summary: Summary): string {
     "",
     ...Object.entries(summary.candidateFunnel).flatMap(([toolPack, counts]) => [`- ${toolPack}: ${Object.entries(counts).map(([gate, count]) => `${gate} ${count}`).join(", ")}`]),
     "",
-    `Promotable (pass every gate; necessary, not sufficient): ${summary.promotable.length === 0 ? "none" : summary.promotable.map((entry) => `\`${entry.rule}\``).join(", ")}`,
+    `Ready to promote: ${summary.promotable.length} (listed above).`,
     "",
     "<details><summary>Every candidate</summary>",
     "",
