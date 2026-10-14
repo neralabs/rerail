@@ -65,7 +65,7 @@ wherever their names agree, so a rule's `kind`, `field` and `pattern` read every
 
 | Concern | Vue |
 |---|---|
-| Regions | The embedded `program`, read as the dialect its script's `lang` names (`vue::tape_script_dialect`: the shared kind codes do not tell the three apart) |
+| Regions | The embedded `program`, read as the dialect `ScriptBlock` built it in, which the tape records (`tape::EmbeddedProgram`: the shared kind codes do not tell the three apart); it stands apart from the template (`Embedder::APART`), so a template's syntax error leaves a clause over a clean program complete |
 | Scope, value, arguments | Ecma's, over the program: template references resolve in the scopes Vue's compiler gives them; a token the view writes (an interpolation's `(` and `);`) is not spelled (`embed::rewritten`) |
 | Calls, format arguments | Refused, as ECMAScript's are: vue-eslint-parser hands the scripts to ESLint, which has neither |
 | Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
