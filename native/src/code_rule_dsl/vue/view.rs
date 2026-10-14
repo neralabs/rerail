@@ -10,7 +10,10 @@
 //! program), and parsed with tree-sitter; each of its nodes maps back to the `.vue` bytes it came
 //! from (`View::span`). Script content and template expressions are copied byte for byte, so their
 //! nodes map exactly onto the file. The syntax around them is synthetic, each token anchored to
-//! the Vue construct it stands for. The blocks are read in source order:
+//! the Vue construct it stands for. The two scripts share the program's module scope, as
+//! vue-eslint-parser 10.4.1 reads them (it parses their bodies as one program for ESLint), not as
+//! Vue's compiler runs them (`<script setup>`'s declarations in `setup()`): a `<script>` function
+//! reading a name `<script setup>` declares resolves to it. The blocks are read in source order:
 //!
 //! | Vue | Program | Span of the synthetic syntax |
 //! |---|---|---|

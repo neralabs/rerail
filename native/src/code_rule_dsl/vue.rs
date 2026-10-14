@@ -141,6 +141,25 @@ mod tests {
         );
     }
 
+    /// vue-eslint-parser 10.4.1 reads `<script>` and `<script setup>` as one module program, so
+    /// eslint-scope resolves a `<script>` function's read of a `<script setup>` declaration to it,
+    /// though Vue's compiler puts that declaration in `setup()`: the rules' oracle reads it so,
+    /// and so does the table (eslint-plugin-vue reports no `no-undef` here).
+    #[test]
+    fn scripts_share_one_module_scope_as_vue_eslint_parser_reads_them() {
+        let source = "<script>export function read() { return local }</script><script setup>const local = 1</script>";
+        let doc = tape(source);
+        let table = ScopeTable::build(doc.root(), GrammarDialect::Vue, usize::MAX, &|| false)
+            .expect("table builds");
+        let read = source.find("local").expect("the read");
+        let reference = table
+            .reference(&(read..read + "local".len()))
+            .expect("a reference");
+        let declared = source.rfind("local").expect("the declaration");
+        let binding = table.resolve(reference, "local").expect("it resolves");
+        assert_eq!(binding.name.map(|name| name.start as usize), Some(declared));
+    }
+
     /// ast-grep walks a node's later siblings from the first sibling that ends after its start
     /// (`next_all`): a `v-for` parameter's are the parameters after it, the alias's parentheses
     /// standing for no bytes (eslint-plugin-vue no-unused-vars invalid-007 to 009: a parameter
