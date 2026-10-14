@@ -4,7 +4,7 @@
  */
 import { h, setContent, chevron, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { categoryLabel, packSuppressions } from "../derive.js";
+import { categoryLabel, inPack, packSuppressions } from "../derive.js";
 import { data, ui, isAttached, packGroups, keptPacks, reviewing } from "../state.js";
 
 /** Whether the pack is on where its button shows: kept, during the review of a repository not set up yet; else added. */
@@ -55,7 +55,8 @@ function suppressionsLine(pack, suppressions) {
 
 export function renderPackPanel(root, pack) {
   const added = isAttached(pack), groups = packGroups(pack);
-  const present = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === pack.id);
+  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
+  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
   // The pack's switch is written as the settings owner the page shows: the repository, or this worktree.
   const owner = ui.scope?.checkout === undefined ? "repository" : ui.owner;
   const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, owner, data.checkout?.checkoutPath) : null;

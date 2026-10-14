@@ -6,7 +6,7 @@
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
-import { packSettingDecides } from "./derive.js";
+import { packSettingDecides, settingDecides } from "./derive.js";
 import { captureScope, inScope, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
@@ -59,10 +59,15 @@ export function settingWrites({ toast, invalidate, owner }) {
     return save(ruleTargets(rules), { on: enabled }, rules, r => { r.enabled = enabled; }, label);
   }
 
-  /** Honour or ignore suppression comments for rules, at every folder each is added at. */
+  /**
+   * Honour or ignore suppression comments for rules, at every folder each is added at. The page shows it in the
+   * folders the rule's setting decides: not where a setting that outranks it decides, by owner or folder depth.
+   */
   function setSuppressions(ids, suppressions, label) {
     const rules = storedRules(ids);
-    return save(ruleTargets(rules), { suppressions }, rules, showSuppressions(suppressions), label);
+    const by = owner();
+    const decides = state => settingDecides(state, "rule", by, data.checkout?.checkoutPath);
+    return save(ruleTargets(rules), { suppressions }, rules, showSuppressions(suppressions, decides), label);
   }
 
   /**

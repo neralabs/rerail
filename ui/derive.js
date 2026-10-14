@@ -100,14 +100,13 @@ export function suppressionsText(stored, checkoutPath) {
 export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
 
 /**
- * Whether pack `packId`'s setting, written as `owner` ("repository" or "checkout", this worktree being `checkoutPath`)
- * at the folder `state` is added at, would decide that folder's suppressions: only where the pack added the rule, and
- * then by the resolver's precedence: this worktree, then the worktrees containing it, then the repository; at one
- * owner the deeper folder; at one owner and folder the rule's own setting before its pack's. Neither a pack's starting
- * value nor a rule's default holds it off.
+ * Whether a setting on `target` ("rule" or "pack"), written as `owner` ("repository" or "checkout", this worktree being
+ * `checkoutPath`) at the folder `state` is added at, would decide that folder's suppressions. It mirrors the
+ * resolver's precedence: this worktree, then the worktrees containing it, then the repository; at one owner the deeper
+ * folder; at one owner and folder the rule's own setting before its pack's. Neither a pack's starting value nor a
+ * rule's default holds it off.
  */
-export function packSettingDecides(state, packId, owner, checkoutPath) {
-  if (state.source?.kind !== "pack" || state.source.id !== packId) return false;
+export function settingDecides(state, target, owner, checkoutPath) {
   const source = state.suppressionsSource;
   if (source?.by !== "checkout" && source?.by !== "repository") return true;
   // Lower outranks: this worktree, a worktree containing it, the repository.
@@ -115,8 +114,16 @@ export function packSettingDecides(state, packId, owner, checkoutPath) {
   const sourceRank = source.by === "repository" ? 2 : source.checkoutPath === checkoutPath ? 0 : 1;
   if (ownerRank !== sourceRank) return ownerRank < sourceRank;
   if (state.folder.length !== source.folder.length) return state.folder.length > source.folder.length;
-  return source.target === "pack";
+  return target === "rule" || source.target === "pack";
 }
+
+/** Whether pack `packId`'s setting would decide `state`'s suppressions: only where the pack added the rule. */
+export function packSettingDecides(state, packId, owner, checkoutPath) {
+  return state.source?.kind === "pack" && state.source.id === packId && settingDecides(state, "pack", owner, checkoutPath);
+}
+
+/** Whether a stored rule is in pack `packId` here: the pack added it at one of its folders. */
+export const inPack = (rule, packId) => rule.folderStates.some(state => state.source?.kind === "pack" && state.source.id === packId);
 
 /**
  * How pack `packId`'s rules here treat suppression comments, from each rule's own value, and what the pack's switch

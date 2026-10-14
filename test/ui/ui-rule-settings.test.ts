@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data } from "../../ui/state.js";
-import { nextSuppressions, optionsText, packSuppressions, suppressionsText } from "../../ui/derive.js";
+import { inPack, nextSuppressions, optionsText, packSuppressions, suppressionsText } from "../../ui/derive.js";
 import { settingWrites } from "../../ui/settings-writes.js";
 
 type Request = { method: string; body: unknown; answer: (status: number, body?: unknown) => void };
@@ -138,6 +138,17 @@ describe("a rule's suppression comments and options on the page", () => {
     expect(packSuppressions(rules, "eslint", "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
     expect(packSuppressions(rules, "other", "repository").next).toBe("ignore");
   });
+
+  // Self-review round 8: a rule added on its own in one folder and by the pack in another is still the pack's rule,
+  // whichever folder the page lists first.
+  it("finds the pack's rules whichever folder the pack added them at", () => {
+    const [rule] = [...toStoredRules([
+      entry("eslint:no-var", "a", { source: { kind: "rerail_rule", id: "eslint:no-var" }, suppressions: "honour", suppressionsSource: { by: "pack-start" } }),
+      entry("eslint:no-var", "b", { suppressions: "ignore", suppressionsSource: inRepository("b", "pack") }),
+    ]).values()];
+    expect(inPack(rule!, "eslint")).toBe(true);
+    expect(packSuppressions([rule!], "eslint", "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+  });
 });
 
 describe("the page's rule setting writes", () => {
@@ -196,6 +207,22 @@ describe("the page's rule setting writes", () => {
 
     expect(toast).toHaveBeenCalledWith("Ignored.");
     expect(stored("eslint:no-var").suppressions).toBe("ignore");
+  });
+
+  // Self-review round 8: this worktree's own setting outranks the repository's, so a repository change does not show
+  // in a folder the worktree decides.
+  it("shows a repository change only in the folders this worktree's setting does not decide", async () => {
+    data.rules = toStoredRules([
+      entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inWorktree("", "rule") }),
+      entry("eslint:no-var", "web", { suppressions: "honour", suppressionsSource: inRepository("web", "rule") }),
+    ]);
+    const saving = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "ignore"]);
+    for (let index = 0; index < 2; index += 1) {
+      await vi.waitFor(() => expect(writes()).toHaveLength(index + 1));
+      writes()[index]!.answer(200, {});
+    }
+    await saving;
   });
 
   it("puts the rule back as it was when the write fails", async () => {

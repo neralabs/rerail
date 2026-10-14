@@ -92,6 +92,7 @@ declare module "*/ui/derive.js" {
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function onText(stored: object, checkoutPath?: string): string;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
+  export function inPack(rule: object, packId: string): boolean;
 }
 
 declare module "*/ui/state.js" {
