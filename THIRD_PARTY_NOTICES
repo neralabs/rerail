@@ -301,15 +301,18 @@ Files: native/src/code_rule_dsl/suppress/biome.rs,
        native/src/code_rule_dsl/suppress/biome_registry.generated.rs,
        conformance/biome-same-sources.generated.ts
 Source: Biome tag @biomejs/biome@2.5.15, crates/biome_suppression/src/lib.rs,
-        crates/biome_analyze/src/{lib.rs,suppressions.rs}, crates/biome_diagnostics_categories/src/categories.rs,
+        crates/biome_analyze/src/{lib.rs,suppressions.rs,matcher.rs,rule.rs},
+        crates/biome_diagnostics_categories/src/categories.rs, crates/biome_js_syntax/src/lib.rs,
+        crates/biome_js_parser/src/lexer/mod.rs, crates/biome_js_analyze/src/suppressions.tests.rs,
         crates/biome_js_analyze/src/{assist,lint,syntax} (https://github.com/biomejs/biome)
 License: MIT (Biome is dual-licensed MIT OR Apache-2.0; Rerail takes it under MIT)
 
 Modified by the Rerail authors: diagnostics, unused-suppression bookkeeping,
 plugin and embedded-snippet suppressions are removed, the analyzer's token walk
-reads Rerail's tree-sitter comments and the text between them, and the
+reads Rerail's tree-sitter comments and the text between them, the
 categories, the JavaScript analyzer's rules and their ESLint same sources are
-tables read from Biome's source.
+tables read from Biome's source, and Biome's suppression test is a Rust test
+in biome.rs.
 
 MIT License
 
