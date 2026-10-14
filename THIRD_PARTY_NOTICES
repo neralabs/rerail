@@ -367,8 +367,8 @@ THE SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
-Files: native/grammars/tree-sitter-typescript/ (LICENSE, common/scanner.h and
-  {typescript,tsx}/src/scanner.c byte-identical to upstream; {typescript,tsx}/src/grammar.json
+Files: native/grammars/tree-sitter-typescript/ (LICENSE and {typescript,tsx}/src/scanner.c
+  byte-identical to upstream; common/scanner.h patched; {typescript,tsx}/src/grammar.json
   regenerated from the patched grammar; common/tree_sitter/{alloc,array,parser}.h written by
   tree-sitter-cli 0.27.0)
 Revision: f975a621f4e7f532fe322e13c4f79495e0a7b2e7
@@ -378,6 +378,20 @@ License: MIT (the verbatim upstream LICENSE is in that directory)
 The patches, why each is carried and how grammar.json is regenerated are in
 native/grammars/tree-sitter-typescript/PATCHES.md. native/build.rs generates
 each parser.c from its grammar.json with tree-sitter-generate 0.27.0.
+
+----------------------------------------------------------------------
+
+Bundled grammar: tree-sitter/tree-sitter-javascript 0.25.0, patched
+Files: native/grammars/tree-sitter-javascript/ (LICENSE byte-identical to upstream;
+  src/scanner.c patched; src/grammar.json regenerated from the patched grammar;
+  src/tree_sitter/{alloc,array,parser}.h written by tree-sitter-cli 0.27.0)
+Revision: 44c892e0be055ac465d5eeddae6d3e194424e7de
+Source: https://github.com/tree-sitter/tree-sitter-javascript
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+The patches, why each is carried and how grammar.json is regenerated are in
+native/grammars/tree-sitter-javascript/PATCHES.md. native/build.rs generates
+its parser.c from its grammar.json with tree-sitter-generate 0.27.0.
 
 ----------------------------------------------------------------------
 

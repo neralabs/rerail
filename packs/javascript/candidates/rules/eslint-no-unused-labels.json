@@ -1,9 +1,9 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-unused-labels",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
- "description": "Port of ESLint's `no-unused-labels` rule (https://eslint.org/docs/latest/rules/no-unused-labels). Flags a label no `break`/`continue` in its body names; removes the label when no comment sits between label and body, the body cannot become a directive, and removal creates no ASI hazard. tree-sitter reads a block holding only labeled expressions (`{ a: 'x' }` as a statement) as an object literal in an expression statement, which JavaScript cannot start with `{`; the third check treats that object's keys as the labels they are.",
+ "description": "Port of ESLint's `no-unused-labels` rule (https://eslint.org/docs/latest/rules/no-unused-labels). Flags a label no `break`/`continue` in its body names; removes the label when no comment sits between label and body, the body cannot become a directive, and removal creates no ASI hazard.",
  "scope": {
   "include": [
    "**/*"
@@ -475,53 +475,6 @@
     "anchor": "capture.L",
     "code": "no-unused-labels",
     "message": "'$L:' is defined but never used."
-   }
-  },
-  {
-   "id": "unused-label-misparsed-block",
-   "forbid": {
-    "ast": {
-     "language": "typescript",
-     "rule": {
-      "all": [
-       {
-        "kind": "pair"
-       },
-       {
-        "inside": {
-         "stopBy": "neighbor",
-         "kind": "object",
-         "inside": {
-          "stopBy": "neighbor",
-          "kind": "expression_statement"
-         }
-        }
-       },
-       {
-        "has": {
-         "stopBy": "neighbor",
-         "kind": "property_identifier",
-         "pattern": "$L"
-        }
-       },
-       {
-        "has": {
-         "stopBy": "neighbor",
-         "pattern": "$V",
-         "not": {
-          "kind": "property_identifier"
-         }
-        }
-       }
-      ]
-     }
-    }
-   },
-   "violation": {
-    "anchor": "capture.L",
-    "code": "no-unused-labels",
-    "message": "'$L:' is defined but never used.",
-    "fix": "$V"
    }
   }
  ]

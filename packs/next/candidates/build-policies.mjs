@@ -512,7 +512,9 @@ const GOOGLE_FONT_LINK = { all: [OPEN, named("link"), hasAttribute("href", liter
 /** The ancestor no-page-custom-font accepts as the default-exported component. */
 const DEFAULT_COMPONENT = {
   any: [
-    { kind: "function_declaration", inside: { kind: "export_statement", regex: "^export\\s+default\\s" } },
+    // `export default function () {}` is a function_expression in the grammar; the plugin reads it as a
+    // FunctionDeclaration whose null id matches the null default-export id.
+    { any: [{ kind: "function_declaration" }, { kind: "function_expression" }], inside: { kind: "export_statement", regex: "^export\\s+default\\s" } },
     { all: [DOCUMENT_CLASS, { inside: { kind: "export_statement", regex: "^export\\s+default\\s" } }] },
     {
       all: [

@@ -500,9 +500,12 @@ impl Resolves {
                 "statement_block" | "switch_statement" => blocks,
                 "for_statement" => {
                     blocks
-                        && ancestor
-                            .field("initializer")
-                            .is_some_and(|initializer| initializer.kind() == "lexical_declaration")
+                        && ancestor.field("initializer").is_some_and(|initializer| {
+                            matches!(
+                                initializer.kind().as_ref(),
+                                "lexical_declaration" | "using_declaration"
+                            )
+                        })
                 }
                 "for_in_statement" => {
                     blocks
