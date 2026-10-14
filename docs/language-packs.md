@@ -85,10 +85,10 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
 `parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
-(`via`); a supported entry may embed only supported languages. An embedding's `Embedder` produces the embedded
-program and `Adapter::regions` yields its regions. Changes stay additive within `rerail.language/v1`: a new
-optional field or a new value is a v1 change, and renaming or removing a field, or changing what a value means,
-needs `rerail.language/v2`.
+(`via`); a supported entry may embed only supported languages. An embedding's `Embedder` builds at most one program
+per file and `via`, and `adapter::regions` yields it as a region in the dialect the tape records for it. Changes stay
+additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing a
+field, or changing what a value means, needs `rerail.language/v2`.
 
 The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
@@ -130,6 +130,12 @@ package and never in the product:
   `nativeRefusingExemplar` (`test/engine/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
   loads is a product build and does not know it. The engine's own refusal, `language-not-supported`, is a native test.
 
+Embedding has a test-only counterpart in the engine: the test-only HTML grammar embeds TypeScript, TSX and JavaScript
+through `Via::TestScript` (`language::test_embeds`, `native/src/code_rule_dsl/embed/test_script.rs`), whose program is
+an HTML file's scripts and then its `on*` handlers. Its tests (`embed/tests.rs`) run the tape's embedder loop, the
+persisted program records, region dialects, and scope and usage over a program whose nodes stand out of file order.
+The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
+
 ## Adding a language
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
@@ -151,17 +157,27 @@ package and never in the product:
    - `CallRules`, with `const NAMES: Option<Family>`, the family whose namespace its call names live in;
    - `FormatArgRules`;
    - `SyntaxRules`, including `embedded_pattern`.
-   A new dialect in an existing family needs only the per-dialect tables the compiler names (ECMAScript's scope
-   scripts in `scope/ecma.rs`, for one).
+   A new dialect in an existing family needs no per-dialect table: ECMAScript's scope reads each dialect's grammar,
+   embedded or not, as the file's tape numbers it (`scope::ecma::script`).
 4. A suppression kind the language needs and the engine lacks is one row in `suppression_kinds!` in
    `native/src/code_rule_dsl/suppress.rs` (`Variant key: Spec = linter::spec, "detail";`, its parser in
    `suppress/<linter>.rs`), one entry in `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`,
    its name in the registry entry's `suppressions`, and its use in the adapter's `suppresses`.
 5. An embedding (`embeds` with a new `via`) adds `native/src/code_rule_dsl/embed/<via>.rs`, implementing `Embedder`
-   (one program per file: `dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's
-   bytes to the host's), and one `mod` and one `pub(crate) use` line in `embed.rs`. `KindCatalog` numbers each
-   embedded grammar's kinds and fields after the host's. `Adapter::regions(root, dialect)` yields
-   `Region { root, dialect }`, and a call summary reads one region.
+   (`APART`, whether its program is a tree apart from the host's that host syntax errors leave whole, and `build`)
+   and `Program` (`dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's bytes to
+   the host's, in any order), and one `mod` and one `pub(crate) use` line in `embed.rs`. `build` returns one program
+   or none, so a file holds at most one program per `via`. Nothing else in the engine changes:
+   - `KindCatalog` numbers each embedded grammar's kinds and fields after the host's, and the tape records each
+     program's dialect and apartness (`tape::EmbeddedProgram`): TypeScript, TSX and JavaScript share kind codes.
+   - `adapter::regions(root, dialect)` yields each program as `Region { root, dialect }`, in the dialect its embedder
+     built it in. ECMAScript's scope and usage read every region (`scope::ecma`), Blade's its compiled view; rule
+     kinds, patterns and values match the whole tape, programs included.
+   - A clause whose witnesses all lie in programs apart from the host, free of syntax errors of their own, is
+     complete whatever the host's errors (`soundness::SyntaxErrors`).
+   - A call summary reads the first region only, so a family whose files may hold several refuses calls.
+
+   The embedding family's adapter (step 3) delegates each concern to the embedded family's, as Blade's does to PHP's.
 6. Add one `#[test]` function for the family to `native/src/code_rule_dsl/language/adapter/kit.rs`, calling
    `kit::<Family>(&Expect { .. })` with the family's expectations.
 7. Flip each capability to `supported` only when it is implemented and proven by its oracle suite; mark one the
