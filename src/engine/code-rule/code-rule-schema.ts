@@ -496,6 +496,20 @@ const resolveDottedName = z
   .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
     message: String.raw`Must be a dotted name (identifiers joined by .) or a PHP name (labels joined by \) of at most 256 bytes.`,
   });
+/** A TypeScript import: a module specifier and, optionally, the member paths it names (the engine's check). */
+const resolveModuleImport = z
+  .object({
+    module: z
+      .string()
+      .min(1)
+      .refine(module => !module.includes("\0") && UTF8.encode(module).length <= 256, "Must be a module specifier of at most 256 bytes."),
+    names: z
+      .array(z.string().max(256).regex(/^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/, "Must be a member path (identifiers joined by .)."))
+      .min(1)
+      .max(1024)
+      .optional(),
+  })
+  .strict();
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");
 /** Every binding form a binding filter names: the engine's `FORMS`, and PHP's `static`. */
@@ -567,7 +581,7 @@ export const codeRuleBindsSchema = z
 export const codeRuleResolvesSchema = z
   .object({
     global: z.union([z.array(resolveIdentifier).min(1).max(1024), z.literal(true)]).optional(),
-    import: z.union([z.array(resolveDottedName).min(1).max(1024), z.literal(true)]).optional(),
+    import: z.union([z.array(z.union([resolveDottedName, resolveModuleImport])).min(1).max(1024), z.literal(true)]).optional(),
     imported: z.array(resolveDottedName).min(1).max(1024).optional(),
     prefix: z.literal(true).optional(),
     directives: z.literal("eslint").optional(),

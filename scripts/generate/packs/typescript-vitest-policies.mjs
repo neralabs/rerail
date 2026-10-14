@@ -189,9 +189,9 @@ const PARAMETER = { any: [{ kind: "required_parameter" }, { kind: "optional_para
 
 /**
  * The binding of a name `vitest` gives one of `names` (upstream's ImportDetails with source `vitest`): a named value
- * import, or a key of a destructured `require`/`await import`, which the engine qualifies `vitest.<name>`.
+ * import, or a key of a destructured `require`/`await import`, which the engine binds to that member of `vitest`.
  */
-const vitestImport = names => names.map(name => `vitest.${name}`);
+const vitestImport = names => [{ module: "vitest", names }];
 
 /**
  * A callee (a call's `function`) that names a Vitest function in `names` by a chain upstream accepts for it, its links

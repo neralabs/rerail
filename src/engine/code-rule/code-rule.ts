@@ -803,16 +803,25 @@ export interface CodeRuleDslResolves {
    */
   global?: string[] | true;
   /**
-   * Dotted names (Python only): the node is a name or attribute chain whose head is bound by an import or a definition,
-   * and its qualified name joined with the rest of the chain is one of them. `import a.b` binds `a` to `a`,
-   * `import m as x` binds `x` to `m`, `from m import x as y` binds `y` to `m.x`. A `def` or `class` is qualified by the
-   * file's module path (the snapshot file's `module`, else the file's stem, as Ruff does outside a package); a relative
-   * import resolves only against a `module`. Star imports never resolve. With `global` too, either may match. At most
-   * 1024 names. `true`: any name or chain with a qualified name (Ruff's `resolve_qualified_name(..).is_some()`): its
-   * head is an import, a definition the module path qualifies, or an unshadowed builtin of the Python version. Under
-   * `languageOptions.typingModules` a listed `typing.<member>` also matches a typing module's member of that name.
+   * Python and PHP: dotted (or PHP) names. Python: the node is a name or attribute chain whose head is bound by an
+   * import or a definition, and its qualified name joined with the rest of the chain is one of them. `import a.b` binds
+   * `a` to `a`, `import m as x` binds `x` to `m`, `from m import x as y` binds `y` to `m.x`. A `def` or `class` is
+   * qualified by the file's module path (the snapshot file's `module`, else the file's stem, as Ruff does outside a
+   * package); a relative import resolves only against a `module`. Star imports never resolve.
+   *
+   * TypeScript and JavaScript: `{ module, names? }` objects. The node is a name or member chain whose head an import
+   * binds to a member of `module` (one of `names`, a member path such as `describe.skip`), or to the module itself when
+   * `names` is absent. `import { a as b } from 'm'` binds `b` to `a` of `m`, a default import to `default`, a namespace
+   * import or `import x = require('m')` to `m` itself; a declarator whose value is `require('m')` (the global
+   * `require`) or `await import('m')` binds its name to `m` and each destructured key to its member. Type-only
+   * imports, array and rest elements and names with defaults bind nothing.
+   *
+   * With `global` too, either may match. At most 1024 items. `true`: any name or chain with a qualified name (Python:
+   * Ruff's `resolve_qualified_name(..).is_some()`, an import, a definition the module path qualifies, or an unshadowed
+   * builtin of the Python version; TypeScript: an import). Under `languageOptions.typingModules` a listed
+   * `typing.<member>` also matches a typing module's member of that name.
    */
-  import?: string[] | true;
+  import?: Array<string | CodeRuleDslModuleImport> | true;
   /**
    * Dotted names (Python only): the node is a `dotted_name` an import statement imports, and the qualified name it
    * imports is one of them. `import a.b` and `import a.b as c` import `a.b`; in `from m import x as y` the module
@@ -918,6 +927,13 @@ export interface CodeRuleDslResolves {
    * Not evaluated in files with syntax errors.
    */
   seenBefore?: true;
+}
+
+/** A TypeScript `resolves.import` item: a module specifier (`vitest`, `node:test`, `@scope/pkg`) and its members. */
+export interface CodeRuleDslModuleImport {
+  module: string;
+  /** Member paths (`it`, `describe.skip`, `default`); absent, the module itself. */
+  names?: string[];
 }
 
 /**

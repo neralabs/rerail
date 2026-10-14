@@ -138,8 +138,13 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -158,8 +163,13 @@
                     "test"
                   ],
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -204,7 +214,12 @@
                     "describe"
                   ],
                   "import": [
-                    "vitest.describe"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "describe"
+                      ]
+                    }
                   ]
                 }
               }

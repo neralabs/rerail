@@ -138,8 +138,13 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -158,8 +163,13 @@
                     "test"
                   ],
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -205,8 +215,13 @@
                     "suite"
                   ],
                   "import": [
-                    "vitest.describe",
-                    "vitest.suite"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "describe",
+                        "suite"
+                      ]
+                    }
                   ]
                 }
               }
@@ -339,7 +354,12 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.bench"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "bench"
+                      ]
+                    }
                   ]
                 }
               },
@@ -357,7 +377,12 @@
                     "bench"
                   ],
                   "import": [
-                    "vitest.bench"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "bench"
+                      ]
+                    }
                   ]
                 }
               },
@@ -403,8 +428,13 @@
                     "vitest"
                   ],
                   "import": [
-                    "vitest.vi",
-                    "vitest.vitest"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "vi",
+                        "vitest"
+                      ]
+                    }
                   ]
                 }
               }
@@ -446,7 +476,12 @@
                     "expect"
                   ],
                   "import": [
-                    "vitest.expect"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "expect"
+                      ]
+                    }
                   ]
                 }
               }
@@ -488,7 +523,12 @@
                     "expectTypeOf"
                   ],
                   "import": [
-                    "vitest.expectTypeOf"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "expectTypeOf"
+                      ]
+                    }
                   ]
                 }
               }
@@ -653,8 +693,13 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.xit",
-                    "vitest.xtest"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "xit",
+                        "xtest"
+                      ]
+                    }
                   ]
                 }
               },
@@ -674,9 +719,14 @@
                     "xdescribe"
                   ],
                   "import": [
-                    "vitest.xit",
-                    "vitest.xtest",
-                    "vitest.xdescribe"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "xit",
+                        "xtest",
+                        "xdescribe"
+                      ]
+                    }
                   ]
                 }
               },
@@ -753,7 +803,12 @@
                     "describe"
                   ],
                   "import": [
-                    "vitest.describe"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "describe"
+                      ]
+                    }
                   ]
                 }
               }
@@ -886,7 +941,12 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.fit"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "fit"
+                      ]
+                    }
                   ]
                 }
               },
@@ -905,8 +965,13 @@
                     "fdescribe"
                   ],
                   "import": [
-                    "vitest.fit",
-                    "vitest.fdescribe"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "fit",
+                        "fdescribe"
+                      ]
+                    }
                   ]
                 }
               },
@@ -984,8 +1049,13 @@
                     "xtest"
                   ],
                   "import": [
-                    "vitest.xit",
-                    "vitest.xtest"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "xit",
+                        "xtest"
+                      ]
+                    }
                   ]
                 }
               },
@@ -1030,7 +1100,12 @@
                     "fit"
                   ],
                   "import": [
-                    "vitest.fit"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "fit"
+                      ]
+                    }
                   ]
                 }
               },

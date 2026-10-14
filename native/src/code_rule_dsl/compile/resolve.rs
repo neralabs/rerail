@@ -9,7 +9,7 @@ use crate::code_rule_dsl::language::{Family, GrammarDialect, language_not_suppor
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, BindingTest, Resolves, Unresolved};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::{Lookup, php_names};
+use crate::code_rule_dsl::scope::{Lookup, MODULE_MEMBER, php_names};
 use napi::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -66,7 +66,8 @@ fn is_php_name(name: &str) -> bool {
         .all(php_names::is_label)
 }
 
-fn names<'a>(value: &'a Value, path: &str, dotted: bool) -> Result<Vec<&'a str>> {
+/// A `resolves` list's items, at least one and at most `MAX_RESOLVE_NAMES`.
+fn listed<'a>(value: &'a Value, path: &str) -> Result<&'a Vec<Value>> {
     let items = value
         .as_array()
         .ok_or_else(|| invalid(format!("{path} must be an array of names")))?;
@@ -79,33 +80,121 @@ fn names<'a>(value: &'a Value, path: &str, dotted: bool) -> Result<Vec<&'a str>>
             items.len()
         )));
     }
-    items
+    Ok(items)
+}
+
+/// One listed name, at `path`: an identifier, or (`dotted`) a dotted or PHP name.
+fn checked_name<'a>(item: &'a Value, path: &str, dotted: bool) -> Result<&'a str> {
+    let name = item
+        .as_str()
+        .ok_or_else(|| invalid(format!("{path} must be a string")))?;
+    // A dotted name is Python's; PHP names are labels joined by `\`, fully qualified or
+    // not. Each family refuses the other's shape when the rule compiles.
+    let valid = if dotted {
+        name.split('.').all(is_identifier) || is_php_name(name)
+    } else {
+        is_identifier(name)
+    };
+    if !valid || name.len() > MAX_RESOLVE_NAME_BYTES {
+        let shape = if dotted {
+            "a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`)"
+        } else {
+            "an identifier"
+        };
+        return Err(invalid(format!(
+            "{path}: `{name}` is not {shape} of at most {MAX_RESOLVE_NAME_BYTES} bytes"
+        )));
+    }
+    Ok(name)
+}
+
+fn names<'a>(value: &'a Value, path: &str, dotted: bool) -> Result<Vec<&'a str>> {
+    listed(value, path)?
         .iter()
         .enumerate()
-        .map(|(index, item)| {
-            let name = item
+        .map(|(index, item)| checked_name(item, &format!("{path}/{index}"), dotted))
+        .collect()
+}
+
+/// The grammar-independent checks of an `import` list: dotted or PHP names, or TypeScript's
+/// `{ "module": <specifier>, "names"?: [<member path>] }`.
+fn validate_imports(value: &Value, path: &str) -> Result<()> {
+    for (index, item) in listed(value, path)?.iter().enumerate() {
+        let item_path = format!("{path}/{index}");
+        let Value::Object(entry) = item else {
+            checked_name(item, &item_path, true)?;
+            continue;
+        };
+        reject_unknown(entry, &["module", "names"], &item_path)?;
+        let module = entry
+            .get("module")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if module.is_empty()
+            || module.len() > MAX_RESOLVE_NAME_BYTES
+            || module.contains(MODULE_MEMBER)
+        {
+            return Err(invalid(format!(
+                "{item_path}/module must be a module specifier: a non-empty string of at most {MAX_RESOLVE_NAME_BYTES} bytes"
+            )));
+        }
+        let Some(members) = entry.get("names") else {
+            continue;
+        };
+        let names_path = format!("{item_path}/names");
+        for (member_index, member) in listed(members, &names_path)?.iter().enumerate() {
+            let member_path = format!("{names_path}/{member_index}");
+            let name = member
                 .as_str()
-                .ok_or_else(|| invalid(format!("{path}/{index} must be a string")))?;
-            // A dotted name is Python's; PHP names are labels joined by `\`, fully qualified or
-            // not. Each family refuses the other's shape when the rule compiles.
-            let valid = if dotted {
-                name.split('.').all(is_identifier) || is_php_name(name)
-            } else {
-                is_identifier(name)
-            };
-            if !valid || name.len() > MAX_RESOLVE_NAME_BYTES {
-                let shape = if dotted {
-                    "a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`)"
-                } else {
-                    "an identifier"
-                };
+                .ok_or_else(|| invalid(format!("{member_path} must be a string")))?;
+            if !name.split('.').all(is_identifier) || name.len() > MAX_RESOLVE_NAME_BYTES {
                 return Err(invalid(format!(
-                    "{path}/{index}: `{name}` is not {shape} of at most {MAX_RESOLVE_NAME_BYTES} bytes"
+                    "{member_path}: `{name}` is not a member path (identifiers joined by `.`) of at most {MAX_RESOLVE_NAME_BYTES} bytes"
                 )));
             }
-            Ok(name)
-        })
-        .collect()
+        }
+    }
+    Ok(())
+}
+
+/// A validated `import` list as the matcher compares it. `modules` (TypeScript): each item is a
+/// `{ module, names }` object, read as the module alone or the module joined to each member by
+/// `MODULE_MEMBER`. Otherwise each item is a name, which `dotted` says how to write.
+fn import_names(value: &Value, path: &str, modules: bool, dotted: &str) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for (index, item) in listed(value, path)?.iter().enumerate() {
+        match (item, modules) {
+            (Value::Object(entry), true) => {
+                let module = entry
+                    .get("module")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                match entry.get("names").and_then(Value::as_array) {
+                    Some(members) => names.extend(
+                        members
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(|member| format!("{module}{MODULE_MEMBER}{member}")),
+                    ),
+                    None => names.push(module.to_owned()),
+                }
+            }
+            (Value::Object(_), false) => {
+                return Err(invalid(format!(
+                    "{path}/{index}: a {{ \"module\", \"names\" }} import is TypeScript's; {dotted}"
+                )));
+            }
+            (_, true) => {
+                return Err(invalid(format!(
+                    "{path}/{index}: a TypeScript import names its module and members: {{ \"module\": \"vitest\", \"names\": [\"it\"] }}"
+                )));
+            }
+            (_, false) => {
+                names.push(checked_name(item, &format!("{path}/{index}"), true)?.to_owned())
+            }
+        }
+    }
+    Ok(names)
 }
 
 /// The grammar-independent checks of a `resolves` object.
@@ -287,7 +376,7 @@ pub(super) fn validate_resolves(value: &Value, path: &str) -> Result<()> {
                 "{path}/import must be true or an array of names"
             )));
         }
-        names(import, &format!("{path}/import"), true)?;
+        validate_imports(import, &format!("{path}/import"))?;
     }
     let declared = resolves.get("declared");
     if let Some(declared) = declared {
@@ -534,6 +623,7 @@ fn compile_lexical_resolves<S: ScopeRules>(
             S::feature(ScopeFeature::GlobalComments),
         )?;
     }
+    let modules = Family::of(language) == Family::Ecma;
     for (key, feature) in [
         ("import", ScopeFeature::Imports),
         ("imported", ScopeFeature::ImportSites),
@@ -549,9 +639,10 @@ fn compile_lexical_resolves<S: ScopeRules>(
             .filter_map(Value::as_str)
             .enumerate()
             .find(|(_, name)| name.contains('\\'))
+            .filter(|_| !modules)
         {
             return Err(invalid(format!(
-                "{path}/{key}/{index}: `{name}` is a PHP name; Python and TypeScript imports are dotted names"
+                "{path}/{key}/{index}: `{name}` is a PHP name; Python imports are dotted names"
             )));
         }
     }
@@ -581,11 +672,17 @@ fn compile_lexical_resolves<S: ScopeRules>(
     let imports = value
         .get("import")
         .filter(|_| !import_any)
-        .map(|import| names(import, &format!("{path}/import"), true))
+        .map(|import| {
+            import_names(
+                import,
+                &format!("{path}/import"),
+                modules,
+                "Python imports are dotted names",
+            )
+        })
         .transpose()?
         .unwrap_or_default()
         .into_iter()
-        .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     // An import resolves a read's member chain too: Python's attributes, TypeScript's members.
     let attribute_kinds = kind_ids(language, &["attribute", "member_expression"]);
@@ -706,11 +803,7 @@ fn compile_php_resolves<S: ScopeRules>(
         )));
     }
     let import_any = value.get("import") == Some(&Value::Bool(true));
-    let listed_names = |key: &str, listed: Option<&Value>| -> Result<Vec<String>> {
-        let listed = listed
-            .map(|listed| names(listed, &format!("{path}/{key}"), true))
-            .transpose()?
-            .unwrap_or_default();
+    let undotted = |key: &str, listed: Vec<String>| -> Result<Vec<String>> {
         if let Some((index, name)) = listed
             .iter()
             .enumerate()
@@ -720,10 +813,31 @@ fn compile_php_resolves<S: ScopeRules>(
                 "{path}/{key}/{index}: `{name}` is a dotted name; PHP names join labels with `\\`"
             )));
         }
-        Ok(listed.into_iter().map(str::to_owned).collect())
+        Ok(listed)
     };
-    let imports = listed_names("import", value.get("import").filter(|_| !import_any))?;
-    let imported = listed_names("imported", value.get("imported"))?;
+    let imports = value
+        .get("import")
+        .filter(|_| !import_any)
+        .map(|import| {
+            import_names(
+                import,
+                &format!("{path}/import"),
+                false,
+                "PHP names join labels with `\\`",
+            )
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let imports = undotted("import", imports)?;
+    let imported = value
+        .get("imported")
+        .map(|imported| names(imported, &format!("{path}/imported"), true))
+        .transpose()?
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let imported = undotted("imported", imported)?;
     let reference_kinds = if variables_asked {
         kind_ids(language, &["variable_name"])
     } else {

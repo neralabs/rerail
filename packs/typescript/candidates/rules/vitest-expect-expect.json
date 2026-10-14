@@ -138,8 +138,13 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -158,8 +163,13 @@
                     "test"
                   ],
                   "import": [
-                    "vitest.it",
-                    "vitest.test"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "it",
+                        "test"
+                      ]
+                    }
                   ]
                 }
               },
@@ -295,7 +305,12 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.bench"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "bench"
+                      ]
+                    }
                   ]
                 }
               },
@@ -313,7 +328,12 @@
                     "bench"
                   ],
                   "import": [
-                    "vitest.bench"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "bench"
+                      ]
+                    }
                   ]
                 }
               },
@@ -449,8 +469,13 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.xit",
-                    "vitest.xtest"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "xit",
+                        "xtest"
+                      ]
+                    }
                   ]
                 }
               },
@@ -469,8 +494,13 @@
                     "xtest"
                   ],
                   "import": [
-                    "vitest.xit",
-                    "vitest.xtest"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "xit",
+                        "xtest"
+                      ]
+                    }
                   ]
                 }
               },
@@ -606,7 +636,12 @@
               {
                 "resolves": {
                   "import": [
-                    "vitest.fit"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "fit"
+                      ]
+                    }
                   ]
                 }
               },
@@ -624,7 +659,12 @@
                     "fit"
                   ],
                   "import": [
-                    "vitest.fit"
+                    {
+                      "module": "vitest",
+                      "names": [
+                        "fit"
+                      ]
+                    }
                   ]
                 }
               },

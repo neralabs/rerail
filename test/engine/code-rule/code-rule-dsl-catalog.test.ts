@@ -540,8 +540,8 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a directive parse in a Python rule", py({ kind: "comment", parse: { grammar: "eslintDirective", kind: "directive" } }), /`eslintDirective` parses TypeScript comments/],
     ["formatArgs in a TypeScript rule", ast({ pattern: "f($$$A)", formatArgs: { style: "brace", string: "S", args: "A", unused: { kind: "identifier" } } }), /`formatArgs` is not available for typescript policies/],
     ["calls in a TypeScript rule", ast({ kind: "call_expression", calls: { kind: "function_declaration" } }), /`calls` is not available for typescript policies/],
-    ["a PHP-qualified Python import", py({ kind: "attribute", resolves: { import: ["App\\Client"] } }), /is a PHP name; Python and TypeScript imports are dotted names/],
-    ["a PHP-qualified Python imported module", py({ kind: "dotted_name", resolves: { imported: ["App\\Client"] } }), /is a PHP name; Python and TypeScript imports are dotted names/],
+    ["a PHP-qualified Python import", py({ kind: "attribute", resolves: { import: ["App\\Client"] } }), /is a PHP name; Python imports are dotted names/],
+    ["a PHP-qualified Python imported module", py({ kind: "dotted_name", resolves: { imported: ["App\\Client"] } }), /is a PHP name; Python imports are dotted names/],
   ])("refuses %s in the engine, which the rule's language lacks", (_name, input, reason) => {
     const validation = validateCodeRule(input);
     expect(validation).toMatchObject({ ok: false, code: "invalid-rule" });

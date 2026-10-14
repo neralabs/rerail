@@ -265,6 +265,20 @@ pub(crate) enum Import {
     Definition,
 }
 
+/// Where a TypeScript qualified name ends its module specifier and starts the member path
+/// (`vitest`, then `describe.skip`). No specifier holds it, so a member of `lodash` never reads as
+/// a module named `lodash.get`.
+pub(crate) const MODULE_MEMBER: char = '\0';
+
+/// TypeScript: a name a `require(...)` declarator qualified, until the table is built and the
+/// `require` it calls (`require` spans that range) is known to be the global one.
+pub(crate) struct Required {
+    pub(crate) scope: u32,
+    pub(crate) name: Box<str>,
+    pub(crate) index: usize,
+    pub(crate) require: Range<usize>,
+}
+
 pub(crate) struct Scope {
     pub(crate) kind: ScopeKind,
     #[allow(dead_code)]
@@ -397,6 +411,8 @@ pub(crate) struct ScopeTable {
     /// TypeScript: the scopes a direct `eval(...)` or a `with` statement runs in, where a read may
     /// be unseen.
     pub(crate) dynamic: Vec<u32>,
+    /// TypeScript: the names `require(...)` qualified, confirmed when the table is finished.
+    pub(crate) required: Vec<Required>,
     /// Python: the scopes that call `locals()` directly (Ruff's `USES_LOCALS`).
     pub(crate) locals_scopes: Vec<u32>,
     /// Python: each absolute import's top-level module, where Ruff's traversal visits it (Ruff's
@@ -526,6 +542,7 @@ impl ScopeTable {
                 dunder_all: Vec::new(),
                 jsx: Vec::new(),
                 dynamic: Vec::new(),
+                required: Vec::new(),
                 locals_scopes: Vec::new(),
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),

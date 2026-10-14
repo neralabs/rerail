@@ -30,5 +30,45 @@
     "line": 183,
     "kind": "rerail-unknown",
     "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('\u2026/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
+  },
+  {
+    "rule": "vitest-no-disabled-tests",
+    "source": "fixtures",
+    "path": "no-disabled-tests/rerail-vitest-require-nested-key.test.ts",
+    "line": 3,
+    "kind": "upstream-wrong",
+    "evidence": "`const { config: { it } } = require('vitest')` binds `it` to `require('vitest').config.it`, not Vitest's `it`. Upstream reports `it.skip` because describeVariableDefAsImport (@vitest/eslint-plugin 1.6.27, dist/index.mjs) takes `imported` from `def.name.parent.key` (the innermost Property, `it`) whatever the pattern's depth, so any nested key named like a test function reads as one; the port binds the name to `config.it` of `vitest` (resolves.import), which is no listed function."
+  },
+  {
+    "rule": "vitest-no-disabled-tests",
+    "source": "fixtures",
+    "path": "no-disabled-tests/rerail-vitest-require-computed-identifier-key.test.ts",
+    "line": 4,
+    "kind": "upstream-wrong",
+    "evidence": "`const { [it]: check } = require('vitest')` with `const it = 'expect'` binds `check` to `expect`. Upstream reports `check.skip` because isSupportedAccessor and getAccessorValue (@vitest/eslint-plugin 1.6.27, dist/index.mjs) read the computed key's Identifier by its name (`it`), not its value; the port reads a computed key only when it is a string, so `check` is bound to no named member."
+  },
+  {
+    "rule": "vitest-no-disabled-tests",
+    "source": "fixtures",
+    "path": "no-disabled-tests/rerail-vitest-type-only-specifier.test.ts",
+    "line": 3,
+    "kind": "upstream-wrong",
+    "evidence": "`import { type it } from 'vitest'` imports `it` as a type only; `it.skip(...)` reads no value of it (TypeScript: \"'it' cannot be used as a value because it was imported using 'import type'\"). Upstream reports it because describeImportDefAsImport (@vitest/eslint-plugin 1.6.27, dist/index.mjs) checks only the declaration's importKind (`def.parent.importKind === \"type\"`), not the specifier's; the port binds no type-only specifier to a module member."
+  },
+  {
+    "rule": "vitest-no-disabled-tests",
+    "source": "fixtures",
+    "path": "no-disabled-tests/rerail-vitest-string-specifier.test.ts",
+    "line": 3,
+    "kind": "upstream-wrong",
+    "evidence": "`import { 'it' as check } from 'vitest'` (an ES2022 string export name) binds `check` to Vitest's `it`, so `check.skip` is a disabled test. Upstream misses it because describeImportDefAsImport (@vitest/eslint-plugin 1.6.27, dist/index.mjs) returns null when `def.node.imported.type != Identifier`; the port reads a string specifier by its value."
+  },
+  {
+    "rule": "vitest-no-disabled-tests",
+    "source": "fixtures",
+    "path": "no-disabled-tests/rerail-vitest-require-declared.test.ts",
+    "line": 6,
+    "kind": "upstream-wrong",
+    "evidence": "The file declares `function require`, so `const { it } = require('vitest')` calls that function and `it` is its result's property, not Vitest's. Upstream reports `it.skip` because findImportSourceNode (@vitest/eslint-plugin 1.6.27, dist/index.mjs) accepts any callee named `require` without resolving it; the port binds a destructured `require` only through the global `require` (resolves.import)."
   }
 ]

@@ -10,7 +10,9 @@ use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
-use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
+use crate::code_rule_dsl::scope::{
+    Binding, BuildError, Import, MODULE_MEMBER, Reading, ScopeTable, TYPE, VALUE,
+};
 use crate::code_rule_dsl::suppress::{
     EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
 };
@@ -589,7 +591,7 @@ impl Resolves {
             && !self
                 .imports
                 .iter()
-                .any(|name| name.rsplit('.').next() == Some(last.as_str()))
+                .any(|name| name.rsplit(['.', MODULE_MEMBER]).next() == Some(last.as_str()))
         {
             return None;
         }
@@ -621,9 +623,18 @@ impl Resolves {
         let full = match import {
             Import::Qualified(qualified) => {
                 let mut full = qualified.to_string();
+                // A TypeScript module's first member follows its specifier past `MODULE_MEMBER`.
+                let mut separator = if Family::of(self.language) == Family::Ecma
+                    && !qualified.contains(MODULE_MEMBER)
+                {
+                    MODULE_MEMBER
+                } else {
+                    '.'
+                };
                 for part in &tail {
-                    full.push('.');
+                    full.push(separator);
                     full.push_str(part);
+                    separator = '.';
                 }
                 Some(full)
             }
@@ -669,7 +680,7 @@ impl Resolves {
         names.contains(name)
             || (self.prefix
                 && name
-                    .match_indices('.')
+                    .match_indices(['.', MODULE_MEMBER])
                     .any(|(dot, _)| names.contains(&name[..dot])))
     }
 

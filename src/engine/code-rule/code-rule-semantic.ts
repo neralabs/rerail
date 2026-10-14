@@ -8,6 +8,7 @@ export type {
   CodeRuleDslFormatArgs,
   CodeRuleDslLanguageOptions,
   CodeRuleDslLayout,
+  CodeRuleDslModuleImport,
   CodeRuleDslParse,
   CodeRuleDslResolves,
   CodeRuleDslValueTest,

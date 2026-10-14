@@ -412,14 +412,18 @@ subprocess.run(l)
 fn import_qualifies_typescript_bindings_by_module_and_member() {
     let rule = typescript(json!({ "rule": {
         "any": [{ "kind": "identifier" }, { "kind": "member_expression" }],
-        "resolves": { "import": ["vitest.it", "vitest.describe.skip", "tap.default", "react.useState"] },
+        "resolves": { "import": [
+            { "module": "vitest", "names": ["it", "describe.skip"] },
+            { "module": "node:test", "names": ["default"] },
+            { "module": "react", "names": ["useState"] },
+        ] },
     } }));
     let source = "\
 import { it as check, describe } from 'vitest';
 import type { it as typed } from 'vitest';
 import { type it as typedMember, 'it' as quoted } from 'vitest';
 import * as v from 'vitest';
-import t from 'tap';
+import t from 'node:test';
 import React = require('react');
 const { it: req, describe: { skip } } = require('vitest');
 const { it: [first] } = require('vitest');
@@ -459,6 +463,105 @@ function g(check) { check(14); }
         ],
         "{result}"
     );
+}
+
+#[test]
+fn typescript_import_names_a_module_apart_from_its_members() {
+    // `lodash.get` the module is not `get` of `lodash`; a namespace import reads through `prefix`.
+    let rule = typescript(json!({ "rule": {
+        "any": [{ "kind": "identifier" }, { "kind": "member_expression" }],
+        "resolves": { "import": [{ "module": "lodash", "names": ["get"] }, { "module": "@scope/pkg" }] },
+    } }));
+    let source = "\
+import get from 'lodash.get';
+import { get as pick } from 'lodash';
+import * as pkg from '@scope/pkg';
+get(1);
+pick(2);
+pkg(3);
+pkg.run(4);
+";
+    let result = evaluate_file(&rule, "typescript", "a.ts", source);
+    // `pkg` itself is the module; `pkg.run` is a member, which only `prefix` reaches.
+    assert_eq!(
+        found(&result, source),
+        ["5:pick", "6:pkg", "7:pkg"],
+        "{result}"
+    );
+    let prefixed = typescript(json!({ "rule": {
+        "kind": "member_expression",
+        "resolves": { "import": [{ "module": "@scope/pkg" }], "prefix": true },
+    } }));
+    let result = evaluate_file(&prefixed, "typescript", "a.ts", source);
+    assert_eq!(found(&result, source), ["7:pkg.run"], "{result}");
+}
+
+#[test]
+fn import_reads_javascript_s_default_specifier() {
+    // tree-sitter-javascript keeps `default` an anonymous token where TypeScript's grammar has an
+    // identifier.
+    let ast = json!({ "rule": {
+        "kind": "identifier",
+        "resolves": { "import": [{ "module": "next/script", "names": ["default"] }] },
+    } });
+    let source = "import { default as Script } from 'next/script';\nScript(1);\n";
+    for (language, path) in [("javascript", "a.js"), ("typescript", "a.ts")] {
+        let compiled =
+            compile(language, ast.clone()).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, language, path, source);
+        assert_eq!(found(&result, source), ["2:Script"], "{language}: {result}");
+    }
+}
+
+#[test]
+fn require_qualifies_only_through_the_global_require() {
+    let rule = typescript(json!({ "rule": {
+        "kind": "identifier",
+        "resolves": { "import": [{ "module": "vitest", "names": ["it"] }] },
+    } }));
+    let source = "\
+const { it } = require('vitest');
+it(1);
+function local(require: (name: string) => { it: () => void }) {
+  const { it } = require('vitest');
+  it(2);
+}
+";
+    let result = evaluate_file(&rule, "typescript", "a.ts", source);
+    assert_eq!(found(&result, source), ["2:it"], "{result}");
+}
+
+#[test]
+fn import_names_take_each_family_s_shape() {
+    for (language, ast, expected) in [
+        (
+            "typescript",
+            json!({ "rule": { "resolves": { "import": ["vitest.it"] } } }),
+            "/clauses/0/forbid/ast/rule/resolves/import/0: a TypeScript import names its module and members: { \"module\": \"vitest\", \"names\": [\"it\"] }",
+        ),
+        (
+            "python",
+            json!({ "rule": { "resolves": { "import": [{ "module": "os", "names": ["path"] }] } } }),
+            "/clauses/0/forbid/ast/rule/resolves/import/0: a { \"module\", \"names\" } import is TypeScript's; Python imports are dotted names",
+        ),
+        (
+            "typescript",
+            json!({ "rule": { "resolves": { "import": [{ "module": "" }] } } }),
+            "/clauses/0/forbid/ast/rule/resolves/import/0/module must be a module specifier: a non-empty string of at most 256 bytes",
+        ),
+        (
+            "typescript",
+            json!({ "rule": { "resolves": { "import": [{ "module": "m", "names": ["a-b"] }] } } }),
+            "/clauses/0/forbid/ast/rule/resolves/import/0/names/0: `a-b` is not a member path (identifiers joined by `.`) of at most 256 bytes",
+        ),
+        (
+            "typescript",
+            json!({ "rule": { "resolves": { "import": [{ "module": "m", "name": ["a"] }] } } }),
+            "unknown field `name` at /clauses/0/forbid/ast/rule/resolves/import/0",
+        ),
+    ] {
+        assert_eq!(rejection(compile(language, ast.clone())), expected, "{ast}");
+    }
 }
 
 #[test]

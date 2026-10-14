@@ -410,6 +410,58 @@ it.only('focused', () => {});
 `,
     reports: { "expect-expect": 1, "no-focused-tests": 1 },
   },
+  // Where upstream's ImportDetails (describeImportDefAsImport, describeVariableDefAsImport) departs from what the
+  // name is bound to, which the ports read through `resolves.import`: a key at any depth of a destructured
+  // `require`, a computed key read by its identifier's name, a type-only specifier, a string-named specifier, and a
+  // `require` the file declares.
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-nested-key",
+    code: `const { config: { it } } = require('vitest');
+
+it.skip('skipped', () => {});
+`,
+    reports: { "no-disabled-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-computed-identifier-key",
+    code: `const it = 'expect';
+const { [it]: check } = require('vitest');
+
+check.skip('skipped', () => {});
+`,
+    reports: { "no-disabled-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-type-only-specifier",
+    code: `import { type it } from 'vitest';
+
+it.skip('skipped', () => {});
+`,
+    reports: { "no-disabled-tests": 1 },
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-string-specifier",
+    code: `import { 'it' as check } from 'vitest';
+
+check.skip('skipped', () => {});
+`,
+  },
+  {
+    rule: "no-disabled-tests",
+    name: "vitest-require-declared",
+    code: `function require(name: string) {
+  return { it: { skip(title: string, fn: () => void) {} } };
+}
+const { it } = require('vitest');
+
+it.skip('skipped', () => {});
+`,
+    reports: { "no-disabled-tests": 1 },
+  },
   {
     rule: "no-focused-tests",
     name: "mode-option-overridden",

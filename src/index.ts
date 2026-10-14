@@ -104,6 +104,7 @@ export type {
   CodeRuleDslFileCondition,
   CodeRuleDslFormatArgs,
   CodeRuleDslLanguageOptions,
+  CodeRuleDslModuleImport,
   CodeRuleDslParse,
   CodeRuleDslResolves,
   CodeRuleDslValueTest,

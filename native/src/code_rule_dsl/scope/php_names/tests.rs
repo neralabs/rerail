@@ -817,6 +817,6 @@ fn php_resolves_refuses_what_php_does_not_answer() {
     );
     assert_eq!(
         rejection(python),
-        "/clauses/0/forbid/ast/rule/resolves/import/0: `os\\path` is a PHP name; Python and TypeScript imports are dotted names"
+        "/clauses/0/forbid/ast/rule/resolves/import/0: `os\\path` is a PHP name; Python imports are dotted names"
     );
 }

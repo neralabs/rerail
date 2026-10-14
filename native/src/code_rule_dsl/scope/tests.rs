@@ -744,13 +744,13 @@ fn typescript_imports_exports_and_properties() {
     typescript(
         "import D, { a as b, c } from \"m\";\nimport * as ns from \"n\";\nimport eq = require(\"x\");\nD; a; b; c; ns; eq;\nexport { b as out, missing };\nexport { gone } from \"m\";\n",
         &[
-            ("D", 1, Is::Import("m.default")),
+            ("D", 1, Is::Import("m\0default")),
             ("a", 1, Global),
-            ("b", 1, Is::Import("m.a")),
-            ("c", 1, Is::Import("m.c")),
+            ("b", 1, Is::Import("m\0a")),
+            ("c", 1, Is::Import("m\0c")),
             ("ns", 1, Is::Import("n")),
             ("eq", 1, Is::Import("x")),
-            ("b", 2, Is::Import("m.a")),
+            ("b", 2, Is::Import("m\0a")),
             ("out", 0, NotRef),
             ("missing", 0, Global),
             ("gone", 0, NotRef),
@@ -796,12 +796,12 @@ fn tsx_references_capitalized_jsx_tag_names() {
         GrammarDialect::Tsx,
         "import Foo from \"f\";\nconst v = <Foo.Bar a={alert}><div /><Baz></Baz><Foo /></Foo.Bar>;\n",
         &[
-            ("Foo", 1, Is::Import("f.default")),
+            ("Foo", 1, Is::Import("f\0default")),
             ("alert", 0, Global),
             ("div", 0, NotRef),
             ("Baz", 0, Global),
             ("Baz", 1, Global),
-            ("Foo", 2, Is::Import("f.default")),
+            ("Foo", 2, Is::Import("f\0default")),
             ("a", 0, NotRef),
         ],
     );

@@ -16,10 +16,15 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-alias.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-dynamic-import.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-import.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-computed-identifier-key.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-computed-key.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-declared.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-nested-key.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-renamed.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-template.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-require-whole.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-string-specifier.test.ts` | written by Rerail |
+| `upstream/eslint-plugin-vitest/fixtures/no-disabled-tests/rerail-vitest-type-only-specifier.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-bun-test.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-comment-between-links.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/rerail-global-extend.test.ts` | written by Rerail |

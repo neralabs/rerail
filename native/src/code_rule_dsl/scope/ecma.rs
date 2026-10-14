@@ -3,12 +3,13 @@
 //! and function declarations bind in their block; values and types are separate namespaces.
 
 use super::{
-    Binding, BuildError, Builder, Form, Grammar, Import, NodeRef, ScopeKind, ScopeTable, Site,
-    TYPE, VALUE,
+    Binding, BuildError, Builder, Form, Grammar, Import, MODULE_MEMBER, NodeRef, Required,
+    ScopeKind, ScopeTable, Site, TYPE, VALUE,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
+use std::ops::Range;
 use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -260,15 +261,31 @@ pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -
         script,
         conditionals: Vec::new(),
         destructured: Vec::new(),
+        requiring: None,
     };
     visitor.children(root)?;
     collect_directives(visitor.builder, root, script);
     Ok(())
 }
 
-/// Charges each write and property mutation to the binding it resolves to.
+/// Charges each write and property mutation to the binding it resolves to, and unqualifies a
+/// name `require(...)` qualified where that `require` is a local binding, not Node's.
 pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
     table.count_writes(&root.text(), root.range().start);
+    for required in std::mem::take(&mut table.required) {
+        let local = table
+            .reference(&required.require)
+            .and_then(|reference| table.resolve(reference, "require"))
+            .is_some_and(Binding::shadows);
+        if local
+            && let Some(binding) = table.scopes[required.scope as usize]
+                .bindings
+                .get_mut(&*required.name)
+                .and_then(|bindings| bindings.get_mut(required.index))
+        {
+            binding.import = None;
+        }
+    }
 }
 
 /// ESLint's `/* global a, b: off */` block comments, as its `ConfigCommentParser` reads them
@@ -334,6 +351,8 @@ struct Visitor<'b, 'd> {
     conditionals: Vec<u32>,
     /// The literal elements the names of the declarator being bound take, by name start.
     destructured: Vec<(usize, NodeRef)>,
+    /// The `require` the declarator being bound calls, whose names a module qualifies.
+    requiring: Option<Range<usize>>,
 }
 
 /// Where a declaration binds.
@@ -754,7 +773,23 @@ impl Visitor<'_, '_> {
         }
         let mut binding = Binding::new(0, spaces, site);
         binding.name = name;
-        binding.import = import;
+        if let Some(import) = import {
+            if let Some(require) = self.requiring.clone() {
+                let index = self
+                    .builder
+                    .scope(scope)
+                    .bindings
+                    .get(text)
+                    .map_or(0, Vec::len);
+                self.builder.table.required.push(Required {
+                    scope,
+                    name: text.into(),
+                    index,
+                    require,
+                });
+            }
+            binding.import = Some(import);
+        }
         self.builder.bind(scope, text, binding);
     }
 
@@ -791,7 +826,7 @@ impl Visitor<'_, '_> {
                 // A shorthand `{ it }` takes the member its own name names.
                 let import = qualified.map(|qualified| {
                     Import::Qualified(if tag == Tag::ShorthandProperty {
-                        format!("{qualified}.{}", node.text()).into()
+                        member_of(qualified, &node.text()).into()
                     } else {
                         qualified.into()
                     })
@@ -817,7 +852,7 @@ impl Visitor<'_, '_> {
                 }
                 let member = qualified
                     .zip(key.as_ref().and_then(static_key))
-                    .map(|(qualified, member)| format!("{qualified}.{member}"));
+                    .map(|(qualified, member)| member_of(qualified, &member));
                 if let Some(value) = field(node, fields.value) {
                     self.pattern_in(&value, target, site, member.as_deref())?;
                 }
@@ -865,8 +900,13 @@ impl Visitor<'_, '_> {
                         &mut self.destructured,
                     );
                 }
-                let module = value.as_ref().and_then(|value| self.required_module(value));
+                let (module, require) = value
+                    .as_ref()
+                    .and_then(|value| self.required_module(value))
+                    .unzip();
+                let outer = std::mem::replace(&mut self.requiring, require.flatten());
                 self.pattern_in(name, target, site, module.as_deref())?;
+                self.requiring = outer;
                 self.destructured.clear();
             }
             self.children_except(&declarator, &[name])?;
@@ -1092,19 +1132,16 @@ impl Visitor<'_, '_> {
     }
 
     /// Default, namespace and named imports, and `import x = require()`: each binds both spaces.
-    /// A value import qualifies its name by the module and the member it imports: `vitest.it`
-    /// for `import { it as check } from 'vitest'`, `m.default` for a default import, `m` for a
-    /// namespace import or `import x = require('m')`. A type-only import qualifies none.
+    /// A value import qualifies its name by the module and the member it imports (`vitest` and
+    /// `it` for `import { it as check } from 'vitest'`, `m` and `default` for a default import),
+    /// or by the module alone for a namespace import or `import x = require('m')`. A type-only
+    /// import qualifies none.
     fn import<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
         let module = field(node, fields.source)
             .and_then(|source| module_name(&source))
             .filter(|_| !type_only(node));
-        let member = |name: &str| {
-            Some(Import::Qualified(
-                format!("{}.{name}", module.as_ref()?).into(),
-            ))
-        };
+        let member = |name: &str| Some(Import::Qualified(member_of(module.as_ref()?, name).into()));
         for child in named(node) {
             match self.tag(&child) {
                 Tag::ImportClause => {
@@ -1182,8 +1219,12 @@ impl Visitor<'_, '_> {
     }
 
     /// The module a declarator's value loads, as eslint-plugin-vitest and eslint-plugin-jest read
-    /// one (`findImportSourceNode`): `require('m')`, or `await import('m')`, through parentheses.
-    fn required_module<D: Doc>(&self, value: &Node<'_, D>) -> Option<String> {
+    /// one (`findImportSourceNode`): `require('m')`, with the range of the `require` it calls, or
+    /// `await import('m')`, through parentheses.
+    fn required_module<D: Doc>(
+        &self,
+        value: &Node<'_, D>,
+    ) -> Option<(String, Option<Range<usize>>)> {
         let value = unparenthesized(value);
         let (call, callee) = match value.kind().as_ref() {
             "call_expression" => (value.clone(), "require"),
@@ -1203,7 +1244,8 @@ impl Visitor<'_, '_> {
         }
         let arguments = call.field("arguments")?;
         let first = named(&arguments).find(|argument| self.tag(argument) != Tag::Comment)?;
-        module_name(&first)
+        let require = (callee == "require").then(|| function.range());
+        Some((module_name(&first)?, require))
     }
 
     /// The target of an assignment, update or `for ... in/of` without a declaration: its names
@@ -1354,6 +1396,17 @@ fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     node
 }
 
+/// `member` of what `qualified` names: after a module specifier, past `MODULE_MEMBER`; after a
+/// member, past a `.`.
+fn member_of(qualified: &str, member: &str) -> String {
+    let separator = if qualified.contains(MODULE_MEMBER) {
+        '.'
+    } else {
+        MODULE_MEMBER
+    };
+    format!("{qualified}{separator}{member}")
+}
+
 /// A module specifier's text: a string literal's value, or a template literal's without
 /// substitutions or escapes.
 fn module_name<D: Doc>(node: &Node<'_, D>) -> Option<String> {
@@ -1368,14 +1421,16 @@ fn module_name<D: Doc>(node: &Node<'_, D>) -> Option<String> {
         }
         _ => None,
     }
-    .filter(|name| !name.is_empty())
+    .filter(|name| !name.is_empty() && !name.contains(MODULE_MEMBER))
 }
 
 /// The member a property key or import specifier names statically (ESLint's
 /// `getStaticPropertyName`): an identifier, a string's value, or a string in computed brackets.
+/// JavaScript's grammar keeps `default` in `import { default as d }` an anonymous token.
 fn static_key<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     match node.kind().as_ref() {
         "property_identifier" | "identifier" => Some(node.text().into_owned()),
+        "default" if !node.is_named() => Some("default".to_owned()),
         "string" | "template_string" => module_name(node),
         "computed_property_name" => named(node)
             .find(|child| child.kind() != "comment")
