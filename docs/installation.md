@@ -316,14 +316,16 @@ when the floor is now above what the version rolled back to opens. It writes the
 copy into the database file itself, so anything that has the file open goes on
 with the restored database, after keeping what the database held as
 `rerail.sqlite.before-rollback` (readable only by you; a later rollback keeps its
-own as `.before-rollback.2`, `.3`, …, never over an earlier one). The copy is
-put back once: it and its record are then removed, so rolling back and forth
-again never restores it a second time. While it writes, `rerail.sqlite.restoring`
-sits beside the database and every Rerail process refuses to open it; try again
-in a moment. While a coding agent session still has the database open, or
-`rerail.sqlite.restoring` is already there (another rollback is running, or one
-was interrupted: delete the file once no rollback runs), the copy is not put
-back: copy it over yourself, as the message says. An update that finds nothing
+own as `.before-rollback.2`, `.3`, …, never over an earlier one). A copy's
+record is used once: once the copy is put back, or you are told how to put it
+back yourself, no later rollback puts it back again. While it writes,
+`rerail.sqlite.restoring` (holding the rollback's process id) sits beside the
+database and every Rerail process refuses to open it; try again in a moment. A
+rollback that was killed leaves the file behind, but once its process is gone
+Rerail opens the database again and the next rollback takes the file over. While
+a coding agent session still has the database open, or another rollback is
+restoring, the copy is not put back: copy it over yourself, as the message says
+(it also says when it stopped the daemon). An update that finds nothing
 newer, or fails, keeps the copy of the last change; one that changes the version
 but cannot keep a copy removes the last one, which no longer belongs to the
 change a rollback would undo.

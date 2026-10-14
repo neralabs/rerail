@@ -1,4 +1,4 @@
-import { accessSync, chmodSync, constants, existsSync, mkdirSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -28,11 +28,33 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
 }
 
 /**
- * Beside the database while `rerail update rollback` writes a copy into it (`project-cli.ts`). Every opener refuses
- * the database while it exists.
+ * Beside the database while `rerail update rollback` writes a copy into it (`project-cli.ts`), holding that process's
+ * pid. Every opener refuses the database while it is live (`rollbackRestoring`).
  */
 export function rollbackRestoringPath(path: string): string {
   return `${path}.restoring`;
+}
+
+/**
+ * Whether a rollback is writing a copy into the database at `path`: its `.restoring` file exists and the process it
+ * names still runs. A file whose process is gone is left by a rollback that was killed, and holds nothing back; one
+ * that names no process (unreadable, or written by an earlier build) is taken as live.
+ */
+export function rollbackRestoring(path: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(rollbackRestoringPath(path), "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+  const pid = Number.parseInt(text.trim(), 10);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
 
 /**
@@ -42,11 +64,10 @@ export function rollbackRestoringPath(path: string): string {
  */
 function refuseWhileRestoring(client: Database.Database, path: string): void {
   client.pragma("user_version", { simple: true });
-  const restoring = rollbackRestoringPath(path);
-  if (existsSync(restoring)) {
+  if (rollbackRestoring(path)) {
     throw new Error(
       `Rerail is putting back a copy of ${path} for a rollback; try again in a moment (if no rerail update rollback is `
-        + `running, one was interrupted: delete ${restoring})`,
+        + `running, one was interrupted: delete ${rollbackRestoringPath(path)})`,
     );
   }
 }
@@ -249,11 +270,25 @@ function upgradeBeforeReading(path: string, database: RerailDatabase, migrations
       );
     }
     if (stamp.version === 1) return "adopting at the migration baseline";
-    return pending.length === 0 ? undefined : `this Rerail's schema steps (${ids})`;
+    if (pending.length > 0) return `this Rerail's schema steps (${ids})`;
+    // A table or index the DDL alone adds (no step needed) is also this build's shape.
+    const missing = missingSchemaObjects(database);
+    return missing.length === 0 ? undefined : `this Rerail's tables and indexes (${missing.join(", ")})`;
   } catch (error) {
     database.$client.close();
     throw error;
   }
+}
+
+/** The tables and indexes this build's DDL creates, by name. */
+const SCHEMA_OBJECTS = RERAIL_SCHEMA_STATEMENTS
+  .map(statement => /^CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS `([^`]+)`/u.exec(statement)?.[1])
+  .filter(name => name !== undefined);
+
+/** The tables and indexes of this build's DDL that the file lacks. */
+function missingSchemaObjects(database: RerailDatabase): string[] {
+  const present = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master`).map(row => row.name));
+  return SCHEMA_OBJECTS.filter(name => !present.has(name));
 }
 
 function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {

@@ -317,13 +317,38 @@ function noteStep(runs: { count: number }, floor?: number): Migration {
 
 const SETTING_ROW = "INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, \"on\", updated_at) VALUES ('repository', 'repo', '', 'rule', 'r', 1, 0)";
 
-/** Every table's columns (as a set: a step appends a column a new file may hold mid-table) and indexes. */
-function shapeOf(path: string): Record<string, { columns: string[]; indexes: string[] }> {
+/** Every `CHECK (…)` clause of a CREATE TABLE statement, whitespace collapsed. */
+function checksOf(statement: string): string[] {
+  const checks: string[] = [];
+  for (const match of statement.matchAll(/\bCHECK\s*\(/giu)) {
+    let depth = 0;
+    let end = match.index;
+    for (let index = match.index + match[0].length - 1; index < statement.length; index += 1) {
+      if (statement[index] === "(") depth += 1;
+      if (statement[index] === ")" && --depth === 0) {
+        end = index + 1;
+        break;
+      }
+    }
+    checks.push(statement.slice(match.index, end).replace(/\s+/gu, " "));
+  }
+  return checks.sort();
+}
+
+/**
+ * A database's shape as its readers and writers meet it: each table's columns (as a set: a step appends a column a new
+ * file may hold mid-table), CHECK constraints, foreign keys and unique or primary keys (with their columns), and its
+ * index statements. Review of #49 (F12): columns and index statements alone missed a constraint a step should change.
+ */
+function shapeOf(path: string): Record<string, { columns: string[]; checks: string[]; foreignKeys: string[]; keys: string[]; indexes: string[] }> {
   const database = new Database(path, { readonly: true });
   try {
-    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").pluck().all() as string[];
-    return Object.fromEntries(tables.map(table => [table, {
+    const tables = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string }[];
+    return Object.fromEntries(tables.map(({ name: table, sql }) => [table, {
       columns: (database.prepare("SELECT name || ' ' || type || ' ' || \"notnull\" || ' ' || ifnull(dflt_value, '') || ' ' || pk FROM pragma_table_info(?)").pluck().all(table) as string[]).sort(),
+      checks: checksOf(sql),
+      foreignKeys: (database.prepare("SELECT \"table\" || ' ' || \"from\" || ' ' || ifnull(\"to\", '') || ' ' || on_update || ' ' || on_delete FROM pragma_foreign_key_list(?)").pluck().all(table) as string[]).sort(),
+      keys: (database.prepare("SELECT origin || ' ' || \"unique\" || ' ' || partial || ' ' || (SELECT group_concat(name, ',') FROM pragma_index_info(il.name)) FROM pragma_index_list(?) AS il WHERE origin <> 'c'").pluck().all(table) as string[]).sort(),
       indexes: (database.prepare("SELECT ifnull(sql, name) FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name").pluck().all(table) as string[]),
     }]));
   } finally {
@@ -349,6 +374,35 @@ describe("the migration path", () => {
     openRerailDatabase(fresh).$client.close();
     expect(shapeOf(baseline)).toEqual(shapeOf(fresh));
     expect(stampOf(baseline)).toEqual(stampOf(fresh));
+  });
+
+  // Review of #49 (F12): the guard sees a constraint a step should have changed, not only columns and indexes.
+  it("tells a table whose CHECK differs from a new file's apart", async () => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    const before = shapeOf(path);
+    const changed = new Database(path);
+    try {
+      changed.exec("CREATE TABLE narrowed (kind text NOT NULL CHECK (kind IN ('a')))");
+      changed.exec("DROP TABLE narrowed; CREATE TABLE narrowed (kind text NOT NULL CHECK (kind IN ('a', 'b')))");
+    } finally {
+      changed.close();
+    }
+    expect(shapeOf(path).narrowed?.checks).toEqual(["CHECK (kind IN ('a', 'b'))"]);
+    expect(Object.values(before).some(table => table.checks.length > 0 || table.foreignKeys.length > 0)).toBe(true);
+  });
+
+  // Review of #49 (F16): a table or index the DDL alone adds (no step) is in place before a read-only open reads.
+  it("adds a table or index of this build's DDL a file lacks before a read-only open reads it", async () => {
+    const path = await temporaryDatabase();
+    stampedFile(path, "DROP INDEX sessions_repository_started");
+    openRerailDatabase(path, { readonly: true }).$client.close();
+    const database = new Database(path, { readonly: true });
+    try {
+      expect(database.prepare("SELECT name FROM sqlite_master WHERE name = 'sessions_repository_started'").pluck().all()).toEqual(["sessions_repository_started"]);
+    } finally {
+      database.close();
+    }
   });
 
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {
