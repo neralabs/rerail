@@ -4,7 +4,7 @@ use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
 use ast_grep_core::{Doc, Node};
 use num_bigint::BigInt;
-use num_traits::{Num, ToPrimitive, Zero};
+use num_traits::{FromPrimitive, Num, ToPrimitive, Zero};
 use std::cell::Cell;
 
 /// A Rust integer type (suffix or annotation).
@@ -255,7 +255,19 @@ fn raw_bytes(text: &str, prefix: &[u8]) -> Option<Vec<u8>> {
     if close <= q || t[close] != b'"' || !t[close + 1..].iter().all(|&c| c == b'#') {
         return None;
     }
-    Some(t[q + 1..close].to_vec())
+    // rustc reads a CRLF line ending as LF and refuses a bare CR in a raw string.
+    let body = &t[q + 1..close];
+    let mut o = Vec::with_capacity(body.len());
+    for (at, &byte) in body.iter().enumerate() {
+        if byte == b'\r' {
+            if body.get(at + 1) != Some(&b'\n') {
+                return None;
+            }
+            continue;
+        }
+        o.push(byte);
+    }
+    Some(o)
 }
 
 enum EscapeMode {
@@ -273,6 +285,14 @@ fn decode_escaped(s: &str, mode: EscapeMode) -> Option<Vec<u8>> {
         if bytes[i] != b'\\' {
             if matches!(mode, EscapeMode::Byte | EscapeMode::ByteString) && bytes[i] >= 128 {
                 return None;
+            }
+            // rustc reads a CRLF line ending as LF and refuses a bare CR.
+            if bytes[i] == b'\r' {
+                if bytes.get(i + 1) != Some(&b'\n') {
+                    return None;
+                }
+                i += 1;
+                continue;
             }
             o.push(bytes[i]);
             i += 1;
@@ -331,7 +351,8 @@ fn decode_escaped(s: &str, mode: EscapeMode) -> Option<Vec<u8>> {
                 }
                 o.extend(char::from_u32(v)?.encode_utf8(&mut [0; 4]).as_bytes());
             }
-            b'\n' => {
+            // A line continuation, after an LF or a CRLF line ending.
+            b'\n' | b'\r' if bytes[i] == b'\n' || bytes.get(i + 1) == Some(&b'\n') => {
                 i += 1;
                 while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
                     i += 1
@@ -356,6 +377,9 @@ const MAX_FOLLOW_DEPTH: usize = 16;
 /// Most `const` names one `evaluate_following` call resolves in all, so initializers that name
 /// several constants each (`A + A + A`) cannot multiply the work past a bound.
 const MAX_FOLLOWED_NAMES: usize = 4096;
+/// Most operands one evaluation evaluates again with the type of the other operand, so nested
+/// re-evaluations cannot multiply the work past a bound.
+const MAX_RETYPED_OPERANDS: usize = 4096;
 
 /// The type an enclosing `const` declares for an unsuffixed literal in its initializer: rustc
 /// infers the literal's type from it.
@@ -374,19 +398,22 @@ struct Context<'t> {
     depth: usize,
     /// `const` names resolved so far in the whole evaluation.
     budget: &'t Cell<usize>,
+    /// Operands evaluated again with their peer's type so far in the whole evaluation.
+    retyped: &'t Cell<usize>,
 }
 
 /// The value rustc gives the expression `node` (tree-sitter-rust), folding literals through
 /// operators, casts, parentheses and constant `if`/block expressions; `RustValue::Unknown` for
 /// anything else (names, paths, calls, macros) and for every expression rustc rejects.
 pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
-    let budget = Cell::new(0);
+    let (budget, retyped) = (Cell::new(0), Cell::new(0));
     eval(
         node,
         Context {
             table: None,
             depth: 0,
             budget: &budget,
+            retyped: &retyped,
         },
         None,
     )
@@ -398,16 +425,26 @@ pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>) -> RustValue {
 /// A chain of more than 16 names, a cycle, a `static`, a `let` binding (a run-time value), a path
 /// (`Self::C`, `m::C`) and a name no item of the file binds are `Unknown`.
 pub(crate) fn evaluate_following<D: Doc>(node: &Node<'_, D>, table: &ScopeTable) -> RustValue {
-    let budget = Cell::new(0);
+    let (budget, retyped) = (Cell::new(0), Cell::new(0));
     eval(
         node,
         Context {
             table: Some(table),
             depth: 0,
             budget: &budget,
+            retyped: &retyped,
         },
         None,
     )
+}
+
+/// The type a numeric value of a known type gives an unsuffixed peer.
+fn typed(value: &RustValue) -> Option<Hint> {
+    match value {
+        RustValue::Int { ty: Some(ty), .. } => Some(Hint::Int(*ty)),
+        RustValue::Float { ty: Some(ty), .. } => Some(Hint::Float(*ty)),
+        _ => None,
+    }
 }
 
 fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> RustValue {
@@ -457,11 +494,47 @@ fn eval<D: Doc>(node: &Node<'_, D>, ctx: Context<'_>, hint: Option<Hint>) -> Rus
                 "<<" | ">>" => (hint, None),
                 _ => (None, None),
             };
-            binary(
+            // The operands of an arithmetic, bitwise or comparison operator have one type: an
+            // unsuffixed one takes its peer's (`0.1` is an f32 in `0.1f32 == 0.1`).
+            let peers = matches!(
                 operator.as_ref(),
-                eval(&left, ctx, left_hint),
-                eval(&right, ctx, right_hint),
-            )
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "&"
+                    | "|"
+                    | "^"
+                    | "=="
+                    | "!="
+                    | "<"
+                    | "<="
+                    | ">"
+                    | ">="
+            );
+            let left_value = eval(&left, ctx, left_hint);
+            let right_hint = right_hint.or(peers.then(|| typed(&left_value)).flatten());
+            let right_value = eval(&right, ctx, right_hint);
+            let left_value = match typed(&right_value) {
+                Some(peer)
+                    if peers
+                        && left_hint.is_none()
+                        && matches!(
+                            left_value,
+                            RustValue::Unknown
+                                | RustValue::Int { ty: None, .. }
+                                | RustValue::Float { ty: None, .. }
+                        ) =>
+                {
+                    if ctx.retyped.get() >= MAX_RETYPED_OPERANDS {
+                        return RustValue::Unknown;
+                    }
+                    ctx.retyped.set(ctx.retyped.get() + 1);
+                    eval(&left, ctx, Some(peer))
+                }
+                _ => left_value,
+            };
+            binary(operator.as_ref(), left_value, right_value)
         }
         "type_cast_expression" => {
             let mut named = node.children().filter(|n| n.is_named());
@@ -722,6 +795,30 @@ fn binary(op: &str, left: RustValue, right: RustValue) -> RustValue {
             _ => RustValue::Unknown,
         };
     }
+    // A shift has its left operand's type, whatever integer type its count has; it drops the bits
+    // shifted out, and a count past the type's width is an overflow (rustc's const error).
+    if matches!(op, "<<" | ">>") {
+        let (RustValue::Int { value, ty }, RustValue::Int { value: count, .. }) = (left, right)
+        else {
+            return RustValue::Unknown;
+        };
+        let Some(count) = count.to_usize().filter(|c| *c < ty.map_or(128, int_bits)) else {
+            return RustValue::Unknown;
+        };
+        // `>>` of a negative value rounds down: the arithmetic shift of a signed type.
+        let value = if op == "<<" {
+            value << count
+        } else {
+            value >> count
+        };
+        return RustValue::Int {
+            value: match ty {
+                Some(ty) => wrap_int(value, ty),
+                None => value,
+            },
+            ty,
+        };
+    }
     if let (RustValue::Int { value: a, ty: ta }, RustValue::Int { value: b, ty: tb }) =
         (left.clone(), right.clone())
     {
@@ -739,12 +836,6 @@ fn binary(op: &str, left: RustValue, right: RustValue) -> RustValue {
             "*" => a * b,
             "/" if !b.is_zero() => a / b,
             "%" if !b.is_zero() => a % b,
-            "<<" | ">>" => {
-                let Some(shift) = b.to_usize().filter(|s| *s < ty.map_or(128, int_bits)) else {
-                    return RustValue::Unknown;
-                };
-                if op == "<<" { a << shift } else { a >> shift }
-            }
             "&" => a & b,
             "|" => a | b,
             "^" => a ^ b,
@@ -860,16 +951,15 @@ fn cast(value: RustValue, target: &str) -> RustValue {
                 value: wrap_int(value, ty),
                 ty: Some(ty),
             },
+            // A float truncates toward zero and saturates at the type's bounds; NaN is 0.
             RustValue::Float { value, .. } => {
                 let (lo, hi) = ty.limits();
                 let value = if value.is_nan() {
                     BigInt::from(0)
-                } else if value <= lo.to_f64().unwrap_or(f64::MIN) {
-                    lo
-                } else if value >= hi.to_f64().unwrap_or(f64::MAX) {
-                    hi
                 } else {
-                    BigInt::from(value.trunc() as i128)
+                    BigInt::from_f64(value.trunc())
+                        .unwrap_or_else(|| if value > 0.0 { hi.clone() } else { lo.clone() })
+                        .clamp(lo, hi)
                 };
                 RustValue::Int {
                     value,
@@ -897,14 +987,16 @@ fn cast(value: RustValue, target: &str) -> RustValue {
         .map(|(_, t)| *t)
     {
         return match value {
-            RustValue::Int { value, .. } => {
-                value
-                    .to_f64()
-                    .map_or(RustValue::Unknown, |value| RustValue::Float {
-                        value,
-                        ty: Some(ty),
-                    })
+            // An integer rounds to the nearest value of the target type itself: through an f64
+            // first, a large one would round twice.
+            RustValue::Int { value, .. } => match ty {
+                FloatTy::F32 => value.to_f32().map(f64::from),
+                FloatTy::F64 => value.to_f64(),
             }
+            .map_or(RustValue::Unknown, |value| RustValue::Float {
+                value,
+                ty: Some(ty),
+            }),
             RustValue::Float { value, .. } => RustValue::Float {
                 value: if ty == FloatTy::F32 {
                     f64::from(value as f32)

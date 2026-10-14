@@ -181,3 +181,52 @@ fn missing_names_the_field_and_unused_the_argument() {
     assert_eq!(binding.unused, vec![1]);
     assert_eq!(binding.fields[1].value, Slot::Missing(3));
 }
+
+/// The decoded text of the literal `literal`, with each character's source span relative to the
+/// literal's start; `None` when the value is not known.
+fn decoded(literal: &str) -> Option<(String, Vec<(u32, u32)>)> {
+    let root = GrammarDialect::Rust.ast_grep(format!("fn main() {{ let _ = {literal}; }}"));
+    let node = root
+        .root()
+        .dfs()
+        .find(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "string_literal" | "raw_string_literal"
+            )
+        })
+        .expect("a string literal");
+    let start = node.range().start as u32;
+    match decode(&node) {
+        Decode::Known(decoded) => Some((
+            decoded.text,
+            decoded
+                .spans
+                .iter()
+                .map(|span| (span.start - start, span.end - start))
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+#[test]
+fn crlf_line_endings_decode_as_lf_from_both_bytes() {
+    // rustc 1.99.0 on a CRLF file reads "a\nb" from each, and "ab" after a continuation; a bare
+    // CR is an error in a string and in a raw string.
+    assert_eq!(
+        decoded("\"a\r\nb\""),
+        Some(("a\nb".to_string(), vec![(1, 2), (2, 4), (4, 5)]))
+    );
+    assert_eq!(
+        decoded("r\"a\r\nb\""),
+        Some(("a\nb".to_string(), vec![(2, 3), (3, 5), (5, 6)]))
+    );
+    assert_eq!(
+        decoded("\"a\\\r\n  b\""),
+        Some(("ab".to_string(), vec![(1, 2), (7, 8)]))
+    );
+    assert_eq!(decoded("\"a\rb\""), None);
+    assert_eq!(decoded("r\"a\rb\""), None);
+    assert_eq!(decoded("\"a\\\rb\""), None);
+}

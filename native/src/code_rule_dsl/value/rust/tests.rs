@@ -272,3 +272,121 @@ fn upstream_value_oracle() {
         "only {followed} const-following cases checked"
     );
 }
+
+/// `evaluate` of the expression `source`, read as a `let` initializer.
+fn evaluated(source: &str) -> RustValue {
+    let root = GrammarDialect::Rust.ast_grep(format!("fn f() {{ let _ = {source}; }}"));
+    let value = root
+        .root()
+        .dfs()
+        .find_map(|node| {
+            (node.kind().as_ref() == "let_declaration")
+                .then(|| node.field("value"))
+                .flatten()
+        })
+        .expect("a let initializer");
+    evaluate(&value)
+}
+
+fn int(value: &str, ty: IntTy) -> RustValue {
+    RustValue::Int {
+        value: value.parse().expect("integer"),
+        ty: Some(ty),
+    }
+}
+
+fn f32_bits(value: RustValue) -> u32 {
+    match value {
+        RustValue::Float {
+            value,
+            ty: Some(FloatTy::F32),
+        } => (value as f32).to_bits(),
+        other => panic!("no f32: {other:?}"),
+    }
+}
+
+#[test]
+fn integer_to_f32_casts_round_once_to_f32() {
+    // rustc 1.99.0: true, 5d800001, and the f64 detour's 5d800000.
+    assert_eq!(
+        evaluated("(16777217u32 as f32) == 16777216f32"),
+        RustValue::Bool(true)
+    );
+    assert_eq!(
+        f32_bits(evaluated("0x1000_0010_0000_0001u64 as f32")),
+        0x5d80_0001
+    );
+    assert_eq!(
+        evaluated("0x1000_0010_0000_0001u64 as f32 == 0x1000_0010_0000_0001u64 as f64 as f32"),
+        RustValue::Bool(false)
+    );
+    assert_eq!(
+        f32_bits(evaluated(
+            "340282366920938463463374607431768211455u128 as f32"
+        )),
+        f32::INFINITY.to_bits()
+    );
+}
+
+#[test]
+fn float_to_u128_casts_keep_values_past_i128() {
+    // rustc 1.99.0 values.
+    assert_eq!(
+        evaluated("2e38f64 as u128"),
+        int("199999999999999995497619646912068059136", IntTy::U128)
+    );
+    assert_eq!(
+        evaluated("3.5e38f64 as u128"),
+        int(&u128::MAX.to_string(), IntTy::U128)
+    );
+    assert_eq!(
+        evaluated("-2e38f64 as i128"),
+        int(&i128::MIN.to_string(), IntTy::I128)
+    );
+    assert_eq!(evaluated("-1.5f64 as u8"), int("0", IntTy::U8));
+}
+
+#[test]
+fn shifts_keep_the_left_type_and_drop_shifted_out_bits() {
+    // rustc 1.99.0: 0, -128, 2, -64, -1; a count past the width is a const error.
+    assert_eq!(evaluated("128u8 << 1"), int("0", IntTy::U8));
+    assert_eq!(evaluated("64i8 << 1"), int("-128", IntTy::I8));
+    assert_eq!(evaluated("1u8 << 1u32"), int("2", IntTy::U8));
+    assert_eq!(evaluated("-128i8 >> 1"), int("-64", IntTy::I8));
+    assert_eq!(evaluated("-1i8 >> 7"), int("-1", IntTy::I8));
+    assert_eq!(evaluated("1u8 << 8"), RustValue::Unknown);
+    assert_eq!(evaluated("1u8 >> 8u64"), RustValue::Unknown);
+    assert_eq!(evaluated("1u8 << -1i32"), RustValue::Unknown);
+}
+
+#[test]
+fn unsuffixed_operands_take_their_peers_type() {
+    // rustc 1.99.0: true, 3e99999a; `1u8 == 256` and `1u8 + (0 - 1 + 1)` are errors.
+    assert_eq!(evaluated("0.1f32 == 0.1"), RustValue::Bool(true));
+    assert_eq!(evaluated("0.1 == 0.1f32"), RustValue::Bool(true));
+    assert_eq!(f32_bits(evaluated("0.1f32 + 0.2")), 0x3e99_999a);
+    assert_eq!(evaluated("1.0f32 + 1"), RustValue::Unknown);
+    assert_eq!(evaluated("1u8 == 256"), RustValue::Unknown);
+    assert_eq!(evaluated("1u8 + (0 - 1 + 1)"), RustValue::Unknown);
+}
+
+#[test]
+fn crlf_line_endings_in_strings_read_as_lf() {
+    // rustc 1.99.0 on a CRLF file: "a\nb" for each, "ab" after a continuation; a bare CR is an
+    // error in a string and in a raw string.
+    let text = |value: RustValue| match value {
+        RustValue::Str(text) => text,
+        other => panic!("no str: {other:?}"),
+    };
+    assert_eq!(text(evaluated("\"a\r\nb\"")), "a\nb");
+    assert_eq!(text(evaluated("r\"a\r\nb\"")), "a\nb");
+    assert_eq!(text(evaluated("r#\"a\r\nb\"#")), "a\nb");
+    assert_eq!(text(evaluated("\"a\\\r\n   b\"")), "ab");
+    assert_eq!(evaluated("b\"a\r\nb\""), RustValue::Bytes(b"a\nb".to_vec()));
+    assert_eq!(
+        evaluated("br\"a\r\nb\""),
+        RustValue::Bytes(b"a\nb".to_vec())
+    );
+    assert_eq!(evaluated("\"a\rb\""), RustValue::Unknown);
+    assert_eq!(evaluated("r\"a\rb\""), RustValue::Unknown);
+}

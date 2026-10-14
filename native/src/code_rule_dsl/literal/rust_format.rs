@@ -703,8 +703,20 @@ pub(crate) fn decode<D: Doc>(node: &Node<'_, D>) -> Decode {
                 return Decode::Unknown;
             }
             let body = &text[open..text.len() - 1 - hashes];
+            let bytes = body.as_bytes();
             for (at, c) in body.char_indices() {
                 let start = base + open + at;
+                // rustc reads a CRLF line ending as LF, from both bytes, and refuses a bare CR.
+                if c == '\r' {
+                    if bytes.get(at + 1) != Some(&b'\n') {
+                        return Decode::Unknown;
+                    }
+                    continue;
+                }
+                if c == '\n' && at > 0 && bytes[at - 1] == b'\r' {
+                    push(&mut decoded, c, start - 1..start + 1);
+                    continue;
+                }
                 push(&mut decoded, c, start..start + c.len_utf8());
             }
         }
@@ -733,9 +745,14 @@ fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
     while at < body.len() {
         let c = body[at..].chars().next().expect("a char");
         if c != '\\' {
-            // A bare carriage return is refused in a string literal.
-            if c == '\r' && bytes.get(at + 1) != Some(&b'\n') {
-                return false;
+            // rustc reads a CRLF line ending as LF, from both bytes, and refuses a bare CR.
+            if c == '\r' {
+                if bytes.get(at + 1) != Some(&b'\n') {
+                    return false;
+                }
+                push(decoded, '\n', base + at..base + at + 2);
+                at += 2;
+                continue;
             }
             push(decoded, c, base + at..base + at + c.len_utf8());
             at += c.len_utf8();
@@ -780,8 +797,8 @@ fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
                 };
                 (Some(c), close + 1)
             }
-            // A line continuation skips the newline and the whitespace after it.
-            b'\n' | b'\r' => {
+            // A line continuation skips the line ending (LF or CRLF) and the whitespace after it.
+            b'\n' | b'\r' if escape == b'\n' || bytes.get(at + 2) == Some(&b'\n') => {
                 let rest = &body[at + 1..];
                 let skipped = rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
                 (None, at + 1 + skipped)
