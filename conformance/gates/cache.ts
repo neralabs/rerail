@@ -6,14 +6,23 @@ import { dirname, join } from "node:path";
 
 import { shardName, type Shard } from "./shard.js";
 
-/** The gate layer's own code: every tracked file under it, hashed from the working tree, is part of every rule's key. */
-export const GATE_CODE = "conformance/gates";
+/**
+ * The gate layer's own code: every tracked file under it, hashed from the working tree, is part of every rule's key.
+ * The files that only render finished results (the merged summary, the pull request comment, the README) decide no
+ * verdict, so changing them re-judges nothing.
+ */
+export const GATE_CODE = [
+  "conformance/gates",
+  ":(exclude)conformance/gates/summary.ts",
+  ":(exclude)conformance/gates/comment.ts",
+  ":(exclude)conformance/gates/README.md",
+] as const;
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** sha256 of every file `git ls-files` lists under `pathspec` at `root`, by path, hashed from the working tree. */
-export function trackedDigest(root: string, pathspec: string): string {
-  const listed = execFileSync("git", ["ls-files", "-z", "--", pathspec], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 })
+export function trackedDigest(root: string, pathspec: string | readonly string[]): string {
+  const listed = execFileSync("git", ["ls-files", "-z", "--", ...(typeof pathspec === "string" ? [pathspec] : pathspec)], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 })
     .split("\0")
     .filter((path) => path !== "")
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
