@@ -832,6 +832,198 @@
     "evidence": "PHPStan: \"If condition is always false.\". The condition is always true or false by PHPStan's types and narrowing (an object or `self` parameter type, a method's or function's return type, `method_exists`/`property_exists`/`function_exists` narrowing from an enclosing or earlier condition, a property's declared type, a variable narrowed by an enclosing `if`); Rerail's value capability decides truthiness of constants only (`value: {truthy, follow}`), so it does not decide the condition."
   },
   {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/SymfonyTestsListener.php",
+    "line": 16,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class SymfonyTestsListener, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/TextUI/Command.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Command, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/AbstractPhpFileCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AbstractPhpFileCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/CachePoolClearerCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolClearerCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/RouterCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RouterCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/SerializerCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class SerializerCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/TranslationsCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationsCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/ValidatorCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class ValidatorCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolDeleteCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolDeleteCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolInvalidateTagsCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolInvalidateTagsCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolListCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolListCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolPruneCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolPruneCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/RouterMatchCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RouterMatchCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Controller/RedirectController.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RedirectController, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Controller/TemplateController.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TemplateController, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/AddValidatorSecurityExpressionLanguageProviderPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AddValidatorSecurityExpressionLanguageProviderPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/AssetsContextPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AssetsContextPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/TranslationLintCommandPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationLintCommandPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/TranslationUpdateCommandPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationUpdateCommandPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/Attribute/AsRoutingConditionService.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AsRoutingConditionService, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/DelegatingLoader.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class DelegatingLoader, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/Router.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Router, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/Fixtures/ClassAliasExampleClass.php",
+    "line": 10,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class ClassAliasExampleClass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Translation/Translator.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Translator, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
     "rule": "phpstan-variable-undefined",
     "source": "fixtures",
     "path": "Rules/Variables/data/bug-7291.php",
