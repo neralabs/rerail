@@ -64,8 +64,11 @@ pub(crate) fn witness_from_match<D: Doc>(
 }
 
 /// The witnesses one match reports under `violation.each`: one, or one per match of a regex group
-/// `each` names (`violations::node_group_sets`). Once `cancelled` holds, the sets not yet enumerated
-/// or transformed report nothing.
+/// `each` names (`violations::each_node_group_set`), each passed to `keep` as it is built. `keep`
+/// drops the witnesses it refuses (those a suppression comment silences), which spend none of
+/// `room`: building ends once `room` witnesses were kept. Once `cancelled` holds, the sets not
+/// yet enumerated or transformed report nothing.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn witnesses_from_match<D: Doc>(
     file: &FileInput,
     matched: &NodeMatch<'_, D>,
@@ -74,15 +77,36 @@ pub(crate) fn witnesses_from_match<D: Doc>(
     room: usize,
     cancelled: impl Fn() -> bool,
     span: impl Fn(usize, usize) -> Span,
+    mut keep: impl FnMut(&mut Witness) -> bool,
 ) -> WitnessResult<Vec<Witness>> {
-    let sets = violations::node_group_sets(violation, language, matched, room, &cancelled);
-    let envs = regrouped(matched, Some(violation), &sets, &cancelled)?;
-    sets.iter()
-        .zip(envs)
-        .map(|(groups, env)| {
-            witness_with_groups(file, matched, language, Some(violation), groups, env, &span)
-        })
-        .collect()
+    let mut kept = Vec::new();
+    // The sets are transformed and built a batch at a time, each batch as large as the room
+    // left: where `keep` refuses none, one batch holds every set the room allows.
+    let mut build = |batch: &mut Vec<Vec<violations::NodeGroup>>, kept: &mut Vec<Witness>| {
+        let envs = regrouped(matched, Some(violation), batch, &cancelled)?;
+        for (groups, env) in batch.iter().zip(envs) {
+            let mut witness =
+                witness_with_groups(file, matched, language, Some(violation), groups, env, &span)?;
+            if keep(&mut witness) {
+                kept.push(witness);
+            }
+        }
+        batch.clear();
+        WitnessResult::Ok(())
+    };
+    let mut batch = Vec::new();
+    let mut failed = Ok(());
+    violations::each_node_group_set(violation, language, matched, &cancelled, |groups| {
+        batch.push(groups);
+        if kept.len() + batch.len() < room {
+            return true;
+        }
+        failed = build(&mut batch, &mut kept);
+        failed.is_ok() && kept.len() < room
+    });
+    failed?;
+    build(&mut batch, &mut kept)?;
+    Ok(kept)
 }
 
 /// The environment each set of the witness's node groups reads, after the violation's group
@@ -695,20 +719,6 @@ fn evaluate_file_clause(
     let mut outcome = FileOutcome::Continue;
     let result = with_file_memo(&target, || {
         let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
-        // A suppressed binding does not spend the violation's output allowance, so where a comment may
-        // suppress one the enumeration, and a regex capture's groups, continue past it, as the workspace
-        // evaluator does.
-        let suppressible = violation.is_some_and(|violation| {
-            (honour_suppressions && violation.suppress.is_some())
-                || crate::code_rule_dsl::violations::names_rerail_ignore(violation, &target.root())
-        });
-        let room = |reported: usize| {
-            if suppressible {
-                usize::MAX
-            } else {
-                (limits.max_witnesses + 1).saturating_sub(reported)
-            }
-        };
         run_clause(
             &target,
             grammar,
@@ -716,19 +726,10 @@ fn evaluate_file_clause(
             limits.max_visited_nodes.saturating_sub(visited),
             util_work,
             |node, first, work| {
-                let matches = match each {
-                    Some(name) => enumerate(
-                        &target,
-                        grammar,
-                        node,
-                        first,
-                        work,
-                        name,
-                        room(metrics.witnesses),
-                    )?,
-                    None => vec![first],
-                };
-                for env in matches {
+                // One binding of the match: false ends the clause. A suppressed witness spends
+                // none of the violation's allowance, so the enumeration, and a regex capture's
+                // groups, go on past suppressed ones until the reported ones overflow it.
+                let mut visit = |env, work: &mut usize| {
                     let mut matched = NodeMatch::new(node_at(&target, node), env);
                     if let Some(transform) = &grammar.transform {
                         crate::code_rule_dsl::matcher::begin_clause(grammar, *work);
@@ -740,8 +741,23 @@ fn evaluate_file_clause(
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
                     if errors.overlaps(&matched.get_node().range()) {
-                        continue;
+                        return Ok(true);
                     }
+                    let matched_node = matched.get_node();
+                    let keep = |witness: &mut Witness| {
+                        if honour_suppressions
+                            && violations::suppresses(violation, matched_node, witness)
+                        {
+                            return false;
+                        }
+                        if violations::rerail_ignores(violation, matched_node, witness) {
+                            if !violation.is_some_and(|violation| violation.ignore_marks) {
+                                return false;
+                            }
+                            witness.ignored = true;
+                        }
+                        true
+                    };
                     let span = |start, end| lines.span(start, end);
                     let found = match violation.filter(|_| each.is_some()) {
                         Some(violation) => witnesses_from_match(
@@ -749,13 +765,20 @@ fn evaluate_file_clause(
                             &matched,
                             grammar.language,
                             violation,
-                            room(metrics.witnesses),
+                            (limits.max_witnesses + 1).saturating_sub(metrics.witnesses),
                             || false,
                             span,
+                            keep,
                         ),
                         None => {
                             witness_from_match(file, &matched, grammar.language, violation, span)
-                                .map(|witness| vec![witness])
+                                .map(|mut witness| {
+                                    if keep(&mut witness) {
+                                        vec![witness]
+                                    } else {
+                                        Vec::new()
+                                    }
+                                })
                         }
                     };
                     let found = match found {
@@ -765,27 +788,7 @@ fn evaluate_file_clause(
                             return Ok(false);
                         }
                     };
-                    for mut witness in found {
-                        let matched_node = matched.get_node();
-                        if honour_suppressions
-                            && crate::code_rule_dsl::violations::suppresses(
-                                violation,
-                                matched_node,
-                                &witness,
-                            )
-                        {
-                            continue;
-                        }
-                        if crate::code_rule_dsl::violations::rerail_ignores(
-                            violation,
-                            matched_node,
-                            &witness,
-                        ) {
-                            if !violation.is_some_and(|violation| violation.ignore_marks) {
-                                continue;
-                            }
-                            witness.ignored = true;
-                        }
+                    for witness in found {
                         metrics.witnesses += 1;
                         if metrics.witnesses > limits.max_witnesses {
                             metrics.visited_nodes = visited + node as usize + 1;
@@ -799,8 +802,12 @@ fn evaluate_file_clause(
                             return Ok(false);
                         }
                     }
+                    Ok(true)
+                };
+                match each {
+                    Some(name) => enumerate(&target, grammar, node, first, work, name, visit),
+                    None => visit(first, work),
                 }
-                Ok(true)
             },
         )
         .and_then(|result| result)

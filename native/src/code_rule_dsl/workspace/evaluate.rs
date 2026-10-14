@@ -788,16 +788,6 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
-            // A directive does not spend a violation's output allowance, so where one may suppress a
-            // witness the enumeration, and a regex capture's groups, continue past suppressed ones.
-            let suppressible = (honour_suppressions && violation.suppress.is_some()) || ignorable;
-            let room = |reported: usize| {
-                if suppressible {
-                    usize::MAX
-                } else {
-                    (limits.max_witnesses + 1).saturating_sub(reported)
-                }
-            };
             let result = {
                 let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
                 run_clause(
@@ -808,22 +798,11 @@ fn evaluate_clauses(
                     &mut util_work[slot],
                     |node, first, work| {
                         metrics.ast_matcher_calls += 1;
-                        let matches = match each {
-                            Some(name) => {
-                                let reported = file.witnesses.get(&id).map_or(0, Vec::len);
-                                enumerate(
-                                    &target,
-                                    grammar,
-                                    node,
-                                    first,
-                                    work,
-                                    name,
-                                    room(reported),
-                                )?
-                            }
-                            None => vec![first],
-                        };
-                        for env in matches {
+                        // One binding of the match: false ends the clause. A directive does not
+                        // spend a violation's output allowance, so the enumeration, and a regex
+                        // capture's groups, go on past suppressed witnesses until the reported
+                        // ones overflow it.
+                        let mut visit = |env, work: &mut usize| {
                             let mut matched =
                                 ast_grep_core::NodeMatch::new(node_at(&target, node), env);
                             if let Some(transform) = &grammar.transform {
@@ -837,17 +816,44 @@ fn evaluate_clauses(
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
                             if errors.overlaps(&matched.get_node().range()) {
-                                continue;
+                                return Ok(true);
                             }
+                            let matched_node = matched.get_node();
+                            let keep = |witness: &mut Witness| {
+                                if honour_suppressions
+                                    && violations::suppresses(
+                                        Some(violation),
+                                        matched_node,
+                                        witness,
+                                    )
+                                {
+                                    return false;
+                                }
+                                if ignorable
+                                    && violations::rerail_ignores(
+                                        Some(violation),
+                                        matched_node,
+                                        witness,
+                                    )
+                                {
+                                    if !violation.ignore_marks {
+                                        return false;
+                                    }
+                                    witness.ignored = true;
+                                }
+                                true
+                            };
                             let found = if each.is_some() {
+                                let reported = file.witnesses.get(&id).map_or(0, Vec::len);
                                 witnesses_from_match(
                                     &file.input,
                                     &matched,
                                     grammar.language,
                                     violation,
-                                    room(file.witnesses.get(&id).map_or(0, Vec::len)),
+                                    (limits.max_witnesses + 1).saturating_sub(reported),
                                     matcher_budget_exhausted,
                                     |start, end| lines.span(start, end),
+                                    keep,
                                 )
                             } else {
                                 witness_from_match(
@@ -857,7 +863,13 @@ fn evaluate_clauses(
                                     Some(violation),
                                     |start, end| lines.span(start, end),
                                 )
-                                .map(|witness| vec![witness])
+                                .map(|mut witness| {
+                                    if keep(&mut witness) {
+                                        vec![witness]
+                                    } else {
+                                        Vec::new()
+                                    }
+                                })
                             };
                             let found = match found {
                                 Ok(found) => found,
@@ -867,28 +879,7 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             };
-                            for mut witness in found {
-                                if honour_suppressions
-                                    && violations::suppresses(
-                                        Some(violation),
-                                        matched.get_node(),
-                                        &witness,
-                                    )
-                                {
-                                    continue;
-                                }
-                                if ignorable
-                                    && violations::rerail_ignores(
-                                        Some(violation),
-                                        matched.get_node(),
-                                        &witness,
-                                    )
-                                {
-                                    if !violation.ignore_marks {
-                                        continue;
-                                    }
-                                    witness.ignored = true;
-                                }
+                            for witness in found {
                                 let witnesses =
                                     file.witnesses.get_mut(&id).expect("eligible check");
                                 if witnesses.len() >= limits.max_witnesses {
@@ -905,8 +896,14 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             }
+                            Ok(true)
+                        };
+                        match each {
+                            Some(name) => {
+                                enumerate(&target, grammar, node, first, work, name, visit)
+                            }
+                            None => visit(first, work),
                         }
-                        Ok(true)
                     },
                 )
                 .and_then(|result| result)
