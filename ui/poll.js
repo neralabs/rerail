@@ -182,9 +182,10 @@ export function toStoredRules(entries) {
   return rules;
 }
 
-/** One folder's own on, mode and suppressions of a rule, with what decided its suppressions. */
+/** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
 const folderState = entry => ({
   folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+  source: entry.source,
 });
 
 /**

@@ -74,9 +74,9 @@ describe("a rule's suppression comments and options on the page", () => {
     const one = [...toStoredRules([entry("eslint:no-var", ""), entry("eslint:radix", "", { suppressions: "ignore" })]).values()];
     const all = [...toStoredRules([entry("eslint:no-var", "", { suppressions: "ignore" }), entry("eslint:radix", "", { suppressions: "ignore" })]).values()];
 
-    expect(packSuppressions(honouring, "repository")).toEqual({ text: "honoured by its rules", next: "ignore" });
-    expect(packSuppressions(one, "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "ignore" });
-    expect(packSuppressions(all, "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+    expect(packSuppressions(honouring, "eslint", "repository")).toEqual({ text: "honoured by its rules", next: "ignore" });
+    expect(packSuppressions(one, "eslint", "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "ignore" });
+    expect(packSuppressions(all, "eslint", "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
   });
 
   // Self-review round 4: the switch writes only the pack's setting, so a rule with its own setting does not hold it on
@@ -86,11 +86,11 @@ describe("a rule's suppression comments and options on the page", () => {
       entry("eslint:no-var", "", { suppressions: "ignore", suppressionsSource: inRepository("", "pack") }),
       entry("eslint:radix", "", { suppressions: "honour", suppressionsSource: inRepository("", "rule") }),
     ]).values()];
-    expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "honour" });
+    expect(packSuppressions(rules, "eslint", "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "honour" });
     // A worktree's own setting decides a rule for the repository's switch, not for the worktree's.
     const worktree = [...toStoredRules([entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inWorktree("", "pack") })]).values()];
-    expect(packSuppressions(worktree, "repository", "/work/a").next).toBe("ignore");
-    expect(packSuppressions(worktree, "checkout", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(worktree, "eslint", "repository", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(worktree, "eslint", "checkout", "/work/a").next).toBe("ignore");
   });
 
   // Self-review round 5: the pack's setting decides each folder on its own; a rule honouring them in one folder by its
@@ -102,7 +102,7 @@ describe("a rule's suppression comments and options on the page", () => {
       entry("eslint:radix", "", { suppressions: "ignore", suppressionsSource: inRepository("", "pack") }),
       entry("eslint:radix", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "pack") }),
     ]).values()];
-    expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+    expect(packSuppressions(rules, "eslint", "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
   });
 
   // Self-review round 6: the pack's setting decides a folder by the resolver's precedence, so a pack setting at a
@@ -113,20 +113,30 @@ describe("a rule's suppression comments and options on the page", () => {
       entry("eslint:radix", "web", { suppressions: "ignore", suppressionsSource: inRepository("", "rule") }),
     ]).values()];
     // The pack attached at `web`: its setting there is deeper than the rules' at the repository root.
-    expect(packSuppressions(rootRuleIgnores, "repository", "/work/a")).toEqual({ text: "ignored by its rules", next: "honour" });
+    expect(packSuppressions(rootRuleIgnores, "eslint", "repository", "/work/a")).toEqual({ text: "ignored by its rules", next: "honour" });
     // This worktree's pack setting outranks the repository's rule setting.
-    expect(packSuppressions(rootRuleIgnores, "checkout", "/work/a").next).toBe("honour");
+    expect(packSuppressions(rootRuleIgnores, "eslint", "checkout", "/work/a").next).toBe("honour");
     // At the same owner and folder the rule's own setting wins.
     const sameFolder = [...toStoredRules([
       entry("eslint:no-var", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "rule") }),
     ]).values()];
-    expect(packSuppressions(sameFolder, "repository", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(sameFolder, "eslint", "repository", "/work/a").next).toBe("ignore");
     // A worktree containing this one outranks the repository but not this worktree.
     const parent = [...toStoredRules([entry("eslint:no-var", "", {
       suppressions: "ignore", suppressionsSource: { by: "checkout", checkoutPath: "/work", folder: "", target: "rule" },
     })]).values()];
-    expect(packSuppressions(parent, "repository", "/work/a").next).toBe("ignore");
-    expect(packSuppressions(parent, "checkout", "/work/a").next).toBe("honour");
+    expect(packSuppressions(parent, "eslint", "repository", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(parent, "eslint", "checkout", "/work/a").next).toBe("honour");
+  });
+
+  // Self-review round 7: a folder where the rule is added on its own, not by the pack, is not the pack's to change.
+  it("counts only the folders where the pack added the rule", () => {
+    const rules = [...toStoredRules([
+      entry("eslint:no-var", "a", { suppressions: "ignore", suppressionsSource: inRepository("a", "pack") }),
+      entry("eslint:no-var", "b", { source: { kind: "rerail_rule", id: "eslint:no-var" }, suppressions: "honour", suppressionsSource: { by: "pack-start" } }),
+    ]).values()];
+    expect(packSuppressions(rules, "eslint", "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+    expect(packSuppressions(rules, "other", "repository").next).toBe("ignore");
   });
 });
 

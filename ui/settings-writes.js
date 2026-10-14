@@ -72,9 +72,8 @@ export function settingWrites({ toast, invalidate, owner }) {
    */
   function setPackSuppressions(packId, suppressions, label) {
     const by = owner();
-    const decides = state => packSettingDecides(state, by, data.checkout?.checkoutPath);
-    const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId
-      && r.folderStates.some(decides));
+    const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
+    const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
     const folders = byFolder((data.attachedPacks.get(packId) ?? []).map(folder => [folder, { kind: "pack", id: packId }]));
     return save(folders, { suppressions }, rules, showSuppressions(suppressions, decides), label);
   }

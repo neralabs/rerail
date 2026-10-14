@@ -100,12 +100,14 @@ export function suppressionsText(stored, checkoutPath) {
 export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
 
 /**
- * Whether the pack's setting, written as `owner` ("repository" or "checkout", this worktree being `checkoutPath`) at
- * the folder `state` is added at, would decide that folder's suppressions. It mirrors the resolver's precedence: this
- * worktree, then the worktrees containing it, then the repository; at one owner the deeper folder; at one owner and
- * folder the rule's own setting before its pack's. Neither a pack's starting value nor a rule's default holds it off.
+ * Whether pack `packId`'s setting, written as `owner` ("repository" or "checkout", this worktree being `checkoutPath`)
+ * at the folder `state` is added at, would decide that folder's suppressions: only where the pack added the rule, and
+ * then by the resolver's precedence: this worktree, then the worktrees containing it, then the repository; at one
+ * owner the deeper folder; at one owner and folder the rule's own setting before its pack's. Neither a pack's starting
+ * value nor a rule's default holds it off.
  */
-export function packSettingDecides(state, owner, checkoutPath) {
+export function packSettingDecides(state, packId, owner, checkoutPath) {
+  if (state.source?.kind !== "pack" || state.source.id !== packId) return false;
   const source = state.suppressionsSource;
   if (source?.by !== "checkout" && source?.by !== "repository") return true;
   // Lower outranks: this worktree, a worktree containing it, the repository.
@@ -117,17 +119,17 @@ export function packSettingDecides(state, owner, checkoutPath) {
 }
 
 /**
- * How an added pack's rules here treat suppression comments, from each rule's own value, and what the pack's switch
+ * How pack `packId`'s rules here treat suppression comments, from each rule's own value, and what the pack's switch
  * (written as `owner` from the worktree `checkoutPath`) sets: honour once every folder of its rules it decides ignores
- * them, else ignore. A folder a setting outranking the pack's decides counts in the text but not in the switch, which
- * does not change it.
+ * them, else ignore. A folder the pack did not add the rule at, or a setting outranking the pack's decides, counts in
+ * the text but not in the switch, which does not change it.
  */
-export function packSuppressions(rules, owner, checkoutPath) {
+export function packSuppressions(rules, packId, owner, checkoutPath) {
   const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
   const text = ignoring === 0 ? "honoured by its rules"
     : ignoring === rules.length ? "ignored by its rules"
     : `ignored by ${ignoring} of its ${rules.length} rules`;
-  const decided = rules.flatMap(rule => rule.folderStates.filter(state => packSettingDecides(state, owner, checkoutPath)));
+  const decided = rules.flatMap(rule => rule.folderStates.filter(state => packSettingDecides(state, packId, owner, checkoutPath)));
   return { text, next: decided.length > 0 && decided.every(state => state.suppressions === "ignore") ? "honour" : "ignore" };
 }
 

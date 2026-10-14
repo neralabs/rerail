@@ -64,8 +64,8 @@ declare module "*/ui/poll.js" {
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
   export type Suppressions = "honour" | "ignore";
-  /** One folder's own on, mode and suppressions, with what decided its suppressions. */
-  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object }
+  /** One folder's own on, mode and suppressions, what decided its suppressions, and what added the rule there. */
+  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object; source: { kind: string; id: string } }
   /** A rule as the page stores it from `GET /api/repository/rules`; only the fields the tests read. */
   export interface StoredRule {
     rule: { id: string; mode: string };
@@ -91,7 +91,7 @@ declare module "*/ui/derive.js" {
   export function optionsText(stored: object, checkoutPath?: string): string | null;
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function onText(stored: object, checkoutPath?: string): string;
-  export function packSuppressions(rules: readonly object[], owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
+  export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
 }
 
 declare module "*/ui/state.js" {
