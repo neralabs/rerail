@@ -5,14 +5,15 @@ Upstream: https://github.com/DerekStride/tree-sitter-sql, version 0.3.11 (commit
 (`languages/sql.json`): PostgreSQL, SQLite, MySQL and ANSI files alike. The patches make it read what the
 SQL pack's oracles hold: SQLFluff 4.4.0's rule fixtures (`packs/sql/upstream/sqlfluff/fixtures/`) and
 PostgreSQL 18.6's names, values and arguments oracles (`fixtures/sql/{scope,matcher/arguments}/postgres.sql`).
-The oracle inputs all parse without an `ERROR` node; 251 of the 265 SQLFluff fixtures do. The 14 that do not:
+The oracle inputs all parse without an `ERROR` node. Of the 283 fixtures `packs/sql/README.md` scores, 265 from
+SQLFluff and 18 Rerail wrote (`fixtures/rerail/`), 270 do. The 13 that do not are all SQLFluff's:
 
 - a bare `[1]` array literal (BigQuery syntax): `ansi/ST10/test_pass_array_access.sql`;
 - a redundantly bracketed join target: `ansi/RF01/test_{fail_redundantly_bracketed_join_target_unknown_table,pass_redundantly_bracketed_join_target_alias}.sql`;
 - `CREATE POLICY` / `ALTER POLICY`: the five `postgres/RF01/test_*_postgres_{create,alter}_policy_*.sql`;
 - `CREATE TRIGGER … BEGIN … END`: the three `sqlite/RF01/test_sqlite_create_trigger_after_*_reference.sql`;
-- quoting the grammar reads differently: `ansi/AL05/test_pass_quoted_case_insensitive.sql`,
-  `ansi/AL08/test_fail_locs.sql` and `sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql`.
+- quoting the grammar reads differently: `ansi/AL05/test_pass_quoted_case_insensitive.sql` and
+  `sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql`.
 
 A port that skips files with syntax errors skips these (`packs/sql/README.md`); each finding they affect is a
 declared divergence or scored as a syntax-error file.
