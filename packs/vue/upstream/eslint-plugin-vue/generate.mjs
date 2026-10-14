@@ -1,8 +1,8 @@
 // Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run offline by a
-// maintainer, never in CI, with the tools of ../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
+// maintainer, never in CI, with the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
-//   node generate.mjs corpus [<name>...]            # corpora of ../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
+//   node generate.mjs corpus [<name>...]            # corpora of ../../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
 //
 // Pins (refused when different): eslint 10.11.0, eslint-plugin-vue 10.11.1, vue-eslint-parser 10.4.1,
 // @typescript-eslint/parser 8.70.1, typescript 6.0.3.
