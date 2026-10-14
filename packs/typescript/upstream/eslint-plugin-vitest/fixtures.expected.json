@@ -43,6 +43,7 @@
    "expect-expect/031.test.ts",
    "expect-expect/032.test.ts",
    "expect-expect/033.test.ts",
+   "expect-expect/rerail-assertion-computed-names.test.ts",
    "expect-expect/rerail-assertion-names.test.ts",
    "expect-expect/rerail-ava.test.ts",
    "expect-expect/rerail-test-without-callback.test.ts",

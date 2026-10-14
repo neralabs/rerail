@@ -547,6 +547,23 @@ function check() {
 `,
     reports: { "expect-expect": 1 },
   },
+  // Self-review round 4: computed accessors in an assertion's name, and a parenthesized helper argument.
+  {
+    rule: "expect-expect",
+    name: "assertion-computed-names",
+    code: `it('string key', () => {
+  assert['ok'](true);
+});
+it('identifier key', () => {
+  assert[method](true);
+});
+it('parenthesized helper', (check));
+
+function check() {
+  expect(1).toBe(1);
+}
+`,
+  },
 ];
 
 function parseArguments(argv) {

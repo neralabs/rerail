@@ -488,13 +488,36 @@ const ast = rule => ({ ast: { language: "typescript", rule } });
 
 /**
  * An assertion call as expect-expect's default `assertFunctionNames` read it (`expect`, `assert`, case-insensitive): a
- * call whose name (getNodeName: the chain through members and calls, parentheses aside) starts with one of them. A
- * tagged template (`` expect`x` ``) is no call upstream, though the grammar reads it as one.
+ * call whose name (getNodeName: the chain through members, computed accessors that name a string or identifier, and
+ * calls, parentheses aside) starts with one of them. A tagged template (`` expect`x` ``) is no call upstream, though
+ * the grammar reads it as one.
  */
 function assertionCall(utils) {
   utils["vitest-assertion-name"] = { kind: "identifier", regex: "(?i)^(?:expect|assert)$" };
-  utils["vitest-assertion-callee"] = chain("vitest-assertion-callee", "vitest-assertion-name");
+  const callee = chain("vitest-assertion-callee", "vitest-assertion-name");
+  callee.any.push({
+    kind: "subscript_expression",
+    all: [
+      { has: { field: "object", matches: "vitest-assertion-callee" } },
+      { has: { field: "index", any: [{ kind: "string" }, { kind: "template_string" }, { kind: "identifier" }] } },
+    ],
+  });
+  utils["vitest-assertion-callee"] = callee;
   return { kind: "call_expression", has: { field: "function", matches: "vitest-assertion-callee" }, not: { has: { field: "arguments", kind: "template_string" } } };
+}
+
+/** A test argument naming a function declaration that asserts (`it('x', check)`, parentheses aside). */
+function assertingHelper(utils) {
+  utils["vitest-asserting-helper"] = {
+    any: [
+      {
+        kind: "identifier",
+        resolves: { binding: { site: { kind: "function_declaration", has: { stopBy: "end", ...assertionCall(utils) } } } },
+      },
+      { kind: "parenthesized_expression", has: { matches: "vitest-asserting-helper" } },
+    ],
+  };
+  return "vitest-asserting-helper";
 }
 
 const DOCUMENTS = {
@@ -526,22 +549,7 @@ const DOCUMENTS = {
               has: {
                 field: "arguments",
                 not: {
-                  any: [
-                    { has: { stopBy: "end", ...assertionCall(utils) } },
-                    {
-                      has: {
-                        kind: "identifier",
-                        resolves: {
-                          binding: {
-                            site: {
-                              kind: "function_declaration",
-                              has: { stopBy: "end", ...assertionCall(utils) },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  ],
+                  any: [{ has: { stopBy: "end", ...assertionCall(utils) } }, { has: { matches: assertingHelper(utils) } }],
                 },
               },
             },

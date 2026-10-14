@@ -4,6 +4,7 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 
 | File | Origin |
 |---|---|
+| `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-assertion-computed-names.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-assertion-names.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-ava.test.ts` | written by Rerail |
 | `upstream/eslint-plugin-vitest/fixtures/expect-expect/rerail-test-without-callback.test.ts` | written by Rerail |
