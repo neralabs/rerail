@@ -1,8 +1,11 @@
 # Rerail rule pack: SQL
 
-22 code rules for SQL, ported from SQLFluff 4.4.0. Each is scored against SQLFluff's own findings on SQLFluff's tests
-and on pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
-`divergences.json`.
+22 code rules for SQL, ported from SQLFluff 4.4.0. Every one is a candidate: it lives in `candidates/rules/` and moves
+to `rules/` and `pack.json` once it passes the V1 rule validation gates
+([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). While `pack.json` lists no rules, the pack
+ships none and is never recommended. Each port is scored against SQLFluff's own findings on SQLFluff's tests and on
+pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
+`divergences.json`. The conformance check (`--check`, run in CI) reports the candidates without gating them.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack sql"` and by
@@ -11,20 +14,20 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group |
-| `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
+| `pack.json` | The pack (`rerail.rule-pack/v1`); it lists no rules while every port is a candidate |
+| `candidates/rules/` | The 22 candidate code-rule documents (`rerail.policy/v1`), one per port, named for its id |
+| `conformance.json` | Every port (all candidates): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
 | `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`) |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
-## Rules that start off
+## Rules that would start off
 
-PG01, PG02 and AM02 depend on SQLFluff's dialect, and Rerail reads every `.sql` file in one dialect, so each starts off
-(`"on": false` in `pack.json`; turn it on per repository or checkout). PG01 and PG02 are PostgreSQL-only: on a MySQL or
-SQLite file they would advise `CONCURRENTLY` or `NOT VALID`, which those databases lack. AM02 is the reverse: SQLFluff
-skips it for PostgreSQL, so on a PostgreSQL file a bare `UNION` would be a false positive; turn it on for MySQL or ANSI
-SQL. The other 19 rules start on. The scores below still cover all 22.
+PG01, PG02 and AM02 depend on SQLFluff's dialect, and Rerail reads every `.sql` file in one dialect, so each should
+start off (`"on": false` in `pack.json`) if it ever ships, to be turned on per repository or checkout. PG01 and PG02
+are PostgreSQL-only: on a MySQL or SQLite file they would advise `CONCURRENTLY` or `NOT VALID`, which those databases
+lack. AM02 is the reverse: SQLFluff skips it for PostgreSQL, so on a PostgreSQL file a bare `UNION` would be a false
+positive; it would be turned on for MySQL or ANSI SQL. The other 19 would start on. The scores below cover all 22.
 
 ## How the rules read SQL
 
@@ -40,8 +43,8 @@ dialect gates for PG01 and AM02) and 2 are `rerail-unknown` (grammar gaps in RF0
 
 ## Scores
 
-TP/FP/FN against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
-findings a declared divergence explains. On the recorded fixtures and the four pinned corpora, every port has no
+TP/FP/FN of each candidate against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
+findings a declared divergence explains. On the recorded fixtures and the four pinned corpora, every candidate has no
 false positive and no false negative on the fixtures outside its declared divergences; that says nothing about other
 SQL, and a port's reading is PostgreSQL's wherever the dialects differ. Corpus false negatives do not fail the gate.
 

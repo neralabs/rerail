@@ -898,7 +898,7 @@ mod tests {
         use crate::code_rule_dsl::CodeRuleDslRuntime;
         use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
         let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../packs/sql/rules/sqlfluff-cv05-convention-is-null.json");
+            .join("../packs/sql/candidates/rules/sqlfluff-cv05-convention-is-null.json");
         let document = std::fs::read_to_string(rule).expect("CV05 rule");
         let compiled =
             CodeRuleDslRuntime::compile(document, "json".to_owned(), CAPABILITIES.to_owned())

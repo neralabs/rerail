@@ -733,7 +733,7 @@ SPDX-License-Identifier = "MIT"
 # under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
 # (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/sql/rules/**"
+path = ["packs/sql/rules/**", "packs/sql/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
