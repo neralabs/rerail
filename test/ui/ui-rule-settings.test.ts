@@ -281,15 +281,29 @@ describe("the page's rule setting writes", () => {
     expect(stored("eslint:radix")).toMatchObject({ enabled: true, suppressions: "ignore", suppressionsSource: inRepository("", "rule") });
   });
 
-  // Self-review round 12: a write another repository's page left unanswered does not hold this one's back.
-  it("sends a write once the page shows another repository, whatever the last one's write is doing", async () => {
-    void page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+  // Self-review rounds 12 and 13: a write another repository's page left unanswered does not hold this one's back, and
+  // one for the same repository still goes out first when the page comes back to it.
+  it("keeps click order per repository across switches, and never makes another repository wait", async () => {
+    void page().setSuppressions(["eslint:no-var"], "honour", "Honoured.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     changeScope({ repository: "B", checkout: "/work/b" });
     data.rules = toStoredRules([entry("eslint:radix", "")]);
     void page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
     expect(writes()[1]!.body).toMatchObject({ repository: "B", targets: [{ kind: "rule", id: "eslint:radix" }] });
+    writes()[1]!.answer(200, {});
+
+    changeScope({ repository: "A", checkout: "/work/a" });
+    data.rules = toStoredRules([entry("eslint:no-var", "")]);
+    const again = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    // Nothing the page could do on its own would send it: let every pending reaction run, then look.
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+    expect(writes()).toHaveLength(2);
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(3));
+    expect(writes()[2]!.body).toMatchObject({ repository: "A", suppressions: "ignore" });
+    writes()[2]!.answer(200, {});
+    await again;
   });
 
   it("sets a pack at every folder it is added at, shown on its rules that follow the pack", async () => {

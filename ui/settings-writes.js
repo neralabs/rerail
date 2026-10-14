@@ -23,11 +23,11 @@ const storedRules = ids => ids.map(id => data.rules.get(id)).filter(r => r !== u
 const ruleTargets = rules => byFolder(rules.flatMap(r => r.folders.map(folder => [folder, { kind: "rule", id: r.rule.id }])));
 
 /**
- * The last setting write queued on the page, with the scope `token` it was clicked in: each is sent once the one
- * clicked before it in the same scope is answered, in click order. A scope switch starts a new queue, so another
- * repository's writes never wait on this one's.
+ * The last setting write queued per repository and worktree the page has shown (keyed by its target): each is sent
+ * once the one clicked before it for the same target is answered, in click order, even after the page has shown
+ * another repository and come back. Another target's writes never wait on these.
  */
-let writing = { token: -1, settled: Promise.resolve() };
+const writing = new Map();
 
 export function settingWrites({ toast, invalidate, owner }) {
   /**
@@ -42,9 +42,10 @@ export function settingWrites({ toast, invalidate, owner }) {
     for (const r of rules) show(r);
     const shown = new Map(rules.map(r => [r, { ...r }]));
     invalidate();
-    const previous = writing.token === scope.token ? writing.settled : Promise.resolve();
-    let done;
-    writing = { token: scope.token, settled: new Promise(resolve => { done = resolve; }) };
+    const key = JSON.stringify(scope.target);
+    const previous = writing.get(key) ?? Promise.resolve();
+    const { promise: settled, resolve: done } = Promise.withResolvers();
+    writing.set(key, settled);
     let failure = null, saved = 0;
     try {
       await previous;
