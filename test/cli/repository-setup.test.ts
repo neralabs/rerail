@@ -506,7 +506,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     });
   });
 
-  it("says an eslint.config.ts it cannot read is not read, and takes an .oxlintrc.json off on the review's path too", async () => {
+  it("starts the ESLint ports off for an eslint.config.ts it cannot read statically, and takes an .oxlintrc.json off on the review's path too", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), "throw new Error(\"run\");\n");
     writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-tslint-comment\": \"off\", },\n}\n");
@@ -515,8 +515,9 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     });
     const review = agentIo();
     await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo }));
-    expect(review.text()).toContain("eslint.config.ts is not read: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config.");
-    expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
+    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
+    expect(review.text()).toContain(`${TYPE_DEFINITIONS} starts off  eslint.config.ts is not statically readable`);
+    expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
     expect(selected(setup)).toEqual(["typescript"]);

@@ -159,10 +159,10 @@ describe("readLintConfigFiles", () => {
       ".eslintrc.json": "{ \"rules\": { \"no-debugger\": \"off\" } }",
     });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toBeUndefined();
+    expect(files.eslint).toMatchObject({ file: "eslint.config.ts", rules: {}, unreadable: expect.stringMatching(/^it runs code/u) });
     expect(files.notes.map(note => note.text)).toEqual([
       ".eslintrc.json is not read: ESLint uses eslint.config.ts instead.",
-      expect.stringMatching(/^eslint\.config\.ts is not read: it runs code Rerail does not read as data \(line 2: writeFileSync\(.+\)\. Rerail never runs your config\.$/u),
+      expect.stringMatching(/^eslint\.config\.ts is not statically readable: it runs code Rerail does not read as data \(line 2: writeFileSync\(.+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u),
     ]);
     expect(existsSync(join(root, "ran"))).toBe(false);
 
@@ -173,12 +173,12 @@ describe("readLintConfigFiles", () => {
   it("reports a flat config it cannot parse or that exports nothing it can find as not read", async () => {
     const broken = await repository({ "eslint.config.js": "export default [\n" });
     expect(readLintConfigFiles(broken).notes.map(note => note.text)).toEqual([
-      expect.stringMatching(/^eslint\.config\.js is not read: it does not parse: .+\. Rerail never runs your config\.$/u),
+      expect.stringMatching(/^eslint\.config\.js is not statically readable: it does not parse: .+\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u),
     ]);
     const thrown = await repository({ "eslint.config.mjs": "throw new Error(\"run\");\n", "eslint.config.ts": "export default [];\n" });
     expect(readLintConfigFiles(thrown).notes.map(note => note.text)).toEqual([
       "eslint.config.ts is not read: ESLint uses eslint.config.mjs instead.",
-      "eslint.config.mjs is not read: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config.",
+      "eslint.config.mjs is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.",
     ]);
   });
 
@@ -477,6 +477,14 @@ describe("proposeLintConfigSettings for .eslintrc overrides", () => {
   });
 });
 
+/** What set-up proposes for a flat config it cannot read statically: every rule it ports from ESLint off, no options. */
+function expectEslintPortsOff(settings: readonly { readonly ruleId: string }[]): void {
+  expect(settings).toContainEqual(expect.objectContaining({ ruleId: "eslint-no-console" }));
+  for (const setting of settings) {
+    expect(setting).toEqual({ ruleId: setting.ruleId, folder: "", on: false, config: null, because: expect.stringMatching(/^eslint\.config\.[cm]?[jt]s is not statically readable$/u) });
+  }
+}
+
 describe("proposeLintConfigSettings for ESLint's flat config", () => {
   /** The settings and notes for packs `packs` from a repository whose only lint config is `name` holding `text`. */
   async function flat(text: string, packs: readonly string[] = ["typescript"], name = "eslint.config.ts") {
@@ -631,7 +639,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
 
   it("reads a config object with a getter as one it cannot read, never calling the getter", async () => {
     const text = "export default [{ rules: { \"no-console\": \"off\" } }, { get rules() { throw new Error(\"ran\"); } }];";
-    expect((await flat(text, ["javascript"], "eslint.config.js")).settings).toEqual([]);
+    expectEslintPortsOff((await flat(text, ["javascript"], "eslint.config.js")).settings);
   });
 
   it("does not read a const the file changes after setting it, however it does", async () => {
@@ -640,7 +648,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
       "const config = [{ rules: { \"no-console\": \"off\" } }];\nconfig.push({ rules: { \"no-console\": \"error\" } });\nexport default config;",
       "const rules = { \"no-console\": \"off\" };\nconst base = { rules };\nfunction tweak(r) { r.rules[\"no-console\"] = \"error\"; }\ntweak(base);\nexport default [{ rules }];",
     ]) {
-      expect((await flat(text, ["javascript"], "eslint.config.js")).settings).toEqual([]);
+      expectEslintPortsOff((await flat(text, ["javascript"], "eslint.config.js")).settings);
     }
     // A const nothing changes is read.
     expect((await flat("const rules = { \"no-console\": \"off\" };\nexport default [{ rules }];", ["javascript"], "eslint.config.js")).settings)
@@ -654,6 +662,11 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
       "const configs = [{ rules: { \"no-console\": \"off\" } }];\nfor (const config of configs) config.rules[\"no-console\"] = \"error\";\nexport default configs;",
       "const rules = { \"no-console\": \"off\" };\n({ level: rules[\"no-console\"] } = { level: \"error\" });\nexport default [{ rules }];",
       "const rules = { \"no-console\": \"off\" };\nfunction getRules() { return rules; }\nObject.assign(getRules(), { \"no-console\": \"error\" });\nexport default [{ rules }];",
+    ]) {
+      expectEslintPortsOff((await flat(text, ["javascript"], "eslint.config.mjs")).settings);
+    }
+    // An exported const is data, but not read: a module that imports it may change it, as for an imported config.
+    for (const text of [
       "export const rules = { \"no-console\": \"off\" };\nexport default [{ rules }];",
       "const rules = { \"no-console\": \"off\" };\nexport { rules };\nexport default [{ rules }];",
     ]) {
@@ -675,8 +688,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
       "const allow = [\"log\"];\nconst metadata = { allow: 0 };\nObject.freeze(metadata);\nexport default [{ rules: { \"no-console\": [\"error\", { allow }] } }];",
     ]) {
       const proposed = await flat(text, ["javascript"]);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.ts is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.ts is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
   });
 
@@ -691,11 +704,11 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const [name, text] of cases) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
     const shadowed = await flat("const module = {};\nexport default [{ rules: { \"no-console\": \"error\" } }];\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs");
-    expect(shadowed.settings).toEqual([]);
+    expectEslintPortsOff(shadowed.settings);
     // A CommonJS config that requires its modules is still read.
     const required = "const js = require(\"@eslint/js\");\nconst merge = require(\"merge\");\nmodule.exports = [merge(js.configs.recommended), { rules: { \"no-console\": \"off\" } }];";
     expect((await flat(required, ["javascript"], "eslint.config.cjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
@@ -710,7 +723,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ].join("\n");
     expect((await flat(text, ["javascript"])).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
     // Handing a call one of its own consts is code: the call could change it.
-    expect((await flat("import merge from \"merge\";\nconst rules = { \"no-console\": \"off\" };\nexport default [{ rules: merge(rules) }];", ["javascript"])).settings).toEqual([]);
+    expect((await flat("import merge from \"merge\";\nconst rules = { \"no-console\": \"off\" };\nexport default [{ rules: merge(rules) }];", ["javascript"])).settings).toSatisfy(settings => { expectEslintPortsOff(settings); return true; });
   });
 
   // Self-review round 6: each of these changes the exported config at load time through a global (ESLint 9.39.1 turns
@@ -728,8 +741,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const [name, text] of cases) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
     // process.cwd() and import.meta's own functions are still read.
     const allowed = "const root = process.cwd();\nconst here = import.meta.resolve(\"./x.js\");\nexport default [{ settings: { root, here }, rules: { \"no-console\": \"off\" } }];";
@@ -748,8 +761,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const [name, text] of cases) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
     // A local module used as data, not called, is still read.
     expect((await flat("import shared from \"./shared.mjs\";\nexport default [...shared, { rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs")).settings)
@@ -769,8 +782,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const text of cases) {
       const proposed = await flat(text, ["javascript"], "eslint.config.cjs");
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
   });
 
@@ -785,8 +798,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const text of cases) {
       const proposed = await flat(text, ["javascript"], "eslint.config.mjs");
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.mjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.mjs is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
   });
 
@@ -801,8 +814,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const text of cases) {
       const proposed = await flat(text, ["javascript"], "eslint.config.cjs");
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
     // Reading the environment, the config's own folder, and its trusted calls are still data.
     const allowed = "const path = require(\"node:path\");\nconst root = path.join(__dirname, process.cwd());\nmodule.exports = [{ settings: { root, ci: process.env.CI }, rules: { \"no-console\": \"off\" } }];";
@@ -819,21 +832,24 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const [name, text] of cases) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([`${name} is not read: it exports an object that may hold a \`default\` config, which ESLint's loader can take instead. Rerail never runs your config.`]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([`${name} is not statically readable: it exports an object that may hold a \`default\` config, which ESLint's loader can take instead. Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.`]);
     }
     // An exported object without one is read as the one config it is.
     expect((await flat("export default { rules: { \"no-console\": \"off\" } };", ["javascript"], "eslint.config.mjs")).settings)
       .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 
-  // Self-review round 11: a later severity alone for every file keeps the options an entry for some files set there
-  // (ESLint 9.39.1 allows only warn in tests/ for this config), so they differ from the repository's as before it.
-  it("keeps an entry's options for some files through a later severity alone for every file", async () => {
+  // Self-review rounds 11 and 14: a later severity alone for every file keeps the options an entry for some files set
+  // there (ESLint 9.39.1 allows only warn in tests/ for this config), and options for every file are the port's only
+  // when no entry for some files sets others: allow: ["log"] for the whole repository would let console.log through in
+  // tests/, where ESLint reports it.
+  it("proposes no options for every file where an entry for some files sets others, through a later severity alone too", async () => {
     const text = "export default [{ rules: { \"no-console\": [\"error\", { allow: [\"log\"] }] } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", { allow: [\"warn\"] }] } }, { rules: { \"no-console\": \"error\" } }];";
-    expect((await flat(text, ["javascript"])).notes).toEqual([
-      "eslint-no-console: the options of eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"warn\"]}] for [\"tests/**\"] are not used: eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"log\"]}] sets the rule for every file, and Rerail sets options for the whole repository only.",
-    ]);
+    expect(await flat(text, ["javascript"])).toEqual({
+      settings: [],
+      notes: ["eslint-no-console: the options of eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"log\"]}] are not used: eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"warn\"]}] sets others for [\"tests/**\"], and Rerail sets options for the whole repository only."],
+    });
   });
 
   // Self-review round 12: a module named by path may be the config itself, and a type-only import is erased, so its
@@ -848,8 +864,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     ];
     for (const [name, text] of cases) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.c?[jt]s is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.c?[jt]s is not statically readable: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
   });
 
@@ -861,8 +877,8 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
       ["eslint.config.mts", "export declare const allowed = \"log\";\nexport default [{ rules: { \"no-console\": [\"error\", { allow: [allowed] }] } }];"],
     ] as const) {
       const proposed = await flat(text, ["javascript"], name);
-      expect(proposed.settings, text).toEqual([]);
-      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.m?ts is not read: it runs code Rerail does not read as data \(line 1: .+\)\. Rerail never runs your config\.$/u)]);
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.m?ts is not statically readable: it runs code Rerail does not read as data \(line 1: .+\)\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u)]);
     }
   });
 
@@ -873,7 +889,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
 
   it("does not trust a config helper the file changes", async () => {
     const text = "import tseslint from \"typescript-eslint\";\ntseslint.config = () => [{ rules: { \"no-console\": \"error\" } }];\nexport default tseslint.config({ rules: { \"no-console\": \"off\" } });";
-    expect((await flat(text, ["javascript"])).settings).toEqual([]);
+    expectEslintPortsOff((await flat(text, ["javascript"])).settings);
   });
 
   it("keeps options a later unread element may have set unknown through a severity alone, off included", async () => {

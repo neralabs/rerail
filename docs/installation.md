@@ -141,7 +141,9 @@ code too, as is any global the file names other than in those calls, besides
 a value of a module named by path handed to a call (it may be the config itself),
 and an exported object that may hold a `default` key (ESLint's loader may take that
 instead). A type-only import is erased, so its names are the globals. A file with
-anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
+anything else is not statically readable: Rerail cannot tell which rules it turns
+off, so every rule Rerail ports from ESLint starts off, with no options, and the
+screen says why (that note comes first). A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
 after another, a later one replacing a rule's entry (and keeping its options
@@ -150,7 +152,9 @@ for the files an earlier entry limited to some files set them for); within one
 `rules` object a later key replaces an earlier one or a spread whole, as
 JavaScript does. An entry in an object with `files`, `ignores` or `basePath`
 applies to some files only: its options become the port's options for the
-whole repository only when no entry for every file sets the rule; it turns a
+whole repository only when no entry for every file sets the rule, and the
+options of an entry for every file become them only when no entry for some files
+sets others (there they would let through what ESLint reports); it turns a
 rule off only in a folder it covers whole (`files: ["scripts/**"]` turns it off
 in `scripts`), and an "off" for narrower files, or one a later object turns back
 on, leaves the rule on with a note. A rule entry whose value Rerail cannot read

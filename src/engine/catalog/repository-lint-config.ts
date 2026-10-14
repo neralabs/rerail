@@ -190,6 +190,11 @@ export interface LintConfigRules {
    * severity alone after it keeps them), with what.
    */
   readonly optionsUnknown: ReadonlyMap<string, string>;
+  /**
+   * Why the file is not statically readable, if it is not: Rerail cannot tell what it turns off, so every rule it
+   * ports from this linter starts off, with no options.
+   */
+  readonly unreadable?: string;
 }
 
 /** A flat config entry Rerail cannot read: why, and what after it Rerail does not read either and may replace it. */
@@ -458,8 +463,8 @@ function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
       config = readEslintFlatConfig(read.present ? read.text! : "", used);
     } catch (error) {
       if (!(error instanceof LintConfigFormatError)) throw error;
-      notes.push({ linter: "eslint", text: `${used} is not read: ${error.message}. ${NEVER_RUN}` });
-      return undefined;
+      notes.push({ linter: "eslint", text: `${used} is not statically readable: ${error.message}. ${NEVER_RUN} The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.` });
+      return { file: used, rules: {}, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), unreadable: error.message };
     }
     for (const note of config.notes) notes.push({ linter: "eslint", text: `${used}: ${note}` });
     return flatRules(used, config);
@@ -831,6 +836,10 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
   for (const [ruleId, port] of ports) {
     for (const key of new Set(port.eslint)) {
       if (eslint === undefined) break;
+      if (eslint.unreadable !== undefined) {
+        add(ruleId, { off: true, because: `${eslint.file} is not statically readable` });
+        break;
+      }
       const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
       const unreadEntry = eslint.unresolved.get(key);
       if (unreadEntry !== undefined) {
@@ -857,9 +866,20 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
           if (back !== undefined) {
             notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
           } else {
+            // Options for every file are the port's for the whole repository only when no entry for some files sets
+            // others: there they would change what ESLint reports.
+            const otherOptions = severity.off || severity.options.length === 0 ? undefined : later.find(entry => {
+              const scoped = entry.shadowedBy === undefined ? severityOf(entry.value, "eslint") : undefined;
+              return scoped !== undefined && !scoped.off && scoped.options.length > 0 && stableJsonText(scoped.options) !== stableJsonText(severity.options);
+            });
             const unknown = severity.off || severity.options.length === 0 ? undefined : eslint.optionsUnknown.get(key);
-            const config = severity.off || severity.options.length === 0 || unknown !== undefined ? undefined : mappedOptions(ruleId, port.declared, severity.options);
+            const config = severity.off || severity.options.length === 0 || unknown !== undefined || otherOptions !== undefined
+              ? undefined
+              : mappedOptions(ruleId, port.declared, severity.options);
             if (unknown !== undefined) notes.push(`${ruleId}: the options of ${because} are not used: ${unknown}, before it, is not read and may have set them.`);
+            if (otherOptions !== undefined) {
+              notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, otherOptions.value)} sets others for ${otherOptions.files}, and Rerail sets options for the whole repository only.`);
+            }
             add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
           }
         }
@@ -890,7 +910,8 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
           // entry for every file sets the rule: otherwise they would change it for files they do not cover.
           const forEvery = global ? severityOf(eslint.rules[key], "eslint") : undefined;
           if (forEvery === undefined) add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
-          else if (stableJsonText(forEvery.options) !== stableJsonText(severity.options)) {
+          // An entry for every file with options of its own says so above; one with a severity alone keeps the defaults.
+          else if (forEvery.options.length === 0) {
             notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, eslint.rules[key])} sets the rule for every file, and Rerail sets options for the whole repository only.`);
           }
         }

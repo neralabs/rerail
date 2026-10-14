@@ -289,13 +289,15 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   const settings = input.lintConfig?.settings ?? [];
   const notes = input.lintConfig?.notes ?? [];
   if (settings.length === 0 && notes.length === 0) return [];
+  // What was not read comes first: it can explain every setting after it (a config not statically readable starts
+  // every rule it ports off), and the rows are capped.
   const rows = [
+    ...notes.map(note => `    ${style.dim(clean(note))}`),
     ...settings.map(setting => {
       const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
       const change = setting.on === false ? (setting.folder === "" ? "starts off" : `starts off in ${clean(setting.folder)}/`) : `starts with ${options}`;
       return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
     }),
-    ...notes.map(note => `    ${style.dim(clean(note))}`),
   ];
   const shown = rows.length > MAX_LINT_CONFIG_LINES ? rows.slice(0, MAX_LINT_CONFIG_LINES - 1) : rows;
   const more = rows.length - shown.length;
