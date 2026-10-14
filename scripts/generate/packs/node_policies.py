@@ -85,8 +85,8 @@ console.log(JSON.stringify({ modules: conv(rawModules), globals: conv(globals) }
 
 # ---- documents ---------------------------------------------------------------------------------------------------
 
-def policy(rid, upstream, description, checks):
-    doc = {"format": "rerail.policy/v1", "id": rid, "revision": 1, "mode": "steer", "description": description,
+def policy(rid, upstream, description, checks, revision=1):
+    doc = {"format": "rerail.policy/v1", "id": rid, "revision": revision, "mode": "steer", "description": description,
            "scope": {"include": INCLUDE, "exclude": []}, "clauses": []}
     for check in checks:
         doc["clauses"].append({"id": check["id"], "forbid": {"ast": {"language": "typescript", **check["ast"]}},
@@ -273,7 +273,9 @@ def fn_utils(rx_mod, rx_fn):
     return utils
 
 
-FS_FNS = "access copyFile open rename truncate rmdir mkdir readdir readlink symlink lstat stat link unlink chmod lchmod lchown chown utimes realpath mkdtemp writeFile appendFile readFile cp glob lutimes opendir rm statfs watch".split()
+# Upstream also reports `watch`; Rerail does not (NER-1834, declared in packs/node/divergences.json): fs.promises.watch
+# returns an async iterator of change events, not an FSWatcher, so it is not a drop-in replacement.
+FS_FNS = "access copyFile open rename truncate rmdir mkdir readdir readlink symlink lstat stat link unlink chmod lchmod lchown chown utimes realpath mkdtemp writeFile appendFile readFile cp glob lutimes opendir rm statfs".split()
 DNS_CALL = "lookup lookupService getServers resolve resolve4 resolve6 resolveAny resolveCname resolveMx resolveNaptr resolveNs resolvePtr resolveSoa resolveSrv resolveTxt reverse setServers".split()
 
 
@@ -292,7 +294,12 @@ def prefer_promises_docs():
         description = (f"eslint-plugin-n 18.4.1 n/prefer-promises/{mod}: calls of the {mod} module's callback API ({', '.join(calls)}"
                        + (f"; construction of {', '.join(constructs)}" if constructs else "")
                        + f") as ReferenceTracker (legacy mode) finds them: members of `require('{mod}')`/`require('node:{mod}')` (global require), `process.getBuiltinModule(…)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers.")
-        docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", description, checks))
+        revision = 1
+        if mod == "fs":
+            description += (" Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change"
+                            " events rather than an FSWatcher and is not a drop-in replacement.")
+            revision = 2
+        docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", description, checks, revision))
     return docs
 
 
@@ -416,10 +423,10 @@ def syntax_docs():
         {"kind": "sequence_expression", "has": {"nthChild": LAST, "matches": "cannot-be-error"}},
         {"kind": "binary_expression", "all": [op("^(?:\\|\\||&&|\\?\\?)$"), {"has": {"field": "left", "matches": "cannot-be-error"}}, {"has": {"field": "right", "matches": "cannot-be-error"}}]},
         {"kind": "ternary_expression", "all": [{"has": {"field": "consequence", "matches": "cannot-be-error"}}, {"has": {"field": "alternative", "matches": "cannot-be-error"}}]}]}
-    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are.", [
+    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): a callback named `cb` or `callback` need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before passing an error or null first.", [
         {"id": "upstream", "ast": {"utils": {"cannot-be-error": cannot_be_error}, "rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb)$"}},
-            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback."}]))
+            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is."}], revision=2))
 
     stop = {"any": [{"kind": "statement_block"}, {"kind": "return_statement"}, {"kind": "arrow_function"}]}
     any_func = {"any": [{"kind": k} for k in ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "arrow_function", "method_definition"]]}
