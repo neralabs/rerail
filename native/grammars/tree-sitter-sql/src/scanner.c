@@ -1,4 +1,5 @@
 #include "tree_sitter/parser.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wctype.h>
@@ -10,75 +11,71 @@ enum TokenType {
   COMMENT
 };
 
-#define MALLOC_STRING_SIZE 1024
+// Rerail patch 22: a dollar quote's tag is the code points between its two `$`, kept whole (not
+// truncated to a byte), at most what one serialization buffer holds after the open flag. A longer
+// tag is not read as one.
+#define MAX_TAG_LENGTH ((TREE_SITTER_SERIALIZATION_BUFFER_SIZE - 1) / sizeof(int32_t))
+
+typedef struct Tag {
+  uint32_t length;
+  int32_t chars[MAX_TAG_LENGTH];
+} Tag;
 
 typedef struct LexerState {
-  char* start_tag;
+  // A function body's start tag was read and its end tag not yet.
+  bool open;
+  Tag start_tag;
 } LexerState;
 
 void *tree_sitter_sql_external_scanner_create() {
-  LexerState *state = malloc(sizeof(LexerState));
-  state->start_tag = NULL;
-  return state;
+  return calloc(1, sizeof(LexerState));
 }
 
 void tree_sitter_sql_external_scanner_destroy(void *payload) {
-  LexerState *state = (LexerState*)payload;
-  if (state->start_tag != NULL) {
-    free(state->start_tag);
-    state->start_tag = NULL;
-  }
   free(payload);
 }
 
-static char* add_char(char* text, size_t* text_size, char c, int index) {
-  if (text == NULL) {
-    text = malloc(sizeof(char) * MALLOC_STRING_SIZE);
-    *text_size = MALLOC_STRING_SIZE;
+// Reads `$tag$` at the lookahead into `tag`: its code points, none of them `$` or white space.
+static bool scan_dollar_string_tag(TSLexer *lexer, Tag *tag) {
+  if (lexer->lookahead != '$') return false;
+  lexer->advance(lexer, false);
+  tag->length = 0;
+  while (lexer->lookahead != '$' && !iswspace(lexer->lookahead) && !lexer->eof(lexer)) {
+    if (tag->length == MAX_TAG_LENGTH) return false;
+    tag->chars[tag->length++] = lexer->lookahead;
+    lexer->advance(lexer, false);
   }
-
-  // will break when indexes advances more than MALLOC_STRING_SIZE
-  if (index + 1 >= *text_size) {
-    *text_size += MALLOC_STRING_SIZE;
-    char* tmp = malloc(*text_size * sizeof(char));
-    strncpy(tmp, text, *text_size);
-    free(text);
-    text = tmp;
-  }
-
-  text[index] = c;
-  text[index + 1] = '\0';
-  return text;
+  if (lexer->lookahead != '$') return false;
+  lexer->advance(lexer, false);
+  return true;
 }
 
-static char* scan_dollar_string_tag(TSLexer *lexer) {
-  char* tag = NULL;
-  int index = 0;
-  size_t* text_size = malloc(sizeof(size_t));
-  *text_size = 0;
-  if (lexer->lookahead == '$') {
-    tag = add_char(tag, text_size, '$', index);
-    lexer->advance(lexer, false);
-  } else {
-    free(text_size);
-    return NULL;
-  }
+static bool same_tag(const Tag *a, const Tag *b) {
+  return a->length == b->length && memcmp(a->chars, b->chars, a->length * sizeof(int32_t)) == 0;
+}
 
-  while (lexer->lookahead != '$' && !iswspace(lexer->lookahead) && !lexer->eof(lexer)) {
-    tag = add_char(tag, text_size, lexer->lookahead, ++index);
+// Reads a dollar-quoted string's body and its closing `$tag$`. The delimiter is matched one code
+// point at a time; a candidate that fails at a `$` leaves that `$` to start the next candidate, so
+// `$a$foo$bar$a$` closes at its last three characters. No tag holds a `$`, so no other restart
+// point is missed.
+static bool scan_dollar_string_body(TSLexer *lexer, const Tag *tag) {
+  while (!lexer->eof(lexer)) {
+    if (lexer->lookahead != '$') {
+      lexer->advance(lexer, false);
+      continue;
+    }
     lexer->advance(lexer, false);
+    uint32_t matched = 0;
+    while (matched < tag->length && !lexer->eof(lexer) && lexer->lookahead == tag->chars[matched]) {
+      lexer->advance(lexer, false);
+      matched++;
+    }
+    if (matched == tag->length && !lexer->eof(lexer) && lexer->lookahead == '$') {
+      lexer->advance(lexer, false);
+      return true;
+    }
   }
-
-  if (lexer->lookahead == '$') {
-    tag = add_char(tag, text_size, lexer->lookahead, ++index);
-    lexer->advance(lexer, false);
-    free(text_size);
-    return tag;
-  } else {
-    free(tag);
-    free(text_size);
-    return NULL;
-  }
+  return false;
 }
 
 // Rerail patch 11: a `--` comment runs to the end of its line; a `/* */` comment nests, as
@@ -126,35 +123,27 @@ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const 
     while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
     if (lexer->lookahead == '-' || lexer->lookahead == '/') return scan_comment(lexer);
   }
-  if (valid_symbols[DOLLAR_QUOTED_STRING_START_TAG] && state->start_tag == NULL) {
+  if (valid_symbols[DOLLAR_QUOTED_STRING_START_TAG] && !state->open) {
     while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
 
-    char* start_tag = scan_dollar_string_tag(lexer);
-    if (start_tag == NULL) {
+    Tag start_tag;
+    if (!scan_dollar_string_tag(lexer, &start_tag)) {
       return false;
     }
-    if (state->start_tag != NULL) {
-      free(state->start_tag);
-      state->start_tag = NULL;
-    }
     state->start_tag = start_tag;
+    state->open = true;
     lexer->result_symbol = DOLLAR_QUOTED_STRING_START_TAG;
     return true;
   }
 
-  if (valid_symbols[DOLLAR_QUOTED_STRING_END_TAG] && state->start_tag != NULL) {
+  if (valid_symbols[DOLLAR_QUOTED_STRING_END_TAG] && state->open) {
     while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
 
-    char* end_tag = scan_dollar_string_tag(lexer);
-    if (end_tag != NULL && strcmp(end_tag, state->start_tag) == 0) {
-      free(state->start_tag);
-      state->start_tag = NULL;
+    Tag end_tag;
+    if (scan_dollar_string_tag(lexer, &end_tag) && same_tag(&end_tag, &state->start_tag)) {
+      state->open = false;
       lexer->result_symbol = DOLLAR_QUOTED_STRING_END_TAG;
-      free(end_tag);
       return true;
-    }
-    if (end_tag != NULL) {
-      free(end_tag);
     }
     return false;
   }
@@ -163,70 +152,50 @@ bool tree_sitter_sql_external_scanner_scan(void *payload, TSLexer *lexer, const 
     lexer->mark_end(lexer);
     while (iswspace(lexer->lookahead)) lexer->advance(lexer, true);
 
-    char* start_tag = scan_dollar_string_tag(lexer);
-    if (start_tag == NULL) {
+    Tag start_tag;
+    if (!scan_dollar_string_tag(lexer, &start_tag)) {
       return false;
     }
 
-    if (state->start_tag != NULL && strcmp(state->start_tag, start_tag) == 0) {
+    if (state->open && same_tag(&state->start_tag, &start_tag)) {
       return false;
     }
 
-    char* end_tag = NULL;
-    while (true) {
-      if (lexer->eof(lexer)) {
-        free(start_tag);
-        free(end_tag);
-        return false;
-      }
-
-      end_tag = scan_dollar_string_tag(lexer);
-      if (end_tag == NULL) {
-        lexer->advance(lexer, false);
-        continue;
-      }
-
-      if (strcmp(end_tag, start_tag) == 0) {
-        free(start_tag);
-        free(end_tag);
-        lexer->mark_end(lexer);
-        lexer->result_symbol = DOLLAR_QUOTED_STRING;
-        return true;
-      }
-
-      free(end_tag);
-      end_tag = NULL;
+    if (!scan_dollar_string_body(lexer, &start_tag)) {
+      return false;
     }
+    lexer->mark_end(lexer);
+    lexer->result_symbol = DOLLAR_QUOTED_STRING;
+    return true;
   }
 
   return false;
 }
 
+// An open start tag is a flag byte and its code points; a closed state is empty.
 unsigned tree_sitter_sql_external_scanner_serialize(void *payload, char *buffer) {
   LexerState *state = (LexerState *)payload;
-  if (state == NULL || state->start_tag == NULL) {
+  if (!state->open) {
     return 0;
   }
-  // + 1 for the '\0'
-  int tag_length = strlen(state->start_tag) + 1;
-  if (tag_length >= TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
-    return 0;
-  }
-
-  memcpy(buffer, state->start_tag, tag_length);
-  if (state->start_tag != NULL) {
-    free(state->start_tag);
-    state->start_tag = NULL;
-  }
-  return tag_length;
+  unsigned size = state->start_tag.length * sizeof(int32_t);
+  buffer[0] = 1;
+  memcpy(buffer + 1, state->start_tag.chars, size);
+  return 1 + size;
 }
 
 void tree_sitter_sql_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
   LexerState *state = (LexerState *)payload;
-  state->start_tag = NULL;
-  // A length of 1 can't exists.
-  if (length > 1) {
-    state->start_tag = malloc(length);
-    memcpy(state->start_tag, buffer, length);
+  state->open = false;
+  state->start_tag.length = 0;
+  if (length == 0) {
+    return;
   }
+  unsigned count = (length - 1) / sizeof(int32_t);
+  if (count > MAX_TAG_LENGTH) {
+    count = MAX_TAG_LENGTH;
+  }
+  state->open = true;
+  state->start_tag.length = count;
+  memcpy(state->start_tag.chars, buffer + 1, count * sizeof(int32_t));
 }

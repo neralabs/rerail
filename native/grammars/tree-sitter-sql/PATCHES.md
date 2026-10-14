@@ -23,7 +23,7 @@ declared divergence or scored as a syntax-error file.
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
 | `src/grammar.json` | generated from the patched `grammar.js` |
-| `src/scanner.c` | upstream, with patch 11 |
+| `src/scanner.c` | upstream, with patches 11 and 22 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
 | `rerail.patch` | the patches: `git diff` of `grammar.js`, `src/scanner.c` and `test/corpus/` |
 
@@ -38,7 +38,7 @@ cd tree-sitter-sql
 git checkout 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8
 git apply <rerail>/native/grammars/tree-sitter-sql/rerail.patch
 tree-sitter generate   # tree-sitter-cli 0.27.0
-tree-sitter test       # 428 of 428 (3 error-recovery cases skipped, below)
+tree-sitter test       # 429 of 429 (3 error-recovery cases skipped, below)
 ```
 
 then copy `src/grammar.json`, `src/scanner.c` and `src/tree_sitter/*.h` here.
@@ -94,6 +94,14 @@ them all.
     `ident_start` and `ident_cont` take every byte from `\200` to `\377`, so every UTF-8 encoded
     non-ASCII character); upstream took `U+00C0` to `U+017F` only. A code rule's pattern metavariable
     (`$A`, read as `µA`, the expando ast-grep and Rerail's patterns share) is then an identifier.
+22. **Dollar-quoted strings close at their own tag** (`scanner.c`). Upstream stored a tag's code points
+    as `char`, so `$š$` (U+0161) read as `$a$` and closed at an embedded `$a$`; and it scanned each
+    `$...$` candidate whole, so a candidate that failed consumed the `$` opening the real closing tag
+    (`$a$foo$bar$a$`, the string `foo$bar`, never closed). Tags are now whole code points, at most 255
+    of them (a longer one is not read as a tag, so the start tag a function body leaves open always
+    serializes), compared by length and content; the closing tag is matched one code point at a time,
+    a failed candidate leaving a `$` it stopped at to start the next. The scanner state is a fixed
+    struct, serialized as a flag byte and the tag's code points.
 
 Three upstream error-recovery cases (`errors.txt`: `Function body with a $$ string literal with the same
 name`, `... a unbalanced $$`, `... a tag name contains whitespace`) are marked `:skip`: they assert the
