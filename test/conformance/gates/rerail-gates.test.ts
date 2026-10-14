@@ -97,7 +97,7 @@ describe("location-based blocking", () => {
   it("the summary lists shipped failures as blocking and candidates in the funnel, and fails on a missing report", () => {
     const summary = summarize([report([rule("a", "shipped", { loads: "schema" }), rule("b", "candidate"), rule("c", "candidate", { loads: "json" })])], noUngated, [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }]);
     assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.check]), [["python/bandit", "a", "schema"], ["python/ruff", "(every rule)", "report"]]);
-    assert.deepEqual(summary.promotable, [{ toolPack: "python/bandit", rule: "b" }]);
+    assert.deepEqual(summary.promotable.map(({ toolPack, rule }) => ({ toolPack, rule })), [{ toolPack: "python/bandit", rule: "b" }]);
     assert.equal(summary.pass, false);
   });
 
