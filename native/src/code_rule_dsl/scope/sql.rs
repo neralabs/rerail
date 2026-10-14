@@ -24,9 +24,12 @@
 //!   joins) is not reported either. The names compare as `AL05._cs_str_id` does for `alias_case_check
 //!   = dialect` on PostgreSQL: naked identifiers fold to lower case, quoted ones are exact.
 //!
-//! A CTE name binds in a wrapper block around its `WITH` statement, so the CTE bodies and the main
-//! query (its children) all see it. That binding is no RF01 target: SQLFluff resolves a CTE only as
-//! a `FROM` table, so `c.a` resolves through a relation over `c` and is unresolved without one.
+//! A CTE name binds in a wrapper block around its `WITH` statement, so the later CTE bodies (all
+//! of them under `RECURSIVE`) and the main query (its children) see it, as PostgreSQL scopes WITH
+//! queries. That binding is no RF01 target: SQLFluff resolves a CTE only as a `FROM` table, so
+//! `c.a` resolves through a relation over `c` and is unresolved without one. A relation over the
+//! CTE's unqualified name uses it, as a qualifier naming it does; a DML target is used by its own
+//! statement.
 //!
 //! `visit` puts the blocks, bindings and qualified references into the file's `ScopeTable` (each
 //! block a `ScopeKind::Query` scope, each binding keyed by its folded name) and keeps the
@@ -61,7 +64,8 @@ enum BindingKind {
     Function,
     /// A derived table (a subquery or `VALUES`) or anything else a relation can be.
     Derived,
-    /// A DML target (`UPDATE t`, `DELETE FROM t`, `INSERT INTO t`) or a CTE name.
+    /// A DML target (`DELETE FROM t`, `INSERT INTO t`; the grammar writes `UPDATE t`'s as a
+    /// relation) or a CTE name.
     Named,
 }
 
@@ -94,7 +98,11 @@ struct Binding {
     /// oracle's, as `aliased`).
     #[cfg_attr(not(test), allow(dead_code))]
     table: Option<String>,
-    /// The byte offset from which the binding is visible (a CTE is not visible before it).
+    /// For a relation over a table named by one part, that name folded: the `WITH` query of the
+    /// name it selects from, where one is visible (`SqlScopes::uses`).
+    cte: Option<String>,
+    /// The byte offset from which the binding is visible: a CTE after its own definition, or
+    /// throughout its `WITH` under `RECURSIVE`.
     visible_from: usize,
 }
 
@@ -288,7 +296,8 @@ impl SqlScopes {
     /// Each binding's uses, with the file table's scope, name and index of the binding. AL05's
     /// walk: a reference (qualified, or a bare row reference) uses, in its own block or the
     /// nearest enclosing block that binds its folded name, every relation of that name; a CTE
-    /// name or DML target is used by the same walk over those alone.
+    /// name or DML target is used by the same walk over those alone. A CTE is used, besides, by
+    /// each relation that selects from it, and a DML target by its own statement.
     pub(crate) fn usage(&self) -> impl Iterator<Item = (u32, &str, usize, Uses)> {
         self.uses()
             .into_iter()
@@ -320,14 +329,42 @@ impl SqlScopes {
                 }
             }
         }
+        // PostgreSQL 18.6 looks a `FROM` name without a schema up among the visible `WITH`
+        // queries first (`parse_clause.c`, `getNSItemForSpecialRelationTypes`, then
+        // `parse_relation.c`, `scanNameSpaceForCTE`, from the innermost query level out).
+        for relation in &self.bindings {
+            let Some(name) = relation.cte.as_deref() else {
+                continue;
+            };
+            let at = relation.site.start as usize;
+            let mut block = Some(relation.block);
+            while let Some(index) = block {
+                if self.by_block[index].iter().any(|&binding| {
+                    let binding = &self.bindings[binding];
+                    binding.form == Form::Cte
+                        && binding.folded == name
+                        && binding.visible_from <= at
+                }) {
+                    let uses = marks.entry((index, name, true)).or_default();
+                    uses.reads += 1;
+                    uses.nested += u32::from(index != relation.block);
+                    break;
+                }
+                block = self.blocks[index].parent;
+            }
+        }
         self.bindings
             .iter()
             .map(|binding| {
                 let named = binding.kind == BindingKind::Named;
-                marks
+                let mut uses = marks
                     .get(&(binding.block, binding.folded.as_str(), named))
                     .copied()
-                    .unwrap_or_default()
+                    .unwrap_or_default();
+                // `UPDATE`, `DELETE` and `INSERT` write their target whether or not anything
+                // qualifies it.
+                uses.reads += u32::from(binding.form == Form::Target);
+                uses
             })
             .collect()
     }
@@ -512,7 +549,18 @@ impl Reader {
                         // is a target once a relation selects from it, through that relation.
                         targets: Vec::new(),
                         table: None,
-                        visible_from: node.range().start,
+                        cte: None,
+                        // PostgreSQL 18.6 (`parse_cte.c`, `transformWithClause`): a
+                        // non-recursive WITH query sees only the ones before it, not itself;
+                        // under `RECURSIVE` each sees them all.
+                        visible_from: match node.parent() {
+                            Some(with)
+                                if with.children().any(|c| c.kind() == "keyword_recursive") =>
+                            {
+                                with.range().start
+                            }
+                            _ => node.range().end,
+                        },
                     });
                 }
             }
@@ -549,6 +597,7 @@ impl Reader {
             folded: folded(&text),
             targets: vec![vec![unquoted(&text)]],
             table: None,
+            cte: None,
             visible_from: 0,
         });
     }
@@ -590,6 +639,12 @@ impl Reader {
             folded: folded(&name.text()),
             targets,
             table: Some(folded(&last.text())),
+            // An `UPDATE`'s own relation is its target, a table and never a WITH query
+            // (PostgreSQL 18.6 `parse_clause.c`, `setTargetTable`, opens the table by name).
+            cte: (kind == BindingKind::Table
+                && parts.len() == 1
+                && site.parent().is_none_or(|parent| parent.kind() != "update"))
+            .then(|| folded(&last.text())),
             visible_from: 0,
         });
     }
@@ -934,6 +989,133 @@ mod tests {
             read_scopes(source).unused_aliases().is_empty(),
             "a row reference uses the alias"
         );
+    }
+
+    /// Each binding of `source`, in source order, with its form and the `used` fact `Usage::sql`
+    /// gives it in the file's `ScopeTable`.
+    fn used(source: &str) -> Vec<(&str, Form, Option<bool>)> {
+        use crate::code_rule_dsl::scope::ScopeTable;
+        use crate::code_rule_dsl::scope::usage::{BindingId, Usage};
+        let root = GrammarDialect::Sql.ast_grep(source);
+        let table = ScopeTable::build(root.root(), GrammarDialect::Sql, usize::MAX, &|| false)
+            .expect("table builds");
+        let usage = Usage::build(&table, &root.root(), usize::MAX, &|| false).expect("usage");
+        let mut bindings = Vec::new();
+        for (scope, entry) in table.scopes.iter().enumerate() {
+            for (name, chain) in &entry.bindings {
+                for (index, binding) in chain.iter().enumerate() {
+                    let node = binding.name.expect("a SQL binding has a name");
+                    let facts = usage.facts(BindingId {
+                        scope: scope as u32,
+                        name,
+                        index,
+                    });
+                    bindings.push((
+                        node.start as usize..node.end as usize,
+                        binding.site.form,
+                        facts.used,
+                    ));
+                }
+            }
+        }
+        bindings.sort_by_key(|(range, ..)| range.start);
+        bindings
+            .into_iter()
+            .map(|(range, form, used)| (&source[range], form, used))
+            .collect()
+    }
+
+    /// `Usage::sql` puts AL05's walk on the table's bindings: each block's scope, name and index.
+    #[test]
+    fn usage_marks_the_bindings_references_use() {
+        assert_eq!(
+            used("SELECT 1 FROM x AS a JOIN y r ON r.k = 1"),
+            vec![
+                ("a", Form::Relation, Some(false)),
+                ("r", Form::Relation, Some(true)),
+            ]
+        );
+        // `o.k` uses the outer `o` from the subquery; `s.k` uses the subquery's own `s`, which
+        // shadows the outer `s`.
+        assert_eq!(
+            used(
+                "SELECT 1 FROM x AS o JOIN y AS s ON true \
+                 WHERE EXISTS (SELECT 1 FROM z AS s WHERE s.k = o.k)"
+            ),
+            vec![
+                ("o", Form::Relation, Some(true)),
+                ("s", Form::Relation, Some(false)),
+                ("s", Form::Relation, Some(true)),
+            ]
+        );
+    }
+
+    /// PostgreSQL 18.6 looks an unqualified `FROM` name up among the visible `WITH` queries first
+    /// (`parse_clause.c`, `getNSItemForSpecialRelationTypes`: "schema-qualified names are never
+    /// CTE ... refs"): a relation over the CTE's name uses it, as does a qualifier naming it. A
+    /// non-recursive WITH query sees only the ones before it, not itself (`parse_cte.c`,
+    /// `transformWithClause`); a recursive one sees them all. An inner `WITH` query of the same
+    /// name shadows an outer one.
+    #[test]
+    fn ctes_are_used_by_the_relations_that_select_from_them() {
+        for (source, cte) in [
+            ("WITH c AS (SELECT 1 AS a) SELECT a FROM c", Some(true)),
+            ("WITH C AS (SELECT 1 AS a) SELECT a FROM c AS d", Some(true)),
+            ("WITH c AS (SELECT 1 AS a) SELECT c.a FROM d", Some(true)),
+            ("WITH c AS (SELECT 1 AS a) SELECT 1 FROM d", Some(false)),
+            ("WITH c AS (SELECT 1 AS a) SELECT 1 FROM s.c", Some(false)),
+            ("WITH \"C\" AS (SELECT 1 AS a) SELECT 1 FROM c", Some(false)),
+            ("WITH c AS (SELECT 1 FROM c) SELECT 1", Some(false)),
+            ("WITH c AS (SELECT 1) UPDATE t SET a = 1 FROM c", Some(true)),
+            // `UPDATE c` writes the table `c`, never the WITH query.
+            ("WITH c AS (SELECT 1) UPDATE c SET a = 1", Some(false)),
+            (
+                "WITH RECURSIVE c AS (SELECT 1 UNION ALL SELECT 1 FROM c) SELECT 1",
+                Some(true),
+            ),
+        ] {
+            let ctes: Vec<_> = used(source)
+                .into_iter()
+                .filter(|(_, form, _)| *form == Form::Cte)
+                .map(|(_, _, used)| used)
+                .collect();
+            assert_eq!(ctes, vec![cte], "{source}");
+        }
+        // `b`'s body cannot see the later `c`; the main query uses `b`.
+        let source = "WITH b AS (SELECT 1 FROM c), c AS (SELECT 1) SELECT 1 FROM b";
+        assert_eq!(
+            used(source)
+                .into_iter()
+                .filter(|(_, form, _)| *form == Form::Cte)
+                .collect::<Vec<_>>(),
+            vec![("b", Form::Cte, Some(true)), ("c", Form::Cte, Some(false))]
+        );
+        let source =
+            "WITH c AS (SELECT 1) SELECT 1 FROM (WITH c AS (SELECT 2) SELECT 1 FROM c) AS s";
+        assert_eq!(
+            used(source)
+                .into_iter()
+                .filter(|(_, form, _)| *form == Form::Cte)
+                .collect::<Vec<_>>(),
+            vec![("c", Form::Cte, Some(false)), ("c", Form::Cte, Some(true))]
+        );
+    }
+
+    /// A DML target (the `target` form: `DELETE FROM` and `INSERT INTO` name theirs outside any
+    /// relation) is used by the statement that writes it, whether or not anything qualifies it.
+    #[test]
+    fn dml_targets_are_used_by_their_statement() {
+        for (source, target) in [
+            ("DELETE FROM t WHERE true", "t"),
+            ("DELETE FROM s.t AS d WHERE true", "d"),
+            ("INSERT INTO t (a) VALUES (1)", "t"),
+        ] {
+            assert_eq!(
+                used(source),
+                vec![(target, Form::Target, Some(true))],
+                "{source}"
+            );
+        }
     }
 
     #[test]

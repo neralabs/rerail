@@ -294,7 +294,8 @@ impl Usage {
     }
 
     /// SQL's index, from the file's query blocks (`sql::SqlScopes::usage`): a binding is used,
-    /// and referenced, where AL05's walk finds a reference to it. SQL exports nothing.
+    /// and referenced, where AL05's walk finds a reference to it, a CTE also where a relation
+    /// selects from it, and a DML target by its own statement. SQL exports nothing.
     pub(crate) fn sql(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<Self, BuildError> {
         let mut facts: Vec<HashMap<Box<str>, Vec<Facts>>> = table
             .scopes

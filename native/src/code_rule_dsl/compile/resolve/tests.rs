@@ -3177,6 +3177,33 @@ fn any_mode_resolves_are_checked() {
     }
 }
 
+/// SQL refuses the `resolves` keys only other families answer, each at its own key, before the
+/// key's companions (`this`, `global`, `imported`) are compiled.
+#[test]
+fn sql_refuses_resolves_keys_of_other_families() {
+    for (resolves, expected) in [
+        (
+            json!({ "this": "global", "sloppyFunctions": true }),
+            "/clauses/0/forbid/ast/rule/resolves/sloppyFunctions: sloppy-mode functions are JavaScript's; SQL has none",
+        ),
+        (
+            json!({ "global": ["a"], "declared": false }),
+            "/clauses/0/forbid/ast/rule/resolves/declared: declared globals come from ESLint's and Ruff's configuration; SQL has none",
+        ),
+        (
+            json!({ "imported": ["a"], "relative": "text" }),
+            "/clauses/0/forbid/ast/rule/resolves/relative: relative imports are Python's; a SQL file imports nothing",
+        ),
+        (
+            json!({ "imported": ["os"], "seenBefore": true }),
+            "/clauses/0/forbid/ast/rule/resolves/seenBefore: Ruff's `seen_module` reads Python's imports; a SQL file imports nothing",
+        ),
+    ] {
+        let ast = json!({ "rule": { "kind": "identifier", "resolves": resolves } });
+        assert_eq!(rejection(compile("sql", ast.clone())), expected, "{ast}");
+    }
+}
+
 #[test]
 fn any_mode_resolves_are_source_incomplete_under_syntax_errors() {
     for resolves in [

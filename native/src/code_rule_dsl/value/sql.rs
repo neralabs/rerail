@@ -57,7 +57,10 @@ fn decimal_form(s: &str) -> Option<(bool, String, i32)> {
         return None;
     }
     let mut digs = format!("{}{}", a.replace('_', ""), b.replace('_', ""));
-    let mut scale = exp - b.replace('_', "").len() as i32;
+    // An exponent near `i32`'s bounds puts the scale outside them: PostgreSQL's `numeric_in`
+    // refuses such a literal, so no value is read.
+    let fraction = i32::try_from(b.replace('_', "").len()).ok()?;
+    let mut scale = exp.checked_sub(fraction)?;
     let trimmed = digs.trim_start_matches('0').to_owned();
     digs = if trimmed.is_empty() {
         "0".into()
@@ -66,7 +69,7 @@ fn decimal_form(s: &str) -> Option<(bool, String, i32)> {
     };
     while digs.len() > 1 && digs.ends_with('0') {
         digs.pop();
-        scale += 1;
+        scale = scale.checked_add(1)?;
     }
     Some((neg, digs, scale))
 }
@@ -821,6 +824,20 @@ mod tests {
             decoded("SELECT -1.5, -1e2, 2.5"),
             [Value::Float(-1.5), Value::Float(-100.0), Value::Float(2.5)]
         );
+    }
+
+    /// A literal whose scale (exponent less fraction digits, plus trailing zeros) leaves `i32`'s
+    /// bounds is no value, not an overflow.
+    #[test]
+    fn extreme_exponents_are_unknown() {
+        for text in [
+            "1.5e-2147483648",
+            "10e2147483647",
+            "100e2147483646",
+            "-1.5e-2147483648",
+        ] {
+            assert_eq!(literal(text), Value::Unknown, "{text}");
+        }
     }
 
     #[test]
