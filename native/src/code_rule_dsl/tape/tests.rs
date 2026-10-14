@@ -119,7 +119,7 @@ fn persisted_image_round_trips_without_parsing() {
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them.
     assert_eq!(
         digest,
-        "21fefd53319e756b295674fd8b80ec1b3b509d011d378a3e60dce52b7cbd4868"
+        "227bea89873bd43db3dae4b3a9d1af873c096e79a0b308b83959a967fbd183ca"
     );
 }
 
