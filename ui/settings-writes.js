@@ -12,6 +12,23 @@ import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
 
+/**
+ * How long one setting write waits for the daemon. A write it never answers then fails like any other, so the writes
+ * clicked after it for the same repository go out.
+ */
+const WRITE_TIMEOUT = 30_000;
+
+/** One setting write, given up after `WRITE_TIMEOUT`. */
+async function put(body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`the daemon did not answer within ${WRITE_TIMEOUT / 1000} s`)), WRITE_TIMEOUT);
+  try {
+    return await send("PUT", SETTINGS, body, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** One entry per folder: the targets written there. */
 function byFolder(pairs) {
   const folders = new Map();
@@ -51,7 +68,7 @@ export function settingWrites({ toast, invalidate, owner }) {
       await previous;
       for (const [folder, targets] of folders) {
         if (!inScope(scope)) break;
-        await send("PUT", SETTINGS, { ...scope.target, folder, owner: by, targets, ...setting });
+        await put({ ...scope.target, folder, owner: by, targets, ...setting });
         saved += 1;
       }
     } catch (error) {

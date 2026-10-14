@@ -164,8 +164,10 @@ describe("the page's rule setting writes", () => {
     toast.mockReset();
     owner = "repository";
     vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
-    vi.stubGlobal("fetch", (_input: URL, init: { method?: string; body?: string } = {}) => {
-      const { promise, resolve } = Promise.withResolvers<Response>();
+    vi.stubGlobal("fetch", (_input: URL, init: { method?: string; body?: string; signal?: AbortSignal } = {}) => {
+      const { promise, resolve, reject } = Promise.withResolvers<Response>();
+      // As fetch does: a request whose signal aborts rejects with the signal's reason.
+      init.signal?.addEventListener("abort", () => reject(init.signal!.reason));
       requests.push({
         method: init.method ?? "GET",
         body: init.body === undefined ? undefined : JSON.parse(init.body),
@@ -185,6 +187,7 @@ describe("the page's rule setting writes", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     data.rules = new Map();
     data.attachedPacks = new Map();
@@ -252,6 +255,28 @@ describe("the page's rule setting writes", () => {
     expect(stored("eslint:no-var").suppressions).toBe("honour");
     expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "honour"]);
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: PUT \/api\/repository\/settings answered 503/u));
+  });
+
+  // Review finding F6: a write the daemon never answers fails after a while, so later clicks for the repository go out.
+  it("gives up on a write the daemon never answers and sends the next one", async () => {
+    vi.useFakeTimers();
+    const hung = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const next = page().setEnabled(["eslint:radix"], false, "Off.");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writes()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(writes()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await hung;
+    expect(toast).toHaveBeenCalledWith("Could not save: the daemon did not answer within 30 s");
+    expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "honour"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writes()).toHaveLength(2);
+    expect(writes()[1]!.body).toMatchObject({ targets: [{ kind: "rule", id: "eslint:radix" }], on: false });
+    writes()[1]!.answer(200, {});
+    await next;
+    expect(toast).toHaveBeenCalledWith("Off.");
   });
 
   // Self-review rounds 10 and 11: writes go out in click order; after a failure the page keeps what a saved folder
