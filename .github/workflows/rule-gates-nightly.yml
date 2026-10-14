@@ -104,6 +104,10 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
