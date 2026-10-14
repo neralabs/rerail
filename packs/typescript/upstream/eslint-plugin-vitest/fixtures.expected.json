@@ -43,6 +43,12 @@
    "expect-expect/031.test.ts",
    "expect-expect/032.test.ts",
    "expect-expect/033.test.ts",
+   "expect-expect/rerail-assertion-computed-names.test.ts",
+   "expect-expect/rerail-assertion-names.test.ts",
+   "expect-expect/rerail-ava.test.ts",
+   "expect-expect/rerail-test-without-callback.test.ts",
+   "expect-expect/rerail-vitest-extend.test.ts",
+   "expect-expect/rerail-vitest-table-calls.test.ts",
    "no-disabled-tests/001.test.ts",
    "no-disabled-tests/002.test.ts",
    "no-disabled-tests/003.test.ts",
@@ -77,6 +83,16 @@
    "no-disabled-tests/032.test.ts",
    "no-disabled-tests/033.test.ts",
    "no-disabled-tests/034.test.ts",
+   "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "no-disabled-tests/rerail-unchecked-heads.test.ts",
+   "no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts",
+   "no-disabled-tests/rerail-vitest-alias.test.ts",
+   "no-disabled-tests/rerail-vitest-dynamic-import.test.ts",
+   "no-disabled-tests/rerail-vitest-import.test.ts",
+   "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
+   "no-disabled-tests/rerail-vitest-require-template.test.ts",
+   "no-disabled-tests/rerail-vitest-require-whole.test.ts",
    "no-focused-tests/001.test.ts",
    "no-focused-tests/002.test.ts",
    "no-focused-tests/003.test.ts",
@@ -96,7 +112,41 @@
    "no-focused-tests/017.test.ts",
    "no-focused-tests/018.test.ts",
    "no-focused-tests/019.test.ts",
-   "no-focused-tests/020.test.ts"
+   "no-focused-tests/020.test.ts",
+   "no-focused-tests/rerail-bun-test.test.ts",
+   "no-focused-tests/rerail-comment-between-links.test.ts",
+   "no-focused-tests/rerail-global-extend.test.ts",
+   "no-focused-tests/rerail-invalid-chains.test.ts",
+   "no-focused-tests/rerail-local-binding.test.ts",
+   "no-focused-tests/rerail-mode-option-overridden.test.ts",
+   "no-focused-tests/rerail-multiline-chain.test.ts",
+   "no-focused-tests/rerail-node-test-default.test.ts",
+   "no-focused-tests/rerail-node-test-mode-options.test.ts",
+   "no-focused-tests/rerail-node-test.test.ts",
+   "no-focused-tests/rerail-parameter.test.ts",
+   "no-focused-tests/rerail-suite-only.test.ts",
+   "no-focused-tests/rerail-test-context-explicit-property.test.ts",
+   "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "no-focused-tests/rerail-test-context-property.test.ts",
+   "no-focused-tests/rerail-test-context-renamed-property.test.ts",
+   "no-focused-tests/rerail-test-context-unchecked-chain.test.ts",
+   "no-focused-tests/rerail-test-context.test.ts",
+   "no-focused-tests/rerail-vitest-alias-across-grammars.test.ts",
+   "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
+   "no-focused-tests/rerail-vitest-default-import.test.ts",
+   "no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts",
+   "no-focused-tests/rerail-vitest-extend-chain.test.ts",
+   "no-focused-tests/rerail-vitest-extend-not-a-test.test.ts",
+   "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
+   "no-focused-tests/rerail-vitest-import-escaped.test.ts",
+   "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "no-focused-tests/rerail-vitest-require-comment.test.ts",
+   "no-focused-tests/rerail-vitest-require-default-value.test.ts",
+   "no-focused-tests/rerail-vitest-require-parenthesized.test.ts",
+   "no-focused-tests/rerail-vitest-require-template-escape.test.ts",
+   "no-focused-tests/rerail-vitest-require.test.ts",
+   "no-focused-tests/rerail-vitest-submodule.test.ts",
+   "no-focused-tests/rerail-vitest-type-import.test.ts"
   ]
  },
  "findings": [
@@ -198,6 +248,54 @@
   },
   {
    "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-assertion-names.test.ts",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-test-without-callback.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-test-without-callback.test.ts",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-test-without-callback.test.ts",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-vitest-extend.test.ts",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-vitest-extend.test.ts",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-vitest-table-calls.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "expect-expect/rerail-vitest-table-calls.test.ts",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
    "path": "no-disabled-tests/002.test.ts",
    "line": 1,
    "column": 1
@@ -288,6 +386,42 @@
   },
   {
    "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-alias.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-alias.test.ts",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-import.test.ts",
+   "line": 5,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-import.test.ts",
+   "line": 6,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
    "path": "no-focused-tests/001.test.ts",
    "line": 1,
    "column": 1
@@ -371,6 +505,138 @@
    "column": 1
   },
   {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-multiline-chain.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-explicit-property.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-explicit-property.test.ts",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-property.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-property.test.ts",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-renamed-property.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context-unchecked-chain.test.ts",
+   "line": 3,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context.test.ts",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-test-context.test.ts",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-alias-across-grammars.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-extend-chain.test.ts",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-import-escaped.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-require-comment.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-require-parenthesized.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "vitest/expect-expect",
+   "path": "no-focused-tests/rerail-vitest-require.test.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
    "rule": "vitest/no-disabled-tests",
    "path": "expect-expect/001.test.ts",
    "line": 1,
@@ -381,6 +647,12 @@
    "path": "expect-expect/002.test.ts",
    "line": 1,
    "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "expect-expect/rerail-test-without-callback.test.ts",
+   "line": 3,
+   "column": 1
   },
   {
    "rule": "vitest/no-disabled-tests",
@@ -449,6 +721,120 @@
    "column": 1
   },
   {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 4,
+   "column": 14
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-expect-modifier-rules.test.ts",
+   "line": 5,
+   "column": 26
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-unchecked-heads.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-unchecked-heads.test.ts",
+   "line": 2,
+   "column": 12
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-alias.test.ts",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-dynamic-import.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-import.test.ts",
+   "line": 4,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-import.test.ts",
+   "line": 6,
+   "column": 3
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 4,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
+   "line": 3,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-template.test.ts",
+   "line": 3,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-multiline-chain.test.ts",
+   "line": 6,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-test-context.test.ts",
+   "line": 3,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-vitest-alias-across-grammars.test.ts",
+   "line": 4,
+   "column": 16
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
+   "line": 6,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-disabled-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 6,
+   "column": 32
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "expect-expect/rerail-vitest-extend.test.ts",
+   "line": 5,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "expect-expect/rerail-vitest-table-calls.test.ts",
+   "line": 4,
+   "column": 4
+  },
+  {
    "rule": "vitest/no-focused-tests",
    "path": "no-disabled-tests/003.test.ts",
    "line": 1,
@@ -465,6 +851,30 @@
    "path": "no-disabled-tests/009.test.ts",
    "line": 1,
    "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/rerail-vitest-alias.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/rerail-vitest-import.test.ts",
+   "line": 3,
+   "column": 10
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-computed-key.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-disabled-tests/rerail-vitest-require-renamed.test.ts",
+   "line": 4,
+   "column": 4
   },
   {
    "rule": "vitest/no-focused-tests",
@@ -524,6 +934,114 @@
    "rule": "vitest/no-focused-tests",
    "path": "no-focused-tests/020.test.ts",
    "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-comment-between-links.test.ts",
+   "line": 1,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-multiline-chain.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context-explicit-property.test.ts",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context-named-callback.test.ts",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context-property.test.ts",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context-unchecked-chain.test.ts",
+   "line": 3,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-test-context.test.ts",
+   "line": 2,
+   "column": 6
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-alias-across-grammars.test.ts",
+   "line": 3,
+   "column": 16
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-default-import-named-type.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-extend-chain.test.ts",
+   "line": 6,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-extend-parenthesized.test.ts",
+   "line": 5,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-import-escaped.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 3,
+   "column": 19
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-mode-options.test.ts",
+   "line": 7,
+   "column": 42
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-require-comment.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-require-parenthesized.test.ts",
+   "line": 3,
+   "column": 4
+  },
+  {
+   "rule": "vitest/no-focused-tests",
+   "path": "no-focused-tests/rerail-vitest-require.test.ts",
+   "line": 3,
    "column": 4
   }
  ]
