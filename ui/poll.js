@@ -37,6 +37,12 @@ async function fetchFresh(path, slot = path) {
   return body;
 }
 
+/**
+ * Fetch slot `slot` in full on the next poll, not conditionally: after a write failed, what the page shows was
+ * changed by hand and may differ from what the daemon holds although the daemon's body did not change.
+ */
+export const refetch = slot => { etags.delete(slot); };
+
 /** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
 export function scopeTarget() {
   const target = {};

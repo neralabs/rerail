@@ -254,27 +254,30 @@ describe("the page's rule setting writes", () => {
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: PUT \/api\/repository\/settings answered 503/u));
   });
 
-  // Self-review round 10: a failed write puts back only what it showed and did not save, not the whole row as it was
-  // when the write started: a folder it saved, and a change made since by another write, stay.
-  it("keeps what was saved, and later changes, when a write fails", async () => {
+  // Self-review rounds 10 and 11: writes go out in click order; after a failure the page keeps what a saved folder
+  // decides (the root's setting reaches web too) and puts back a write that saved nothing without undoing later clicks.
+  it("sends writes in click order and, after a failure, keeps what was saved", async () => {
     const partial = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    const enabling = page().setEnabled(["eslint:radix"], false, "Off.");
+    const ignoring = page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     writes()[0]!.answer(200, {});
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
     writes()[1]!.answer(503, { error: "daemon restarting" });
     await partial;
     expect(stored("eslint:no-var").folderStates.map(state => [state.suppressions, state.suppressionsSource])).toEqual([
-      ["ignore", inRepository("", "rule")], ["honour", packStart],
+      ["ignore", inRepository("", "rule")], ["ignore", inRepository("web", "rule")],
     ]);
 
-    const enabling = page().setEnabled(["eslint:radix"], false, "Off.");
+    // The on/off write was clicked before the suppressions one: it goes out first, and the other waits for its answer.
     await vi.waitFor(() => expect(writes()).toHaveLength(3));
-    const ignoring = page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
-    await vi.waitFor(() => expect(writes()).toHaveLength(4));
-    writes()[3]!.answer(200, {});
-    await ignoring;
+    expect(writes()[2]!.body).toMatchObject({ on: false });
     writes()[2]!.answer(503, { error: "daemon restarting" });
     await enabling;
+    await vi.waitFor(() => expect(writes()).toHaveLength(4));
+    expect(writes()[3]!.body).toMatchObject({ suppressions: "ignore" });
+    writes()[3]!.answer(200, {});
+    await ignoring;
     expect(stored("eslint:radix")).toMatchObject({ enabled: true, suppressions: "ignore", suppressionsSource: inRepository("", "rule") });
   });
 

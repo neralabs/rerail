@@ -1,13 +1,14 @@
 /**
  * The page's rule setting writes: a rule on or off, and whether a rule or a rule pack honours linter suppression
  * comments. Each change is one `PUT /api/repository/settings` per folder it is written at, owned by this worktree or
- * the repository (`owner()`). The page shows the change at once and rolls it back if a write fails; the poll that
- * follows reads back the sources. `toast` and `invalidate` are the page's.
+ * the repository (`owner()`), sent in click order. The page shows the change at once; after a failed write it puts
+ * back what nothing saved and reads the rules in full, so it ends on what the daemon holds. `toast` and `invalidate`
+ * are the page's.
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
 import { packSettingDecides, settingDecides } from "./derive.js";
-import { captureScope, inScope, refreshNow } from "./poll.js";
+import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
 
@@ -21,6 +22,9 @@ function byFolder(pairs) {
 const storedRules = ids => ids.map(id => data.rules.get(id)).filter(r => r !== undefined);
 const ruleTargets = rules => byFolder(rules.flatMap(r => r.folders.map(folder => [folder, { kind: "rule", id: r.rule.id }])));
 
+/** The last setting write queued on the page: each is sent once the one clicked before it is answered, in click order. */
+let writing = Promise.resolve();
+
 export function settingWrites({ toast, invalidate, owner }) {
   /**
    * Write `setting` at each folder of `folders` for its targets, and show it on `rules` at once with `show`.
@@ -33,23 +37,31 @@ export function settingWrites({ toast, invalidate, owner }) {
     const before = new Map(rules.map(r => [r, { ...r }]));
     for (const r of rules) show(r);
     const shown = new Map(rules.map(r => [r, { ...r }]));
-    const saved = new Set();
     invalidate();
-    let failure = null;
+    const previous = writing;
+    let done;
+    writing = new Promise(resolve => { done = resolve; });
+    let failure = null, saved = 0;
     try {
+      await previous;
       for (const [folder, targets] of folders) {
+        if (!inScope(scope)) break;
         await send("PUT", SETTINGS, { ...scope.target, folder, owner: by, targets, ...setting });
-        saved.add(folder);
+        saved += 1;
       }
     } catch (error) {
       failure = error;
+    } finally {
+      done();
     }
     // Another repository's page now: these rows and the outcome are not its.
     if (!inScope(scope)) return;
     if (failure === null) {
       toast(label);
     } else {
-      for (const r of rules) undo(r, before.get(r), shown.get(r), saved);
+      // A folder that saved may decide others below it: only the reload says what holds where.
+      if (saved === 0) for (const r of rules) undo(r, before.get(r), shown.get(r));
+      refetch("rules");
       toast(`Could not save: ${failure.message}`);
     }
     invalidate();
@@ -90,19 +102,14 @@ export function settingWrites({ toast, invalidate, owner }) {
 }
 
 /**
- * Put back on stored rule `r` what a failed write showed (`shown`, over `was`), except in the folders it did save
- * (`saved`) and wherever a later change has replaced it since.
+ * Put back on stored rule `r` what a write that saved nothing showed (`shown`, over `was`), except wherever a later
+ * change has replaced it since.
  */
-function undo(r, was, shown, saved) {
-  r.folderStates = r.folderStates.map((state, index) => (
-    state === shown.folderStates[index] && state !== was.folderStates[index] && !saved.has(state.folder) ? was.folderStates[index] : state));
+function undo(r, was, shown) {
+  r.folderStates = r.folderStates.map((state, index) => (state === shown.folderStates[index] ? was.folderStates[index] : state));
   r.suppressions = r.folderStates[0]?.suppressions ?? r.suppressions;
   r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
-  // On is shown for the row: on in every folder. A saved off is off; an on holds only once every folder saved it.
-  if (r.enabled === shown.enabled && shown.enabled !== was.enabled) {
-    const savedAll = r.folders.every(folder => saved.has(folder)), savedAny = r.folders.some(folder => saved.has(folder));
-    r.enabled = savedAll ? shown.enabled : shown.enabled === false && savedAny ? false : was.enabled;
-  }
+  if (r.enabled === shown.enabled) r.enabled = was.enabled;
 }
 
 /**
