@@ -389,6 +389,10 @@ describe("packedFileFailures", () => {
     expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
   });
 
+  it("passes files under a folder a glob entry matches, which npm publishes whole", () => {
+    expect(packedFileFailures(["pack.json", "rules/*"], ["pack.json", "rules/a.json", "rules/group/b.json"])).toEqual([]);
+  });
+
   it("fails validation material even when files publishes it", () => {
     expect(packedFileFailures(["*", "upstream", "candidates"], ["conformance.json", "divergences.json", "upstream/tool/fixtures/a.py", "candidates/rules/x.json", "pack.json"])).toEqual([
       "candidates/rules/x.json: validation material, never published",

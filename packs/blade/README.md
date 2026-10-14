@@ -45,7 +45,8 @@ The title is what `pack.json` lists for a candidate once it ships; its group is 
 | `blade-parser-for-else-structure` | blade-parser ForElseStructureValidator: @forelse with one @empty |
 | `blade-parser-component-shorthand-variable-parameter` | blade-parser ComponentShorthandVariableParameterValidator: Malformed component shorthand attribute |
 
-Eight candidates carried an example pair while they shipped, checked through the engine. For six of them
+Eight candidates carried an example pair while they shipped. `test/engine/catalog/candidate-examples.test.ts` still
+checks each pair below through the engine, so they keep guarding Blade's embedded PHP. For six of them
 (`bladestan-variable-undefined`, `bladestan-argument-sprintf`, `bladestan-array-duplicate-key`,
 `bladestan-random-int-parameters`, `bladestan-if-always-false`, `bladestan-missing-function-return-type`) the tool's
 fixture findings are empty or all excused, so the pair is what proved them while they shipped; the pairs go back

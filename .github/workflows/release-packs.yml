@@ -39,8 +39,10 @@ on:
 permissions:
   contents: read
 
+# GitHub keeps one pending run per group and cancels the older one, so a promotion gets its own group per pack: it
+# can neither cancel a publish queued behind a release run nor be cancelled by one.
 concurrency:
-  group: release-packs-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && format('release-packs-promote-{0}', inputs.pack) || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
