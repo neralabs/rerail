@@ -3,8 +3,9 @@ import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import type { UpdateResult } from "../setup/updater.js";
+import type { StopDaemonResult } from "../runtime/daemon-control.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory, rollbackRestoring, rollbackRestoringPath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistory, rollbackRestoring, rollbackRestoringMarker, rollbackRestoringPath } from "../engine/storage/database.js";
 import { RERAIL_SCHEMA_VERSION } from "../engine/storage/migrations.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
@@ -150,23 +151,50 @@ function schemaFloor(path: string): number | undefined {
   return "floor" in read ? read.floor : undefined;
 }
 
-/** The transition recorded beside the pre-update copy, or undefined when there is none or it is unreadable. */
-function snapshotTransition(databasePath: string): SnapshotTransition | undefined {
+/**
+ * What `rerail.sqlite.pre-update.json` says: no record (an older release's update kept a copy without one, or none was
+ * kept), a record a rollback has already acted on (`handled`), one that cannot be read, or the change the copy was
+ * taken for.
+ */
+type SnapshotRecord =
+  | { readonly kind: "none" }
+  | { readonly kind: "handled" }
+  | { readonly kind: "unreadable"; readonly why: string }
+  | { readonly kind: "transition"; readonly transition: SnapshotTransition };
+
+function snapshotRecord(databasePath: string): SnapshotRecord {
+  let text: string;
   try {
-    const value = JSON.parse(readFileSync(`${preUpdateSnapshotPath(databasePath)}.json`, "utf8")) as Partial<SnapshotTransition>;
-    if (typeof value.from !== "string" || typeof value.to !== "string" || !Number.isInteger(value.fromReads)) return undefined;
-    return { from: value.from, to: value.to, fromReads: value.fromReads! };
-  } catch {
-    return undefined;
+    text = readFileSync(`${preUpdateSnapshotPath(databasePath)}.json`, "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "none" } : { kind: "unreadable", why: (error as Error).message };
   }
+  let value: Partial<SnapshotTransition> & { handled?: unknown };
+  try {
+    value = JSON.parse(text) as typeof value;
+  } catch (error) {
+    return { kind: "unreadable", why: (error as Error).message };
+  }
+  if (value.handled === true) return { kind: "handled" };
+  if (typeof value.from !== "string" || typeof value.to !== "string" || !Number.isInteger(value.fromReads)) {
+    return { kind: "unreadable", why: "it does not record the version change and schema floor" };
+  }
+  return { kind: "transition", transition: { from: value.from, to: value.to, fromReads: value.fromReads! } };
 }
 
 /**
- * Removes the record of the change a copy was taken for, keeping the copy: once a rollback has acted on a record
- * (put the copy back, or told the person how to), no later rollback may match it again.
+ * Marks the record of the change a copy was taken for as acted on, keeping the copy: once a rollback has told the
+ * person how to put it back, no later rollback may match it again, nor take the copy for one an older release kept.
  */
-function forgetTransition(databasePath: string): void {
-  removeQuietly(`${preUpdateSnapshotPath(databasePath)}.json`);
+function forgetTransition(databasePath: string, transition: SnapshotTransition): void {
+  const record = `${preUpdateSnapshotPath(databasePath)}.json`;
+  try {
+    writeFileSync(`${record}.tmp`, `${JSON.stringify({ ...transition, handled: true })}\n`, { mode: 0o600 });
+    renameSync(`${record}.tmp`, record);
+  } catch {
+    removeQuietly(`${record}.tmp`);
+    removeQuietly(record);
+  }
 }
 
 /** Why `restoreInPlace` left the database as it was. */
@@ -220,7 +248,7 @@ function freshKeptPath(base: string): string {
  */
 async function restoreInPlace(path: string, snapshot: string, keptBase: string, floor: number): Promise<RestoreRefusal | { kept: string }> {
   const restoring = rollbackRestoringPath(path);
-  const claim = (): void => writeFileSync(restoring, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+  const claim = (): void => writeFileSync(restoring, rollbackRestoringMarker(), { flag: "wx", mode: 0o600 });
   try {
     claim();
   } catch (error) {
@@ -321,23 +349,39 @@ function hintUnrecordedCopy(databasePath: string, version: string): void {
  * The copy is written into the database file itself (`restoreInPlace`). A restore that fails, or whose copy did not
  * reach the file, is reported, never fatal: the version has rolled back already.
  */
-export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
+export async function rollbackWithSnapshot(
+  updater: SnapshotUpdater,
+  databasePath: string,
+  stopDaemon: () => Promise<StopDaemonResult>,
+): Promise<UpdateResult> {
   const result = await updater.rollback();
   const leaving = result.previous?.version;
-  const transition = snapshotTransition(databasePath);
-  if (transition === undefined) {
+  const record = snapshotRecord(databasePath);
+  if (record.kind === "handled") return result;
+  if (record.kind === "none") {
     hintUnrecordedCopy(databasePath, result.current.version);
     return result;
   }
-  if (leaving === undefined || transition.from !== result.current.version || transition.to !== leaving) return result;
   const snapshot = preUpdateSnapshotPath(databasePath);
+  if (record.kind === "unreadable") {
+    if (existsSync(snapshot)) {
+      process.stderr.write(
+        `rerail: could not read ${snapshot}.json (${record.why}), so Rerail does not put ${snapshot} back itself. If `
+        + `${result.current.version} refuses the database, stop Rerail, keep ${databasePath} elsewhere if you need what changed `
+        + `since the update, then copy ${snapshot} to ${databasePath}.\n`,
+      );
+    }
+    return result;
+  }
+  const transition = record.transition;
+  if (leaving === undefined || transition.from !== result.current.version || transition.to !== leaving) return result;
   const restoring = rollbackRestoringPath(databasePath);
   const byHand = `copy ${snapshot} to ${databasePath} (keep the current file if you need what changed since the update)`;
   const current = readFloor(databasePath);
   const before = readFloor(snapshot);
   if (!("floor" in current) || !("floor" in before)) {
     const [file, read] = "floor" in current ? [snapshot, before] : [databasePath, current];
-    forgetTransition(databasePath);
+    forgetTransition(databasePath, transition);
     process.stderr.write(
       `rerail: could not read the schema of ${file} (${"error" in read ? read.error : ""}), so the copy taken before the `
       + `update is not put back. If ${result.current.version} refuses the database, stop Rerail, then ${byHand}.\n`,
@@ -347,7 +391,7 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
   if (current.floor <= transition.fromReads) return result;
   const cannotRead = `${databasePath} is at schema v${current.floor}, which the version rolled back to cannot read`;
   if (rollbackRestoring(databasePath)) {
-    forgetTransition(databasePath);
+    forgetTransition(databasePath, transition);
     process.stderr.write(
       `rerail: ${cannotRead}, and ${restoring} exists: another rollback is running, or one was interrupted. Once no `
       + `rollback runs, delete ${restoring}, then ${byHand}.\n`,
@@ -359,7 +403,7 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
     if (await stopDaemon() === "stopped") daemon = " Rerail's daemon was stopped for this; rerail daemon start starts it again.";
     const restored = await restoreInPlace(databasePath, snapshot, `${databasePath}.before-rollback`, before.floor);
     if (typeof restored === "string") {
-      forgetTransition(databasePath);
+      forgetTransition(databasePath, transition);
       const why = restored === "open"
         ? "coding agent sessions still have it open. Close them"
         : `${restoring} exists: another rollback is running, or one was interrupted. Once no rollback runs, delete ${restoring}`;
@@ -372,7 +416,7 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
       + `holds the copy taken before the update (schema v${before.floor}). What changed since the update is in ${restored.kept}.${daemon}\n`,
     );
   } catch (error) {
-    forgetTransition(databasePath);
+    forgetTransition(databasePath, transition);
     process.stderr.write(
       `rerail: could not put back ${snapshot} for the rolled-back version: ${(error as Error).message}. `
       + `Stop Rerail, then copy ${snapshot} to ${databasePath}.${daemon}\n`,

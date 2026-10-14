@@ -91,7 +91,7 @@ describe("rerail update and rerail update rollback", () => {
     const stopped: string[] = [];
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    expect(await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); })).toMatchObject({ current: { version: "1.0.0" } });
+    expect(await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; })).toMatchObject({ current: { version: "1.0.0" } });
     expect(stopped).toEqual(["daemon"]);
     // The version rolled back to opens it again.
     openRerailDatabase(path).$client.close();
@@ -109,7 +109,7 @@ describe("rerail update and rerail update rollback", () => {
     const session = new Database(path);
     try {
       session.pragma("journal_mode = WAL");
-      await rollbackWithSnapshot(updater, path, async () => undefined);
+      await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
       session.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('during', 'during', 0, 0)");
     } finally {
       session.close();
@@ -130,7 +130,7 @@ describe("rerail update and rerail update rollback", () => {
     try {
       session.pragma("journal_mode = DELETE");
       expect(session.prepare("SELECT count(*) AS n FROM repositories").get()).toEqual({ n: 2 });
-      await rollbackWithSnapshot(updater, path, async () => undefined);
+      await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
       expect(session.prepare("SELECT repository_key FROM repositories ORDER BY repository_key").pluck().all()).toEqual(["before"]);
       session.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('during', 'during', 0, 0)");
     } finally {
@@ -163,6 +163,7 @@ describe("rerail update and rerail update rollback", () => {
           refused.push((error as Error).message);
         }
       });
+      return "not-running" as const;
     });
     // Without the refusal, 'during' was committed and is in neither file.
     expect(refused).toEqual([expect.stringContaining(`Rerail is putting back a copy of ${path} for a rollback; try again in a moment`)]);
@@ -181,6 +182,7 @@ describe("rerail update and rerail update rollback", () => {
     try {
       await rollbackWithSnapshot(updater, path, async () => {
         sessions.push(openRerailDatabase(path, { migrations: [afterUpdate(RERAIL_BASELINE_SCHEMA_VERSION + 1)] }));
+        return "not-running" as const;
       });
       for (const session of sessions) {
         session.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('during', 'during', 0, 0)");
@@ -201,7 +203,7 @@ describe("rerail update and rerail update rollback", () => {
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     writeFileSync(`${path}.restoring`, "");
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped"; });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     // Review of #49 (N8): the daemon is left running when another rollback already restores.
     expect(stopped).toEqual([]);
     expect(existsSync(`${path}.restoring`)).toBe(true);
@@ -220,7 +222,7 @@ describe("rerail update and rerail update rollback", () => {
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     vi.spyOn(Database.prototype, "backup").mockResolvedValue({ totalPages: 0, remainingPages: 0 });
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
     expect(existsSync(`${path}.restoring`)).toBe(false);
     expect(vi.mocked(process.stdout.write)).not.toHaveBeenCalledWith(expect.stringContaining("now holds the copy"));
@@ -238,7 +240,7 @@ describe("rerail update and rerail update rollback", () => {
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     const umask = process.umask(0o022);
     try {
-      await rollbackWithSnapshot(updater, path, async () => undefined);
+      await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     } finally {
       process.umask(umask);
     }
@@ -254,7 +256,7 @@ describe("rerail update and rerail update rollback", () => {
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     await updateWithSnapshot(updater, path, channel).catch(() => undefined);
     expect(updater.current).toBe("2.0.0");
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     openRerailDatabase(path).$client.close();
     expect(repositoryKeys(path)).toEqual(["before"]);
   });
@@ -265,7 +267,7 @@ describe("rerail update and rerail update rollback", () => {
     const stopped: string[] = [];
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path);
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
     expect(existsSync(`${path}.before-rollback`)).toBe(false);
@@ -279,7 +281,7 @@ describe("rerail update and rerail update rollback", () => {
     const stopped: string[] = [];
     await updateWithSnapshot(updater, path, "2.0.0", RERAIL_BASELINE_SCHEMA_VERSION + 1);
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
     expect(existsSync(`${path}.before-rollback`)).toBe(false);
@@ -291,11 +293,11 @@ describe("rerail update and rerail update rollback", () => {
     const updater = new FakeUpdater();
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     const keys = repositoryKeys(path);
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(updater.current).toBe("2.0.0");
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(keys);
@@ -309,14 +311,14 @@ describe("rerail update and rerail update rollback", () => {
     writeFileSync(preUpdateSnapshotPath(path), "not a database");
     const bytes = readFileSync(path);
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(stopped).toEqual([]);
     expect(readFileSync(path)).toEqual(bytes);
     // Review of #49 (F15): the person is told, and the record is not matched again.
     expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
       `rerail: could not read the schema of ${preUpdateSnapshotPath(path)} (`,
     ));
-    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
+    expect(JSON.parse(readFileSync(`${preUpdateSnapshotPath(path)}.json`, "utf8"))).toMatchObject({ handled: true });
   });
 
   // Review of #49 (B1): the record is used once. A rollback after it, and another rollback back again, find no copy to
@@ -326,15 +328,15 @@ describe("rerail update and rerail update rollback", () => {
     const updater = new FakeUpdater();
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(existsSync(preUpdateSnapshotPath(path))).toBe(false);
     expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(updater.current).toBe("2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     const working = repositoryKeys(path);
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(updater.current).toBe("1.0.0");
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(working);
@@ -345,13 +347,13 @@ describe("rerail update and rerail update rollback", () => {
     const second = new FakeUpdater();
     await updateWithSnapshot(second, again, "2.0.0");
     migrate(again, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(second, again, async () => undefined);
+    await rollbackWithSnapshot(second, again, async () => "not-running" as const);
     await updateWithSnapshot(second, again, "3.0.0");
     const latest = new Database(again);
     latest.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('latest', 'latest', 0, 0)");
     latest.close();
     migrate(again, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(second, again, async () => undefined);
+    await rollbackWithSnapshot(second, again, async () => "not-running" as const);
     expect(repositoryKeys(`${again}.before-rollback`)).toEqual(["after", "before"]);
     expect(repositoryKeys(`${again}.before-rollback.2`)).toEqual(["after", "before", "latest"]);
     expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining(`What changed since the update is in ${again}.before-rollback.2.`));
@@ -367,7 +369,7 @@ describe("rerail update and rerail update rollback", () => {
     const updater = new FakeUpdater();
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(true);
     fail(path);
     await expect(updateWithSnapshot(updater, path, "2.0.0")).resolves.toMatchObject({ changed: true, current: { version: "2.0.0" } });
@@ -376,7 +378,7 @@ describe("rerail update and rerail update rollback", () => {
     openRerailDatabase(path, { migrations: [afterUpdate(), { id: "raise", floor: RERAIL_BASELINE_SCHEMA_VERSION + 1, up: () => {} }] }).$client.close();
     const keys = repositoryKeys(path);
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(keys);
   });
@@ -408,7 +410,7 @@ describe("rerail update and rerail update rollback", () => {
       if (source === "journal_mode = DELETE") throw new Database.SqliteError("disk I/O error", "SQLITE_IOERR");
       return pragma.call(this, source, options);
     });
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
       `could not put back ${preUpdateSnapshotPath(path)} for the rolled-back version: disk I/O error.`,
     ));
@@ -422,7 +424,7 @@ describe("rerail update and rerail update rollback", () => {
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     const backup = vi.spyOn(Database.prototype, "backup").mockResolvedValueOnce({ totalPages: 0, remainingPages: 0 });
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(backup).toHaveBeenCalledTimes(2);
     expect(repositoryKeys(path)).toEqual(["before"]);
     expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining("now holds the copy"));
@@ -453,7 +455,7 @@ describe("rerail update and rerail update rollback", () => {
     await updateWithSnapshot(updater, path, "2.0.0");
     expect(JSON.parse(readFileSync(`${preUpdateSnapshotPath(path)}.json`, "utf8"))).toMatchObject({ from: "1.5.0", to: "2.0.0" });
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(updater.current).toBe("1.5.0");
     expect(repositoryKeys(path)).toEqual(["before"]);
   });
@@ -469,7 +471,7 @@ describe("rerail update and rerail update rollback", () => {
       if (source === "VACUUM INTO ?") throw new Database.SqliteError("database or disk is full", "SQLITE_FULL");
       return prepare.call(this, source);
     });
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     expect(existsSync(`${path}.before-rollback`)).toBe(false);
     expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining("database or disk is full. Stop Rerail, then copy"));
   });
@@ -485,7 +487,7 @@ describe("rerail update and rerail update rollback", () => {
     const updater = new FakeUpdater();
     updater.previous = "0.1.0-next.1";
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(updater.current).toBe("0.1.0-next.1");
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(["before"]);
@@ -506,21 +508,40 @@ describe("rerail update and rerail update rollback", () => {
     const session = new Database(path);
     try {
       session.pragma("journal_mode = WAL");
-      await rollbackWithSnapshot(updater, path, async () => undefined);
+      await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
     } finally {
       session.close();
     }
     expect(existsSync(preUpdateSnapshotPath(path))).toBe(true);
-    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(JSON.parse(readFileSync(`${preUpdateSnapshotPath(path)}.json`, "utf8"))).toMatchObject({ from: "1.0.0", to: "2.0.0", handled: true });
+    vi.mocked(process.stderr.write).mockClear();
+    await rollbackWithSnapshot(updater, path, async () => "not-running" as const);
+    // Review of #49 (N10): the copy a rollback already dealt with is not described as one an older release kept.
+    expect(vi.mocked(process.stderr.write)).not.toHaveBeenCalledWith(expect.stringContaining("recorded no version change"));
     expect(updater.current).toBe("2.0.0");
     const latest = new Database(path);
     latest.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('latest', 'latest', 0, 0)");
     latest.close();
     const stopped: string[] = [];
-    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
     expect(stopped).toEqual([]);
     expect(repositoryKeys(path)).toEqual(["after", "before", "latest"]);
+  });
+
+  // Review of #49 (N10): a record that cannot be read is reported as such, with the manual step, not as a missing one.
+  it("reports a record it cannot read instead of calling the copy unrecorded", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    writeFileSync(`${preUpdateSnapshotPath(path)}.json`, "{not json");
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped" as const; });
+    expect(stopped).toEqual([]);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
+      `rerail: could not read ${preUpdateSnapshotPath(path)}.json (`,
+    ));
+    expect(vi.mocked(process.stderr.write)).not.toHaveBeenCalledWith(expect.stringContaining("recorded no version change"));
   });
 
   // Review of #49 (F14): a rollback killed while restoring left its file behind; it names a process that is gone, so
@@ -533,7 +554,7 @@ describe("rerail update and rerail update rollback", () => {
     const gone = spawnSync(process.execPath, ["-e", ""]).pid;
     writeFileSync(`${path}.restoring`, `${gone}\n`);
     openRerailDatabase(path, { readonly: true, migrations: [afterUpdate(RERAIL_BASELINE_SCHEMA_VERSION + 1)] }).$client.close();
-    await rollbackWithSnapshot(updater, path, async () => "stopped");
+    await rollbackWithSnapshot(updater, path, async () => "stopped" as const);
     expect(repositoryKeys(path)).toEqual(["before"]);
     expect(existsSync(`${path}.restoring`)).toBe(false);
     expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining(

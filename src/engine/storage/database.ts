@@ -1,3 +1,4 @@
+import { uptime } from "node:os";
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dirname, join } from "node:path";
@@ -29,15 +30,30 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
 
 /**
  * Beside the database while `rerail update rollback` writes a copy into it (`project-cli.ts`), holding that process's
- * pid. Every opener refuses the database while it is live (`rollbackRestoring`).
+ * pid and when the system booted (`rollbackRestoringMarker`). Every opener refuses the database while it is live
+ * (`rollbackRestoring`).
  */
 export function rollbackRestoringPath(path: string): string {
   return `${path}.restoring`;
 }
 
+/** When this system booted, in seconds since the epoch: a process from before a restart is not running now. */
+function bootTime(): number {
+  return Math.round(Date.now() / 1000 - uptime());
+}
+
+/** What a rollback writes into `.restoring`: its pid and the boot time, so a later restart makes the file stale. */
+export function rollbackRestoringMarker(): string {
+  return `${process.pid} ${bootTime()}\n`;
+}
+
+/** How far apart two readings of the boot time may be and still be the same boot (the clock may be adjusted). */
+const BOOT_TOLERANCE_SECONDS = 120;
+
 /**
- * Whether a rollback is writing a copy into the database at `path`: its `.restoring` file exists and the process it
- * names still runs. A file whose process is gone is left by a rollback that was killed, and holds nothing back; one
+ * Whether a rollback is writing a copy into the database at `path`: its `.restoring` file exists, was written since the
+ * system last booted, and the process it names still runs. A file whose process is gone, or from before a restart
+ * (its pid may since belong to another process), is left by a rollback that was killed, and holds nothing back; one
  * that names no process (unreadable, or written by an earlier build) is taken as live.
  */
 export function rollbackRestoring(path: string): boolean {
@@ -47,8 +63,11 @@ export function rollbackRestoring(path: string): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ENOENT";
   }
-  const pid = Number.parseInt(text.trim(), 10);
+  const [pidText, bootText] = text.trim().split(/\s+/u);
+  const pid = Number.parseInt(pidText ?? "", 10);
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  const boot = Number.parseInt(bootText ?? "", 10);
+  if (Number.isSafeInteger(boot) && Math.abs(boot - bootTime()) > BOOT_TOLERANCE_SECONDS) return false;
   try {
     process.kill(pid, 0);
     return true;

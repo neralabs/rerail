@@ -319,10 +319,12 @@ with the restored database, after keeping what the database held as
 own as `.before-rollback.2`, `.3`, …, never over an earlier one). A copy's
 record is used once: once the copy is put back, or you are told how to put it
 back yourself, no later rollback puts it back again. While it writes,
-`rerail.sqlite.restoring` (holding the rollback's process id) sits beside the
-database and every Rerail process refuses to open it; try again in a moment. A
-rollback that was killed leaves the file behind, but once its process is gone
-Rerail opens the database again and the next rollback takes the file over. While
+`rerail.sqlite.restoring` (holding the rollback's process id and when the system
+booted) sits beside the database and every Rerail process refuses to open it; try
+again in a moment. A rollback that was killed leaves the file behind, but once its
+process is gone, or the computer has restarted since, Rerail opens the database
+again and the next rollback takes the file over. If Rerail still says a copy is
+being put back when no rollback runs, delete the file. While
 a coding agent session still has the database open, or another rollback is
 restoring, the copy is not put back: copy it over yourself, as the message says
 (it also says when it stopped the daemon). An update that finds nothing

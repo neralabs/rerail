@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, uptime } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -286,6 +286,18 @@ describe("the baseline schema", () => {
     await rm(`${path}.restoring`);
     openRerailDatabase(path).$client.close();
     openRerailDatabase(path, { readonly: true }).$client.close();
+  });
+
+  // Review of #49 (N11): a file from before a restart is stale even when its pid now belongs to a running process; one
+  // this boot with a live pid still holds the database back.
+  it("ignores a restoring file from before a restart, whatever process now has its pid", async () => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    const thisBoot = Math.round(Date.now() / 1000 - uptime());
+    await writeFile(`${path}.restoring`, `${process.pid} ${thisBoot - 3600}\n`);
+    openRerailDatabase(path, { readonly: true }).$client.close();
+    await writeFile(`${path}.restoring`, `${process.pid} ${thisBoot}\n`);
+    expect(() => openRerailDatabase(path, { readonly: true })).toThrow(/putting back a copy/u);
   });
 });
 
