@@ -89,8 +89,8 @@ describe("a rule's suppression comments and options on the page", () => {
     expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by 1 of its 2 rules", next: "honour" });
     // A worktree's own setting decides a rule for the repository's switch, not for the worktree's.
     const worktree = [...toStoredRules([entry("eslint:no-var", "", { suppressions: "honour", suppressionsSource: inWorktree("", "pack") })]).values()];
-    expect(packSuppressions(worktree, "repository").next).toBe("ignore");
-    expect(packSuppressions(worktree, "checkout").next).toBe("ignore");
+    expect(packSuppressions(worktree, "repository", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(worktree, "checkout", "/work/a").next).toBe("ignore");
   });
 
   // Self-review round 5: the pack's setting decides each folder on its own; a rule honouring them in one folder by its
@@ -103,6 +103,30 @@ describe("a rule's suppression comments and options on the page", () => {
       entry("eslint:radix", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "pack") }),
     ]).values()];
     expect(packSuppressions(rules, "repository")).toEqual({ text: "ignored by its rules", next: "honour" });
+  });
+
+  // Self-review round 6: the pack's setting decides a folder by the resolver's precedence, so a pack setting at a
+  // deeper folder or a nearer owner wins over a rule's own setting; only the same owner and folder keeps the rule's.
+  it("counts a folder where the pack's setting would win over a rule's own setting by owner or depth", () => {
+    const rootRuleIgnores = [...toStoredRules([
+      entry("eslint:no-var", "web", { suppressions: "ignore", suppressionsSource: inRepository("", "rule") }),
+      entry("eslint:radix", "web", { suppressions: "ignore", suppressionsSource: inRepository("", "rule") }),
+    ]).values()];
+    // The pack attached at `web`: its setting there is deeper than the rules' at the repository root.
+    expect(packSuppressions(rootRuleIgnores, "repository", "/work/a")).toEqual({ text: "ignored by its rules", next: "honour" });
+    // This worktree's pack setting outranks the repository's rule setting.
+    expect(packSuppressions(rootRuleIgnores, "checkout", "/work/a").next).toBe("honour");
+    // At the same owner and folder the rule's own setting wins.
+    const sameFolder = [...toStoredRules([
+      entry("eslint:no-var", "web", { suppressions: "ignore", suppressionsSource: inRepository("web", "rule") }),
+    ]).values()];
+    expect(packSuppressions(sameFolder, "repository", "/work/a").next).toBe("ignore");
+    // A worktree containing this one outranks the repository but not this worktree.
+    const parent = [...toStoredRules([entry("eslint:no-var", "", {
+      suppressions: "ignore", suppressionsSource: { by: "checkout", checkoutPath: "/work", folder: "", target: "rule" },
+    })]).values()];
+    expect(packSuppressions(parent, "repository", "/work/a").next).toBe("ignore");
+    expect(packSuppressions(parent, "checkout", "/work/a").next).toBe("honour");
   });
 });
 
@@ -205,6 +229,21 @@ describe("the page's rule setting writes", () => {
 
     expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["ignore", "honour"]);
     expect(stored("eslint:no-var").suppressions).toBe("ignore");
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    writes()[1]!.answer(200, {});
+    await saving;
+  });
+
+  // Self-review round 6: this worktree's pack setting outranks the repository's setting for the rule.
+  it("shows a worktree's pack change on a rule the repository's rule setting decides", async () => {
+    owner = "checkout";
+    data.checkout = { checkoutPath: "/work/a", folder: "", state: "started" };
+    const saving = page().setPackSuppressions("eslint", "ignore", "Ignored for ESLint.");
+
+    expect(stored("eslint:radix").suppressions).toBe("ignore");
+    expect(stored("eslint:eqeqeq").suppressions).toBe("ignore");
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     writes()[0]!.answer(200, {});
     await vi.waitFor(() => expect(writes()).toHaveLength(2));

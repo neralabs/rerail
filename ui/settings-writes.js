@@ -6,7 +6,7 @@
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
-import { followsPack } from "./derive.js";
+import { packSettingDecides } from "./derive.js";
 import { captureScope, inScope, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
@@ -67,15 +67,16 @@ export function settingWrites({ toast, invalidate, owner }) {
 
   /**
    * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it in the
-   * folders of the pack's rules that follow their pack: not where a rule has a setting of its own, nor where this
-   * worktree decides when the change is the repository's.
+   * folders of the pack's rules its setting decides: not where a setting that outranks it decides, by owner, folder
+   * depth, or a rule's own setting at the same owner and folder.
    */
   function setPackSuppressions(packId, suppressions, label) {
     const by = owner();
+    const decides = state => packSettingDecides(state, by, data.checkout?.checkoutPath);
     const rules = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === packId
-      && r.folderStates.some(state => followsPack(state.suppressionsSource, by)));
+      && r.folderStates.some(decides));
     const folders = byFolder((data.attachedPacks.get(packId) ?? []).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(folders, { suppressions }, rules, showSuppressions(suppressions, state => followsPack(state.suppressionsSource, by)), label);
+    return save(folders, { suppressions }, rules, showSuppressions(suppressions, decides), label);
   }
 
   return { setEnabled, setSuppressions, setPackSuppressions };

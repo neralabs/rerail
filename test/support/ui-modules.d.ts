@@ -91,7 +91,7 @@ declare module "*/ui/derive.js" {
   export function optionsText(stored: object, checkoutPath?: string): string | null;
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function onText(stored: object, checkoutPath?: string): string;
-  export function packSuppressions(rules: readonly object[], owner: "repository" | "checkout"): { text: string; next: "honour" | "ignore" };
+  export function packSuppressions(rules: readonly object[], owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
 }
 
 declare module "*/ui/state.js" {
@@ -106,6 +106,7 @@ declare module "*/ui/state.js" {
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
     repository: { setUp: boolean } | null;
+    checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;

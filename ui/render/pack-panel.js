@@ -58,7 +58,7 @@ export function renderPackPanel(root, pack) {
   const present = [...data.rules.values()].filter(r => r.source.kind === "pack" && r.source.id === pack.id);
   // The pack's switch is written as the settings owner the page shows: the repository, or this worktree.
   const owner = ui.scope?.checkout === undefined ? "repository" : ui.owner;
-  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, owner) : null;
+  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, owner, data.checkout?.checkoutPath) : null;
   const sig = `pack|${pack.id}|${added}|${packOn(pack)}|${ui.removeAsk === pack.id}|${[...data.rules.keys()].length}|${JSON.stringify(suppressions)}`;
   setContent(root, sig, () => h("div.pwrap", null,
     h("div.phead", null,
