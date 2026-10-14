@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { shardName, type Shard } from "./shard.js";
+
 /** The gate layer's own code: every tracked file under it, hashed from the working tree, is part of every rule's key. */
 export const GATE_CODE = "conformance/gates";
 
@@ -52,13 +54,16 @@ export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }
 
-/** Where one rule's cached result lives: `<cache>/results/<pack>/<tool>/<key>.json`. */
-export function resultPath(cacheRoot: string, pack: string, tool: string, key: string): string {
-  return join(cacheRoot, "results", pack, tool, `${key}.json`);
+/**
+ * Where one rule's cached result lives: `<cache>/results/<pack>/<tool>/<key>.json`, or under the shard's directory
+ * (`<tool>/shard-<index>of<count>/`) when the tool-pack is sharded, so each CI leg caches its own shard.
+ */
+export function resultPath(cacheRoot: string, pack: string, tool: string, key: string, shard?: Shard): string {
+  return join(cacheRoot, "results", pack, tool, ...(shard === undefined ? [] : [shardName(shard)]), `${key}.json`);
 }
 
-export async function readCached<T>(cacheRoot: string, pack: string, tool: string, key: string): Promise<T | undefined> {
-  const path = resultPath(cacheRoot, pack, tool, key);
+export async function readCached<T>(cacheRoot: string, pack: string, tool: string, key: string, shard?: Shard): Promise<T | undefined> {
+  const path = resultPath(cacheRoot, pack, tool, key, shard);
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;
@@ -67,8 +72,8 @@ export async function readCached<T>(cacheRoot: string, pack: string, tool: strin
   }
 }
 
-export async function writeCached(cacheRoot: string, pack: string, tool: string, key: string, value: unknown): Promise<void> {
-  const path = resultPath(cacheRoot, pack, tool, key);
+export async function writeCached(cacheRoot: string, pack: string, tool: string, key: string, value: unknown, shard?: Shard): Promise<void> {
+  const path = resultPath(cacheRoot, pack, tool, key, shard);
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value)}\n`);

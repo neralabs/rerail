@@ -115,3 +115,25 @@ cached like the corpus), so Ruff's GPL-derived fixtures are read in place and ne
 `ci.yml` calls `rule-gates.yml` after its build job when a pull request touches `packs/`, `conformance/`, the engine
 or the workflows, and on every push to main: one job per gated tool-pack, then a report job that writes the summary
 and fails when anything blocking failed.
+
+### Sharding
+
+A tool-pack too slow for one 60-minute job runs in several, each judging a share of its rules. The matrix gives such a
+tool-pack's legs `shard` (1 to `shards`) and `shards`; each runs
+
+```sh
+npm run gates -- --pack typescript --tool typescript-eslint --shard 2/6   # rules whose sha256(id) mod 6 is 1
+```
+
+A rule's shard depends only on its document id and the shard count, so adding or removing rules moves no other rule.
+Every shard still checks the whole tool-pack (pins, recordings, the bundled-rule load), writes its report under
+`shard-<i>of<n>/` and caches its results under `.rerail/gates/results/<pack>/<tool>/shard-<i>of<n>/`. The report job
+then merges each tool-pack's shards into one report before the summary:
+
+```sh
+npm run gates -- merge .rerail/reports/gates           # shard-*of*/<pack>--<tool>.json -> <pack>--<tool>.json
+npm run gates -- merge .rerail/reports/gates --write   # and the shards' golden promotions into goldens.tsv
+```
+
+A tool-pack whose shards are missing, of another count, or disagree on what they share gets no merged report, so the
+summary fails it. `--write` does not take `--shard` (shards run side by side); merge the shards with `--write` instead.

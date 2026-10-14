@@ -10,13 +10,16 @@ import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { goldensPath } from "./goldens.js";
 import { toolPackDirectory } from "./manifest.js";
+import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
+import { parseShard, shardName } from "./shard.js";
 import { writeSummary } from "./summary.js";
 
 const USAGE = `usage:
-  npm run gates -- [--pack <id>] [--tool <tool>] [--cache dir] [--no-cache] [--write] [--out dir]
+  npm run gates -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache] [--write] [--out dir]
+  npm run gates -- merge <dir> [--write]
   npm run gates -- summary <dir> [--base <sha>]
 `;
 
@@ -42,17 +45,20 @@ function parse(args: string[], valued: string[], flags: string[]): Record<string
 }
 
 async function gates(args: string[]): Promise<number> {
-  const flags = parse(args, ["--pack", "--tool", "--cache", "--out"], ["--no-cache", "--write"]);
+  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--write"]);
   const root = PACKAGE_ROOT;
+  const shard = typeof flags["--shard"] === "string" ? parseShard(flags["--shard"]) : undefined;
+  // Shards run side by side; each writes its promotions to its own report directory, and merge --write commits them.
+  if (shard !== undefined && flags["--write"] === true) throw new Error(`--write does not take --shard: merge the shards' reports with gates merge <dir> --write\n${USAGE}`);
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
-  const out = resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT);
+  const out = join(resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT), shard === undefined ? "" : shardName(shard));
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   await mkdir(out, { recursive: true });
   const runner = new ProcessCommandRunner();
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const { report, goldens, goldensChanged } = await runToolPack({ root, pack, tool, cacheRoot, useCache: flags["--no-cache"] !== true, runner });
+    const { report, goldens, goldensChanged } = await runToolPack({ root, pack, tool, cacheRoot, useCache: flags["--no-cache"] !== true, runner, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));
@@ -64,10 +70,22 @@ async function gates(args: string[]): Promise<number> {
     }
     const blocking = blockingFailures(report);
     failing += blocking;
-    console.log(`${report.toolPack}: ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blocking} blocking failure(s); cache ${report.cache.hits}/${report.cache.rules}; tool-pack checks ${report.toolPackChecks.pass ? "pass" : "FAIL"}`);
+    console.log(`${report.toolPack}${shard === undefined ? "" : ` (${shardName(shard)}, ${report.rules.length} of ${report.shard!.rules} rules)`}: ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blocking} blocking failure(s); cache ${report.cache.hits}/${report.cache.rules}; tool-pack checks ${report.toolPackChecks.pass ? "pass" : "FAIL"}`);
   }
   console.log(`wrote ${selected.length} report(s) to ${out}`);
   return failing > 0 ? 1 : 0;
+}
+
+async function merge(args: string[]): Promise<number> {
+  const [directory, ...rest] = args;
+  if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
+  const flags = parse(rest, [], ["--write"]);
+  const { merged, problems } = await mergeDirectory(PACKAGE_ROOT, resolve(directory), flags["--write"] === true);
+  for (const report of merged) console.log(`${report.toolPack}: merged ${report.rules.length} rules; ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blockingFailures(report)} blocking failure(s)`);
+  for (const problem of problems) process.stderr.write(`not merged: ${problem}\n`);
+  console.log(`merged ${merged.length} sharded tool-pack(s) in ${resolve(directory)}`);
+  // 2: a tool-pack's shards are missing or disagree, so it has no report (the summary fails it); 1: a shipped rule fails.
+  return problems.length > 0 ? 2 : merged.some((report) => blockingFailures(report) > 0) ? 1 : 0;
 }
 
 async function summary(args: string[]): Promise<number> {
@@ -82,6 +100,7 @@ async function summary(args: string[]): Promise<number> {
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (args[0] === "summary") return await summary(args.slice(1));
+  if (args[0] === "merge") return await merge(args.slice(1));
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(USAGE);
     return 0;
