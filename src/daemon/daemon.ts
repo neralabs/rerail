@@ -278,16 +278,25 @@ export class RerailDaemon {
       }
       return daemon;
     } catch (error) {
-      // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE).
-      await Promise.allSettled([
-        server?.listening === true ? closeHttpServer(server) : Promise.resolve(),
-        Promise.resolve().then(() => nativeServer?.close()),
-        Promise.resolve().then(() => engineService?.close()),
-      ]);
+      // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
+      // database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is
+      // written to stderr, so a later EADDRINUSE has its cause on record.
+      const failed = (what: string, reason: unknown): void => {
+        process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
+      };
+      const closing: [string, () => unknown][] = [
+        ["the HTTP server", () => (server?.listening === true ? closeHttpServer(server) : undefined)],
+        ["the native session server", () => nativeServer?.close()],
+        ["the engine service", () => engineService?.close()],
+      ];
+      const settled = await Promise.allSettled(closing.map(async ([, close]) => await close()));
+      settled.forEach((outcome, index) => {
+        if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
+      });
       try {
         stores.close();
-      } catch {
-        // The start's own error is the one to report.
+      } catch (reason) {
+        failed("the database", reason);
       }
       throw error;
     }

@@ -222,7 +222,7 @@ describe("rerail update and rerail update rollback", () => {
     expect(vi.mocked(process.stdout.write)).not.toHaveBeenCalledWith(expect.stringContaining("now holds the copy"));
     expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
       `could not put back ${preUpdateSnapshotPath(path)} for the rolled-back version: the copy did not reach the database, which is `
-      + `still at schema v${RERAIL_BASELINE_SCHEMA_VERSION + 1}. Stop Rerail, then copy`,
+      + `still at schema v${RERAIL_BASELINE_SCHEMA_VERSION + 1} (the database as it was is saved in ${path}.before-rollback). Stop Rerail, then copy`,
     ));
   });
 
@@ -447,5 +447,43 @@ describe("rerail update and rerail update rollback", () => {
     await rollbackWithSnapshot(updater, path, async () => undefined);
     expect(updater.current).toBe("1.5.0");
     expect(repositoryKeys(path)).toEqual(["before"]);
+  });
+
+  // Review of #49 (F10): a saved database VACUUM INTO could not fill is not left behind under the name later ones need.
+  it("leaves no empty saved database when saving the replaced one fails", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const prepare = Database.prototype.prepare;
+    vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+      if (source === "VACUUM INTO ?") throw new Database.SqliteError("database or disk is full", "SQLITE_FULL");
+      return prepare.call(this, source);
+    });
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(existsSync(`${path}.before-rollback`)).toBe(false);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining("database or disk is full. Stop Rerail, then copy"));
+  });
+
+  // Review of #49 (F9): 0.1.0-next.1's `rerail update` kept a copy (schema v1) with no record; rolling back to it
+  // after this release adopted the database leaves a file next.1 refuses, so the rollback says how to put the copy back.
+  it("tells how to put back a copy an older update kept without a record, when its floor is below the database's", async () => {
+    const path = await database();
+    const copy = new Database(preUpdateSnapshotPath(path));
+    copy.pragma("user_version = 1");
+    copy.exec("CREATE TABLE sessions (session_id text)");
+    copy.close();
+    const updater = new FakeUpdater();
+    updater.previous = "0.1.0-next.1";
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    expect(updater.current).toBe("0.1.0-next.1");
+    expect(stopped).toEqual([]);
+    expect(repositoryKeys(path)).toEqual(["before"]);
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(
+      `rerail: ${path} is at schema v${RERAIL_BASELINE_SCHEMA_VERSION}, and ${preUpdateSnapshotPath(path)} (schema v1) was taken by an update that `
+      + "recorded no version change, so Rerail does not put it back itself. If 0.1.0-next.1 refuses the database, stop Rerail, "
+      + `keep ${path} elsewhere if you need what changed since that update, then copy ${preUpdateSnapshotPath(path)} to ${path}.\n`,
+    );
   });
 });
