@@ -26,9 +26,10 @@ In addition to the team-wide blockers:
 
 ## High-risk areas
 
-- `src/engine/storage/`: the Rerail database in users' repos. Check that existing databases still open and nothing is lost.
+- Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
+- CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
+- Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points.
 - `src/setup/`: installs rerail into users' agents.
-- `packs/*/package.json` and the release workflows: what gets published.
 - `LICENSES/` and `scripts/check/licence-allowlist.json`: licensing.
 
 ## Reviewer settings
@@ -39,8 +40,20 @@ Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is
 {
   "highRiskPaths": [
     "src/engine/storage/",
-    "src/setup/",
+    "native/src/content_store/schema.rs",
+    "scripts/release/",
+    ".changeset/config.json",
+    "/package.json",
+    "/Cargo.toml",
+    "native/Cargo.toml",
+    "native/build.rs",
+    "scripts/build/",
+    "tsconfig.build.json",
     "packs/*/package.json",
+    ".claude-plugin/",
+    ".codex-plugin/",
+    ".cursor-plugin/",
+    "src/setup/",
     "LICENSES/",
     "scripts/check/licence-allowlist.json"
   ],
