@@ -87,10 +87,18 @@ export function rebuildFixtureTexts(checkout: string, recorded: RecordedFixtureT
   return [...texts, ...recorded.inline.map(({ text }) => text)];
 }
 
+/**
+ * A directory as a non-cone sparse-checkout pattern. Those are gitignore patterns, so glob characters in a name
+ * (Next.js's `custom-pages/[profile]/`) are escaped to match only that directory.
+ */
+export function sparseDirectoryPattern(path: string): string {
+  return `/${posix.dirname(path)}/`.replace(/^\/\.\/$/u, "/").replace(/[\\*?[\]]/gu, "\\$&");
+}
+
 /** A sparse, shallow, blobless checkout of the directories of every recorded upstream file, at the pinned commit. */
 export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: string; commit: string }, recorded: RecordedFixtureTexts, runner: CommandRunner): Promise<string[]> {
   if (recorded.files.length === 0) return rebuildFixtureTexts(cacheRoot, recorded);
-  const directories = [...new Set(recorded.files.map(({ path }) => `/${posix.dirname(path)}/`.replace(/^\/\.\/$/u, "/")))].sort();
+  const directories = [...new Set(recorded.files.map(({ path }) => sparseDirectoryPattern(path)))].sort();
   const checkout = await checkoutPinned(pins.repository, pins.commit, upstreamCheckoutDirectory(cacheRoot, pins), directories, runner, { blobless: true });
   return rebuildFixtureTexts(checkout, recorded);
 }
