@@ -309,8 +309,8 @@ Most steps add a column or a table, which older versions read correctly, so
 they keep the floor and an older Rerail still opens the file; a hook or the
 status line runs them before reading. A step an older version would misread
 raises the floor and waits for the new version's daemon or a command that
-writes (until then a hook or the status line says to run one, such as `rerail
-state`); from then on older versions refuse the file, and `rerail update
+writes (until then a hook or the status line says to start Rerail, `rerail
+daemon start`); from then on older versions refuse the file, and `rerail update
 rollback` puts back the copy `rerail update` took before that version change
 when the floor is now above what the version rolled back to opens. It writes the
 copy into the database file itself, so anything that has the file open goes on

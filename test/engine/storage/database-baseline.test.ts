@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { LazyReadonlyRerailDatabase, openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_SCHEMA_VERSION, addColumn, type Migration } from "../../../src/engine/storage/migrations.js";
+import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, RERAIL_SCHEMA_VERSION, addColumn, type Migration } from "../../../src/engine/storage/migrations.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql.generated.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
@@ -223,21 +223,26 @@ describe("the baseline schema", () => {
     expect(readFileSync(path)).toEqual(before);
   });
 
+  /** A file 0.1.0-next.1 (main before the migration path) wrote at `path`, stamped 1, holding one session. */
+  async function nextOneFile(path: string): Promise<void> {
+    await mkdir(dirname(path), { recursive: true });
+    const created = new Database(path);
+    try {
+      created.exec(readFileSync(fixturesPath("host", "database", "stamp-1-schema.sql"), "utf8"));
+      created.exec("INSERT INTO sessions (session_id, host, cwd, started_at) VALUES ('kept', 'claude', '/work', 1)");
+      created.pragma("user_version = 1");
+    } finally {
+      created.close();
+    }
+  }
+
   // Review of #49 (F1, user decision): 0.1.0-next.1 (main before the migration path) wrote files stamped 1 in the
   // baseline's shape without `schema_migrations`; Rerail adopts them at the baseline. Any other file stamped 1 (such
   // as 0.1.0-next.0's, whose tables differ) is still refused and left as it is.
   it("adopts a file stamped 1 in 0.1.0-next.1's shape at the baseline, with its rows, writable or read-only", async () => {
     for (const readonly of [false, true]) {
       const path = await temporaryDatabase();
-      await mkdir(dirname(path), { recursive: true });
-      const created = new Database(path);
-      try {
-        created.exec(readFileSync(fixturesPath("host", "database", "stamp-1-schema.sql"), "utf8"));
-        created.exec("INSERT INTO sessions (session_id, host, cwd, started_at) VALUES ('kept', 'claude', '/work', 1)");
-        created.pragma("user_version = 1");
-      } finally {
-        created.close();
-      }
+      await nextOneFile(path);
       const database = openRerailDatabase(path, { readonly });
       try {
         expect(database.$client.prepare("SELECT session_id FROM sessions").pluck().all()).toEqual(["kept"]);
@@ -246,6 +251,19 @@ describe("the baseline schema", () => {
       }
       expect(stampOf(path)).toEqual({ tables: BASELINE_TABLES, version: RERAIL_SCHEMA_VERSION });
     }
+  });
+
+  // Self-review round 15: a read-only consumer adopts through a writable open, which would also run a pending step
+  // that raises the floor; that is the writer's, as for a file at the baseline.
+  it("leaves adopting a file stamped 1 to the writer while a step that raises the floor is pending", async () => {
+    const path = await temporaryDatabase();
+    await nextOneFile(path);
+    const raising: Migration = { id: "raise-floor", floor: RERAIL_BASELINE_SCHEMA_VERSION + 1, up: () => {} };
+    const migrations = [...RERAIL_MIGRATIONS, raising];
+    expect(() => openRerailDatabase(path, { readonly: true, migrations })).toThrow(
+      /needs this Rerail's schema steps \(.*raise-floor\) before it can be read, and raise-floor raise its schema floor, which a read-only open does not do\. Start Rerail first \(rerail daemon start\), which runs them\.$/u,
+    );
+    expect(stampOf(path).version).toBe(1);
   });
 
   it("refuses a file stamped 1 in any other shape, and leaves it untouched", async () => {
@@ -449,7 +467,7 @@ describe("the migration path", () => {
       const ids = migrations.map(migration => migration.id).join(", ");
       expect(() => openRerailDatabase(raising, { readonly: true, migrations })).toThrow(new Error(
         `${raising} needs this Rerail's schema steps (${ids}) before it can be read, and ${migrations.filter(migration => migration.floor !== undefined).map(migration => migration.id).join(", ")} `
-          + "raise its schema floor, which a read-only open does not do. Run a rerail command that writes it first (rerail state).",
+          + "raise its schema floor, which a read-only open does not do. Start Rerail first (rerail daemon start), which runs them.",
       ));
       expect(migrationState(raising)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
     }

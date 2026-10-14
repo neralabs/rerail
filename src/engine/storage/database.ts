@@ -131,11 +131,17 @@ function stampOneShape(): readonly string[] {
   return baselineWithoutRecord;
 }
 
+/**
+ * The file's stamp, read as one snapshot: another opener adopting a file stamped 1 between reading its stamp and
+ * reading its schema would otherwise make an adoptable file look like one in an unknown shape.
+ */
 function schemaStamp(database: RerailDatabase): SchemaStamp {
-  const tables = database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`);
-  const version = database.all<{ user_version: number }>(sql`PRAGMA user_version`)[0]?.user_version ?? 0;
-  const adoptable = version === 1 && JSON.stringify(schemaEntries(database.$client)) === JSON.stringify(stampOneShape());
-  return { empty: tables.length === 0, version, adoptable };
+  return database.$client.transaction(() => {
+    const tables = database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`);
+    const version = database.all<{ user_version: number }>(sql`PRAGMA user_version`)[0]?.user_version ?? 0;
+    const adoptable = version === 1 && JSON.stringify(schemaEntries(database.$client)) === JSON.stringify(stampOneShape());
+    return { empty: tables.length === 0, version, adoptable };
+  })();
 }
 
 /** The refusal for a file that holds something other than a Rerail database this build can read. */
@@ -231,20 +237,19 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
 function upgradeBeforeReading(path: string, database: RerailDatabase, migrations: readonly Migration[]): string | undefined {
   try {
     const stamp = schemaStamp(database);
-    // Only an adoptable file stamped 1 passes the read-only open's checks.
-    if (stamp.version === 1) return "adopting at the migration baseline";
-    if (stamp.version < RERAIL_BASELINE_SCHEMA_VERSION) return undefined;
+    if (stamp.version < RERAIL_BASELINE_SCHEMA_VERSION && stamp.version !== 1) return undefined;
+    // A file stamped 1 passes the read-only open's checks only when adoptable; it has run no step.
     const pending = pendingMigrations(database, migrations);
-    if (pending.length === 0) return undefined;
     const ids = pending.map(migration => migration.id).join(", ");
     const raising = pending.filter(migration => migration.floor !== undefined).map(migration => migration.id);
     if (raising.length > 0) {
       throw new Error(
         `${path} needs this Rerail's schema steps (${ids}) before it can be read, and ${raising.join(", ")} raise its `
-          + "schema floor, which a read-only open does not do. Run a rerail command that writes it first (rerail state).",
+          + "schema floor, which a read-only open does not do. Start Rerail first (rerail daemon start), which runs them.",
       );
     }
-    return `this Rerail's schema steps (${ids})`;
+    if (stamp.version === 1) return "adopting at the migration baseline";
+    return pending.length === 0 ? undefined : `this Rerail's schema steps (${ids})`;
   } catch (error) {
     database.$client.close();
     throw error;

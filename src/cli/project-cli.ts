@@ -65,11 +65,18 @@ function removeQuietly(path: string): void {
   }
 }
 
-/** Removes the pre-update copy and its record, so no later rollback finds them. */
+/**
+ * Removes the pre-update copy and its record, so no later rollback finds them. Runs after a version change that kept
+ * no copy of its own, which has succeeded: a removal that fails is reported with what to remove by hand, never fatal.
+ */
 function discardSnapshot(databasePath: string): void {
   const target = preUpdateSnapshotPath(databasePath);
-  rmSync(`${target}.json`, { force: true });
-  rmSync(target, { force: true });
+  try {
+    rmSync(`${target}.json`, { force: true });
+    rmSync(target, { force: true });
+  } catch (error) {
+    process.stderr.write(`rerail: remove ${target} and ${target}.json yourself before rolling back: ${(error as Error).message}\n`);
+  }
 }
 
 /**
@@ -100,7 +107,7 @@ export async function updateWithSnapshot(
     return result;
   }
   if (staged === undefined || from === undefined) {
-    if (staged !== undefined) rmSync(staged, { force: true });
+    if (staged !== undefined) removeQuietly(staged);
     discardSnapshot(databasePath);
     return result;
   }
@@ -116,11 +123,7 @@ export async function updateWithSnapshot(
     removeQuietly(staged);
     removeQuietly(`${target}.json.tmp`);
     process.stderr.write(`rerail: could not keep the copy of ${databasePath} taken before the update: ${(error as Error).message}\n`);
-    try {
-      discardSnapshot(databasePath);
-    } catch (removal) {
-      process.stderr.write(`rerail: remove ${target} and ${target}.json yourself before rolling back: ${(removal as Error).message}\n`);
-    }
+    discardSnapshot(databasePath);
     return result;
   }
   process.stdout.write(`Copied ${databasePath} to ${target}\n`);
