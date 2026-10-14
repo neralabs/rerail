@@ -12,11 +12,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
-import { readRuleDocument } from "../../../src/engine/catalog/bundled-rule-documents.js";
-import { repositoryPath } from "../../support/oracles.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { repositoryPath } from "../../../support/oracles.js";
 
-const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
+const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_PATH = repositoryPath("packs", "python", "candidates", "rules", "ruff-b030-except-with-non-exception-classes.json");
