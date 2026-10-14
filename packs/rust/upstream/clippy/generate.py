@@ -203,6 +203,134 @@ fn call_arguments() {
     //~| double_parens
 }
 """,
+    "precedence": """\
+#![warn(clippy::precedence)]
+#![allow(clippy::eq_op, clippy::identity_op, clippy::no_effect, clippy::erasing_op, clippy::if_same_then_else)]
+
+fn takes(_: i32) {}
+
+fn shift_with_multiplicative() {
+    1 << 2 * 3;
+    //~^ precedence
+    8 >> 4 / 2;
+    //~^ precedence
+    1 << 5 % 3;
+    //~^ precedence
+    1 * 2 << 3;
+    //~^ precedence
+    16 / 2 >> 3;
+    //~^ precedence
+    4 % 3 << 1;
+    //~^ precedence
+}
+
+fn bitwise_with_arithmetic() {
+    1 & 2 * 3;
+    //~^ precedence
+    1 | 2 / 3;
+    //~^ precedence
+    1 ^ 2 % 3;
+    //~^ precedence
+    1 * 2 & 3;
+    //~^ precedence
+    1 - 2 | 3;
+    //~^ precedence
+    1 / 2 ^ 3;
+    //~^ precedence
+}
+
+fn arithmetic_on_both_sides() {
+    1 + 2 & 3 * 4;
+    //~^ precedence
+    1 << 2 & 3 + 4;
+    //~^ precedence
+}
+
+fn nested() {
+    let _ = (1 << 2 + 3) == 0;
+    //~^ precedence
+    let _ = 1 + (2 & 3 - 1);
+    //~^ precedence
+    let _ = 1 | 2 & 3 * 4;
+    //~^ precedence
+    takes(1 + (2 << 3 * 4));
+    //~^ precedence
+    let _ = [1 << 2 % 3, 4];
+    //~^ precedence
+    let _ = if true { 1 } else { 2 >> 1 * 1 };
+    //~^ precedence
+    let _ = 1 << 2 - 3 << 4;
+    //~^ precedence
+}
+
+fn parenthesised() {
+    (1 << 2) + 3;
+    1 << (2 + 3);
+    (1 & 2) * 3;
+    1 | (2 / 3);
+    1 << 2 << 3;
+    1 + 2 * 3;
+}
+""",
+    "precedence_bits": """\
+#![warn(clippy::precedence_bits)]
+#![allow(clippy::eq_op, clippy::identity_op, clippy::no_effect, clippy::erasing_op, clippy::precedence)]
+
+fn takes(_: i32) {}
+
+fn outermost() {
+    0x0F00 & 0x00F0 << 4;
+    //~^ precedence_bits
+    0x0F00 | 0xF000 >> 4;
+    //~^ precedence_bits
+    0x0F00 ^ 1 << 4;
+    //~^ precedence_bits
+    1 << 4 & 0x0F00;
+    //~^ precedence_bits
+    1 >> 4 | 0x0F00;
+    //~^ precedence_bits
+    1 << 4 ^ 0x0F00;
+    //~^ precedence_bits
+    1 << 2 & 3 >> 4;
+    //~^ precedence_bits
+}
+
+fn nested() {
+    let _ = (0x0F00 & 0x00F0 << 4) == 0;
+    //~^ precedence_bits
+    let _ = 1 + (2 & 3 << 4);
+    //~^ precedence_bits
+    takes(1 + (2 | 3 >> 4));
+    //~^ precedence_bits
+    let _ = [1 ^ 2 << 3, 4];
+    //~^ precedence_bits
+    let _ = if true { 1 } else { 2 & 3 >> 1 };
+    //~^ precedence_bits
+    let _ = 1 | 2 & 3 << 4;
+    //~^ precedence_bits
+}
+
+fn arithmetic_inside_a_shift() {
+    // the outer `&` has a shift operand and no arithmetic one; the shift's own `+` is the `precedence` lint's
+    1 & 2 << 3 + 4;
+    //~^ precedence_bits
+}
+
+fn arithmetic_makes_it_precedence() {
+    // an arithmetic operand makes it the `precedence` lint's, not `precedence_bits`'
+    1 << 2 & 3 + 4;
+    1 & 2 + 3;
+    1 << 2 + 3;
+    1 * 2 & 3 << 4;
+}
+
+fn parenthesised() {
+    (1 & 2) << 3;
+    1 & (2 << 3);
+    1 << 2 << 3;
+    1 & 2 & 3;
+}
+""",
     "redundant_static_lifetimes": """\
 #![warn(clippy::redundant_static_lifetimes)]
 

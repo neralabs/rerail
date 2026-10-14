@@ -37,8 +37,8 @@ Per rule (TP / FP / FN, explained points in parentheses):
 
 | Rule | fixtures | ripgrep | tokio |
 |---|---|---|---|
-| `clippy-precedence` | 9 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-precedence-bits` | 8 / 0 / 0 | 0 / 0 / 0 | 2 / 0 / 0 |
+| `clippy-precedence` | 30 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| `clippy-precedence-bits` | 22 / 0 / 0 | 0 / 0 / 0 | 2 / 0 / 0 |
 | `clippy-double-parens` | 16 / 0 / 0 (5) | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-int-plus-one` | 14 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | `clippy-redundant-static-lifetimes` | 31 / 0 / 0 | 32 / 0 / 0 (2) | 0 / 0 / 0 |

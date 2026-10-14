@@ -40,6 +40,8 @@
    "rerail/allow_attributes.rs",
    "rerail/allow_attributes_without_reason.rs",
    "rerail/double_parens.rs",
+   "rerail/precedence.rs",
+   "rerail/precedence_bits.rs",
    "rerail/redundant_static_lifetimes.rs",
    "rerail/unnested_or_patterns.rs",
    "tests/ui-toml/decimal_literal_representation/decimal_literal_representation.rs",
@@ -268,6 +270,18 @@
    "path": "rerail/allow_attributes_without_reason.rs",
    "line": 10,
    "column": 60
+  },
+  {
+   "rule": "allow_attributes_without_reason",
+   "path": "rerail/precedence.rs",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "allow_attributes_without_reason",
+   "path": "rerail/precedence_bits.rs",
+   "line": 2,
+   "column": 1
   },
   {
    "rule": "allow_attributes_without_reason",
@@ -1351,6 +1365,132 @@
   },
   {
    "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 9,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 26,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 30,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 32,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 37,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 39,
+   "column": 5
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 44,
+   "column": 14
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 46,
+   "column": 18
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 48,
+   "column": 17
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 50,
+   "column": 16
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 52,
+   "column": 14
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 54,
+   "column": 34
+  },
+  {
+   "rule": "precedence",
+   "path": "rerail/precedence.rs",
+   "line": 56,
+   "column": 13
+  },
+  {
+   "rule": "precedence",
    "path": "tests/ui/precedence.rs",
    "line": 14,
    "column": 5
@@ -1402,6 +1542,90 @@
    "path": "tests/ui/precedence.rs",
    "line": 53,
    "column": 13
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 9,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 24,
+   "column": 14
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 26,
+   "column": 18
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 28,
+   "column": 16
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 30,
+   "column": 14
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 32,
+   "column": 34
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 34,
+   "column": 17
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 40,
+   "column": 5
   },
   {
    "rule": "precedence_bits",

@@ -7,5 +7,7 @@ The fixtures listed below were written by Rerail for the pinned Clippy to score,
 | `upstream/clippy/fixtures/rerail/allow_attributes.rs` | written by Rerail |
 | `upstream/clippy/fixtures/rerail/allow_attributes_without_reason.rs` | written by Rerail |
 | `upstream/clippy/fixtures/rerail/double_parens.rs` | written by Rerail |
+| `upstream/clippy/fixtures/rerail/precedence.rs` | written by Rerail |
+| `upstream/clippy/fixtures/rerail/precedence_bits.rs` | written by Rerail |
 | `upstream/clippy/fixtures/rerail/redundant_static_lifetimes.rs` | written by Rerail |
 | `upstream/clippy/fixtures/rerail/unnested_or_patterns.rs` | written by Rerail |

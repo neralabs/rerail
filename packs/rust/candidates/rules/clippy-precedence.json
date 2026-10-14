@@ -1,19 +1,19 @@
 {
   "format": "rerail.policy/v1",
   "id": "clippy-precedence",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's precedence lint: reports arithmetic expressions mixing shifts or bitwise operators without parentheses; macro expansion and type/value semantics are not modelled.",
+  "description": "Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation whose operand is an unparenthesized arithmetic (+ - * / %) operation, at every nesting depth; macro expansion and type/value semantics are not modelled.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
-      "id": "shift-with-additive",
-      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^(?:<<|>>)$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[+-]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[+-]$" } } } ] } } },
+      "id": "shift-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^(?:<<|>>)$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
       "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Clippy precedence: operator precedence might not be intended" }
     },
     {
-      "id": "bitwise-with-additive",
-      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^[&^|]$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[+-]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[+-]$" } } } ] } } },
+      "id": "bitwise-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^[&^|]$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
       "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Clippy precedence: operator precedence might not be intended" }
     },
     {
