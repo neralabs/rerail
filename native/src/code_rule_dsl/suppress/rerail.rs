@@ -8,8 +8,10 @@
 //!   over (before a Python body's first statement, that statement); nothing where none follows
 //!   (the end of a block);
 //! - after code on the line where it starts (trailing): the nearest preceding named sibling, when
-//!   only comments stand between them and it ends on that line; otherwise the smallest ancestor
-//!   of the comment holding the line's first code byte (never the file's root).
+//!   only comments stand between them and it ends on that line; past a `,` or `;` ending a list
+//!   element or class field on that line, the elements before it on the line, from the one
+//!   holding the line's first code byte; otherwise the smallest ancestor of the comment holding
+//!   that byte (never the file's root).
 //!
 //! A violation is silenced when the byte its anchor names falls in a range covered for its rule's
 //! id: the anchor's start, or for an end anchor the witness's last byte (the point where a witness
@@ -202,21 +204,40 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
         }
         return None;
     }
-    // Trailing: the code it directly follows, when that ends on its line.
+    // Trailing: the code it directly follows, when that ends on its line. Past a `,` or `;` that
+    // ends there (a list element's or class field's), the elements before it on the line, from
+    // the one holding the line's first code byte: in `m(n, //` that is no element but the call
+    // opened on the line.
+    let code = line_start + (before.len() - before.trim_start().len());
+    // Whether the walk passed a separator, and the end of the element that separator closes.
+    let mut separated = false;
+    let mut end = None;
     let mut previous = comment.prev();
     while let Some(node) = previous {
+        previous = node.prev();
         if is_comment(&node) || source[node.range()].trim().is_empty() {
-            previous = node.prev();
             continue;
         }
         let range = node.range();
-        if node.is_named() && lines.line(range.end.saturating_sub(1).max(range.start)) == line {
+        if lines.line(range.end.saturating_sub(1).max(range.start)) != line {
+            break;
+        }
+        if !node.is_named() {
+            if matches!(node.kind().as_ref(), "," | ";") {
+                separated = true;
+                continue;
+            }
+            break;
+        }
+        if !separated {
             return Some(range);
         }
-        break;
+        let end = *end.get_or_insert(range.end);
+        if range.start <= code {
+            return Some(range.start..end);
+        }
     }
     // Otherwise the smallest construct holding the line's code: the comment sits inside it.
-    let code = line_start + (before.len() - before.trim_start().len());
     let mut ancestor = comment.parent();
     while let Some(node) = ancestor {
         let parent = node.parent();
@@ -402,6 +423,49 @@ mod tests {
         );
         let top = format!("{{{{-- rerail-ignore calls --}}}}\n{blade}");
         assert!(reported(blade_rule, "blade", "a.blade.php", &top).is_empty());
+    }
+
+    /// A trailing directive after a list element's `,` or a class field's `;` covers that element
+    /// or field (the ones before it on its line too), not the argument list, object or class body
+    /// holding it: the later elements and members stay reported.
+    #[test]
+    fn a_trailing_directive_past_a_separator_covers_the_element_before_it() {
+        let call = "foo(\n  a(), // rerail-ignore calls\n  b(),\n  c(),\n);\n";
+        let pair = "foo(\n  a(), b(), // rerail-ignore calls\n  c(),\n);\n";
+        let object = "const o = {\n  a: 1, // rerail-ignore keys\n  b: 2,\n};\n";
+        let class = "class A {\n  x = f(); // rerail-ignore members\n  m() {}\n  n() {}\n}\n";
+        let python = "foo(\n    a(),  # rerail-ignore calls\n    b(),\n)\n";
+        for (language, source, expected) in [
+            (GrammarDialect::TypeScript, call, cover("a()", &["calls"])),
+            (
+                GrammarDialect::TypeScript,
+                pair,
+                cover("a(), b()", &["calls"]),
+            ),
+            (GrammarDialect::TypeScript, object, cover("a: 1", &["keys"])),
+            (
+                GrammarDialect::TypeScript,
+                class,
+                cover("x = f()", &["members"]),
+            ),
+            (GrammarDialect::Python, python, cover("a()", &["calls"])),
+        ] {
+            assert_eq!(covered_texts(language, source), [expected], "{source:?}");
+        }
+
+        let calls = rule("calls", "typescript", "call_expression", None);
+        assert_eq!(
+            reported(calls, "typescript", "a.ts", call),
+            [call.trim_end().trim_end_matches(';'), "b()", "c()"]
+        );
+        let mut members = rule("members", "typescript", "public_field_definition", None);
+        members["clauses"][0]["forbid"]["ast"]["rule"] = json!({ "any": [
+            { "kind": "public_field_definition" }, { "kind": "method_definition" }
+        ] });
+        assert_eq!(
+            reported(members, "typescript", "a.ts", class),
+            ["m() {}", "n() {}"]
+        );
     }
 
     /// A covered node's range excludes its end: a leading directive over `a();` leaves `b();`,
