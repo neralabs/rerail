@@ -9,9 +9,9 @@ reads the component's tree-sitter-vue tree and the ECMAScript program its script
 is scored against eslint-plugin-vue's own findings on its RuleTester cases, on cases Rerail wrote for inputs a port once
 misread (`fixtures/<rule>/rerail-*.vue`, listed in `upstream/eslint-plugin-vue/UPSTREAM.md`) and on three pinned corpora
 (element-plus, vue-vben-admin, hoppscotch), through the engine's production workspace path. Every port agrees with
-eslint-plugin-vue on every case and corpus file: 1,074 findings on the fixtures and 221 on the corpora, with no false
-positive or false negative but the one `divergences.json` declares (a native HTML tag has no node in the view, so
-`vue/no-unused-vars` does not see it as a descendant element named like the variable).
+eslint-plugin-vue on every case and corpus file: 1,106 findings on the 773 fixture files and 221 on the corpora's 2,111
+files, with no false positive or false negative but the one `divergences.json` declares (a native HTML tag has no node
+in the view, so `vue/no-unused-vars` does not see it as a descendant element named like the variable).
 
 It is checked by:
 
