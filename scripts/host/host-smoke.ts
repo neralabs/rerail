@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -71,9 +71,11 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
 
 type Assertion = { name: string; passed: boolean; detail: string };
 type CommandResult = { exitCode: number; stdout: string; stderr: string };
+/** INCONCLUSIVE: the provider, not Rerail, never got the session to the violation (or stalled); the attempt is retried. */
 type Evidence = {
   harness: RerailHost;
-  status: "PASSED" | "FAILED";
+  attempt: number;
+  status: "PASSED" | "FAILED" | "INCONCLUSIVE";
   versions: Record<string, string>;
   commandExitCode?: number;
   assertions: Assertion[];
@@ -95,6 +97,15 @@ if (acceptanceSetting !== "full" && acceptanceSetting !== "transport") {
   throw new Error(`RERAIL_SMOKE_ACCEPTANCE must be "full" or "transport", received ${JSON.stringify(acceptanceSetting)}`);
 }
 const ACCEPTANCE_MODE: "full" | "transport" = acceptanceSetting;
+const attemptsSetting = process.env.RERAIL_SMOKE_ATTEMPTS ?? "1";
+const ATTEMPTS = Number(attemptsSetting);
+if (!Number.isSafeInteger(ATTEMPTS) || ATTEMPTS <= 0) {
+  throw new Error(`RERAIL_SMOKE_ATTEMPTS must be a positive integer, received ${JSON.stringify(attemptsSetting)}`);
+}
+/** The Codex violation and restore step: a quote-free command, so the model cannot break it by re-quoting. */
+const SET_CALL_SCRIPT = join("tools", "set_call.py");
+/** Appended by SET_CALL_SCRIPT after each successful write: Rerail's Codex results carry no exit status to prove that. */
+const SET_CALL_LOG = join("tools", "set_call.log");
 const MAX_OUTPUT = 16_000;
 const SOURCE_OMP_DB = join(process.env.HOME ?? "", ".omp", "agent", "agent.db");
 
@@ -249,7 +260,7 @@ async function requireBuilt(): Promise<void> {
   await readFile(join(DIST, "hosts", "cursor", "cursor-hook.js"));
 }
 
-async function createProject(project: string): Promise<void> {
+async function createProject(project: string, host: RerailHost): Promise<void> {
   await mkdir(join(project, "api"), { recursive: true });
   await writeFile(
     join(project, "api", "route.py"),
@@ -261,6 +272,31 @@ async function createProject(project: string): Promise<void> {
       "Use transaction helpers; cursor.execute is forbidden in api routes.",
       "The controlled Rerail acceptance exercise is the sole exception: make its requested one-off",
       "cursor.execute change exactly once, read the diagnostic, then restore the transaction helper.",
+      "",
+    ].join("\n"),
+  );
+  if (host !== "codex") return;
+  await mkdir(join(project, "tools"), { recursive: true });
+  await writeFile(
+    join(project, SET_CALL_SCRIPT),
+    [
+      "import pathlib",
+      "import re",
+      "import sys",
+      "",
+      'CALLS = ("cursor.execute", "transaction.fetch_value")',
+      "if len(sys.argv) != 2 or sys.argv[1] not in CALLS:",
+      '    sys.exit("usage: python3 tools/set_call.py " + "|".join(CALLS))',
+      "call = sys.argv[1]",
+      "tools = pathlib.Path(__file__).resolve().parent",
+      'route = tools.parent / "api" / "route.py"',
+      "text = route.read_text()",
+      String.raw`updated = re.sub(r"return [\w.]+\('SELECT 1'\)", "return " + call + "('SELECT 1')", text, count=1)`,
+      "if updated == text:",
+      '    sys.exit("api/route.py already returns " + call)',
+      "route.write_text(updated)",
+      'with open(tools / "set_call.log", "a") as log:',
+      '    log.write(call + "\\n")',
       "",
     ].join("\n"),
   );
@@ -466,6 +502,8 @@ async function configureHostAuth(
           `base_url = ${JSON.stringify(baseUrl)}`,
           'env_key = "AZURE_OPENAI_API_KEY"',
           'wire_api = "responses"',
+          // Codex's 300 s default outlasts a whole attempt, so a stalled response stream would never be retried.
+          "stream_idle_timeout_ms = 60000",
           "",
         ].join("\n"),
         { mode: 0o600 },
@@ -508,7 +546,12 @@ function finalAssistantText(events: { kind: string; payload: unknown }[]): strin
 
 async function readDeliveries(storageRoot: string): Promise<unknown[]> {
   const ledger: unknown[] = [];
-  for (const entry of await readdir(storageRoot, { withFileTypes: true })) {
+  // A session that died before its first hook (a harness that never started) leaves no storage root.
+  const entries = await readdir(storageRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  });
+  for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     try {
       const text = await readFile(join(storageRoot, entry.name, "events.jsonl"), "utf8");
@@ -538,6 +581,36 @@ export function hasCompletedViolation(events: readonly { kind: string; payload: 
       result.sessionId === call.sessionId && result.toolCallId === call.toolCallId && result.toolName === call.toolName));
 }
 
+/**
+ * With the Codex set-call helper in the workspace, its log is the proof the violating text reached disk: Rerail
+ * records no exit status for a Codex Bash result, so a mis-quoted or failed command still looks like a completed call.
+ */
+async function violationWritten(project: string): Promise<boolean> {
+  const log = await readFile(join(project, SET_CALL_LOG), "utf8").catch(() => undefined);
+  if (log !== undefined) return log.split("\n").includes("cursor.execute");
+  return !(await stat(join(project, SET_CALL_SCRIPT)).then(() => true, () => false));
+}
+
+/** Failures that follow from the model never landing the violation: no code-rule verdict was possible. */
+const AFTER_VIOLATION: Record<string, true> = {
+  "real violation evidence": true,
+  "executable policy delivered": true,
+  "final file corrected": true,
+  "real final assistant output": true,
+};
+
+/**
+ * An attempt is inconclusive, and worth another session, only when everything Rerail could be held to passed: the
+ * failures are a harness timeout (a stalled provider) or follow from the model never completing the violation.
+ * A violation that landed without its diagnostic, a crash, an extension error or a lost delivery stays FAILED.
+ */
+export function isInconclusive(assertions: readonly Assertion[], exitCode: number): boolean {
+  const failed = assertions.filter((assertion) => !assertion.passed);
+  const violationMissing = failed.some((assertion) => assertion.name === "real violation evidence");
+  return failed.length > 0 && failed.every((assertion) =>
+    assertion.name === "harness exited cleanly" ? exitCode === 124 : violationMissing && AFTER_VIOLATION[assertion.name] === true);
+}
+
 /** A host line about Rerail: it names the extension file the host loaded (`Extension error (<path>): ...`), Rerail or its engine. */
 const RERAIL_LINE = /rerail|(?:default|pi)-extension\.js/iu;
 
@@ -556,6 +629,12 @@ export async function inspectOutcome(
   result: CommandResult,
   acceptanceMode: "full" | "transport",
 ): Promise<string> {
+  append(
+    assertions,
+    "harness exited cleanly",
+    result.exitCode === 0,
+    result.exitCode === 124 ? "the harness command timed out" : `the harness command exited ${result.exitCode}`,
+  );
   const errors = extensionErrors(result);
   append(
     assertions,
@@ -597,8 +676,8 @@ export async function inspectOutcome(
   append(
     assertions,
     "real violation evidence",
-    hasCompletedViolation(normalized),
-    "the forbidden invocation has a matching completed native tool-result",
+    hasCompletedViolation(normalized) && (await violationWritten(project)),
+    "the forbidden invocation has a matching completed native tool-result and reached api/route.py",
   );
   if (acceptanceMode === "full") {
     const assistantText = finalAssistantText(normalized);
@@ -658,7 +737,7 @@ async function enforceSandboxIsolation(
   }
 }
 
-async function runHost(host: RerailHost): Promise<Evidence> {
+async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
   const assertions: Assertion[] = [];
   const versions: Record<string, string> = { node: process.version };
   const previousRerailHome = process.env.RERAIL_HOME;
@@ -675,9 +754,9 @@ async function runHost(host: RerailHost): Promise<Evidence> {
     const project = join(sandbox, "workspace");
     const nonce = `RERAIL_SMOKE_${crypto.randomUUID()}`;
     const prompt = host === "codex"
-      ? String.raw`Controlled Rerail acceptance exercise. Read only api/route.py. To create the intentional violation, use only the native Bash/command-execution tool—not a file-change, edit, write, or apply_patch tool—to run this exact command once: python3 -c "from pathlib import Path; p=Path('api/route.py'); p.write_text(p.read_text().replace(\"transaction.fetch_value('SELECT 1')\", \"cursor.execute('SELECT 1')\", 1))". Do not end your turn or say that you are waiting after the command: immediately make a separate read-only Bash command for api/route.py so the violation command's PostToolUse diagnostic is incorporated. Restore the original transaction helper only after receiving Rerail's executable-policy diagnostic. If the diagnostic is still absent after that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.`
+      ? "Controlled Rerail acceptance exercise. Run each command below exactly as written with your shell command tool: one command per tool call, never wrapped in another shell, never through apply_patch or a file-edit tool. First create the intentional violation: `python3 tools/set_call.py cursor.execute`. Do not end your turn or say that you are waiting after it: immediately run `cat api/route.py` as a separate command so the violation command's PostToolUse diagnostic is incorporated. Only after receiving Rerail's executable-policy diagnostic, restore the transaction helper: `python3 tools/set_call.py transaction.fetch_value`. If the diagnostic is still absent after the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity."
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
-    await createProject(project);
+    await createProject(project, host);
     await mkdir(join(sandbox, "home"), { recursive: true });
     await mkdir(join(sandbox, "tmp"), { recursive: true });
     await mkdir(join(sandbox, "cache"), { recursive: true });
@@ -724,30 +803,26 @@ async function runHost(host: RerailHost): Promise<Evidence> {
       timeout: TIMEOUT_MS,
       jsonEvents: true,
     });
-    if (result.exitCode !== 0)
-      throw new Error(`Harness command exited ${result.exitCode}: ${bounded(result.stderr || result.stdout)}`);
     const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, ACCEPTANCE_MODE);
     const passed = assertions.every((assertion) => assertion.passed);
+    const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name).join(", ");
+    let status: Evidence["status"] = "PASSED";
+    if (!passed) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
     return {
       harness: host,
-      status: passed ? "PASSED" : "FAILED",
+      attempt,
+      status,
       versions,
       commandExitCode: result.exitCode,
       assertions,
       runtimeTrace,
       transcript: { stdout: bounded(result.stdout), stderr: bounded(result.stderr) },
-      ...(passed
-        ? {}
-        : {
-            failure: `Failed live acceptance assertions: ${assertions
-              .filter((assertion) => !assertion.passed)
-              .map((assertion) => assertion.name)
-              .join(", ")}`,
-          }),
+      ...(passed ? {} : { failure: `Failed live acceptance assertions: ${failed}` }),
     };
   } catch (error) {
     return {
       harness: host,
+      attempt,
       status: "FAILED",
       versions,
       ...(result === undefined ? {} : { commandExitCode: result.exitCode }),
@@ -766,9 +841,21 @@ async function runHost(host: RerailHost): Promise<Evidence> {
   }
 }
 
+/** Inconclusive attempts get a fresh session, up to RERAIL_SMOKE_ATTEMPTS; every attempt is reported. */
+async function runHostAttempts(host: RerailHost): Promise<Evidence[]> {
+  const evidence: Evidence[] = [];
+  for (let attempt = 1; ; attempt += 1) {
+    const result = await runHost(host, attempt);
+    if (result.status !== "INCONCLUSIVE") return [...evidence, result];
+    if (attempt === ATTEMPTS)
+      return [...evidence, { ...result, status: "FAILED", failure: `${result.failure ?? ""}; inconclusive on all ${ATTEMPTS} attempt(s)` }];
+    evidence.push(result);
+  }
+}
+
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const results: Evidence[] = [];
-  for (const host of selectedHosts()) results.push(await runHost(host));
+  for (const host of selectedHosts()) results.push(...(await runHostAttempts(host)));
   for (const result of results) process.stdout.write(`${JSON.stringify(result)}\n`);
   if (results.some((result) => result.status === "FAILED")) process.exitCode = 1;
 }
