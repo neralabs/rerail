@@ -32,7 +32,8 @@ fn reference(name: &str) -> bool {
 struct Directive {
     line: usize,
     action: Option<Action>,
-    patterns: Option<Vec<String>>,
+    /// The listed patterns, each translated once when the directive is read; `None` for all rules.
+    patterns: Option<Vec<Vec<Glob>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,10 +74,14 @@ impl SqlfluffIndex {
         Self { directives }
     }
 
-    /// Reads every `comment` node of the file `root` belongs to (tree-sitter-sql names `--` and `/* */` comments `comment`).
+    /// Reads every `comment` node of the file `root` belongs to (tree-sitter-sql names `--` and
+    /// `/* */` comments `comment`), except those inside a routine's `AS $$ ... $$` body: the
+    /// grammar parses that body as SQL, but SQLFluff's PostgreSQL dialect lexes it as one
+    /// dollar-quoted string, so a comment there is no directive. A `BEGIN ATOMIC` body is SQL to
+    /// both, and its comments count.
     pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         Self::from_comments(root.dfs().filter_map(|node| {
-            (node.kind() == "comment").then(|| {
+            (node.kind() == "comment" && !in_dollar_quoted_body(&node)).then(|| {
                 let range = node.range();
                 (lines.line(range.start) + 1, &source[range])
             })
@@ -87,10 +92,10 @@ impl SqlfluffIndex {
     pub(crate) fn suppresses(&self, references: &[String], line: usize) -> bool {
         let matches = |directive: &Directive| {
             directive.patterns.as_ref().is_none_or(|patterns| {
-                patterns.iter().any(|pattern| {
+                patterns.iter().any(|globs| {
                     references
                         .iter()
-                        .any(|reference| fnmatchcase(pattern, reference))
+                        .any(|reference| fnmatchcase(globs, reference))
                 })
             })
         };
@@ -109,7 +114,28 @@ impl SqlfluffIndex {
     }
 }
 
-fn parse(comment: &str) -> Option<(Option<Action>, Option<Vec<String>>)> {
+/// Whether `comment` lies between the opening and closing `dollar_quote` of an enclosing
+/// `function_body` (`AS $tag$ ... $tag$`). A comment between `AS` and the opening tag is outside
+/// the string, as SQLFluff lexes it.
+fn in_dollar_quoted_body<D: Doc>(comment: &Node<'_, D>) -> bool {
+    let range = comment.range();
+    comment
+        .ancestors()
+        .filter(|node| node.kind() == "function_body")
+        .any(|body| {
+            let mut quotes = body
+                .children()
+                .filter(|child| child.kind() == "dollar_quote");
+            match (quotes.next(), quotes.last()) {
+                (Some(open), Some(close)) => {
+                    open.range().end <= range.start && range.end <= close.range().start
+                }
+                _ => false,
+            }
+        })
+}
+
+fn parse(comment: &str) -> Option<(Option<Action>, Option<Vec<Vec<Glob>>>)> {
     let comment = comment.rsplit("--").next()?.trim();
     if !comment.starts_with("noqa") {
         return None;
@@ -146,14 +172,14 @@ fn parse(comment: &str) -> Option<(Option<Action>, Option<Vec<String>>)> {
         Some(
             rule_part
                 .split(',')
-                .map(|rule| rule.trim().to_owned())
+                .map(|rule| translate(rule.trim()))
                 .collect(),
         ),
     ))
 }
 
 /// One step of a translated `fnmatch` pattern.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Glob {
     /// `*`, consecutive stars collapsed.
     Star,
@@ -161,7 +187,7 @@ enum Glob {
     One(Set),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Set {
     Any,
     Char(char),
@@ -192,7 +218,15 @@ impl Set {
 }
 
 /// Python 3.12's `fnmatch.translate`, as steps: `*` (collapsed), `?`, `[...]` sets, literals.
-fn translate(pattern: &[char]) -> Vec<Glob> {
+/// Each `[` finds its closing `]` in a table built once, so the walk is linear in the pattern
+/// (rescanning to the end for every unclosed `[` would be quadratic).
+fn translate(pattern: &str) -> Vec<Glob> {
+    let pattern: Vec<char> = pattern.chars().collect();
+    // `close[j]`: the position of the first `]` at or after `j`, or the pattern's length.
+    let mut close = vec![pattern.len(); pattern.len() + 1];
+    for j in (0..pattern.len()).rev() {
+        close[j] = if pattern[j] == ']' { j } else { close[j + 1] };
+    }
     let mut globs = Vec::new();
     let mut i = 0;
     while i < pattern.len() {
@@ -213,9 +247,7 @@ fn translate(pattern: &[char]) -> Vec<Glob> {
                 if pattern.get(j) == Some(&']') {
                     j += 1;
                 }
-                while j < pattern.len() && pattern[j] != ']' {
-                    j += 1;
-                }
+                let j = close[j];
                 if j >= pattern.len() {
                     globs.push(Glob::One(Set::Char('[')));
                 } else {
@@ -231,60 +263,57 @@ fn translate(pattern: &[char]) -> Vec<Glob> {
 
 /// The set a bracket expression's body (between `[` and `]`) matches, as `translate` builds it:
 /// the body splits into chunks at each hyphen that makes a range (not one right after the opening
-/// or its `!`, nor one right after a range's end); a range between the last character of one chunk
-/// and the first of the next is dropped, with both, when it is empty; a `!` the result then starts
-/// with negates; every other character, hyphens included, is itself.
+/// or its `!`, nor one right after a range's end, nor one ending the body); a range between the
+/// last character of one chunk and the first of the next is dropped, with both, when it is empty;
+/// a `!` the result then starts with negates; every other character, hyphens included, is itself.
+///
+/// Whether a range is empty depends only on the two chunks it joins (a chunk between two ranges
+/// has at least two characters, so merging never changes the characters a later range compares),
+/// so one forward pass decides each range in turn where `translate` walks them backwards.
 fn class(body: &[char]) -> Set {
-    let mut chunks: Vec<Vec<char>> = Vec::new();
-    if body.contains(&'-') {
-        let mut start = 0;
-        let mut k = if body.first() == Some(&'!') { 2 } else { 1 };
-        while let Some(offset) = body
-            .get(k..)
+    // The body with dropped ranges merged away; `range_starts` holds each kept range's low end.
+    let mut items: Vec<char> = Vec::with_capacity(body.len());
+    let mut range_starts = Vec::new();
+    let last = body.len().saturating_sub(1);
+    let mut start = 0;
+    let mut k = if body.first() == Some(&'!') { 2 } else { 1 };
+    loop {
+        let hyphen = body
+            .get(k..last)
             .and_then(|rest| rest.iter().position(|&c| c == '-'))
-        {
-            let hyphen = k + offset;
-            chunks.push(body[start..hyphen].to_vec());
-            start = hyphen + 1;
-            k = hyphen + 3;
+            .map(|offset| k + offset);
+        let chunk = &body[start..hyphen.unwrap_or(body.len())];
+        if start == 0 {
+            items.extend_from_slice(chunk);
+        } else if body[start - 2] > chunk[0] {
+            items.pop();
+            items.extend_from_slice(&chunk[1..]);
+        } else {
+            range_starts.push(items.len() - 1);
+            items.extend_from_slice(chunk);
         }
-        if start < body.len() {
-            chunks.push(body[start..].to_vec());
-        } else if let Some(last) = chunks.last_mut() {
-            last.push('-');
-        }
-        for k in (1..chunks.len()).rev() {
-            let (Some(&end), Some(&first)) = (chunks[k - 1].last(), chunks[k].first()) else {
-                continue;
-            };
-            if end > first {
-                let next = chunks.remove(k);
-                let previous = &mut chunks[k - 1];
-                previous.pop();
-                previous.extend_from_slice(&next[1..]);
-            }
-        }
-    } else {
-        chunks.push(body.to_vec());
+        let Some(hyphen) = hyphen else {
+            break;
+        };
+        start = hyphen + 1;
+        k = hyphen + 3;
     }
-    let negated = chunks[0].first() == Some(&'!');
-    if negated {
-        chunks[0].remove(0);
-    }
+    let negated = items.first() == Some(&'!');
+    let mut range_starts = range_starts.into_iter().peekable();
     let mut chars = Vec::new();
     let mut ranges = Vec::new();
-    let count = chunks.len();
-    for (index, chunk) in chunks.iter().enumerate() {
-        let from = usize::from(index > 0);
-        let to = if index + 1 < count {
-            chunk.len().saturating_sub(1)
+    let mut index = usize::from(negated);
+    // A lone `!` before a range leaves `[^-x...]`: that hyphen and `x` are themselves.
+    if negated && range_starts.next_if_eq(&0).is_some() {
+        chars.push('-');
+    }
+    while index < items.len() {
+        if range_starts.next_if_eq(&index).is_some() {
+            ranges.push((items[index], items[index + 1]));
+            index += 2;
         } else {
-            chunk.len()
-        };
-        chars.extend(chunk.get(from..to.max(from)).unwrap_or_default());
-        let next = chunks.get(index + 1).and_then(|next| next.first());
-        if let (Some(&lo), Some(&hi)) = (chunk.last(), next) {
-            ranges.push((lo, hi));
+            chars.push(items[index]);
+            index += 1;
         }
     }
     Set::Class {
@@ -295,11 +324,10 @@ fn class(body: &[char]) -> Set {
 }
 
 /// Python's `fnmatch.fnmatchcase`, without filesystem normalization: the translated pattern
-/// matched over the whole text. Every step but `*` takes one character, so the classic
+/// `globs` matched over the whole text. Every step but `*` takes one character, so the classic
 /// backtrack-to-the-last-star walk decides it in time linear in the pattern times the text,
 /// without recursion.
-fn fnmatchcase(pattern: &str, text: &str) -> bool {
-    let globs = translate(&pattern.chars().collect::<Vec<_>>());
+fn fnmatchcase(globs: &[Glob], text: &str) -> bool {
     let text: Vec<char> = text.chars().collect();
     let (mut g, mut t) = (0, 0);
     // The step after the last star, and the text position that star resumes from.
@@ -450,10 +478,24 @@ mod tests {
             ("[z-a!]", "!", true),
             ("[z-a!b]", "b", false),
             ("[z-a!b]", "c", true),
+            // A lone `!` left before a kept range reads `[^-c]`: the hyphen and `c` are themselves.
+            ("[z-a!-c]", "c", false),
+            ("[z-a!-c]", "-", false),
+            ("[z-a!-c]", "b", true),
+            ("[z-a!-c]", "!", true),
+            // Merged ranges keep the hyphens and characters they no longer join.
+            ("[c-b-a]", "-", true),
+            ("[c-b-a]", "a", true),
+            ("[c-b-a]", "b", false),
+            ("[x-a-c-e]", "d", true),
+            ("[x-a-c-e]", "-", true),
+            ("[x-a-c-e]", "a", false),
+            ("[]-a]", "^", true),
+            ("[]-a]", "b", false),
         ];
         for &(pattern, text, expected) in cases {
             assert_eq!(
-                fnmatchcase(pattern, text),
+                fnmatchcase(&translate(pattern), text),
                 expected,
                 "{pattern:?} on {text:?}"
             );
@@ -474,8 +516,30 @@ mod tests {
         assert!(!index.suppresses(&refs("CV05"), 1));
         assert!(!index.suppresses(&refs("CV05"), 2));
         let long = "a".repeat(400);
-        assert!(!fnmatchcase(&alternating, &long));
-        assert!(fnmatchcase(&alternating, &format!("{long}Z")));
+        assert!(!fnmatchcase(&translate(&alternating), &long));
+        assert!(fnmatchcase(&translate(&alternating), &format!("{long}Z")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    /// A `noqa` pattern translates once per directive, in time linear in its length: a `[` with no
+    /// closing `]` is not rescanned to the end, nor a bracket expression of many merged ranges.
+    #[test]
+    fn long_bracket_patterns_translate_in_linear_time() {
+        let started = std::time::Instant::now();
+        let unclosed = "[".repeat(100_000);
+        let merged = format!("[{}ab]", "ab-".repeat(50_000));
+        let index = SqlfluffIndex::from_comments([
+            (1, format!("-- noqa: disable={unclosed}").as_str()),
+            (2, format!("-- noqa: {merged}").as_str()),
+        ]);
+        for line in 1..=100 {
+            assert!(!index.suppresses(&refs("CV05"), line));
+        }
+        assert!(fnmatchcase(&translate(&unclosed), &unclosed));
+        let merged = translate(&merged);
+        assert!(fnmatchcase(&merged, "a"));
+        assert!(fnmatchcase(&merged, "b"));
+        assert!(!fnmatchcase(&merged, "-"));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
@@ -534,7 +598,7 @@ mod tests {
             (
                 "postgres_bodies.sql",
                 vec![
-                    (2, "-- noqa"),
+                    // Line 2's `-- noqa` is inside a `$$` body, one string to SQLFluff.
                     (4, "-- noqa: CV05"),
                     (8, "/* outer /* nested */ -- noqa */"),
                     (9, "/* noqa:\ndisable=CV05 */"),
@@ -562,6 +626,14 @@ mod tests {
                     (28, "-- noqa: disable=CV08"),
                 ],
             ),
+            (
+                "routine_bodies.sql",
+                vec![
+                    // Lines 2 and 6 are inside `$$` bodies; line 10 is in a `BEGIN ATOMIC` body.
+                    (10, "-- noqa: disable=CV08"),
+                    (14, "-- noqa: disable=CV05"),
+                ],
+            ),
         ];
         for (file, comments) in comments {
             let index = SqlfluffIndex::from_comments(comments);
@@ -583,7 +655,12 @@ mod tests {
         use crate::code_rule_dsl::lines::Terminators;
         use ast_grep_language::LanguageExt;
         let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-        for file in ["inline.sql", "postgres_bodies.sql", "range.sql"] {
+        for file in [
+            "inline.sql",
+            "postgres_bodies.sql",
+            "range.sql",
+            "routine_bodies.sql",
+        ] {
             let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
                 .join("sql/suppress/sqlfluff")
                 .join(file);
@@ -598,10 +675,6 @@ mod tests {
                 oracle_findings(&oracle, file, "kept").into_iter().collect();
             let mut checked = 0;
             for (code, line) in oracle_findings(&oracle, file, "all") {
-                // Line 2 of postgres_bodies.sql is inside a `$$` body the grammar parses as SQL; SQLFluff reports nothing there.
-                if file == "postgres_bodies.sql" && line == 2 {
-                    continue;
-                }
                 assert_eq!(
                     index.suppresses(&refs(&code), line),
                     !kept.contains(&(code.clone(), line)),
