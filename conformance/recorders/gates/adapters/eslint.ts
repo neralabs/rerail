@@ -1,14 +1,15 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, extname, join, matchesGlob, relative, resolve } from "node:path";
+import { dirname, extname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
 import { runChecked, type CommandRunner } from "../../../gates/process.js";
 import { eslintSpan, eslintSpanParts, messageSpan } from "../../../gates/span-units/eslint.js";
-import type { Check, EslintUpstream, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../gates/types.js";
+import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../gates/types.js";
 import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,
@@ -650,6 +651,14 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     }
   }
   const fixtureTexts = [...new Set([...tests.texts.map(({ code }) => code), ...fixtureSources])];
+  // Each text's origin, in the same order: a test's code inline, a fixture source by its path in the checkout.
+  const sourceOf = new Map<string, FixtureTextSource>();
+  for (const { code } of tests.texts) if (!sourceOf.has(code)) sourceOf.set(code, { inline: code });
+  fixtureFiles.filter((file) => SOURCE_EXTENSIONS.has(extname(file))).forEach((file, index) => {
+    const text = fixtureSources[index]!;
+    if (!sourceOf.has(text)) sourceOf.set(text, { path: relative(upstream.directory, file).split(sep).join("/"), sha256: createHash("sha256").update(text).digest("hex") });
+  });
+  const fixtureTextSources = fixtureTexts.map((text) => sourceOf.get(text)!);
 
   /** Whether upstream reports end positions for the rule: every finding on its own tests carries both ends. */
   const endsReported = new Map(ruleNames.map((name) => [name, (tests.cases[name] ?? []).every((testCase) => testCase.findings.every(([, , endLine, endColumn]) => endLine !== null && endColumn !== null))]));
@@ -699,6 +708,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     },
     fixtureWords: () => fixtureWords,
     fixtureTexts: () => fixtureTexts,
+    fixtureTextSources: () => fixtureTextSources,
 
     keywords: keywords(runtimeTs),
     // TypeScript's JSDoc tags and pragmas, ESLint's directive comments (`eslint-disable-next-line`, `global`) and the

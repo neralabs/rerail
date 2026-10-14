@@ -1,11 +1,12 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../gates/process.js";
 import { banditSpan, banditSpanParts, TROJANSOURCE_RELEASE, trojansourcePoint } from "../../../gates/span-units/bandit.js";
-import type { PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../gates/types.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../gates/types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
 import { checkoutUpstream, filesUnder, treeDigest, uvRuntime } from "../runtimes.js";
 
@@ -82,6 +83,10 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
   });
 
   const fixtureTexts = [...exampleText.values()];
+  const fixtureTextSources: FixtureTextSource[] = [...exampleText].map(([path, text]) => ({
+    path: relative(upstream.directory, path).split(sep).join("/"),
+    sha256: createHash("sha256").update(text).digest("hex"),
+  }));
   const fixtureWords = new Set((await python.words(fixtureTexts)).flat());
   const nameSet = new Set(names.map(idOf));
 
@@ -152,6 +157,7 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
     },
     fixtureWords: () => fixtureWords,
     fixtureTexts: () => fixtureTexts,
+    fixtureTextSources: () => fixtureTextSources,
     keywords: python.keywords,
     // Bandit honours `# nosec`, read from its pinned manager.
     commentVocabulary: new Set([...python.commentVocabulary, ...(facts.nosec.match(/[A-Za-z_]\w*/gu) ?? []).filter((word) => word !== "P" && word !== "tests")]),

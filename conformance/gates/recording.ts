@@ -14,8 +14,9 @@
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseSha256` (the text itself is the kept
  *   `licenses/<project>/LICENSE`, checked against this digest); rule(name) → `rules[name].facts`, undefined for a name
  *   in `absent`; implementationNames / sharedImplementationNames / implementationRegexes → `rules[name].names` with
- *   `nameSets`; fixtureWords → `fixtureWords`; fixtureTexts → the committed source of every case (`cases[].file`), a
- *   narrowing of the live adapter's every upstream test file that the report states; keywords → `keywords`;
+ *   `nameSets`; fixtureWords → `fixtureWords`; fixtureTexts → `fixtureTexts`: upstream's files fetched at the
+ *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
+ *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
  *   each source read from its `file`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
  *   `corpus`; lintCorpus → gates-corpus.json `files`; parserVerdicts → `parserVerdicts` here and gates-corpus.json
@@ -234,6 +235,20 @@ export const gatesRecordingSchema = z.strictObject({
   commentVocabulary: sortedStrings(nonEmpty),
   /** fixtureWords: every word of all of upstream's test files and test configurations (not only the copied ones), sorted. */
   fixtureWords: sortedStrings(nonEmpty),
+  /**
+   * fixtureTexts, by origin: every upstream file the live adapter read a text from, by its path in upstream's checkout at
+   * the pinned commit, the sha256 (UTF-8) of the text as the adapter produced it and the transform that produced it
+   * (`notebook-code-cells`: a notebook's code cells joined), sorted by path; and every text that is no file (Ruff's
+   * test-module string literals), sorted, each as often as the adapter read it. The gates fetch the files at the pinned
+   * commit and check each digest. A text of Ruff's GPL-derived fixtures is never inline. Absent in an older recording,
+   * whose fixtureTexts are the committed case sources.
+   */
+  fixtureTexts: z.strictObject({
+    files: z.array(z.strictObject({ path: relativePath, sha256, transform: z.literal("notebook-code-cells").optional() }))
+      .refine((files) => files.every((file, index) => index === 0 || byText(files[index - 1]!.path, file.path) < 0), "sorted by path, each path once"),
+    inline: z.array(z.strictObject({ text: z.string() }))
+      .refine((texts) => texts.every((entry, index) => index === 0 || byText(texts[index - 1]!.text, entry.text) <= 0), "sorted in code-unit order"),
+  }).optional(),
   /** Name sets several rules share, by an id the recorder chooses (an upstream file path, `crates:ruff_python_ast`). */
   nameSets: z.record(nonEmpty, nameSetSchema),
   /** Every upstream rule the pack's conformance.json names for the tool that upstream has, by that name. */

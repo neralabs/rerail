@@ -178,7 +178,7 @@ async function isPristine(directory: string, commit: string, runner: CommandRunn
  * A sparse checkout of `paths` of a repository at one exact commit, in `directory`. A cached checkout is reused only
  * while it is pristine; anything else is fetched again.
  */
-export async function checkoutPinned(repository: string, commit: string, directory: string, paths: string[], runner: CommandRunner): Promise<string> {
+export async function checkoutPinned(repository: string, commit: string, directory: string, paths: string[], runner: CommandRunner, options: { blobless?: boolean } = {}): Promise<string> {
   if (await isPristine(directory, commit, runner)) {
     // A checkout cached with fewer paths only needs its sparse set widened: the shallow fetch holds every file of the
     // commit. Widened, never narrowed, so tool-packs that share a corpus keep each other's files.
@@ -193,7 +193,8 @@ export async function checkoutPinned(repository: string, commit: string, directo
   await git("init", "-q");
   await git("remote", "add", "origin", `${repository}.git`);
   await git("sparse-checkout", "set", "--no-cone", ...paths);
-  await git("fetch", "-q", "--depth", "1", "origin", commit);
+  // Blobless, the checkout fetches only the blobs of the sparse paths, and a widened sparse set fetches the rest on demand.
+  await git("fetch", "-q", "--depth", "1", ...(options.blobless === true ? ["--filter=blob:none"] : []), "origin", commit);
   await git("checkout", "-q", "--force", "FETCH_HEAD");
   if (!(await isPristine(directory, commit, runner))) throw new Error(`checkout of ${repository} ${commit} is not clean after checkout`);
   return directory;

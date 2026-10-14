@@ -15,6 +15,7 @@ import {
   GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../gates/recording.js";
+import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../gates/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../gates/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createEslintAdapter } from "./adapters/eslint.js";
@@ -32,6 +33,46 @@ export const LIVE_ADAPTERS: Record<GatesManifest["adapter"], AdapterFactory> = {
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (values: Iterable<string>): string[] => [...new Set([...values].filter((value) => value !== ""))].sort(byText);
+
+/** Ruff's fixture directories whose files derive from GPL-licensed projects: their text is never written into a recording. */
+const GPL_DERIVED = /(?:^|\/)resources\/test\/fixtures\/(?:pylint|flake8_builtins)\//u;
+
+/**
+ * The live adapter's fixtureTextSources as gates.json records them: files sorted by path, inline texts sorted. The list
+ * the gates rebuild from it (rebuildFixtureTexts, on the live adapter's checkout) must equal the live fixtureTexts() as a
+ * multiset, or nothing is written.
+ */
+export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins: { repository: string; commit: string }): RecordedFixtureTexts | undefined {
+  const origins = adapter.fixtureTextSources?.();
+  if (origins === undefined) return undefined;
+  const live = adapter.fixtureTexts();
+  if (origins.length !== live.length) throw new Error(`the adapter gives ${origins.length} fixture text origin(s) for ${live.length} fixture text(s)`);
+  const files = new Map<string, { path: string; sha256: string; transform?: "notebook-code-cells" }>();
+  const inline: { text: string }[] = [];
+  for (const origin of origins) {
+    if ("inline" in origin) {
+      inline.push({ text: origin.inline });
+      continue;
+    }
+    if (files.has(origin.path)) throw new Error(`fixture text origin ${origin.path} is listed twice`);
+    files.set(origin.path, { path: origin.path, sha256: origin.sha256, ...(origin.transform === undefined ? {} : { transform: origin.transform }) });
+  }
+  const recorded: RecordedFixtureTexts = {
+    files: [...files.keys()].sort(byText).map((path) => files.get(path)!),
+    inline: inline.sort((a, b) => byText(a.text, b.text)),
+  };
+  // A GPL-derived fixture's text must never be inline; it is fetched from upstream by path instead.
+  const gplTexts = new Set(live.filter((_, index) => { const origin = origins[index]!; return !("inline" in origin) && GPL_DERIVED.test(origin.path); }));
+  const leaked = recorded.inline.filter(({ text }) => text.length > 0 && gplTexts.has(text)).length;
+  if (leaked > 0) throw new Error(`${leaked} inline fixture text(s) are the text of a GPL-derived fixture`);
+  const rebuilt = rebuildFixtureTexts(upstreamCheckoutDirectory(cacheRoot, pins), recorded);
+  const counts = new Map<string, number>();
+  for (const text of live) counts.set(text, (counts.get(text) ?? 0) + 1);
+  for (const text of rebuilt) counts.set(text, (counts.get(text) ?? 0) - 1);
+  const differing = [...counts.values()].filter((count) => count !== 0).length;
+  if (rebuilt.length !== live.length || differing > 0) throw new Error(`fixtureTexts rebuilt from their recorded origins differ from the live adapter's (${rebuilt.length} vs ${live.length} texts, ${differing} differing)`);
+  return recorded;
+}
 
 /** Where a case's upstream test file is committed under the tool-pack directory, or null when it must not be copied. */
 export interface CaseLayout {
@@ -238,6 +279,9 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const verdictFiles = verdictKeys.map((key) => verdictInputs.get(key)!);
   const verdicts = await adapter.parserVerdicts(verdictFiles.map(({ path, source, script }) => ({ path, source, script })));
 
+  // fixtureTexts by origin, rebuilt from upstream's checkout exactly as the gates will, and checked against the live list.
+  const fixtureTexts = recordFixtureTexts(adapter, cacheRoot, manifest.upstream);
+
   const extensions = PROBED_EXTENSIONS.filter((extension) => adapter.inCorpus(`src/example${extension}`));
   const runtimeDigests = options.runtimeDigests ?? ((runtime: string) => runtimeLockfileDigests(runtime));
   const recording = gatesRecordingSchema.parse({
@@ -257,6 +301,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     keywords: sortedUnique(adapter.keywords),
     commentVocabulary: sortedUnique(adapter.commentVocabulary),
     fixtureWords: sortedUnique(adapter.fixtureWords()),
+    ...(fixtureTexts === undefined ? {} : { fixtureTexts }),
     nameSets,
     rules,
     absent: sortedUnique(absent),

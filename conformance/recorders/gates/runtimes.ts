@@ -67,6 +67,11 @@ export async function checkoutUpstream(
     await git("sparse-checkout", "set", "--no-cone", ...sparsePaths);
     await git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", upstream.commit);
     await git("checkout", "-q", "--force", "FETCH_HEAD");
+  } else {
+    // The gates fetch upstream's test files into the same directory with a narrower sparse set: widen it, never narrow.
+    const sparse = (await git("sparse-checkout", "list").catch(() => "")).split("\n");
+    const missing = sparsePaths.filter((path) => !sparse.includes(path));
+    if (missing.length > 0) await git("sparse-checkout", "add", ...missing);
   }
   if ((await git("rev-parse", "-q", "--verify", `refs/tags/${tag}^{commit}`).catch(() => "")) === "") {
     await git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", `refs/tags/${tag}:refs/tags/${tag}`);

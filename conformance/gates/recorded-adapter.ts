@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, posix, resolve } from "node:path";
 
-import type { CorpusFile } from "./corpus.js";
+import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, toolPackDirectory } from "./manifest.js";
+import type { CommandRunner } from "./process.js";
 import { GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
@@ -45,6 +46,53 @@ export function decodeSource(bytes: Buffer): string {
     if (coding !== undefined && /^(latin-?1|iso-?8859-1|l1|cp819)$/u.test(coding.replaceAll("_", "-"))) return bytes.toString("latin1");
     return bytes.toString("utf8");
   }
+}
+
+/**
+ * The code cells of a notebook joined, as the words of upstream's notebook test files; a text that is not a notebook is
+ * returned unchanged. The Ruff adapter's `notebook-code-cells` transform, shared so the gates rebuild its texts exactly.
+ */
+export function notebookCodeCells(text: string): string {
+  try {
+    const notebook = JSON.parse(text) as { cells?: { cell_type?: string; source?: string | string[] }[] };
+    return (notebook.cells ?? []).filter((cell) => cell.cell_type === "code")
+      .map((cell) => (Array.isArray(cell.source) ? cell.source.join("") : cell.source ?? "")).join("\n");
+  } catch {
+    return text;
+  }
+}
+
+export type RecordedFixtureTexts = NonNullable<GatesRecording["fixtureTexts"]>;
+
+/** Where the gates and the recorder keep upstream's checkout at the pinned commit: `<cache>/upstream/<repository name>/<commit>`. */
+export function upstreamCheckoutDirectory(cacheRoot: string, pins: { repository: string; commit: string }): string {
+  return resolve(cacheRoot, "upstream", pins.repository.slice(pins.repository.lastIndexOf("/") + 1), pins.commit);
+}
+
+/**
+ * fixtureTexts rebuilt from a checkout of upstream at the pinned commit: each recorded file read (UTF-8, as the live
+ * adapters read it), its transform applied and its sha256 checked, then the inline texts. A missing file or another
+ * digest throws: the recording is stale, and a silent narrowing would let not-overfit pass what it should not.
+ */
+export function rebuildFixtureTexts(checkout: string, recorded: RecordedFixtureTexts): string[] {
+  const texts = recorded.files.map(({ path, sha256: digest, transform }) => {
+    const file = join(checkout, path);
+    if (!existsSync(file)) throw new Error(`upstream's ${path} is missing from the checkout at ${checkout}`);
+    const raw = readFileSync(file, "utf8");
+    const text = transform === "notebook-code-cells" ? notebookCodeCells(raw) : raw;
+    const actual = sha256(text);
+    if (actual !== digest) throw new Error(`upstream's ${path}${transform === undefined ? "" : ` (${transform})`} has sha256 ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}: the recording is stale`);
+    return text;
+  });
+  return [...texts, ...recorded.inline.map(({ text }) => text)];
+}
+
+/** A sparse, shallow, blobless checkout of the directories of every recorded upstream file, at the pinned commit. */
+export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: string; commit: string }, recorded: RecordedFixtureTexts, runner: CommandRunner): Promise<string[]> {
+  if (recorded.files.length === 0) return rebuildFixtureTexts(cacheRoot, recorded);
+  const directories = [...new Set(recorded.files.map(({ path }) => `/${posix.dirname(path)}/`.replace(/^\/\.\/$/u, "/")))].sort();
+  const checkout = await checkoutPinned(pins.repository, pins.commit, upstreamCheckoutDirectory(cacheRoot, pins), directories, runner, { blobless: true });
+  return rebuildFixtureTexts(checkout, recorded);
 }
 
 /** Everything a recorded adapter is read from, so tests can build one without a checkout. */
@@ -127,9 +175,17 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
   return checks;
 }
 
-/** A PackAdapter answering from a tool-pack's recordings and committed case sources; it never runs upstream. */
-export function createRecordedAdapter(inputs: RecordedInputs): PackAdapter & { recordedCorpusPins: GatesCorpusRecording["pins"] | null } {
+/**
+ * A PackAdapter answering from a tool-pack's recordings and committed case sources; it never runs upstream. Its
+ * fixtureTexts are upstream's test files fetched at the pinned commit (`upstream` says where to cache them):
+ * `loadFixtureTexts` fetches them, once, and must be awaited before fixtureTexts is read.
+ */
+export function createRecordedAdapter(
+  inputs: RecordedInputs,
+  upstream?: { cacheRoot: string; runner: CommandRunner },
+): PackAdapter & { recordedCorpusPins: GatesCorpusRecording["pins"] | null; loadFixtureTexts(): Promise<void> } {
   const { root, manifest, recording, corpus } = inputs;
+  let fetchedTexts: string[] | undefined;
   const directory = toolPackDirectory(root, manifest.rerail.pack, recording.tool);
   const sources = new Map<string, string>();
   const source = (file: string): string => {
@@ -176,7 +232,16 @@ export function createRecordedAdapter(inputs: RecordedInputs): PackAdapter & { r
       return [...names.implementation.regexes, ...setRegexes(names.implementation.sets), ...names.shared.regexes, ...setRegexes(names.shared.sets)].map(regex);
     },
     fixtureWords: () => new Set(recording.fixtureWords),
+    async loadFixtureTexts() {
+      if (recording.fixtureTexts === undefined || fetchedTexts !== undefined) return;
+      if (upstream === undefined) throw new Error(`${GATES_RECORDING} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
+      fetchedTexts = await fetchFixtureTexts(upstream.cacheRoot, recording.pins, recording.fixtureTexts, upstream.runner);
+    },
     fixtureTexts() {
+      if (recording.fixtureTexts !== undefined) {
+        if (fetchedTexts === undefined) throw new Error("fixtureTexts read before loadFixtureTexts fetched upstream's test files");
+        return fetchedTexts;
+      }
       const files = new Set(Object.values(recording.rules).flatMap((rule) => rule.cases.map((testCase) => testCase.file).filter((file): file is string => file !== null)));
       return [...files].sort().map(source);
     },

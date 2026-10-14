@@ -65,7 +65,9 @@ A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`
 `*.expected.json` recording or `*.cases.json` case list; it is a code-rule document; it sits in a test
 root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TS/JS source or Markdown; or it sits
 in `test/`/`integration/` with a fixture name. It may live only under `fixtures/` or `packs/<id>/upstream/`.
-Exemptions: `packs/<id>/candidates/**` (pack data) and, for code-rule documents, `packs/<id>/rules/**`.
+Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the rule gates' pinned inputs and workers:
+`conformance/gates/*.json`, `conformance/recorders/gates/runtimes/**` and the recorder's Python workers) and, for
+code-rule documents, `packs/<id>/rules/**`.
 
 ### 4. Engine source roots — target 1 (`native/`)
 

@@ -26,6 +26,14 @@ export type GateId = (typeof GATES)[number]["id"];
 export type BlockingGateId = BlockingGate["id"];
 
 /** One deterministic check. `detail` says what was compared, so a failure explains itself. */
+/**
+ * One fixtureTexts() entry's origin: a file of upstream's checkout (`path` relative to it, `sha256` of the text as the
+ * adapter produced it, `transform` when that text is not the raw file), or an inline text that is no file.
+ */
+export type FixtureTextSource =
+  | { path: string; sha256: string; transform?: "notebook-code-cells" }
+  | { inline: string };
+
 export interface Check {
   id: string;
   ok: boolean;
@@ -162,6 +170,11 @@ export interface PackAdapter {
   fixtureWords(): Set<string>;
   /** The text of every upstream test file, as the linter reads it. */
   fixtureTexts(): string[];
+  /**
+   * Where each fixtureTexts() entry comes from, in the same order (live adapters only): an upstream file at the pinned
+   * commit, or a text that is no file. The recorder writes it so the gates can rebuild the same list.
+   */
+  fixtureTextSources?(): FixtureTextSource[];
   /** Keywords of the upstream language: syntax wherever a rule spells them. */
   keywords: Set<string>;
   /** Words the upstream language gives meaning to inside comments (documentation tags, directives). */

@@ -1,12 +1,14 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, posix, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 
 import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
 import type { CorpusFile } from "../../../gates/corpus.js";
 import { runChecked, type CommandRunner } from "../../../gates/process.js";
+import { notebookCodeCells } from "../../../gates/recorded-adapter.js";
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../gates/span-units/ruff.js";
-import type { PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../gates/types.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../gates/types.js";
 import { createPythonToolkit } from "../languages/python.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, uvRuntime } from "../runtimes.js";
@@ -107,17 +109,6 @@ export function instability(status: Record<string, { since: string }>): string |
 
 function compareSpans(a: Span, b: Span): number {
   return a.startLine - b.startLine || (a.startCol ?? 0) - (b.startCol ?? 0) || (a.endLine ?? 0) - (b.endLine ?? 0) || (a.endCol ?? 0) - (b.endCol ?? 0);
-}
-
-/** The code cells of a notebook joined, as the words of upstream's notebook test files. */
-function notebookCode(text: string): string {
-  try {
-    const notebook = JSON.parse(text) as { cells?: { cell_type?: string; source?: string | string[] }[] };
-    return (notebook.cells ?? []).filter((cell) => cell.cell_type === "code")
-      .map((cell) => (Array.isArray(cell.source) ? cell.source.join("") : cell.source ?? "")).join("\n");
-  } catch {
-    return text;
-  }
 }
 
 /** The string literal values inside a mod.rs `mod tests`: test option values and inline test sources. */
@@ -337,10 +328,24 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       ...filesUnder(join(linterDirectory, FIXTURES), (path) => /\.(?:py|pyi|ipynb)$/u.test(path)),
       ...lints.map((lint) => resolve(linterDirectory, lint.fixture!)),
     ])].sort();
-    const fixtureTexts = [
-      ...fixtureFiles.map((path) => (path.endsWith(".ipynb") ? notebookCode(readFileSync(path, "utf8")) : readFileSync(path, "utf8"))),
-      ...testModules.flatMap(({ file }) => testModuleStrings(readFileSync(file, "utf8"))),
-    ];
+    // Each text's origin, so the gates can rebuild the list: a file by its path in the checkout and the digest of the text
+    // as read here; a test-module string literal inline (Ruff's own Rust sources, never a GPL-derived fixture).
+    const fixtureTextSources: FixtureTextSource[] = [];
+    const fixtureTexts: string[] = [];
+    for (const path of fixtureFiles) {
+      const raw = readFileSync(path, "utf8");
+      const text = path.endsWith(".ipynb") ? notebookCodeCells(raw) : raw;
+      const upstreamRelative = relative(upstream.directory, path).split(sep).join("/");
+      if (upstreamRelative.startsWith("../")) throw new Error(`${path} is outside the Ruff checkout`);
+      fixtureTexts.push(text);
+      fixtureTextSources.push({ path: upstreamRelative, sha256: createHash("sha256").update(text).digest("hex"), ...(text === raw ? {} : { transform: "notebook-code-cells" as const }) });
+    }
+    for (const { file } of testModules) {
+      for (const text of testModuleStrings(readFileSync(file, "utf8"))) {
+        fixtureTexts.push(text);
+        fixtureTextSources.push({ inline: text });
+      }
+    }
     const fixtureWords = new Set((await python.words(fixtureTexts)).flat());
 
     const literalCache = new Map<string, RustLiterals>();
@@ -455,6 +460,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       },
       fixtureWords: () => fixtureWords,
       fixtureTexts: () => fixtureTexts,
+      fixtureTextSources: () => fixtureTextSources,
       keywords: python.keywords,
       // Ruff reads `# noqa`, `# ruff: ...` and the other pragma comments it recognizes, read from its pinned source.
       commentVocabulary: new Set([...python.commentVocabulary, ...directiveWords]),

@@ -405,7 +405,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const names = [...new Set(mine.map((document) => document.entry.upstream.rule))].sort(byText);
 
   const inputs = readRecordedInputs(root, pack, tool, names);
-  const adapter = createRecordedAdapter(inputs);
+  const adapter = createRecordedAdapter(inputs, { cacheRoot, runner: options.runner });
   const manifest = inputs.manifest;
   const on = packOn(root, pack);
   const rules = mine.map((document) => ({ ...document, rule: readRule(root, document.path, document.entry.upstream.rule) }));
@@ -466,6 +466,8 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     }
   } else {
     const engine = loadEngine(root);
+    // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
+    await adapter.loadFixtureTexts();
     const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner);
     const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner);
     const corpusFiles = [...catalog.files, ...rerailCorpus.files];
