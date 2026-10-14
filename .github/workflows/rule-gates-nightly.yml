@@ -104,6 +104,10 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: typescript
+            tool: typescript-eslint
+          - pack: typescript
+            tool: eslint-plugin-vitest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

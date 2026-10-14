@@ -1,0 +1,3 @@
+
+type NodeListOf = 1;
+      

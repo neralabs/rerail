@@ -1,0 +1,6 @@
+
+var a = 10,
+  b = 0,
+  c = null;
+alert(a + b);
+      

@@ -1,7 +1,7 @@
 # Rule gates
 
 The rule gates judge every rule document of a gated tool-pack (one upstream tool in one pack: `python/ruff`,
-`python/bandit`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
+`typescript/typescript-eslint`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
 of the pack contract (`test/engine/catalog/packs.test.ts`) and the conformance check; they do not replace either.
 Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Documents under `packs/<pack>/candidates/**`
 (except `candidates/probes/**`) go through the same gates and are only reported.
@@ -60,10 +60,9 @@ complete. The report's method text says so.
 
 ## Packs that are not gated
 
-`pending.json` lists the ESLint-family tool-packs (javascript/eslint, javascript/eslint-plugin-unicorn,
-typescript/typescript-eslint, typescript/eslint-plugin-vitest, react/eslint-plugin-react,
-react/eslint-plugin-react-hooks, next/eslint-plugin-next): they are still validated in nera-rule-validation until their
-recorder lands, are reported as pending and are not frozen.
+`pending.json` lists the ESLint-family tool-packs not gated yet (javascript/eslint, javascript/eslint-plugin-unicorn,
+react/eslint-plugin-react, react/eslint-plugin-react-hooks, next/eslint-plugin-next): they are still validated in
+nera-rule-validation until their recording lands, are reported as pending and are not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (blade, complexity,
 node, php). It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted

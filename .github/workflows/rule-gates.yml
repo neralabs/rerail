@@ -37,6 +37,41 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          # 47 rules on vscode's 10,176 files: one leg would run about two hours.
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 1
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 2
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 3
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 4
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 5
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 6
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 7
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 8
+            shards: 8
+          - pack: typescript
+            tool: eslint-plugin-vitest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

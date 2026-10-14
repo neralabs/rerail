@@ -1,0 +1,1 @@
+type neverVoidUnion = never | void;
