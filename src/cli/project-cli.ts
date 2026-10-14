@@ -25,21 +25,22 @@ interface SnapshotTransition {
 
 /** What `rerail update` and `rerail update rollback` ask of the managed updater. */
 export interface SnapshotUpdater {
-  status(): Promise<UpdateStatus>;
   update(channel?: string): Promise<UpdateResult>;
   rollback(): Promise<UpdateResult>;
 }
 
 /**
  * A consistent copy of the whole database (every project's rules and every repository's history) beside the
- * current copy, or undefined when there is no database or the copy failed. A copy that fails is reported, never
- * fatal; the update must not be blocked by a database the new version may be the fix for.
+ * current copy, readable only by its owner, or undefined when there is no database or the copy failed. A copy that
+ * fails is reported, never fatal; the update must not be blocked by a database the new version may be the fix for.
  */
 function stageSnapshot(databasePath: string): string | undefined {
   if (!existsSync(databasePath)) return undefined;
   const staging = `${preUpdateSnapshotPath(databasePath)}.${process.pid}.tmp`;
   try {
     rmSync(staging, { force: true });
+    // VACUUM INTO fills an empty file, keeping the mode it was created with.
+    closeSync(openSync(staging, "wx", 0o600));
     const source = new Database(databasePath, { readonly: true, fileMustExist: true });
     try {
       source.pragma("busy_timeout = 5000");
@@ -49,17 +50,35 @@ function stageSnapshot(databasePath: string): string | undefined {
     }
     return staging;
   } catch (error) {
-    rmSync(staging, { force: true });
+    removeQuietly(staging);
     process.stderr.write(`rerail: could not copy ${databasePath} before the update: ${(error as Error).message}\n`);
     return undefined;
   }
 }
 
+/** Best-effort cleanup on a path already failing: a file left behind must not hide the failure being reported. */
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // The failure being reported is the one that matters.
+  }
+}
+
+/** Removes the pre-update copy and its record, so no later rollback finds them. */
+function discardSnapshot(databasePath: string): void {
+  const target = preUpdateSnapshotPath(databasePath);
+  rmSync(`${target}.json`, { force: true });
+  rmSync(target, { force: true });
+}
+
 /**
  * `rerail update`: copy the database, then update. Only an update that changes the version replaces
- * `rerail.sqlite.pre-update`, and the copy records that change and the schema floor this version opens (`fromReads`,
- * this build's own); an update that finds nothing newer, or fails, leaves the copy of the last real change in place, so
- * rolling that change back still finds it.
+ * `rerail.sqlite.pre-update`, and the copy records that change, read from the updater's own result (`previous`, under
+ * its lock), and the schema floor this version opens (`fromReads`, this build's own); an update that finds nothing
+ * newer, or fails, leaves the copy of the last real change in place, so rolling that change back still finds it. A
+ * version change without a copy (the copy, or recording it, failed) removes the last one: it no longer belongs to the
+ * change a rollback would undo.
  */
 export async function updateWithSnapshot(
   updater: SnapshotUpdater,
@@ -67,7 +86,6 @@ export async function updateWithSnapshot(
   channel: string | undefined,
   fromReads: number = RERAIL_SCHEMA_VERSION,
 ): Promise<UpdateResult> {
-  const from = (await updater.status()).current.version;
   const staged = stageSnapshot(databasePath);
   let result: UpdateResult;
   try {
@@ -76,16 +94,35 @@ export async function updateWithSnapshot(
     if (staged !== undefined) rmSync(staged, { force: true });
     throw error;
   }
-  if (staged === undefined) return result;
+  const from = result.previous?.version;
   if (!result.changed || result.current.version === from) {
-    rmSync(staged, { force: true });
+    if (staged !== undefined) rmSync(staged, { force: true });
+    return result;
+  }
+  if (staged === undefined || from === undefined) {
+    if (staged !== undefined) rmSync(staged, { force: true });
+    discardSnapshot(databasePath);
     return result;
   }
   const target = preUpdateSnapshotPath(databasePath);
   const transition: SnapshotTransition = { from, to: result.current.version, fromReads };
-  writeFileSync(`${target}.json.tmp`, `${JSON.stringify(transition)}\n`);
-  renameSync(staged, target);
-  renameSync(`${target}.json.tmp`, `${target}.json`);
+  try {
+    writeFileSync(`${target}.json.tmp`, `${JSON.stringify(transition)}\n`, { mode: 0o600 });
+    // The old record goes first: a copy is never paired with a record of another change.
+    rmSync(`${target}.json`, { force: true });
+    renameSync(staged, target);
+    renameSync(`${target}.json.tmp`, `${target}.json`);
+  } catch (error) {
+    removeQuietly(staged);
+    removeQuietly(`${target}.json.tmp`);
+    process.stderr.write(`rerail: could not keep the copy of ${databasePath} taken before the update: ${(error as Error).message}\n`);
+    try {
+      discardSnapshot(databasePath);
+    } catch (removal) {
+      process.stderr.write(`rerail: remove ${target} and ${target}.json yourself before rolling back: ${(removal as Error).message}\n`);
+    }
+    return result;
+  }
   process.stdout.write(`Copied ${databasePath} to ${target}\n`);
   return result;
 }
@@ -118,18 +155,53 @@ function snapshotTransition(databasePath: string): SnapshotTransition | undefine
 /** Why `restoreInPlace` left the database as it was. */
 type RestoreRefusal = "open" | "restoring";
 
+/** How often, and how long apart, a backup that copied nothing is tried again while `.restoring` keeps openers out. */
+const BACKUP_ATTEMPTS = 20;
+const BACKUP_RETRY_MS = 50;
+
+function sleep(milliseconds: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, milliseconds);
+  return promise;
+}
+
+/** SQLite's answer when another connection holds the database: the only refusal that means a session has it open. */
+function heldByAnother(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"));
+}
+
+/**
+ * The first of `<base>`, `<base>.2`, `<base>.3`, ... that does not exist yet, created empty with mode 0600: an earlier
+ * rollback's saved database is never replaced.
+ */
+function freshKeptPath(base: string): string {
+  for (let index = 1; ; index += 1) {
+    const candidate = index === 1 ? base : `${base}.${index}`;
+    try {
+      closeSync(openSync(candidate, "wx", 0o600));
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
+
 /**
  * Puts copy `snapshot` back into the database at `path`, in place and through SQLite, after saving what the database
- * holds as `kept` (mode 0600). Writing the same file, rather than renaming another over it, keeps every connection, open
- * or opening, on the restored database: none goes on writing to a file that has been moved aside. `rerail.sqlite.restoring`
- * is held from before the check through the copy, and every Rerail opener refuses the database while it exists
- * (`connectSqlite`), so no session commits between the save and the copy, where its change would be in neither file.
- * Refused, with nothing changed, while that file exists (another rollback runs, or one was interrupted) or another
- * connection has the database in WAL mode (a coding agent session, opened before the file existed): SQLite leaves WAL
- * mode only for its last connection, and that session would go on with the database it already read. Throws when the
- * copy did not reach the file (`floor`, the copy's schema floor, is not what the file now records).
+ * holds under the first free name from `keptBase` (mode 0600), which it returns. Writing the same file, rather than
+ * renaming another over it, keeps every connection, open or opening, on the restored database: none goes on writing
+ * to a file that has been moved aside. `rerail.sqlite.restoring` is held from before the check through the copy, and
+ * every Rerail opener refuses the database while it exists (`connectSqlite`), so no session commits between the save
+ * and the copy, where its change would be in neither file. Refused, with nothing changed, while that file exists
+ * (another rollback runs, or one was interrupted) or another connection holds the database (a coding agent session,
+ * opened before the file existed): SQLite leaves WAL mode only for its last connection, and that session would go on
+ * with the database it already read. An opener's brief read can still make a backup step find the file busy, and
+ * better-sqlite3 then resolves without copying anything, so the backup is tried again while `.restoring` keeps new
+ * openers out. Throws on any other failure, and when the copy did not reach the file (`floor`, the copy's schema
+ * floor, is not what the file records).
  */
-async function restoreInPlace(path: string, snapshot: string, kept: string, floor: number): Promise<RestoreRefusal | undefined> {
+async function restoreInPlace(path: string, snapshot: string, keptBase: string, floor: number): Promise<RestoreRefusal | { kept: string }> {
   const restoring = rollbackRestoringPath(path);
   try {
     closeSync(openSync(restoring, "wx", 0o600));
@@ -138,35 +210,38 @@ async function restoreInPlace(path: string, snapshot: string, kept: string, floo
     throw error;
   }
   try {
+    let kept: string;
     const database = new Database(path, { fileMustExist: true });
     try {
       database.pragma("busy_timeout = 0");
       let mode: unknown;
       try {
         mode = database.pragma("journal_mode = DELETE", { simple: true });
-      } catch {
-        // SQLITE_BUSY: another connection holds the database.
-        return "open";
+      } catch (error) {
+        if (heldByAnother(error)) return "open";
+        throw error;
       }
       if (mode !== "delete") return "open";
-      for (const suffix of ["", "-wal", "-shm", "-journal"]) rmSync(`${kept}${suffix}`, { force: true });
       // VACUUM INTO fills an empty file, keeping the mode it was created with.
-      closeSync(openSync(kept, "wx", 0o600));
+      kept = freshKeptPath(keptBase);
       database.prepare("VACUUM INTO ?").run(kept);
     } finally {
       database.close();
     }
     const source = new Database(snapshot, { readonly: true, fileMustExist: true });
     try {
-      await source.backup(path);
+      for (let attempt = 1; ; attempt += 1) {
+        await source.backup(path);
+        if (schemaFloor(path) === floor || attempt === BACKUP_ATTEMPTS) break;
+        await sleep(BACKUP_RETRY_MS);
+      }
     } finally {
       source.close();
     }
     chmodSync(path, 0o600);
-    // better-sqlite3 resolves a backup whose first step found the file busy without copying anything.
     const written = schemaFloor(path);
     if (written !== floor) throw new Error(`the copy did not reach the database, which is still at schema v${String(written)}`);
-    return undefined;
+    return { kept };
   } finally {
     rmSync(restoring, { force: true });
   }
@@ -174,32 +249,35 @@ async function restoreInPlace(path: string, snapshot: string, kept: string, floo
 
 /**
  * `rerail update rollback`: roll the version back, then, when the copy taken before updating from the version rolled
- * back to (`from`) to the version left (`to`) exists and the database's schema floor is now above what `from` opens,
- * put the copy back: the version rolled back to refuses the database otherwise. The replaced database, with what
- * changed since the update, is kept as `rerail.sqlite.before-rollback`. A floor `from` still opens (additive steps, or
+ * back to (`from`) to the version left (`to`, the updater's own `previous`, read under its lock) exists and the
+ * database's schema floor is now above what `from` opens, put the copy back: the version rolled back to refuses the
+ * database otherwise. The replaced database, with what changed since the update, is kept as
+ * `rerail.sqlite.before-rollback` (or `.before-rollback.2`, ..., never over an earlier one), and the copy and its record
+ * are removed once put back, so no later rollback puts them back again. A floor `from` still opens (additive steps, or
  * a floor it already supported) keeps the database as it is, and a copy taken for another change is never used. A
  * record from before `fromReads` was kept is judged by the copy's own floor. `stopDaemon` runs first: the daemon holds
  * the database open. The copy is written into the database file itself (`restoreInPlace`), and not while a coding agent
- * session has it open in WAL mode or `rerail.sqlite.restoring` exists (another rollback runs, or one was interrupted);
- * the person is then told how to finish. A restore that fails, or whose copy did not reach the file, is reported, never
- * fatal: the version has rolled back already.
+ * session holds it or `rerail.sqlite.restoring` exists (another rollback runs, or one was interrupted); the person is
+ * then told how to finish. A restore that fails, or whose copy did not reach the file, is reported, never fatal: the
+ * version has rolled back already.
  */
 export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePath: string, stopDaemon: () => Promise<unknown>): Promise<UpdateResult> {
-  const leaving = (await updater.status()).current.version;
   const result = await updater.rollback();
+  const leaving = result.previous?.version;
   const transition = snapshotTransition(databasePath);
-  if (transition === undefined || transition.from !== result.current.version || transition.to !== leaving) return result;
+  if (leaving === undefined || transition === undefined || transition.from !== result.current.version || transition.to !== leaving) {
+    return result;
+  }
   const snapshot = preUpdateSnapshotPath(databasePath);
   const current = schemaFloor(databasePath);
   const before = schemaFloor(snapshot);
   if (current === undefined || before === undefined || current <= (transition.fromReads ?? before)) return result;
-  const kept = `${databasePath}.before-rollback`;
   try {
     await stopDaemon();
-    const refusal = await restoreInPlace(databasePath, snapshot, kept, before);
-    if (refusal !== undefined) {
+    const restored = await restoreInPlace(databasePath, snapshot, `${databasePath}.before-rollback`, before);
+    if (typeof restored === "string") {
       const restoring = rollbackRestoringPath(databasePath);
-      const why = refusal === "open"
+      const why = restored === "open"
         ? "coding agent sessions still have it open. Close them"
         : `${restoring} exists: another rollback is running, or one was interrupted. Once no rollback runs, delete ${restoring}`;
       process.stderr.write(
@@ -208,9 +286,10 @@ export async function rollbackWithSnapshot(updater: SnapshotUpdater, databasePat
       );
       return result;
     }
+    discardSnapshot(databasePath);
     process.stdout.write(
       `The update moved ${databasePath} to schema v${current}, which the version rolled back to cannot read, so it now holds `
-      + `the copy taken before the update (schema v${before}). What changed since the update is in ${kept}.\n`,
+      + `the copy taken before the update (schema v${before}). What changed since the update is in ${restored.kept}.\n`,
     );
   } catch (error) {
     process.stderr.write(
