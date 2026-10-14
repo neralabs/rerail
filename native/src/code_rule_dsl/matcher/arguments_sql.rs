@@ -28,8 +28,12 @@ pub(crate) struct SqlArgument<'r, D: Doc> {
 /// * `position(sub IN str)` and `trim([both|leading|trailing] chars FROM str)` are written in the
 ///   opposite order to the call PostgreSQL builds (`position_list: b_expr IN_P b_expr` gives
 ///   `list_make2($3, $1)`, `TRIM ... trim_list: a_expr FROM expr_list` gives
-///   `lappend($3, $1)`), so their two operands are swapped to `(str, sub)`. `substring` and
-///   `overlay` operands keep their source order.
+///   `lappend($3, $1)`), so their two operands are swapped to `(str, sub)`. `overlay` operands
+///   keep their source order, as do `substring`'s written `FROM m FOR n`.
+/// * `substring(s FOR n)` passes `(s, 1, n)` (`substr_list: a_expr FOR a_expr` gives
+///   `list_make3($1, makeIntConst(1, -1), $3)`): its start is a constant no source holds, so the
+///   arguments do not read (`None`). `substring(s FOR n FROM m)`, which PostgreSQL passes as
+///   `(s, m, n)`, is a parse error in the grammar, so it is `None` too.
 /// * `VARIADIC x`: the grammar reads it as a `field` named `VARIADIC` with `x` as its `alias`.
 ///   The `VARIADIC` marker is dropped and the argument is `x` (the alias identifier), positioned
 ///   last as PostgreSQL does (`func_arg_list` keeps it in place, `variadic` only flags the call).
@@ -39,6 +43,10 @@ pub(crate) struct SqlArgument<'r, D: Doc> {
 /// `None` when an argument is not one of those shapes (a parse error inside the call).
 pub(crate) fn sql_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Vec<SqlArgument<'r, D>>> {
     if call.kind() != "invocation" || call.children().any(|child| child.is_error()) {
+        return None;
+    }
+    let has = |kind: &str| call.children().any(|child| child.kind() == kind);
+    if is_named(call, "substring") && has("keyword_for") && !has("keyword_from") {
         return None;
     }
     let mut operands: Vec<Node<'r, D>> = call
@@ -172,12 +180,15 @@ fn is_swapped_form<D: Doc>(call: &Node<'_, D>, count: usize) -> bool {
     if has("keyword_in") {
         return true;
     }
-    has("keyword_from")
-        && call
-            .field("function")
-            .or_else(|| call.children().next())
-            .and_then(|callee| sql::node_name(&callee.field("name")?))
-            .is_some_and(|name| name == "trim")
+    has("keyword_from") && is_named(call, "trim")
+}
+
+/// Whether `call`'s callee is the unqualified function `name`.
+fn is_named<D: Doc>(call: &Node<'_, D>, name: &str) -> bool {
+    call.field("function")
+        .or_else(|| call.children().next())
+        .and_then(|callee| sql::node_name(&callee.field("name")?))
+        .is_some_and(|callee| callee == name)
 }
 
 #[cfg(test)]
@@ -198,6 +209,10 @@ mod tests {
     /// Oracle calls the grammar does not read as an `invocation`, by (name, line): none; the
     /// oracle holds no `cast` (PostgreSQL's TypeCast is not a FuncCall).
     const MISMATCHES: &[(&str, u64, &str)] = &[];
+
+    /// Oracle calls whose arguments the grammar errors on, by (name, line), so `sql_arguments`
+    /// is `None`: `substring(s FOR 2 FROM 1)`.
+    const UNREADABLE: &[(&str, u64)] = &[("substring", 22)];
 
     #[test]
     fn matches_postgres_oracle() {
@@ -231,8 +246,21 @@ mod tests {
                 skipped += 1;
                 continue;
             };
-            let arguments = sql_arguments(node).unwrap_or_else(|| panic!("None at {at:?}"));
             let expected = call["args"].as_array().unwrap();
+            // An argument PostgreSQL supplies (`substring(s FOR n)`'s start) has no source, and a
+            // call the grammar errors in has no operands to read: either way every slot is unknown.
+            let unreadable = UNREADABLE
+                .iter()
+                .any(|(name, line)| *line == at.0 && call["name"][0].as_str() == Some(name));
+            if unreadable || expected.iter().any(|want| want["implicit"] == true) {
+                assert!(
+                    sql_arguments(node).is_none(),
+                    "arguments read at {at:?}: {call}"
+                );
+                matched += 1;
+                continue;
+            }
+            let arguments = sql_arguments(node).unwrap_or_else(|| panic!("None at {at:?}"));
             assert_eq!(arguments.len(), expected.len(), "count at {at:?}: {call}");
             for (argument, want) in arguments.iter().zip(expected) {
                 let got_value = position(&source, argument.value.range().start);

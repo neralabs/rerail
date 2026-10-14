@@ -23,21 +23,24 @@ interface Example {
   text: string;
 }
 
-/** The example pairs in a pack README: one per `### \`<rule id>\`` section, which must hold both blocks. */
+/**
+ * The example pairs in a pack README. Every `### ` section is one pair: a heading that is not exactly `` `<rule id>` ``,
+ * or a section without both blocks, fails rather than dropping the pair.
+ */
 function readmePairs(pack: string): { id: string; caught: Example; passes: Example }[] {
   const readme = readFileSync(repositoryPath("packs", pack, "README.md"), "utf8");
   return readme
     .split(/^### /mu)
     .slice(1)
-    .flatMap(section => {
+    .map(section => {
       const id = /^`([^`]+)`\n/u.exec(section)?.[1];
-      if (id === undefined) return [];
+      if (id === undefined) throw new Error(`packs/${pack}/README.md: the heading \`### ${section.split("\n", 1)[0]}\` names no rule id`);
       const block = (side: "Caught" | "Passes"): Example => {
         const match = new RegExp(`^${side} \\(\`([^\`]+)\`\\):\\n\\n\`\`\`\\w+\\n([\\s\\S]*?)^\`\`\`$`, "mu").exec(section);
         if (match === null) throw new Error(`packs/${pack}/README.md: ${id} has no ${side} block`);
         return { path: match[1]!, text: match[2]! };
       };
-      return [{ id, caught: block("Caught"), passes: block("Passes") }];
+      return { id, caught: block("Caught"), passes: block("Passes") };
     });
 }
 
