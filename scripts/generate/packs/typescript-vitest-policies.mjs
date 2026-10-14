@@ -188,87 +188,10 @@ const FUNCTION_KINDS = [{ kind: "arrow_function" }, { kind: "function_expression
 const PARAMETER = { any: [{ kind: "required_parameter" }, { kind: "optional_parameter" }] };
 
 /**
- * Module-source utilities, read as upstream's ESTree resolver reads them: the argument that names the module is a string
- * literal whose value is `vitest` (escapes decoded) or a template literal whose raw text is (`getStringValue`), comments
- * and trailing commas aside, and parentheses around an expression are transparent (ESTree keeps none).
- */
-const MODULE_SOURCE = {
-  "vitest-source": { any: [{ kind: "string", value: { eq: "vitest" } }, { kind: "template_string", regex: "^`vitest`$" }] },
-  "vitest-module-argument": { kind: "arguments", has: { nthChild: { position: 1, ofRule: { not: { kind: "comment" } } }, matches: "vitest-source" } },
-  // `require('vitest')` or `await import('vitest')` (findImportSourceNode); `await require(...)` is neither.
-  "vitest-module": {
-    any: [
-      {
-        kind: "call_expression",
-        all: [{ has: { field: "function", kind: "identifier", regex: "^require$" } }, { has: { field: "arguments", matches: "vitest-module-argument" } }],
-      },
-      { kind: "await_expression", has: { matches: "vitest-dynamic-import" } },
-      { kind: "parenthesized_expression", has: { matches: "vitest-module" } },
-    ],
-  },
-  "vitest-dynamic-import": {
-    any: [
-      { kind: "call_expression", all: [{ has: { field: "function", kind: "import" } }, { has: { field: "arguments", matches: "vitest-module-argument" } }] },
-      { kind: "parenthesized_expression", has: { matches: "vitest-dynamic-import" } },
-    ],
-  },
-};
-
-/**
- * An object pattern in the name of a declarator whose value is `require('vitest')` or `await import('vitest')`, at any
- * depth (`{ a: { it } }`), as upstream reads the declarator's initializer whatever the pattern.
- */
-const VITEST_DESTRUCTURING = {
-  kind: "object_pattern",
-  inside: { kind: "variable_declarator", stopBy: "end", has: { field: "value", matches: "vitest-module" } },
-};
-
-/**
  * The binding of a name `vitest` gives one of `names` (upstream's ImportDetails with source `vitest`): a named value
- * import, or a key of a destructured `require`/`await import`. A default value (`{ it = x }`) or rest element is not one.
+ * import, or a key of a destructured `require`/`await import`, which the engine qualifies `vitest.<name>`.
  */
-function vitestBinding(names) {
-  return {
-    any: [
-      {
-        resolves: {
-          binding: {
-            site: {
-              kind: "import_specifier",
-              has: { field: "name", regex: oneOf(names) },
-              inside: {
-                kind: "import_statement",
-                stopBy: "end",
-                // A type-only import (`import type { it }`, `import type * as v`, `import type D from`), not a
-                // default import named `type` (`import type, { it } from`), which imports values.
-                not: { regex: "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)" },
-                has: { field: "source", matches: "vitest-source" },
-              },
-            },
-          },
-        },
-      },
-      {
-        resolves: {
-          binding: {
-            // The declarator first: `occurrence` reads every reference of the name, so it runs only for a name a
-            // `require('vitest')` or `await import('vitest')` declarator binds.
-            site: { kind: "variable_declarator", has: { field: "value", matches: "vitest-module" } },
-            occurrence: {
-              any: [
-                { kind: "shorthand_property_identifier_pattern", regex: oneOf(names), inside: VITEST_DESTRUCTURING },
-                {
-                  kind: "identifier",
-                  inside: { kind: "pair_pattern", field: "value", has: { field: "key", ...accessorKey(names) }, inside: VITEST_DESTRUCTURING },
-                },
-              ],
-            },
-          },
-        },
-      },
-    ],
-  };
-}
+const vitestImport = names => names.map(name => `vitest.${name}`);
 
 /**
  * A callee (a call's `function`) that names a Vitest function in `names` by a chain upstream accepts for it, its links
@@ -296,7 +219,7 @@ function vitestCallee(utils, names, links) {
 function namedCallee(utils, names) {
   const label = labelOf(names);
   const cases = names.filter(name => TEST_CASES.includes(name));
-  const any = [{ resolves: { global: names } }, vitestBinding(names)];
+  const any = [{ resolves: { global: names, import: vitestImport(names) } }];
   if (cases.length > 0) {
     Object.assign(utils, extendUtilities(labelOf(cases), cases));
     any.push({ matches: `vitest-${labelOf(cases)}-extended` });
@@ -343,7 +266,7 @@ function extendUtilities(label, cases) {
       ],
     },
     [`vitest-${label}-root`]: chain(`vitest-${label}-root`, `vitest-${label}-bound`),
-    [`vitest-${label}-bound`]: { kind: "identifier", any: [vitestBinding(cases), { matches: `vitest-${label}-extended` }] },
+    [`vitest-${label}-bound`]: { kind: "identifier", any: [{ resolves: { import: vitestImport(cases) } }, { matches: `vitest-${label}-extended` }] },
   };
 }
 
@@ -479,7 +402,7 @@ function withDefine(build, modifiers = []) {
   const utils = {};
   const clauses = build(utils);
   for (const modifier of modifiers) Object.assign(utils, modifierUtilities(modifier));
-  Object.assign(utils, TEST_CONTEXT, MODULE_SOURCE);
+  Object.assign(utils, TEST_CONTEXT);
   return [{ id: "vitest-functions", define: { language: "typescript", utils } }, ...clauses];
 }
 

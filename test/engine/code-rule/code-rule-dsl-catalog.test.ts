@@ -498,7 +498,6 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["references in a Python rule", document({ forbid: { ast: { language: "python", rule: { pattern: "f($A, $B)", compare: { left: "A", op: "eq", right: "B", text: "reference" } } } } }), /use structure for Python/],
     ["star imports in a TypeScript rule", ast({ kind: "identifier", resolves: { unresolved: "star" } }), /TypeScript has none/],
     ["beforeLocal in a TypeScript rule", ast({ kind: "identifier", resolves: { beforeLocal: true } }), /TypeScript has none/],
-    ["import: true in a TypeScript rule", ast({ kind: "identifier", resolves: { import: true } }), /import resolution is Python-only/],
     ["sameImport in a TypeScript rule", ast({ kind: "identifier", binds: { redefines: { sameImport: true } } }), /qualified import names are Python's/],
     ["every in a Python rule", document({ forbid: { ast: { language: "python", rule: { kind: "identifier", binds: { redefines: { every: true } } } } } }), /`every` is TypeScript's/],
     ["builtin in a Python filter", document({ forbid: { ast: { language: "python", rule: { kind: "identifier", binds: { builtin: true } } } } }), /configured globals are ESLint's/],
@@ -512,7 +511,6 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a Python binding flag on a TypeScript binding", ast({ kind: "identifier", resolves: { binding: { latest: true } } }), /TypeScript has none/],
     ["global comments on unresolved Python names", document({ forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { unresolved: true, directives: "eslint" } } } } }), /comments are ESLint's; Python has none/],
     ["global comments in a Python rule", document({ forbid: { ast: { language: "python", rule: { kind: "identifier", resolves: { global: ["a"], directives: "eslint" } } } } }), /comments are ESLint's; Python has none/],
-    ["import resolution in a TypeScript rule", ast({ kind: "identifier", resolves: { import: ["react.useState"] } }), /import resolution is Python-only/],
     ["keyword-only slots in TypeScript", ast({ kind: "call_expression", arguments: { signature: ["a", "*", "b"], absent: ["b"] } }), /JavaScript passes arguments by position only/],
     ["syntactic arguments in TypeScript", ast({ kind: "call_expression", arguments: { signature: ["a"], absent: ["a"], mode: "syntactic" } }), /TypeScript has no keywords/],
     ["ESTree arguments in Python", document({ forbid: { ast: { language: "python", rule: { kind: "call", arguments: { signature: ["a"], absent: ["a"], mode: "estree" } } } } }), /use language or syntactic for Python/],
@@ -521,7 +519,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a Python type name in a binding's value test", ast({ kind: "identifier", resolves: { binding: { value: { value: { type: "str" } } } } }), /`str` is not a TypeScript type name/],
     ["a Python type name in a TypeScript rule", ast({ kind: "string", value: { type: "str" } }), /`str` is not a TypeScript type name/],
     ["a TypeScript type name in a Python rule", document({ forbid: { ast: { language: "python", rule: { kind: "string", value: { type: ["str", "string"] } } } } }), /`string` is not a Python type name/],
-    ["imported names in a TypeScript rule", ast({ kind: "identifier", resolves: { imported: ["react"] } }), /import resolution is Python-only/],
+    ["imported names in a TypeScript rule", ast({ kind: "identifier", resolves: { imported: ["react"] } }), /a TypeScript module is a string/],
     ["an ecmaVersion on a Python query", document({ forbid: { ast: { language: "python", languageOptions: { ecmaVersion: 5 }, rule: { kind: "identifier" } } } }), /needs ecmaVersion 2015 or later/],
     ["a pythonVersion on a TypeScript query", ast({ kind: "identifier" }, { languageOptions: { pythonVersion: "3.13" } }), /unknown field `pythonVersion`/],
     ["typingModules on a TypeScript query", ast({ kind: "identifier" }, { languageOptions: { typingModules: ["compat"] } }), /unknown field `typingModules`/],
@@ -542,8 +540,8 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a directive parse in a Python rule", py({ kind: "comment", parse: { grammar: "eslintDirective", kind: "directive" } }), /`eslintDirective` parses TypeScript comments/],
     ["formatArgs in a TypeScript rule", ast({ pattern: "f($$$A)", formatArgs: { style: "brace", string: "S", args: "A", unused: { kind: "identifier" } } }), /`formatArgs` is not available for typescript policies/],
     ["calls in a TypeScript rule", ast({ kind: "call_expression", calls: { kind: "function_declaration" } }), /`calls` is not available for typescript policies/],
-    ["a PHP-qualified Python import", py({ kind: "attribute", resolves: { import: ["App\\Client"] } }), /is a PHP name; Python imports are dotted names/],
-    ["a PHP-qualified Python imported module", py({ kind: "dotted_name", resolves: { imported: ["App\\Client"] } }), /is a PHP name; Python imports are dotted names/],
+    ["a PHP-qualified Python import", py({ kind: "attribute", resolves: { import: ["App\\Client"] } }), /is a PHP name; Python and TypeScript imports are dotted names/],
+    ["a PHP-qualified Python imported module", py({ kind: "dotted_name", resolves: { imported: ["App\\Client"] } }), /is a PHP name; Python and TypeScript imports are dotted names/],
   ])("refuses %s in the engine, which the rule's language lacks", (_name, input, reason) => {
     const validation = validateCodeRule(input);
     expect(validation).toMatchObject({ ok: false, code: "invalid-rule" });

@@ -534,11 +534,14 @@ fn compile_lexical_resolves<S: ScopeRules>(
             S::feature(ScopeFeature::GlobalComments),
         )?;
     }
-    for key in ["import", "imported"] {
+    for (key, feature) in [
+        ("import", ScopeFeature::Imports),
+        ("imported", ScopeFeature::ImportSites),
+    ] {
         let Some(listed) = value.get(key) else {
             continue;
         };
-        gate(&format!("{path}/{key}"), S::feature(ScopeFeature::Imports))?;
+        gate(&format!("{path}/{key}"), S::feature(feature))?;
         if let Some((index, name)) = listed
             .as_array()
             .into_iter()
@@ -548,7 +551,7 @@ fn compile_lexical_resolves<S: ScopeRules>(
             .find(|(_, name)| name.contains('\\'))
         {
             return Err(invalid(format!(
-                "{path}/{key}/{index}: `{name}` is a PHP name; Python imports are dotted names"
+                "{path}/{key}/{index}: `{name}` is a PHP name; Python and TypeScript imports are dotted names"
             )));
         }
     }
@@ -584,8 +587,8 @@ fn compile_lexical_resolves<S: ScopeRules>(
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
-    let attribute_kinds = kind_ids(language, &["attribute"]);
-    // An import resolves a read's attribute chain too.
+    // An import resolves a read's member chain too: Python's attributes, TypeScript's members.
+    let attribute_kinds = kind_ids(language, &["attribute", "member_expression"]);
     let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
     if !imports.is_empty() || import_any {
         reference_kinds.extend(attribute_kinds.iter().copied());

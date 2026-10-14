@@ -567,13 +567,16 @@ impl Resolves {
         unparenthesized(&self.paren_kinds, node)
     }
 
-    /// The head name of an identifier or attribute chain and the attribute names after it, when
-    /// the last one could complete a listed qualified name.
+    /// The head name of an identifier or member chain and the member names after it, when the
+    /// last one could complete a listed qualified name.
     fn import_chain<'r, D: Doc>(&self, node: &Node<'r, D>) -> Option<(Node<'r, D>, Vec<String>)> {
         let mut tail = Vec::new();
         let mut head = node.clone();
         while self.attribute_kinds.contains(&head.kind_id()) {
-            tail.push(name_in(self.language, head.field("attribute")?.text()).into_owned());
+            // Python's `attribute` names its member `attribute`; TypeScript's `member_expression`,
+            // `property`.
+            let member = head.field("attribute").or_else(|| head.field("property"))?;
+            tail.push(name_in(self.language, member.text()).into_owned());
             head = self.unparenthesized(head.field("object")?);
         }
         if !self.reference_kinds.contains(&head.kind_id()) {
@@ -602,9 +605,11 @@ impl Resolves {
             return false;
         };
         let resolved = table.resolve(reference, &name);
-        // Ruff qualifies an unshadowed builtin too (`["", name]`).
+        // Ruff qualifies an unshadowed builtin too (`["", name]`); TypeScript qualifies only
+        // imports.
         if self.import_any && resolved.is_none() {
-            return self.python_options().declares(&name);
+            return Family::of(self.language) == Family::Python
+                && self.python_options().declares(&name);
         }
         let Some(Binding {
             import: Some(import),

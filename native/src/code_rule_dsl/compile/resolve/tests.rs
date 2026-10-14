@@ -213,13 +213,6 @@ fn malformed_resolves_are_rejected() {
     ] {
         assert_eq!(rejection(compile("python", ast.clone())), expected, "{ast}");
     }
-    assert_eq!(
-        rejection(compile(
-            "typescript",
-            json!({ "rule": { "resolves": { "import": ["react.useState"] } } })
-        )),
-        "/clauses/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`"
-    );
     let many = (0..1025)
         .map(|index| format!("n{index}"))
         .collect::<Vec<_>>();
@@ -410,6 +403,59 @@ subprocess.run(l)
             "15:o.path.join",
             "16:path.join",
             "22:time.sleep",
+        ],
+        "{result}"
+    );
+}
+
+#[test]
+fn import_qualifies_typescript_bindings_by_module_and_member() {
+    let rule = typescript(json!({ "rule": {
+        "any": [{ "kind": "identifier" }, { "kind": "member_expression" }],
+        "resolves": { "import": ["vitest.it", "vitest.describe.skip", "tap.default", "react.useState"] },
+    } }));
+    let source = "\
+import { it as check, describe } from 'vitest';
+import type { it as typed } from 'vitest';
+import { type it as typedMember, 'it' as quoted } from 'vitest';
+import * as v from 'vitest';
+import t from 'tap';
+import React = require('react');
+const { it: req, describe: { skip } } = require('vitest');
+const { it: [first] } = require('vitest');
+const { it: dflt = x } = require('vitest');
+const { it: lazy } = import('vitest');
+async function f() { const { it } = await (import(`vitest`)); it(); }
+check(1);
+typed(2);
+typedMember(3);
+quoted(4);
+v.it(5);
+describe.skip(6);
+t(7);
+React.useState(8);
+req(9);
+skip(10);
+first(11);
+dflt(12);
+lazy(13);
+function g(check) { check(14); }
+";
+    let result = evaluate_file(&rule, "typescript", "a.ts", source);
+    // A type-only import, an array element, a default, an unawaited `import()` and a shadowing
+    // parameter denote no import.
+    assert_eq!(
+        found(&result, source),
+        [
+            "11:it",
+            "12:check",
+            "15:quoted",
+            "16:v.it",
+            "17:describe.skip",
+            "18:t",
+            "19:React.useState",
+            "20:req",
+            "21:skip",
         ],
         "{result}"
     );
@@ -2263,7 +2309,7 @@ fn malformed_imported_and_prefix_are_rejected() {
         (
             "typescript",
             json!({ "rule": { "resolves": { "imported": ["react"] } } }),
-            "/clauses/0/forbid/ast/rule/resolves/imported: import resolution is Python-only for now; TypeScript rules can use `global`",
+            "/clauses/0/forbid/ast/rule/resolves/imported: `imported` reads an import statement's dotted name; a TypeScript module is a string, which `resolves.import` qualifies a binding by",
         ),
         (
             "python",
@@ -3058,22 +3104,13 @@ fn any_mode_resolves_are_checked() {
     ] {
         assert_eq!(rejection(compile("python", ast.clone())), expected, "{ast}");
     }
-    for (ast, expected) in [
-        (
-            json!({ "rule": { "resolves": { "unresolved": "star" } } }),
-            "/clauses/0/forbid/ast/rule/resolves/unresolved: \"star\" asks whether a Python star import binds the name; TypeScript has none",
-        ),
-        (
-            json!({ "rule": { "resolves": { "import": true } } }),
-            "/clauses/0/forbid/ast/rule/resolves/import: import resolution is Python-only for now; TypeScript rules can use `global`",
-        ),
-    ] {
-        assert_eq!(
-            rejection(compile("typescript", ast.clone())),
-            expected,
-            "{ast}"
-        );
-    }
+    assert_eq!(
+        rejection(compile(
+            "typescript",
+            json!({ "rule": { "resolves": { "unresolved": "star" } } })
+        )),
+        "/clauses/0/forbid/ast/rule/resolves/unresolved: \"star\" asks whether a Python star import binds the name; TypeScript has none"
+    );
 }
 
 #[test]

@@ -3,7 +3,8 @@
 //! and function declarations bind in their block; values and types are separate namespaces.
 
 use super::{
-    Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
+    Binding, BuildError, Builder, Form, Grammar, Import, NodeRef, ScopeKind, ScopeTable, Site,
+    TYPE, VALUE,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
@@ -693,8 +694,21 @@ impl Visitor<'_, '_> {
     }
 
     fn bind<D: Doc>(&mut self, target: Target, name: &Node<'_, D>, spaces: u8, site: Site) {
+        self.bind_imported(target, name, spaces, site, None);
+    }
+
+    /// Binds `name`, which denotes the qualified name `import` names (`vitest.it`) when an
+    /// import, a `require` or an awaited `import()` gives it.
+    fn bind_imported<D: Doc>(
+        &mut self,
+        target: Target,
+        name: &Node<'_, D>,
+        spaces: u8,
+        site: Site,
+        import: Option<Import>,
+    ) {
         let text = name.text();
-        self.bind_name(target, &text, spaces, site, Some(NodeRef::of(name)));
+        self.bind_name(target, &text, spaces, site, Some(NodeRef::of(name)), import);
     }
 
     /// The type a `type` field's annotation holds, without its `:`.
@@ -714,6 +728,7 @@ impl Visitor<'_, '_> {
         spaces: u8,
         site: Site,
         name: Option<NodeRef>,
+        import: Option<Import>,
     ) {
         let mut scope = match target {
             Target::At(scope) => scope,
@@ -739,16 +754,30 @@ impl Visitor<'_, '_> {
         }
         let mut binding = Binding::new(0, spaces, site);
         binding.name = name;
+        binding.import = import;
         self.builder.bind(scope, text, binding);
     }
 
     /// A declaration pattern: its names bind at `target`, defaults and computed keys are read.
     fn pattern<D: Doc>(&mut self, node: &Node<'_, D>, target: Target, site: Site) -> Visit {
+        self.pattern_in(node, target, site, None)
+    }
+
+    /// A declaration pattern whose value is the module member `qualified` names (`require('m')`
+    /// destructured: `m`, then `m.a` under a key `a`), so each name it binds denotes its own
+    /// member. An array element, a rest element or a name with a default denotes none.
+    fn pattern_in<D: Doc>(
+        &mut self,
+        node: &Node<'_, D>,
+        target: Target,
+        site: Site,
+        qualified: Option<&str>,
+    ) -> Visit {
         self.builder.enter()?;
         let fields = self.fields();
         match self.tag(node) {
             // tree-sitter gives `undefined` its own kind, but it is an ordinary bindable name.
-            Tag::Identifier | Tag::ShorthandProperty | Tag::Undefined => {
+            tag @ (Tag::Identifier | Tag::ShorthandProperty | Tag::Undefined) => {
                 let start = node.range().start;
                 let value = self
                     .destructured
@@ -759,9 +788,22 @@ impl Visitor<'_, '_> {
                     value: Some(value),
                     ..site
                 });
-                self.bind(target, node, VALUE, site)
+                // A shorthand `{ it }` takes the member its own name names.
+                let import = qualified.map(|qualified| {
+                    Import::Qualified(if tag == Tag::ShorthandProperty {
+                        format!("{qualified}.{}", node.text()).into()
+                    } else {
+                        qualified.into()
+                    })
+                });
+                self.bind_imported(target, node, VALUE, site, import)
             }
-            Tag::ObjectPattern | Tag::ArrayPattern | Tag::RestPattern => {
+            Tag::ObjectPattern => {
+                for child in named(node) {
+                    self.pattern_in(&child, target, site, qualified)?;
+                }
+            }
+            Tag::ArrayPattern | Tag::RestPattern => {
                 for child in named(node) {
                     self.pattern(&child, target, site)?;
                 }
@@ -773,8 +815,11 @@ impl Visitor<'_, '_> {
                 {
                     self.visit(key)?;
                 }
+                let member = qualified
+                    .zip(key.as_ref().and_then(static_key))
+                    .map(|(qualified, member)| format!("{qualified}.{member}"));
                 if let Some(value) = field(node, fields.value) {
-                    self.pattern(&value, target, site)?;
+                    self.pattern_in(&value, target, site, member.as_deref())?;
                 }
             }
             Tag::ObjectAssignmentPattern | Tag::AssignmentPattern => {
@@ -820,7 +865,8 @@ impl Visitor<'_, '_> {
                         &mut self.destructured,
                     );
                 }
-                self.pattern(name, target, site)?;
+                let module = value.as_ref().and_then(|value| self.required_module(value));
+                self.pattern_in(name, target, site, module.as_deref())?;
                 self.destructured.clear();
             }
             self.children_except(&declarator, &[name])?;
@@ -919,7 +965,14 @@ impl Visitor<'_, '_> {
         }
         self.builder.push(ScopeKind::Function, node.range());
         if arguments {
-            self.bind_name(Target::Block, "arguments", VALUE, Site::IMPLICIT, None);
+            self.bind_name(
+                Target::Block,
+                "arguments",
+                VALUE,
+                Site::IMPLICIT,
+                None,
+                None,
+            );
         }
         if let Some(parameter) = field(node, fields.parameter) {
             let site = site(Form::Parameter, &parameter);
@@ -993,7 +1046,7 @@ impl Visitor<'_, '_> {
             let text = inner.text();
             let name = own_name.then(|| NodeRef::of(inner));
             let site = site(Form::Definition, node);
-            self.bind_name(Target::Block, &text, VALUE | TYPE, site, name);
+            self.bind_name(Target::Block, &text, VALUE | TYPE, site, name, None);
         }
         for child in named(node) {
             if same(&child, name.as_ref())
@@ -1039,8 +1092,19 @@ impl Visitor<'_, '_> {
     }
 
     /// Default, namespace and named imports, and `import x = require()`: each binds both spaces.
+    /// A value import qualifies its name by the module and the member it imports: `vitest.it`
+    /// for `import { it as check } from 'vitest'`, `m.default` for a default import, `m` for a
+    /// namespace import or `import x = require('m')`. A type-only import qualifies none.
     fn import<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
+        let module = field(node, fields.source)
+            .and_then(|source| module_name(&source))
+            .filter(|_| !type_only(node));
+        let member = |name: &str| {
+            Some(Import::Qualified(
+                format!("{}.{name}", module.as_ref()?).into(),
+            ))
+        };
         for child in named(node) {
             match self.tag(&child) {
                 Tag::ImportClause => {
@@ -1048,14 +1112,24 @@ impl Visitor<'_, '_> {
                         match self.tag(&part) {
                             Tag::Identifier => {
                                 let site = site(Form::Import, &child);
-                                self.bind(Target::Block, &part, VALUE | TYPE, site)
+                                let import = member("default");
+                                self.bind_imported(Target::Block, &part, VALUE | TYPE, site, import)
                             }
                             Tag::NamespaceImport => {
                                 if let Some(name) =
                                     named(&part).find(|name| self.tag(name) == Tag::Identifier)
                                 {
                                     let site = site(Form::Import, &part);
-                                    self.bind(Target::Block, &name, VALUE | TYPE, site);
+                                    let import = module
+                                        .as_deref()
+                                        .map(|module| Import::Qualified(module.into()));
+                                    self.bind_imported(
+                                        Target::Block,
+                                        &name,
+                                        VALUE | TYPE,
+                                        site,
+                                        import,
+                                    );
                                 }
                             }
                             Tag::NamedImports => {
@@ -1063,13 +1137,25 @@ impl Visitor<'_, '_> {
                                     if self.tag(&specifier) != Tag::ImportSpecifier {
                                         continue;
                                     }
+                                    let imported = field(&specifier, fields.name);
                                     let local = field(&specifier, fields.alias)
-                                        .or_else(|| field(&specifier, fields.name));
+                                        .or_else(|| imported.clone());
                                     if let Some(local) = local
                                         && self.tag(&local) == Tag::Identifier
                                     {
                                         let site = site(Form::Import, &specifier);
-                                        self.bind(Target::Block, &local, VALUE | TYPE, site);
+                                        let import = imported
+                                            .as_ref()
+                                            .and_then(static_key)
+                                            .filter(|_| !type_only(&specifier))
+                                            .and_then(|name| member(&name));
+                                        self.bind_imported(
+                                            Target::Block,
+                                            &local,
+                                            VALUE | TYPE,
+                                            site,
+                                            import,
+                                        );
                                     }
                                 }
                             }
@@ -1081,7 +1167,11 @@ impl Visitor<'_, '_> {
                     if let Some(name) = named(&child).find(|name| self.tag(name) == Tag::Identifier)
                     {
                         let site = site(Form::Import, &child);
-                        self.bind(Target::Block, &name, VALUE | TYPE, site);
+                        let import = field(&child, fields.source)
+                            .and_then(|source| module_name(&source))
+                            .filter(|_| !type_only(node))
+                            .map(|module| Import::Qualified(module.into()));
+                        self.bind_imported(Target::Block, &name, VALUE | TYPE, site, import);
                     }
                 }
                 Tag::ImportAlias => self.visit(&child)?,
@@ -1089,6 +1179,31 @@ impl Visitor<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// The module a declarator's value loads, as eslint-plugin-vitest and eslint-plugin-jest read
+    /// one (`findImportSourceNode`): `require('m')`, or `await import('m')`, through parentheses.
+    fn required_module<D: Doc>(&self, value: &Node<'_, D>) -> Option<String> {
+        let value = unparenthesized(value);
+        let (call, callee) = match value.kind().as_ref() {
+            "call_expression" => (value.clone(), "require"),
+            "await_expression" => (
+                unparenthesized(&named(&value).find(|child| self.tag(child) != Tag::Comment)?),
+                "import",
+            ),
+            _ => return None,
+        };
+        let function = field(&call, self.fields().function)?;
+        let named_callee = match callee {
+            "require" => function.kind() == "identifier" && function.text() == "require",
+            _ => function.kind() == "import",
+        };
+        if call.kind() != "call_expression" || !named_callee {
+            return None;
+        }
+        let arguments = call.field("arguments")?;
+        let first = named(&arguments).find(|argument| self.tag(argument) != Tag::Comment)?;
+        module_name(&first)
     }
 
     /// The target of an assignment, update or `for ... in/of` without a declaration: its names
@@ -1225,4 +1340,53 @@ fn site<D: Doc>(form: Form, node: &Node<'_, D>) -> Site {
         value: None,
         annotation: None,
     }
+}
+
+/// `node` without the parentheses around it.
+fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
+    let mut node = node.clone();
+    while node.kind() == "parenthesized_expression" {
+        let Some(inner) = named(&node).find(|child| child.kind() != "comment") else {
+            break;
+        };
+        node = inner;
+    }
+    node
+}
+
+/// A module specifier's text: a string literal's value, or a template literal's without
+/// substitutions or escapes.
+fn module_name<D: Doc>(node: &Node<'_, D>) -> Option<String> {
+    match node.kind().as_ref() {
+        "string" => {
+            String::from_utf16(&crate::code_rule_dsl::value::ecma::string(&node.text())?).ok()
+        }
+        "template_string" => {
+            let text = node.text();
+            let body = text.strip_prefix('`')?.strip_suffix('`')?;
+            (!body.contains(['\\', '$'])).then(|| body.to_owned())
+        }
+        _ => None,
+    }
+    .filter(|name| !name.is_empty())
+}
+
+/// The member a property key or import specifier names statically (ESLint's
+/// `getStaticPropertyName`): an identifier, a string's value, or a string in computed brackets.
+fn static_key<D: Doc>(node: &Node<'_, D>) -> Option<String> {
+    match node.kind().as_ref() {
+        "property_identifier" | "identifier" => Some(node.text().into_owned()),
+        "string" | "template_string" => module_name(node),
+        "computed_property_name" => named(node)
+            .find(|child| child.kind() != "comment")
+            .filter(|key| matches!(key.kind().as_ref(), "string" | "template_string"))
+            .and_then(|key| module_name(&key)),
+        _ => None,
+    }
+}
+
+/// Whether an import statement or specifier is type-only: `import type { a }`, `import { type a }`.
+fn type_only<D: Doc>(node: &Node<'_, D>) -> bool {
+    node.children()
+        .any(|child| !child.is_named() && child.kind() == "type")
 }

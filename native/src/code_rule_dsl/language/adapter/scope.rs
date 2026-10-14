@@ -39,8 +39,10 @@ pub(crate) enum ScopeFeature {
     BeforeLocal,
     /// `resolves.unresolved` but `true`: whether a star import binds the name.
     StarImports,
-    /// `resolves.import` and `resolves.imported`.
+    /// `resolves.import`: what an import binds a name to.
     Imports,
+    /// `resolves.imported`: the dotted name an import statement imports.
+    ImportSites,
     /// `resolves.binding.stopAtGlobal: true`.
     StopAtGlobal,
     /// `resolves.binding.stopAtGlobal: false`: a read through a `global` statement.
@@ -376,6 +378,7 @@ impl ScopeRules for Python {
             | ScopeFeature::BeforeLocal
             | ScopeFeature::StarImports
             | ScopeFeature::Imports
+            | ScopeFeature::ImportSites
             | ScopeFeature::StopAtGlobal
             | ScopeFeature::ThroughGlobal
             | ScopeFeature::Filter(_)
@@ -543,8 +546,8 @@ impl ScopeRules for Ecma {
             ScopeFeature::StarImports => refused(
                 "\"star\" asks whether a Python star import binds the name; TypeScript has none",
             ),
-            ScopeFeature::Imports => refused(
-                "import resolution is Python-only for now; TypeScript rules can use `global`",
+            ScopeFeature::ImportSites => refused(
+                "`imported` reads an import statement's dotted name; a TypeScript module is a string, which `resolves.import` qualifies a binding by",
             ),
             ScopeFeature::StopAtGlobal => {
                 refused("`global` statements are Python's; TypeScript has none")
@@ -567,6 +570,7 @@ impl ScopeRules for Ecma {
             | ScopeFeature::LastWrite
             | ScopeFeature::DestructuredValue
             | ScopeFeature::Filter(_)
+            | ScopeFeature::Imports
             | ScopeFeature::Every => Ok(()),
         }
     }
@@ -632,6 +636,7 @@ fn php_feature(
             return refused(format!("`{key}` reads {what}; {label} has none"));
         }
         ScopeFeature::Imports
+        | ScopeFeature::ImportSites
         | ScopeFeature::StopAtGlobal
         | ScopeFeature::Occurrence
         | ScopeFeature::DestructuredValue

@@ -347,15 +347,19 @@ fn ecma() {
             ),
             refuses: &[
                 (
-                    super::ScopeFeature::Imports,
-                    "import resolution is Python-only for now; TypeScript rules can use `global`",
+                    super::ScopeFeature::ImportSites,
+                    "`imported` reads an import statement's dotted name; a TypeScript module is a string, which `resolves.import` qualifies a binding by",
                 ),
                 (
                     super::ScopeFeature::Filter("latest"),
                     "`latest` reads Python's binding order and declarations; TypeScript has none",
                 ),
             ],
-            reads: &[super::ScopeFeature::This, super::ScopeFeature::LastWrite],
+            reads: &[
+                super::ScopeFeature::This,
+                super::ScopeFeature::LastWrite,
+                super::ScopeFeature::Imports,
+            ],
             unpackaged: None,
         },
     });
