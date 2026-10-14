@@ -4,7 +4,7 @@
  *
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
-export { type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
+export { bindSteerReceipt, type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
 export { NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
 export { registerHostCommands, type HostCommandContext, type HostCommandHost } from "./host-commands.js";

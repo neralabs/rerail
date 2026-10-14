@@ -93,7 +93,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
           ".cjs"
         ],
         "parser": "tree-sitter",
-        "grammar": "ast-grep:JavaScript",
+        "grammar": "vendored:javascript",
         "tapeTag": 6
       }
     ],

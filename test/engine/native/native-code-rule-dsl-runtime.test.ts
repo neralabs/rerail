@@ -462,9 +462,9 @@ clauses:
       const compiled = compileJson([astForbid({ pattern: "print($ARG)" })]);
       const result = evaluate(compiled, snapshot([{ language: "python", path: "broken.py", source: "print(" }]));
 
-      // The only call overlaps the error region: no witness, and the file is marked partial.
+      // The whole file is an error region, so no AST clause read it: no witness, and the clause did not run.
       expect(result).toMatchObject({ violations: [], status: "failed" });
-      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "source-partial", path: "broken.py" })]);
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "source-incomplete", path: "broken.py" })]);
     });
   });
 
@@ -2121,13 +2121,14 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
     const identities = (failures: Array<{ clauseId: string; code: string; path?: string | undefined }>) =>
       failures.map(({ clauseId, code, path }) => ({ clauseId, code, path }))
         .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
-    // A missing comma, which TypeScript rejects too, so the error region stays whatever the grammar fixes.
+    // Syntax errors TypeScript rejects too (a missing comma; a bare `>` in JSX text), so the error regions stay
+    // whatever the grammars fix.
     const missingComma = 'const m = importOriginal(1 load("./api"));\ndebugger;\n';
-    const jsxAmpersand = "export const View = () => <p>Domain & capability map</p>;\ndebugger;\n";
+    const jsxGreaterThan = "export const View = () => <p>Domain > capability map</p>;\ndebugger;\n";
 
     it.each([
       ["typescript", "api.test.ts", missingComma],
-      ["tsx", "map.tsx", jsxAmpersand],
+      ["tsx", "map.tsx", jsxGreaterThan],
     ] as const)("reports sound %s witnesses outside the error region and marks the file partial", async (language, path, source) => {
       const nativeWorkspace = workspace();
       const compiled = compileJson([
@@ -2169,7 +2170,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       try {
         const files = [
           { language: "typescript" as const, path: "api.test.ts", source: `${missingComma}console.log(m);\nfunction run() {\n  report(1);\n  debugger;\n}\n` },
-          { language: "tsx" as const, path: "map.tsx", source: `${jsxAmpersand}export const Title = () => <h1 title="map">{report(2)}</h1>;\n` },
+          { language: "tsx" as const, path: "map.tsx", source: `${jsxGreaterThan}export const Title = () => <h1 title="map">{report(2)}</h1>;\n` },
         ];
         const actual = await applyWorkspace(nativeWorkspace, 1, files);
         const full = evaluate(compiled, snapshot(files as never));
@@ -2192,7 +2193,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       nativeWorkspace.addCodeRule(compiled);
       try {
         const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
-        const broken = { language: "typescript", path: "broken.ts", source: "debugger;\nfunction f( {\n  debugger;\n" };
+        const broken = { language: "typescript", path: "broken.ts", source: "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n" };
         const actual = await applyWorkspace(nativeWorkspace, 1, [clean, broken]);
         expect(actual.violations.map(item => [item.clauseId, item.path, item.span?.startLine])).toEqual([
           ["debugger", "broken.ts", 0],
@@ -2219,6 +2220,57 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         nativeWorkspace.close();
       }
     });
+
+    it("reads nothing from a file whose error regions cover half of it or more, sound clause or not", async () => {
+      // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end: 95% of the bytes.
+      const prose = { language: "typescript", path: "notes.ts", source: `debugger;\n${"Install it: run the script, then open the page.\n".repeat(5)}` };
+      const clean = { language: "typescript", path: "clean.ts", source: "debugger;\n" };
+      const nativeWorkspace = workspace();
+      const compiled = compileJson([
+        tsClause("debugger", { kind: "debugger_statement" }),
+        tsClause("unguarded", { all: [{ kind: "debugger_statement" }, { not: { follows: { kind: "import_statement", stopBy: "end" } } }] }),
+        { id: "regex", forbid: { regex: { pattern: "debugger", source: "file.content" } }, violation: violation("REGEX") },
+        // A cross-file query names the unread file and reports its detail too.
+        {
+          id: "gated",
+          forbid: { select_when: {
+            exists: { regex: { pattern: "debugger", source: "file.content" } },
+            select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+          } },
+          violation: violation("GATED"),
+        },
+      ]);
+      nativeWorkspace.addCodeRule(compiled);
+      try {
+        const actual = await applyWorkspace(nativeWorkspace, 1, [clean, prose]);
+        // The stateless path fails a whole query that cannot read some file, so compare it on that file alone.
+        const full = evaluate(compiled, snapshot([prose] as never));
+        // Regex clauses read the bytes and still report; no AST clause reports from the unread file.
+        expect(actual.violations.map(item => [item.clauseId, item.path])).toEqual([
+          ["debugger", "clean.ts"],
+          ["unguarded", "clean.ts"],
+          ["regex", "clean.ts"],
+          ["regex", "notes.ts"],
+        ]);
+        expect(full.violations).toEqual(actual.violations.filter(item => item.path === "notes.ts"));
+        const unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+        const failures = (evaluation: { failures: ReadonlyArray<{ clauseId: string; code: string; path?: string | undefined; message: string }> }) => evaluation.failures
+          .map(({ clauseId, code, path, message }) => ({ clauseId, code, path, message }))
+          .sort((left, right) => left.clauseId.localeCompare(right.clauseId));
+        expect(failures(actual)).toEqual([
+          { clauseId: "debugger", code: "source-incomplete", path: "notes.ts", message: unread },
+          { clauseId: "gated", code: "source-incomplete", path: "notes.ts", message: unread },
+          { clauseId: "unguarded", code: "source-incomplete", path: "notes.ts", message: unread },
+        ]);
+        expect(failures(full)).toEqual(failures(actual));
+
+        const repaired = await applyWorkspace(nativeWorkspace, 2, [{ ...prose, source: "debugger;\n" }]);
+        expect(repaired).toMatchObject({ status: "completed", failures: [] });
+      } finally {
+        nativeWorkspace.close();
+      }
+    });
+
     it("continues capture enumeration after an eslint-suppressed binding", async () => {
       const nativeWorkspace = workspace();
       const compiled = compileJson([{

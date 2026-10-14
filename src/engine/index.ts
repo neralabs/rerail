@@ -19,7 +19,7 @@ export {
 export { auditRequestSchema } from "./audit/audit-control-schema.js";
 export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
-export { type AuditInput, type AuditRecorder, type AuditResult } from "./audit/audit.js";
+export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadBundledRules } from "./catalog/bundled-rule-documents.js";
 export { loadBundledCatalog } from "./catalog/bundled-rules.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
@@ -74,7 +74,8 @@ export {
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleSourceLanguage, type CodeRuleViolation, type RuleSteerDelivery } from "./code-rule/code-rule.js";
-export { linkSteers, sessionStartNote, steerBlock, steerHeadlines } from "./code-rule/rerail-steer.js";
+export { headlineText, linkSteers, sessionStartNote, steerBlock, steerHeadlines } from "./code-rule/rerail-steer.js";
+export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
@@ -96,6 +97,7 @@ export {
   resetRepositoryHistory,
 } from "./storage/database.js";
 export { defaultRerailHome } from "./storage/rerail-home.js";
+export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export {
   auditRequests,
   auditResultPages,
@@ -111,6 +113,7 @@ export {
   setupReviews,
   ruleAttachments,
   ruleCatalogIdentities,
+  schemaMigrations,
   rules,
   ruleSettings,
   sessions,

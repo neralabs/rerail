@@ -6,7 +6,7 @@ import { ingestEngineEvent, startEngineService, stopDaemon, SqliteSessionReader 
 import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
-import { type AdapterDelivery, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
+import { type AdapterDelivery, headlineText, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
 import { cursorRelayed, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
@@ -151,12 +151,13 @@ describe("engine service", () => {
         },
         options,
       );
-      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, common.cwd);
-      const shown = expect.stringContaining(steerHeadlines(steer)[0]!);
+      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, common.cwd, "From your rule library.");
+      const shown = expect.stringContaining(headlineText(steerHeadlines(steer)[0]!, "plain"));
       // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is
-      // ready by then, otherwise as the Stop follow-up — exactly once either way.
+      // ready by then, otherwise as the Stop follow-up — exactly once either way. A Stop hold shows the person
+      // its reason under Codex's own "Blocked by hook", so it carries no separate line.
       expect([initial, stop]).toEqual(Object.keys(initial).length === 0
-        ? [{}, { decision: "block", reason: expect.stringContaining(steer), systemMessage: shown }]
+        ? [{}, { decision: "block", reason: expect.stringContaining(steer) }]
         : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}]);
     } finally {
       await service?.close();
@@ -482,7 +483,7 @@ describe("engine service", () => {
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
           options,
         ),
-      ).toEqual({ decision: "block", reason, systemMessage: steerHeadlines(reason).join("\n") });
+      ).toEqual({ decision: "block", reason });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -501,12 +502,11 @@ describe("engine service", () => {
     delete process.env.RERAIL_ENGINE_SOCKET;
     startTestRepository(root);
     try {
-      await expect(
-        runCodexHook(
-          { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
-          { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
-        ),
-      ).rejects.toThrow("RERAIL_AUTOSTART");
+      // Codex has no footer, so a session that starts without a daemon says so in its one line.
+      expect(await runCodexHook(
+        { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
+        { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
+      )).toEqual({ systemMessage: "Rerail ✕ not running · start it with: rerail daemon start" });
       // The home holds only the database recording the repository start: no daemon state, log, or start lock.
       expect((await readdir(home)).filter(entry => !entry.startsWith("rerail.sqlite"))).toEqual([]);
     } finally {

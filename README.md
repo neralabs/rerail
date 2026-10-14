@@ -306,7 +306,7 @@ rerail daemon start            # background daemon on http://127.0.0.1:4737/ (a 
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
-rerail stop                    # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); leave the shared daemon running
+rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); leave the shared daemon running. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon; exit 3 when the daemon is not running
 rerail ui [--print]            # prints the rules page URL and opens it; --print only prints
@@ -405,7 +405,7 @@ OMP and Pi expose the commands natively, with descriptions in slash completion. 
 | `/rerail-update`   | Install the newest Rerail version.                                                                                                 |
 | `/rerail-rage-quit` | Remove Rerail from this computer (`rerail install --remove`); rules and history are kept in a backup. Asks first: OMP and Pi use a native selector, and Claude Code does not pre-approve the removal. |
 
-A rule draft for `/rerail-create` is `{ kind, rule, cases: { caught: [...], passed: [...] } }`. `rerail rules test` validates it and runs its cases plus a pass over the repository without writing anything; `rerail rules add` stores it in your library and adds it, on, to this repository (the whole repository, or the draft's `folder`), setting a repository that is not set up up with just that rule; it refuses to replace a rule shipped by Rerail.
+A rule draft for `/rerail-create` is `{ kind, rule, cases: { caught: [...], passed: [...] } }`. `rerail rules test` validates it and runs its cases plus a pass over the repository without writing anything; a case whose file some clause could not check (it did not parse, say) is marked `not checked (<reason>)`, never passed, and the repository pass lists the files the rule could not check. `rerail rules add` stores it in your library and adds it, on, to this repository (the whole repository, or the draft's `folder`), setting a repository that is not set up up with just that rule; it refuses to replace a rule shipped by Rerail.
 
 Rerail is off in every repository until it is started there. Rules belong to
 the repository; on and off belong to each checkout, else the nearest checkout
@@ -424,8 +424,8 @@ persists across coding agent and daemon restarts, does not delete history or
 rules, and does not stop the machine-wide daemon. In a stopped checkout no
 events are recorded, no code or conversation rules run, no guidance is
 delivered, and hooks do not autostart or contact the daemon. The footer in
-Claude Code, OMP, and Pi reads `Rerail ○ not on here` while a daemon is
-running to say so, and `Rerail ○ not set up  ·  rerail start` in a started
+Claude Code, OMP, and Pi reads `R E R A I L ○ not on here` while a daemon is
+running to say so, and `R E R A I L ○ not set up · rerail start` in a started
 repository that is not set up. `/rerail` and `rerail status` report whether
 Rerail is on in this checkout.
 

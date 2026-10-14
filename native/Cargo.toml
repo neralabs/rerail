@@ -12,9 +12,10 @@ code-rule-profile = []
 bench-backends = ["dep:metal"]
 [dependencies]
 ast-grep-core = "=0.45.3"
-# Python, TypeScript and TSX are not ast-grep's: Rerail builds them from its patched vendored
-# grammars (grammars/tree-sitter-{python,typescript}/PATCHES.md), and no second parser is linked.
-ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-javascript", "tree-sitter-php"] }
+# Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
+# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
+# parser is linked.
+ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-php"] }
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
 gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
@@ -63,9 +64,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 metal = { version = "0.33.0", optional = true }
 
 [dev-dependencies]
-# The test-only dialects' grammars: `builtin-parser` without tree-sitter-python and
-# tree-sitter-typescript, which Rerail vendors.
-ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-javascript", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
+# The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
+# tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
+ast-grep-language = { version = "=0.45.3", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 
 [build-dependencies]
 cc = "=1.8.0"

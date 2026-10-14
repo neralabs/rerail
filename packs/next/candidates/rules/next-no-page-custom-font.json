@@ -171,7 +171,14 @@
                     "stopBy": "end",
                     "any": [
                       {
-                        "kind": "function_declaration",
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          }
+                        ],
                         "inside": {
                           "kind": "export_statement",
                           "regex": "^export\\s+default\\s"
