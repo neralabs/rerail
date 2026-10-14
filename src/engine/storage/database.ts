@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, pendingMigrations, schemaVersionOf, type Migration } from "./migrations.js";
+import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome } from "./rerail-home.js";
@@ -105,12 +106,36 @@ interface SchemaStamp {
   readonly empty: boolean;
   /** `PRAGMA user_version`: the file's compatibility floor (`migrations.ts`), 0 when no Rerail stamped it. */
   readonly version: number;
+  /** For a file stamped 1: whether it holds exactly the baseline's shape without `schema_migrations` (0.1.0-next.1). */
+  readonly adoptable: boolean;
+}
+
+/** Every schema entry of `client`'s database as SQLite records it (type, name, table, CREATE statement), in order. */
+function schemaEntries(client: Database.Database): string[] {
+  return client.prepare("SELECT type || ' ' || name || ' ' || tbl_name || ' ' || ifnull(sql, '') FROM sqlite_master "
+    + "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").pluck().all() as string[];
+}
+
+let baselineWithoutRecord: readonly string[] | undefined;
+
+/** The baseline's schema entries without `schema_migrations`: the shape 0.1.0-next.1 (main before the path) wrote. */
+function stampOneShape(): readonly string[] {
+  if (baselineWithoutRecord !== undefined) return baselineWithoutRecord;
+  const memory = new Database(":memory:");
+  try {
+    for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) memory.exec(statement);
+    baselineWithoutRecord = schemaEntries(memory).filter(entry => !/^\S+ \S+ schema_migrations /u.test(entry));
+  } finally {
+    memory.close();
+  }
+  return baselineWithoutRecord;
 }
 
 function schemaStamp(database: RerailDatabase): SchemaStamp {
   const tables = database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`);
   const version = database.all<{ user_version: number }>(sql`PRAGMA user_version`)[0]?.user_version ?? 0;
-  return { empty: tables.length === 0, version };
+  const adoptable = version === 1 && JSON.stringify(schemaEntries(database.$client)) === JSON.stringify(stampOneShape());
+  return { empty: tables.length === 0, version, adoptable };
 }
 
 /** The refusal for a file that holds something other than a Rerail database this build can read. */
@@ -125,11 +150,17 @@ function notADatabase(error: unknown): boolean {
   return notSqlite(error) || (error instanceof Error && notSqlite(error.cause));
 }
 
+/** An error that says this process may not write the file or its folder. */
+function cannotWrite(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && (["EACCES", "EPERM", "EROFS"].includes(code) || code.startsWith("SQLITE_READONLY"));
+}
+
 /**
  * Why a build reading schemas up to `supported` cannot open a file stamped `stamp`, or undefined when it can: a
  * file stamped by a newer Rerail, a file that is not new and carries no Rerail stamp (a `user_version` below 1),
- * or a file from before the migration baseline. Only a file with neither a table nor a stamp is new; a stamped
- * file is judged by its stamp even when it holds no table.
+ * or a file from before the migration baseline other than one in 0.1.0-next.1's shape, which a writer adopts. Only
+ * a file with neither a table nor a stamp is new; a stamped file is judged by its stamp even when it holds no table.
  */
 function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): string | undefined {
   if (stamp.version > supported) {
@@ -138,8 +169,11 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
   }
   if (stamp.version === 0 && stamp.empty) return undefined;
   if (stamp.version < 1) return unreadableDatabase(path, "no Rerail schema version", supported);
-  if (stamp.version < RERAIL_BASELINE_SCHEMA_VERSION) {
-    return unreadableDatabase(path, `schema v${stamp.version}, from a development build before the migration baseline`, supported);
+  if (stamp.version === 1 && !stamp.adoptable) {
+    return unreadableDatabase(path, "schema v1 in a shape this build does not know, such as 0.1.0-next.0's", supported);
+  }
+  if (stamp.version === 2) {
+    return unreadableDatabase(path, "schema v2, from a development build before the migration baseline", supported);
   }
   return undefined;
 }
@@ -155,37 +189,66 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
  * not run and the current DDL, which is idempotent, and stamps the floor they reach (`migrations.ts`).
  *
  * A read-only open never writes its own connection. Its readers query this build's shape, so when an existing file
- * still lacks steps that keep the floor (columns and tables older builds read correctly, the upgrade a new version
- * makes when it first runs), a writable open runs them first. A reader that cannot write the file (permissions) is
- * refused with the reason, since this build's readers would fail on the shape it has. A step that raises the floor
- * waits for this version's writer: an older Rerail still running would misread the file after it. A read-only open
- * of a file whose creator has not committed the schema yet sees no table at all.
+ * is in 0.1.0-next.1's shape (stamped 1), or still lacks steps that keep the floor (columns and tables older builds
+ * read correctly, the upgrade a new version makes when it first runs), a writable open adopts it or runs them first.
+ * A reader that cannot write the file (permissions) is refused with the reason, since this build's readers would fail
+ * on the shape it has; any other failure of that open is the open's own. A step that raises the floor waits for this
+ * version's writer, since an older Rerail still running would misread the file after it, so a read-only open of a
+ * file with one pending is refused, telling the person to run a Rerail command first. A read-only open of a file
+ * whose creator has not committed the schema yet sees no table at all.
  */
 export function openRerailDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
   const readonly = options.readonly === true;
   const migrations = options.migrations ?? RERAIL_MIGRATIONS;
   const supported = schemaVersionOf(migrations);
   const database = openChecked(path, readonly, migrations, supported);
-  if (!readonly || !upgradesBeforeReading(database, migrations)) return database;
-  const pending = pendingMigrations(database, migrations).map(migration => migration.id);
-  database.$client.close();
+  if (!readonly) return database;
+  let upgrade: string | undefined;
+  try {
+    upgrade = upgradeBeforeReading(path, database, migrations);
+  } finally {
+    if (upgrade !== undefined) database.$client.close();
+  }
+  if (upgrade === undefined) return database;
   try {
     openChecked(path, false, migrations, supported).$client.close();
   } catch (error) {
+    if (!cannotWrite(error)) throw error;
     throw new Error(
-      `${path} needs this Rerail's schema steps (${pending.join(", ")}) before it can be read, and this process cannot `
-        + `write it: ${error instanceof Error ? error.message : String(error)}. Run a rerail command as the file's owner, `
+      `${path} needs ${upgrade} before it can be read, and this process cannot write it: `
+        + `${error instanceof Error ? error.message : String(error)}. Run a rerail command as the file's owner, `
         + "or make it writable for this user.",
+      { cause: error },
     );
   }
   return openChecked(path, true, migrations, supported);
 }
 
-/** Whether an existing file lacks steps of `migrations`, all of which keep the floor. */
-function upgradesBeforeReading(database: RerailDatabase, migrations: readonly Migration[]): boolean {
-  if (schemaStamp(database).version < RERAIL_BASELINE_SCHEMA_VERSION) return false;
-  const pending = pendingMigrations(database, migrations);
-  return pending.length > 0 && pending.every(migration => migration.floor === undefined);
+/**
+ * What a writable open must do before this build reads the file a read-only `database` holds, or undefined when it
+ * reads the file as it is. Throws, closing `database`, for a pending step that raises the floor.
+ */
+function upgradeBeforeReading(path: string, database: RerailDatabase, migrations: readonly Migration[]): string | undefined {
+  try {
+    const stamp = schemaStamp(database);
+    // Only an adoptable file stamped 1 passes the read-only open's checks.
+    if (stamp.version === 1) return "adopting at the migration baseline";
+    if (stamp.version < RERAIL_BASELINE_SCHEMA_VERSION) return undefined;
+    const pending = pendingMigrations(database, migrations);
+    if (pending.length === 0) return undefined;
+    const ids = pending.map(migration => migration.id).join(", ");
+    const raising = pending.filter(migration => migration.floor !== undefined).map(migration => migration.id);
+    if (raising.length > 0) {
+      throw new Error(
+        `${path} needs this Rerail's schema steps (${ids}) before it can be read, and ${raising.join(", ")} raise its `
+          + "schema floor, which a read-only open does not do. Run a rerail command that writes it first (rerail state).",
+      );
+    }
+    return `this Rerail's schema steps (${ids})`;
+  } catch (error) {
+    database.$client.close();
+    throw error;
+  }
 }
 
 function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {

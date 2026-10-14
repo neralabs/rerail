@@ -306,28 +306,35 @@ A process that only reads and cannot write the file (its permissions) gets an
 error naming those steps instead, and the file, its mode included, is left as
 it was.
 Most steps add a column or a table, which older versions read correctly, so
-they keep the floor and an older Rerail still opens the file. A step an older
-version would misread raises the floor and waits for the new version's daemon
-or a command that writes; from then on older versions refuse the file, and
-`rerail update rollback` puts back the copy `rerail update` took before that
-version change when the floor is now above what the version rolled back to
-opens. It writes the copy into the database file itself, so anything that has
-the file open goes on with the restored database, after keeping what the
-database held as `rerail.sqlite.before-rollback` (readable only by you). While
-it writes, `rerail.sqlite.restoring` sits beside the database and every Rerail
-process refuses to open it; try again in a moment. While a coding agent session
-still has the database open, or `rerail.sqlite.restoring` is already there
-(another rollback is running, or one was interrupted: delete the file once no
-rollback runs), the copy is not put back: copy it over yourself, as the message
-says. An update that finds nothing newer, or fails, keeps the copy of the last
-change.
+they keep the floor and an older Rerail still opens the file; a hook or the
+status line runs them before reading. A step an older version would misread
+raises the floor and waits for the new version's daemon or a command that
+writes (until then a hook or the status line says to run one, such as `rerail
+state`); from then on older versions refuse the file, and `rerail update
+rollback` puts back the copy `rerail update` took before that version change
+when the floor is now above what the version rolled back to opens. It writes the
+copy into the database file itself, so anything that has the file open goes on
+with the restored database, after keeping what the database held as
+`rerail.sqlite.before-rollback` (readable only by you; a later rollback keeps its
+own as `.before-rollback.2`, `.3`, …, never over an earlier one). The copy is
+put back once: it and its record are then removed, so rolling back and forth
+again never restores it a second time. While it writes, `rerail.sqlite.restoring`
+sits beside the database and every Rerail process refuses to open it; try again
+in a moment. While a coding agent session still has the database open, or
+`rerail.sqlite.restoring` is already there (another rollback is running, or one
+was interrupted: delete the file once no rollback runs), the copy is not put
+back: copy it over yourself, as the message says. An update that finds nothing
+newer, or fails, keeps the copy of the last change; one that changes the version
+but cannot keep a copy removes the last one, which no longer belongs to the
+change a rollback would undo.
 
-A database file written by a newer Rerail (a floor above this release's), or
-by other software, is refused with an error and left untouched. So is a file
-stamped 1 or 2: development builds wrote those before the migration path
-existed, and no release reads them. Move such a file aside (or point
-`RERAIL_HOME` elsewhere) and start again, then re-import rules with `rerail
-rules import`.
+A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
+adopted: the first Rerail process that opens it records the baseline and stamps
+it 3, keeping everything in it. A database file written by a newer Rerail (a
+floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
+an older shape) or by a development build (stamped 2) is refused with an error
+and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)
+and start again, then re-import rules with `rerail rules import`.
 
 ### Resetting session history
 

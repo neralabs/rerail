@@ -34,8 +34,10 @@ export interface Migration {
 }
 
 /**
- * The first schema version with a migration path. Files stamped below it (1, or 2 from development builds)
- * predate it, carry no `schema_migrations`, and are refused: there is no release whose files they could be.
+ * The first schema version with a migration path. Files stamped 1 come from releases before it: 0.1.0-next.1 (main
+ * before the migration path) wrote the baseline's shape without `schema_migrations`, and such a file is adopted at the
+ * baseline (`database.ts`); 0.1.0-next.0 wrote another shape, which is refused, as is any file stamped 2 (development
+ * builds only).
  */
 export const RERAIL_BASELINE_SCHEMA_VERSION = 3;
 
