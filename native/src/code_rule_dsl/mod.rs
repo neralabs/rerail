@@ -27,6 +27,7 @@ mod test_support;
 mod transducer;
 mod value;
 mod violations;
+mod vue;
 mod workspace;
 
 /// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the

@@ -1,0 +1,133 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-export-in-script-setup",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement whose nearest earlier script marker, the empty statement the view puts before each script, is the setup block's start tag) is reported at the statement's start, except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). Reads only syntax and the view's script markers.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "export-in-script-setup",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "kind": "export_statement"
+              },
+              {
+                "follows": {
+                  "stopBy": {
+                    "kind": "empty_statement",
+                    "regex": "^<script\\b"
+                  },
+                  "kind": "empty_statement",
+                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "regex": "^type$",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "declaration",
+                        "any": [
+                          {
+                            "kind": "type_alias_declaration"
+                          },
+                          {
+                            "kind": "interface_declaration"
+                          },
+                          {
+                            "kind": "ambient_declaration",
+                            "has": {
+                              "any": [
+                                {
+                                  "kind": "type_alias_declaration"
+                                },
+                                {
+                                  "kind": "interface_declaration"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "export_clause",
+                        "all": [
+                          {
+                            "has": {
+                              "kind": "export_specifier"
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "kind": "export_specifier",
+                                "not": {
+                                  "has": {
+                                    "regex": "^type$",
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "kind": "string"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "vue/no-export-in-script-setup",
+        "anchor": "witness.span",
+        "message": "`<script setup>` cannot contain ES module exports.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-export-in-script-setup"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

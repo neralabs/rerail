@@ -13,6 +13,7 @@ use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
     EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex, SqlfluffIndex,
+    VueDirectives,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -880,6 +881,9 @@ struct FileScopes {
     lines: [Option<Rc<LineTable>>; 2],
     /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
     eslint_directives: Option<Rc<EslintDirectives>>,
+    /// The file's eslint-plugin-vue template comment directives (`suppress.eslint` in a Vue
+    /// file), read on first use.
+    vue_directives: Option<Rc<VueDirectives>>,
     /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
     noqa: Option<Rc<NoqaIndex>>,
     /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
@@ -932,6 +936,7 @@ impl FileScopeSlot {
             value_parses: HashMap::new(),
             lines: [None, None],
             eslint_directives: None,
+            vue_directives: None,
             noqa: None,
             nosec: None,
             phpstan: None,
@@ -1043,6 +1048,25 @@ pub(crate) fn file_eslint_directives(
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
             scopes.eslint_directives = Some(Rc::clone(&directives));
+        }
+    });
+    directives
+}
+
+/// The eslint-plugin-vue template comment directives of the file being matched: read once per
+/// file while a file is being matched, and fresh outside one.
+pub(crate) fn file_vue_directives(read: impl FnOnce() -> VueDirectives) -> Rc<VueDirectives> {
+    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.vue_directives.clone())
+    }) {
+        return directives;
+    }
+    let directives = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.vue_directives = Some(Rc::clone(&directives));
         }
     });
     directives

@@ -15,6 +15,7 @@ use psalm::Psalm;
 pub(crate) use psalm::PsalmIndex;
 use serde_json::Value;
 pub(crate) use sqlfluff::SqlfluffIndex;
+pub(crate) use vue::{VueDirectives, script_directives as vue_script_directives};
 
 /// Names a `rules` or `codes` list may hold.
 const MAX_NAMES: usize = 256;
@@ -184,6 +185,7 @@ mod psalm;
 #[cfg(test)]
 mod ruff;
 mod sqlfluff;
+mod vue;
 
 #[cfg(test)]
 mod tests {
