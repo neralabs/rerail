@@ -1,0 +1,6 @@
+CREATE TRIGGER x
+AFTER UPDATE
+ON y
+BEGIN
+SELECT 1 WHERE old.xyz != new.xyz;
+END;
