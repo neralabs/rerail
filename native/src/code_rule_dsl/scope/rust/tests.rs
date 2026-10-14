@@ -346,3 +346,52 @@ fn import_paths_follow_use_aliases() {
         None
     );
 }
+
+/// The names `resolves: { unresolved: true }` reports in the Rust file `source`.
+fn unresolved_names(source: &str) -> Vec<String> {
+    use crate::code_rule_dsl::test_support::*;
+    let document = clause_document(serde_json::json!({
+        "id": "unresolved",
+        "forbid": { "ast": { "language": "rust", "rule": {
+            "any": [{ "kind": "identifier" }, { "kind": "type_identifier" }, { "kind": "lifetime" }],
+            "resolves": { "unresolved": true },
+        } } },
+        "violation": violation(),
+    }));
+    let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    let compiled = compile_document_with(document, &capabilities)
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "rust", "src/lib.rs", source);
+    assert_eq!(result["failures"], serde_json::json!([]), "{result}");
+    matched_texts(&result, source)
+}
+
+/// rustc 1.99.0 compiles `BOUND` (as a library): every name it reads is bound, by an associated
+/// type, an `extern` block, a higher-ranked lifetime, or a macro's expansion.
+const BOUND: &str = "pub trait Stream {\n    type Item: Clone;\n    type Pair<'a>: Clone where Self: 'a;\n    fn next(&mut self) -> Option<Self::Item>;\n}\n\
+unsafe extern \"C\" {\n    fn abs(x: i32) -> i32;\n    static ERRNO: i32;\n}\n\
+pub fn call() -> i32 { unsafe { abs(-1) + ERRNO } }\n\
+pub fn hr<F>(f: F) where for<'a> F: Fn(&'a u8) -> &'a u8 { let _ = f; }\n\
+pub fn hr2(f: &dyn for<'b> Fn(&'b u8) -> &'b u8) { let _ = f; }\n\
+pub type Ptr = for<'c> fn(&'c u8) -> &'c u8;\n\
+thread_local! { static COUNT: u8 = 0; }\n\
+pub fn tl() -> u8 { COUNT.with(|c| *c) }\n\
+macro_rules! make { ($n:ident) => { pub fn $n() {} }; }\n\
+make!(generated);\n\
+pub fn uses() { generated(); }\n";
+
+#[test]
+fn names_bound_outside_plain_items_are_not_unresolved() {
+    assert_eq!(unresolved_names(BOUND), Vec::<String>::new());
+    // A module's macros define nothing in a module inside it, nor does a block's in another.
+    let control = format!(
+        "{BOUND}mod inner {{\n    pub fn f() {{ missing(); }}\n    \
+         pub fn g() {{ {{ make!(local); }} {{ local(); }} }}\n}}\n"
+    );
+    assert_eq!(unresolved_names(&control), ["missing", "local"]);
+    // A standard expression macro defines nothing.
+    assert_eq!(
+        unresolved_names("pub fn f() { println!(\"x\"); missing(); }\n"),
+        ["missing"]
+    );
+}

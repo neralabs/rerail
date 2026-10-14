@@ -3,13 +3,15 @@
 //! bindings from where they are made, a nested `fn` sees no local of the function around it, and a
 //! module sees nothing of its parent but macros. Types, values, macros, lifetimes and labels are
 //! separate namespaces. Names in macro token trees and paths past their first segment are not read:
-//! what they denote needs macro expansion or type information.
+//! what they denote needs macro expansion or type information. A macro invoked where an item may
+//! stand may define items, as a glob import may (`glob_visible`): a name nothing binds there is not
+//! known to be unresolved.
 
 use super::{
     Binding, BuildError, Builder, Form, Import, NodeRef, Reference, ScopeKind, ScopeTable, Site,
     TYPE, VALUE,
 };
-use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module};
+use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.
@@ -115,8 +117,10 @@ fn is_item(binding: &Binding, scope_start: usize) -> bool {
     }
 }
 
-/// Whether a glob import (`use m::*`) of the reference's module or a block within it may bind a
-/// name: the module it reads is another file's or crate's.
+/// Whether a glob import (`use m::*`) or a macro invoked where an item may stand
+/// (`thread_local! { .. }`, `lazy_static! { .. }`) in the reference's module or a block within it
+/// may bind a name: the module a glob reads is another file's or crate's, and what a macro defines
+/// needs its expansion.
 pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
     let mut current = Some(reference.scope);
     while let Some(index) = current {
@@ -414,7 +418,17 @@ impl Visitor<'_, '_> {
             "for_expression" => self.for_expression(node),
             "match_arm" => self.match_arm(node),
             "struct_item" | "enum_item" | "union_item" | "type_item" | "trait_item"
-            | "impl_item" => self.generic_item(node),
+            | "impl_item" | "associated_type" => self.generic_item(node),
+            "higher_ranked_trait_bound" => self.higher_ranked(node, None),
+            "where_predicate" => match node
+                .field("left")
+                .filter(|left| left.kind() == "higher_ranked_trait_bound")
+            {
+                // `for<'a> F: Fn(&'a T)`: the lifetimes are the whole predicate's.
+                Some(left) => self.higher_ranked(&left, node.field("bounds")),
+                None => self.children(node),
+            },
+            "function_type" => self.function_type(node),
             "const_item" | "static_item" => {
                 self.field(node, "type")?;
                 self.field(node, "value")
@@ -430,6 +444,12 @@ impl Visitor<'_, '_> {
                     .filter(|name| name.kind() == "identifier")
                 {
                     self.builder.reference(name.range(), MACRO);
+                }
+                if defines_items(node) {
+                    let current = self.builder.current;
+                    self.builder.table.scopes[current as usize]
+                        .stars
+                        .push(node.range().start);
                 }
                 Ok(())
             }
@@ -532,6 +552,13 @@ impl Visitor<'_, '_> {
                 "macro_definition" => {
                     if let Some(name) = child.field("name") {
                         self.bind(&name, &child, MACRO, Form::Definition, child.range().end);
+                    }
+                    continue;
+                }
+                // `extern "C" { fn f(); static S: i32; }`: its items are the scope's.
+                "foreign_mod_item" => {
+                    if let Some(body) = child.field("body") {
+                        self.items(&body);
                     }
                     continue;
                 }
@@ -647,6 +674,56 @@ impl Visitor<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// `for<'a> Fn(&'a T)`: its lifetimes are visible in its type, and in the `bounds` of the
+    /// `where` predicate it heads (`where for<'a> F: Fn(&'a T)`).
+    fn higher_ranked<D: Doc>(
+        &mut self,
+        node: &Node<'_, D>,
+        bounds: Option<Node<'_, D>>,
+    ) -> Result<(), BuildError> {
+        let range = node.range();
+        let end = bounds
+            .as_ref()
+            .map_or(range.end, |bounds| bounds.range().end);
+        self.builder.push(ScopeKind::TypeParams, range.start..end);
+        let result = (|| {
+            if let Some(parameters) = node.field("type_parameters") {
+                self.type_parameters(&parameters, range.start)?;
+            }
+            self.field(node, "type")?;
+            match &bounds {
+                Some(bounds) => self.visit(bounds),
+                None => Ok(()),
+            }
+        })();
+        self.builder.pop();
+        result
+    }
+
+    /// `for<'a> fn(&'a u8) -> &'a u8`: its lifetimes are visible in the whole type.
+    fn function_type<D: Doc>(&mut self, node: &Node<'_, D>) -> Result<(), BuildError> {
+        let Some(lifetimes) = node
+            .children()
+            .find(|child| child.kind() == "for_lifetimes")
+        else {
+            return self.children(node);
+        };
+        let start = node.range().start;
+        self.builder.push(ScopeKind::TypeParams, node.range());
+        for lifetime in lifetimes
+            .children()
+            .filter(|child| child.kind() == "lifetime")
+        {
+            self.bind(&lifetime, &lifetimes, LIFETIME, Form::TypeParameter, start);
+        }
+        let result = node
+            .children()
+            .filter(|child| child.is_named() && child.kind() != "for_lifetimes")
+            .try_for_each(|child| self.visit(&child));
+        self.builder.pop();
+        result
     }
 
     fn function<D: Doc>(&mut self, node: &Node<'_, D>) -> Result<(), BuildError> {
@@ -939,8 +1016,11 @@ impl Visitor<'_, '_> {
     }
 
     /// Whether an identifier pattern is a path rustc reads: it names a constant, a static, a unit
-    /// or tuple struct of this file visible here, or a prelude unit variant. A function's name is
-    /// no such path: a pattern binds over it.
+    /// or tuple struct of this file visible here, a prelude unit variant, or an import spelled as
+    /// rustc's naming lints spell a constant, a static, a struct or a variant (an uppercase first
+    /// letter: `use Ordering::{Less, Greater}`), whose item is another module's. A function's name
+    /// is no such path, nor is an import of a lowercase name (a function, a module): a pattern
+    /// binds over it.
     fn pattern_path(&self, name: &str, at: usize) -> bool {
         if PRELUDE_PATTERN_PATHS.contains(&name) {
             return true;
@@ -963,6 +1043,7 @@ impl Visitor<'_, '_> {
             let start = self.builder.table.scopes[scope as usize].range.start;
             match binding.site.form {
                 Form::Static => true,
+                Form::Import => name.starts_with(|c: char| c.is_uppercase()),
                 // A unit or tuple struct is bound in both namespaces, a function in values only.
                 Form::Definition => binding.spaces & TYPE != 0,
                 // A `const` item is bound at its scope's start, a `let` after its declaration.
@@ -1193,6 +1274,21 @@ impl Visitor<'_, '_> {
 /// A path's text with its whitespace removed (`std :: io` is `std::io`).
 fn path_text<D: Doc>(node: &Node<'_, D>) -> String {
     node.text().chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Whether the macro invocation `node` stands where an item may (in a module, or as a block's
+/// statement) and may expand to one: any macro but the standard library's that expand to an
+/// expression (`println!`, `vec!`); `thread_local!` defines its statics.
+fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    let item_position = match parent.kind().as_ref() {
+        "source_file" | "declaration_list" | "block" => true,
+        "expression_statement" => parent.parent().is_some_and(|block| block.kind() == "block"),
+        _ => false,
+    };
+    item_position && std_macro(node).is_none_or(|name| name == "thread_local")
 }
 
 /// A Rust file's table, as `ScopeTable::build` builds it.

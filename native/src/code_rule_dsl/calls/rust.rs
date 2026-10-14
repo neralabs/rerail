@@ -635,20 +635,28 @@ const STD_MACROS: &[&str] = &[
     "vec",
 ];
 
-/// Whether the expansion of the macro invocation `invocation` may call a function of the crate:
-/// any macro but `STD_MACROS` may (its expansion is not read), and one of those may where its
-/// tokens hold a call (`call_in_tokens`).
-fn macro_may_call<D: Doc>(invocation: &Node<'_, D>) -> bool {
-    let Some(path) = invocation.field("macro") else {
-        return true;
-    };
-    let path: String = path.text().chars().filter(|c| !c.is_whitespace()).collect();
+/// The name of the `STD_MACROS` macro the invocation `invocation` calls, by its bare name or a
+/// path of the standard library (`std::println!`); `None` for any other macro.
+pub(crate) fn std_macro<D: Doc>(invocation: &Node<'_, D>) -> Option<&'static str> {
+    let path: String = invocation
+        .field("macro")?
+        .text()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let path = path.strip_prefix("::").unwrap_or(&path);
     let name = LIBRARY_ROOTS
         .iter()
         .find_map(|root| path.strip_prefix(root)?.strip_prefix("::"))
         .unwrap_or(path);
-    if !STD_MACROS.contains(&name) {
+    STD_MACROS.iter().find(|known| **known == name).copied()
+}
+
+/// Whether the expansion of the macro invocation `invocation` may call a function of the crate:
+/// any macro but `STD_MACROS` may (its expansion is not read), and one of those may where its
+/// tokens hold a call (`call_in_tokens`).
+fn macro_may_call<D: Doc>(invocation: &Node<'_, D>) -> bool {
+    if std_macro(invocation).is_none() {
         return true;
     }
     invocation
