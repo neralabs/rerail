@@ -1684,6 +1684,69 @@ fn broken_files_report_sound_witnesses_and_are_marked_partial() {
     );
 }
 
+/// E2E F1 on #47: a Vue template's syntax error lies outside the program the scripts and
+/// template expressions make, so a clause whose witnesses lie in a clean program runs, even one
+/// not sound under errors, and is partial; a clause reading the template is incomplete, and so
+/// is every clause where the program has an error of its own.
+#[test]
+fn a_vue_template_error_leaves_program_clauses_complete() {
+    let vue = |id: &str, rule: Value| {
+        json!({
+            "id": id,
+            "forbid": { "ast": { "language": "vue", "rule": rule } },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+        })
+    };
+    // Each is unsound under errors: a negated relation leaves the witness.
+    let clauses = || {
+        vec![
+            vue(
+                "script",
+                json!({ "kind": "binary_expression", "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } }),
+            ),
+            vue(
+                "template",
+                json!({ "kind": "element", "not": { "follows": { "kind": "element" } } }),
+            ),
+        ]
+    };
+    let template_error = "<script setup>\nimport { ref } from 'vue'\nconst a = ref(1)\nconst b = a + 1\n</script>\n\n<template>\n  <div v-for=\"x in xs\">{{ x </div>\n  <p v-html=\"b\"></p>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "BrokenTpl.vue", "source": template_error }]);
+    for evaluation in [
+        apply_clauses(clauses(), files.clone()),
+        stateless(clauses(), files),
+    ] {
+        let violations = evaluation["violations"].as_array().expect("findings");
+        assert_eq!(violations.len(), 1, "{evaluation}");
+        assert_eq!(violations[0]["clauseId"], "script", "{evaluation}");
+        assert_eq!(violations[0]["span"]["startLine"], 3, "{evaluation}");
+        assert_eq!(
+            failure_codes(&evaluation),
+            [
+                ("script".to_owned(), "source-partial".to_owned()),
+                ("template".to_owned(), "source-incomplete".to_owned()),
+            ],
+            "{evaluation}"
+        );
+    }
+    let script_error = template_error.replace("a + 1\n", "a + 1\nfunction (\n");
+    let files = json!([{ "language": "vue", "path": "Broken.vue", "source": script_error }]);
+    for evaluation in [
+        apply_clauses(clauses(), files.clone()),
+        stateless(clauses(), files),
+    ] {
+        assert_eq!(evaluation["violations"], json!([]), "{evaluation}");
+        assert_eq!(
+            failure_codes(&evaluation),
+            [
+                ("script".to_owned(), "source-incomplete".to_owned()),
+                ("template".to_owned(), "source-incomplete".to_owned()),
+            ],
+            "{evaluation}"
+        );
+    }
+}
+
 #[test]
 fn anchor_selection_keeps_witnesses_beside_error_subtrees() {
     // A pattern with an exact terminal is anchored; its postings come from the whole tree,

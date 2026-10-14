@@ -48,8 +48,21 @@ pub(crate) struct EslintDirectives {
 impl EslintDirectives {
     /// Reads every comment of the file `node` belongs to.
     pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+        Self::from_comments(
+            root(node).dfs().filter(|node| node.kind() == "comment"),
+            source,
+            lines,
+        )
+    }
+
+    /// Reads `comments`: the comment nodes ESLint's source code holds.
+    pub(crate) fn from_comments<'r, D: Doc + 'r>(
+        comments: impl Iterator<Item = Node<'r, D>>,
+        source: &str,
+        lines: &LineTable,
+    ) -> Self {
         let mut directives = Self::default();
-        for comment in root(node).dfs().filter(|node| node.kind() == "comment") {
+        for comment in comments {
             let range = comment.range();
             let text = &source[range.clone()];
             let Some(directive) = Directive::parse(text).filter(Directive::disables) else {
