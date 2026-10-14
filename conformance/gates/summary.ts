@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { renderComment } from "./comment.js";
 import type { CommandRunner } from "./process.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, type GatesReport } from "./run.js";
@@ -181,7 +182,11 @@ export function renderSummary(summary: Summary): string {
   return text;
 }
 
-/** `gates summary <dir> [--base <sha>]`: write summary.{md,json}, append to the step summary, return whether it passed. */
+/**
+ * `gates summary <dir> [--base <sha>]`: write summary.{md,json} and the pull request comment (comment.md), append the
+ * summary to the step summary, return whether it passed. The comment names the commit in RULE_GATES_COMMIT and links
+ * the run in RULE_GATES_RUN_URL when CI sets them.
+ */
 export async function writeSummary(root: string, directory: string, base: string | undefined, runner: CommandRunner): Promise<Summary> {
   if (!existsSync(directory)) throw new Error(`${directory} does not exist`);
   const ungated = await ungatedChecks(root, { ...(base === undefined ? {} : { base }), runner });
@@ -189,6 +194,8 @@ export async function writeSummary(root: string, directory: string, base: string
   const markdown = renderSummary(summary);
   await writeFile(join(directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   await writeFile(join(directory, "summary.md"), markdown);
+  const context = { commit: process.env.RULE_GATES_COMMIT ?? "", runUrl: process.env.RULE_GATES_RUN_URL ?? "" };
+  await writeFile(join(directory, "comment.md"), renderComment(summary, context));
   const step = process.env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);
   return summary;

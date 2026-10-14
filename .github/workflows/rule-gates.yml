@@ -121,6 +121,11 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Writing pull request comments: the results comment below. The callers grant the same.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -152,12 +157,45 @@ jobs:
         name: Summarize, and check the packs without an upstream adapter
         env:
           BASE: ${{ inputs.base }}
+          RULE_GATES_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          RULE_GATES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
           # A push that creates a branch has no previous head.
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
           npm run gates -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      # One results comment per run: the earlier ones are minimized as outdated (collapsed, still there to compare), and
+      # the new one goes last. Fork pull requests get a read-only token, so they read the job summary instead.
+      - name: Post the results on the pull request
+        if: >-
+          ${{
+            always() &&
+            github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name == github.repository
+          }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker='<!-- rerail-rule-gates -->'
+          body="$RUNNER_TEMP/gates/comment.md"
+          if [ ! -s "$body" ]; then
+            printf '%s\n## Rule gates: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+          fi
+          gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\") | select(.body | startswith(\"$marker\")) | .node_id" |
+            while read -r id; do
+              gh api graphql -f id="$id" \
+                -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
+                > /dev/null || echo "::warning::could not collapse the earlier rule gates comment $id"
+            done
+          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
 
       - name: Upload the summary
         if: always()
@@ -167,6 +205,7 @@ jobs:
           path: |
             ${{ runner.temp }}/gates/summary.md
             ${{ runner.temp }}/gates/summary.json
+            ${{ runner.temp }}/gates/comment.md
           if-no-files-found: warn
           retention-days: 14
 
