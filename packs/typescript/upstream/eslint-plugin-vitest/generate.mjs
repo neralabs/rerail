@@ -21,7 +21,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertKnownReportRules, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -731,10 +731,7 @@ function extractFixtures() {
   const authored = [];
   for (const { rule, name, code, reports = {} } of AUTHORED) {
     if (!RULES.includes(`${PREFIX}${rule}`)) throw new Error(`AUTHORED ${name}: ${rule} is not a pack rule`);
-    // A misspelled rule would be read as 0 findings by authoredMismatches and pass silently.
-    for (const key of Object.keys(reports)) {
-      if (!RULES.includes(`${PREFIX}${key}`)) throw new Error(`AUTHORED ${name}: reports names ${key}, which is not a pack rule`);
-    }
+    assertKnownReportRules(name, reports, RULES.map(entry => entry.slice(PREFIX.length)));
     const file = `${rule}/rerail-${name}.test.ts`;
     mkdirSync(join(fixtures, rule), { recursive: true });
     writeFileSync(join(fixtures, file), code);
