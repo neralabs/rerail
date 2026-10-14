@@ -1067,7 +1067,9 @@ mod tests {
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let vendored = ["python", "typescript", "tsx", "vue"];
-        let planned = quoted(&planned_ids(&root.join("../languages")));
+        let planned_ids = planned_ids(&root.join("../languages"));
+        let planned = quoted(&planned_ids);
+        let tested_planned = quoted(&[planned_ids, vec!["exemplar".to_owned()]].concat());
         let out = Registry::new("repository", &[]);
         generate(
             &root.join("../languages"),
@@ -1094,7 +1096,7 @@ mod tests {
             "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
         )));
         assert!(tested.contains(&format!(
-            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}, \"exemplar\"];"
+            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{tested_planned}];"
         )));
         assert!(tested.contains(
             "#[cfg(test)]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[\"exemplar\"];"
