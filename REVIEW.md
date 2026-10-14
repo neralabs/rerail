@@ -26,8 +26,6 @@ In addition to the team-wide blockers:
 
 ## High-risk areas
 
-- `native/src/`: the engine. Parsing, scope and value resolution, and the content store. Check behaviour against the base, not just the new tests.
-- `native/grammars/`: vendored tree-sitter grammars, patched by hand.
 - `src/hosts/` and `hooks/`: run inside each coding agent's session. Check failure handling: a host must not break the agent's session when rerail fails.
 - `src/engine/storage/` and `src/runtime/`: the Rerail database and its repair. Check that existing databases still open and nothing is lost.
 - `src/setup/`: installs rerail into users' agents.
@@ -41,8 +39,6 @@ Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is
 ```json reviewer
 {
   "highRiskPaths": [
-    "native/src/",
-    "native/grammars/",
     "src/hosts/",
     "hooks/",
     "src/engine/storage/",
