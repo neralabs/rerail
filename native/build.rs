@@ -74,6 +74,21 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-python/src/tree_sitter/parser.h",
         ],
     },
+    // tree-sitter-sql (DerekStride) 0.3.11, commit 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8, with
+    // the patches in grammars/tree-sitter-sql/PATCHES.md.
+    VendoredGrammar {
+        name: "sql",
+        source: "grammars/tree-sitter-sql/src",
+        headers: "grammars/tree-sitter-sql/src",
+        version: (0, 3, 11),
+        inputs: &[
+            "grammars/tree-sitter-sql/src/grammar.json",
+            "grammars/tree-sitter-sql/src/scanner.c",
+            "grammars/tree-sitter-sql/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-sql/src/tree_sitter/array.h",
+            "grammars/tree-sitter-sql/src/tree_sitter/parser.h",
+        ],
+    },
     // tree-sitter-typescript 0.23.2 with the patch in grammars/tree-sitter-typescript/PATCHES.md.
     VendoredGrammar {
         name: "typescript",
