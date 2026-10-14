@@ -52,6 +52,8 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 pub struct CodeRuleDslWorkspace {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) scopes: Mutex<Vec<CodeRuleScope>>,
+    /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
+    pub(super) server_graph: AtomicBool,
     pub(super) closed: Arc<AtomicBool>,
 }
 
@@ -72,6 +74,7 @@ impl CodeRuleDslWorkspace {
         Self {
             state: Arc::new(Mutex::new(state)),
             scopes: Mutex::new(Vec::new()),
+            server_graph: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -201,6 +204,9 @@ impl CodeRuleDslWorkspace {
             .lock()
             .map_err(|_| invalid("policy workspace is unavailable"))?
             .push(resident.scope.clone());
+        if resident.reads_server_graph() {
+            self.server_graph.store(true, Ordering::Release);
+        }
         #[cfg(feature = "code-rule-profile")]
         for clause in &resident.clauses {
             if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {
@@ -240,6 +246,13 @@ impl CodeRuleDslWorkspace {
                 .scopes
                 .lock()
                 .is_ok_and(|scopes| scopes.iter().any(|scope| scope.matches(&path)))
+    }
+
+    /// Whether a code rule reads `file.package.serverGraph`: a host then sends each file of a
+    /// package naming `next` its membership (`serverGraph`).
+    #[napi]
+    pub fn reads_server_graph(&self) -> bool {
+        self.server_graph.load(Ordering::Acquire)
     }
 
     #[napi]
@@ -1252,7 +1265,7 @@ impl Task for WorkspaceCompletionTask {
         // One deadline for the publication under the lock and the completion write after it,
         // so an apply waiting on the lock waits at most one.
         let _deadline = OperationDeadline::enter();
-        let (storage, catalog, revision) = {
+        let (storage, catalog, revision, server_graph) = {
             let mut state = self.lock_state()?;
             let Some(storage) = state.storage.clone() else {
                 return Ok(());
@@ -1267,11 +1280,20 @@ impl Task for WorkspaceCompletionTask {
             if state.store_cooling_down() {
                 return Err(invalid(StoreError::Busy.to_string()));
             }
-            (storage, catalog, i64::from(state.revision))
+            let server_graph = state
+                .code_rules
+                .iter()
+                .any(|code_rule| code_rule.reads_server_graph());
+            (storage, catalog, i64::from(state.revision), server_graph)
         };
         let completed_at = unix_seconds()?;
         let written = if let Some(repository) = &storage.repository {
-            let directories = reusable_directories(repository, &storage.repository_prefix);
+            let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
+                repository.worktree_root.join(&storage.repository_prefix),
+            )
+            .reading_server_graphs(server_graph);
+            let directories =
+                reusable_directories(repository, &storage.repository_prefix, &mut manifests);
             storage.store.complete_directories(
                 WorkspaceCompletion {
                     workspace_id: storage.workspace_id,

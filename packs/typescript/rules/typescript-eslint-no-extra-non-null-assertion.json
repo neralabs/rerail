@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `no-extra-non-null-assertion` rule (https://typescript-eslint.io/rules/no-extra-non-null-assertion). Flags a non-null assertion that is itself asserted non-null again, or that is the object/callee of an optional chain (parentheses are transparent, as in ESTree).",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },

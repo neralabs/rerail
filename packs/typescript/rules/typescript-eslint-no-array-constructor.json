@@ -6,7 +6,10 @@
  "description": "Port of typescript-eslint's `no-array-constructor` rule (https://typescript-eslint.io/rules/no-array-constructor). Flags `Array(...)` / `new Array(...)` unless called with exactly one argument or type arguments (no scope check: typescript-eslint's version does not resolve `Array`), and fixes to an array literal. Comments inside the argument list are not carried by the `$$$A` capture, so those calls get no fix.",
  "scope": {
   "include": [
-   "**/*"
+   "**/*.ts",
+   "**/*.tsx",
+   "**/*.mts",
+   "**/*.cts"
   ],
   "exclude": []
  },

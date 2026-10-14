@@ -22,7 +22,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit, file_gates_admit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -529,6 +529,10 @@ fn evaluate_ast_file(
         profile::record_transient(doc.navigation_bytes());
     }
     let errors = SyntaxErrors::of_doc(&doc);
+    #[cfg(feature = "code-rule-profile")]
+    let _doc_owner = profile::DocOwner::start();
+    let restored = doc.clone();
+    let root = Root::doc(doc);
     if !errors.is_empty() {
         match errors.reading(&lines, file.input.source.len()) {
             // No AST clause runs on a file the parser did not read, sound or not; the failure
@@ -543,12 +547,11 @@ fn evaluate_ast_file(
             }
             SyntaxReading::Partial(message) => {
                 for &id in &file.candidates.ast {
+                    let grammar = candidate_grammar(&code_rules[id.0], id.1, &file.input);
+                    // A file the query's file gates exclude matches nothing, errors or not.
                     if !file.failures.contains_key(&id)
-                        && errors.incomplete(candidate_grammar(
-                            &code_rules[id.0],
-                            id.1,
-                            &file.input,
-                        ))
+                        && errors.incomplete(grammar)
+                        && file_gates_admit(grammar, &file.input, &root.root())
                     {
                         file.failures
                             .insert(id, ("source-incomplete", "file has syntax errors"));
@@ -558,10 +561,6 @@ fn evaluate_ast_file(
             }
         }
     }
-    #[cfg(feature = "code-rule-profile")]
-    let _doc_owner = profile::DocOwner::start();
-    let restored = doc.clone();
-    let root = Root::doc(doc);
     #[cfg(test)]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A file's node and utility visits grow with the file (`Limits::visits_for`).
@@ -662,7 +661,7 @@ fn evaluate_ast_file(
             file.input.module.clone(),
             errors.hide_bindings(),
         )
-        .path(&file.input.path);
+        .file(&file.input);
         let match_started = Instant::now();
         settled = evaluate_clauses(
             file,

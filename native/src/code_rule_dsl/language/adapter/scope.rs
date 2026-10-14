@@ -1,8 +1,8 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal, regions};
-use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
@@ -150,7 +150,8 @@ pub(crate) trait ScopeRules {
         directives: Option<&Directives>,
     ) -> bool;
     /// ESLint's settings declaring the family's globals: `options`, the query's, else ESLint's
-    /// defaults (the latest `ecmaVersion`, a module); `None` for a family they do not configure.
+    /// defaults (the latest `ecmaVersion`, each file's source type); `None` for a family they do
+    /// not configure.
     fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>>;
     /// Ruff's settings declaring the family's builtins: `python`, the query's, else Ruff's
     /// default version; `None` for a family they do not configure.
@@ -518,18 +519,17 @@ impl ScopeRules for Ecma {
         directives: Option<&Directives>,
     ) -> bool {
         mode == Unresolved::Unbound
-            && !options
-                .is_some_and(|options| options.declares_in(name, reference.spaces, directives))
+            && !options.is_some_and(|options| {
+                options.declares_in(name, reference.spaces, directives, file_source_type())
+            })
     }
 
     fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
-        Some(options.cloned().unwrap_or_else(|| {
-            Arc::new(LanguageOptions::new(
-                EsGlobals::get().latest,
-                SourceType::Module,
-                [],
-            ))
-        }))
+        Some(
+            options.cloned().unwrap_or_else(|| {
+                Arc::new(LanguageOptions::new(EsGlobals::get().latest, None, []))
+            }),
+        )
     }
 
     fn ruff_options(_: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
@@ -964,9 +964,9 @@ pub(super) mod kit {
     /// What one family's scope rules answer.
     pub(crate) struct Expect {
         pub(crate) flow: bool,
-        /// The ESLint `ecmaVersion` and source type, and the Ruff version (its minor), the
-        /// family's default settings declare its globals by.
-        pub(crate) declared: (Option<(u16, SourceType)>, Option<u8>),
+        /// The ESLint `ecmaVersion` and source type (`None`: each file's), and the Ruff version
+        /// (its minor), the family's default settings declare its globals by.
+        pub(crate) declared: (Option<(u16, Option<SourceType>)>, Option<u8>),
         /// Files, a name each reads last that no binding resolves, and whether that read is
         /// unresolved under the default settings.
         pub(crate) unresolved: &'static [(&'static str, &'static str, bool)],
@@ -1011,7 +1011,7 @@ pub(super) mod kit {
             ),
             expect.declared
         );
-        let options = Arc::new(LanguageOptions::new(5, SourceType::Script, []));
+        let options = Arc::new(LanguageOptions::new(5, Some(SourceType::Script), []));
         assert_eq!(
             <A::Scope as ScopeRules>::eslint_options(Some(&options))
                 .is_some_and(|kept| Arc::ptr_eq(&kept, &options)),

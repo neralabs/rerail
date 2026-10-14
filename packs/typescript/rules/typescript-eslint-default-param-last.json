@@ -4,7 +4,7 @@
   "revision": 3,
   "mode": "steer",
   "description": "Port of typescript-eslint's `default-param-last` rule (https://typescript-eslint.io/rules/default-param-last), identical to the ESLint base port. Reports a defaulted or optional parameter of a function with a body that is followed by a required, non-rest parameter.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {
       "id": "default-param-not-last",

@@ -31,6 +31,8 @@ pub(crate) mod adapter;
 
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::package_manifest::{DEFAULT_NODE_RANGE, Manifest};
+use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
     language::Language,
     matcher::{Pattern, PatternBuilder, PatternError, PatternNode},
@@ -38,6 +40,7 @@ use ast_grep_core::{
 };
 use ast_grep_language::{LanguageExt, SupportLang};
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 impl std::fmt::Display for GrammarDialect {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -701,13 +704,12 @@ fn shift_kinds(node: &mut PatternNode, embedded: &Embedded) {
     }
 }
 
-/// One grammar dialect: the file label hosts and the store use, and its persisted tape tag (never
-/// reused). Its suffixes are the host's routing; tests read them through `label_of_path`. The
-/// rows are the registry's supported dialects (`DIALECTS`, generated).
+/// One grammar dialect: the file label hosts and the store use, its file suffixes (the host's
+/// routing, `label_of_path`) and its persisted tape tag (never reused). The rows are the
+/// registry's supported dialects (`DIALECTS`, generated).
 struct Dialect {
     lang: GrammarDialect,
     label: &'static str,
-    #[cfg(test)]
     suffixes: &'static [&'static str],
     tape_tag: u8,
 }
@@ -784,7 +786,6 @@ pub(crate) fn label(lang: GrammarDialect) -> Option<&'static str> {
 
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
 /// longest matching suffix.
-#[cfg(test)]
 pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
     let path = path.to_ascii_lowercase();
     DIALECTS
@@ -898,7 +899,7 @@ pub(crate) enum Semantic {
 pub(crate) use crate::code_rule_dsl::suppress::Suppression;
 
 /// The ECMAScript source form that structural `when` gates and scope construction read.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum SourceType {
     /// Top-level declarations join the global scope, and top-level `this` is the global object.
     Script,
@@ -906,6 +907,349 @@ pub(crate) enum SourceType {
     Module,
     /// A function-like module scope with CommonJS globals.
     CommonJs,
+}
+
+impl SourceType {
+    /// The module system of the file at `path` in the dialect labelled `label`, whose nearest
+    /// `package.json` has `package` as its type (`None`: no manifest), for a query that leaves
+    /// `sourceType` to the file: its family's `Adapter::source_type`. `None` where Node reads the
+    /// syntax instead (`has_module_syntax`).
+    pub(crate) fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
+        adapter::source_type(label, path, package)
+    }
+}
+
+/// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PackageType {
+    /// `"type": "module"`.
+    Module,
+    /// `"type": "commonjs"`.
+    CommonJs,
+    /// No valid `type`: none, another value, or a manifest that cannot be read.
+    Unset,
+}
+
+impl PackageType {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "module" => Some(Self::Module),
+            "commonjs" => Some(Self::CommonJs),
+            "unset" => Some(Self::Unset),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::CommonJs => "commonjs",
+            Self::Unset => "unset",
+        }
+    }
+}
+
+/// The CommonJS module wrapper's parameters, which a module may not redeclare lexically.
+const COMMONJS_WRAPPER_NAMES: [&str; 5] =
+    ["require", "module", "exports", "__dirname", "__filename"];
+
+/// Node's module syntax detection (22.7 and later) for a file no `type` decides: a top-level
+/// static `import` or `export` declaration that type stripping keeps, `import.meta` anywhere, a
+/// top-level `await` (outside functions and class bodies, `for await` included), or a top-level
+/// `const`, `let` or `class` declaring one of the CommonJS wrapper's names, each of which only
+/// parses as a module.
+pub(crate) fn has_module_syntax<D: ast_grep_core::Doc>(root: &ast_grep_core::Node<'_, D>) -> bool {
+    root.children()
+        .any(|child| is_module_declaration(&child) || redeclares_commonjs_wrapper(&child))
+        || (root.text().contains("meta")
+            && root
+                .dfs()
+                .any(|node| node.kind() == "meta_property" && node.text().starts_with("import")))
+        || (root.text().contains("await") && has_top_level_await(root))
+}
+
+/// Whether a top-level statement is an `import` or `export` declaration that Node's type
+/// stripping leaves in place. It erases `import type`, `export type`, and exported interfaces,
+/// type aliases and `declare` declarations. `import x = require(…)` and `export =` are
+/// TypeScript's CommonJS forms, which Node refuses to strip.
+fn is_module_declaration<D: ast_grep_core::Doc>(statement: &ast_grep_core::Node<'_, D>) -> bool {
+    match statement.kind().as_ref() {
+        "import_statement" => !statement
+            .children()
+            .any(|child| matches!(child.kind().as_ref(), "type" | "import_require_clause")),
+        "export_statement" => {
+            !statement
+                .children()
+                .any(|child| matches!(child.kind().as_ref(), "type" | "="))
+                && !statement.field("declaration").is_some_and(|declaration| {
+                    matches!(
+                        declaration.kind().as_ref(),
+                        "interface_declaration" | "type_alias_declaration" | "ambient_declaration"
+                    )
+                })
+        }
+        _ => false,
+    }
+}
+
+/// Whether `node` holds an `await` that is not inside a function or a class body. A class
+/// member's computed name and decorators run where the class is defined, so they are read; its
+/// body, parameters and field initializer are not. Walks an explicit stack, so a deeply nested
+/// expression cannot exhaust the native stack.
+fn has_top_level_await<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> bool {
+    let mut pending = node.children().collect::<Vec<_>>();
+    while let Some(child) = pending.pop() {
+        match child.kind().as_ref() {
+            "await_expression" => return true,
+            "for_in_statement" if child.children().any(|token| token.kind() == "await") => {
+                return true;
+            }
+            "function_declaration"
+            | "generator_function_declaration"
+            | "function_expression"
+            | "function"
+            | "generator_function"
+            | "arrow_function" => {}
+            "method_definition" => pending.extend(evaluated_where_defined(&child)),
+            "class_body" => {
+                for member in child.children() {
+                    if matches!(
+                        member.kind().as_ref(),
+                        "method_definition" | "field_definition" | "public_field_definition"
+                    ) {
+                        pending.extend(evaluated_where_defined(&member));
+                    } else if member.kind() == "decorator" {
+                        pending.push(member);
+                    }
+                }
+            }
+            _ => pending.extend(child.children()),
+        }
+    }
+    false
+}
+
+/// The parts of a method or class field that run where it is defined: its name (a computed one's
+/// expression) and its decorators.
+fn evaluated_where_defined<'r, D: ast_grep_core::Doc>(
+    member: &ast_grep_core::Node<'r, D>,
+) -> Vec<ast_grep_core::Node<'r, D>> {
+    member
+        .field("name")
+        .or_else(|| member.field("property"))
+        .into_iter()
+        .chain(
+            member
+                .children()
+                .filter(|child| child.kind() == "decorator"),
+        )
+        .collect()
+}
+
+/// Whether a top-level statement is a `const`, `let` or `class` declaration binding a CommonJS
+/// wrapper name (destructured names included). A TypeScript `abstract class` is a class once
+/// types are stripped; a `declare` one is erased (`ambient_declaration`), so it binds nothing.
+fn redeclares_commonjs_wrapper<D: ast_grep_core::Doc>(
+    statement: &ast_grep_core::Node<'_, D>,
+) -> bool {
+    match statement.kind().as_ref() {
+        "lexical_declaration" => statement
+            .children()
+            .filter(|declarator| declarator.kind() == "variable_declarator")
+            .filter_map(|declarator| declarator.field("name"))
+            .any(|name| binds_commonjs_wrapper(&name)),
+        "class_declaration" | "abstract_class_declaration" => statement
+            .field("name")
+            .is_some_and(|name| COMMONJS_WRAPPER_NAMES.contains(&name.text().as_ref())),
+        _ => false,
+    }
+}
+
+/// Whether a binding pattern binds a CommonJS wrapper name: its identifiers in binding position,
+/// not a default value's or a renamed property's key. Walks an explicit stack.
+fn binds_commonjs_wrapper<D: ast_grep_core::Doc>(pattern: &ast_grep_core::Node<'_, D>) -> bool {
+    let mut pending = vec![pattern.clone()];
+    while let Some(pattern) = pending.pop() {
+        match pattern.kind().as_ref() {
+            "identifier" | "shorthand_property_identifier_pattern"
+                if COMMONJS_WRAPPER_NAMES.contains(&pattern.text().as_ref()) =>
+            {
+                return true;
+            }
+            "assignment_pattern" | "object_assignment_pattern" => {
+                pending.extend(pattern.field("left"));
+            }
+            "pair_pattern" => pending.extend(pattern.field("value")),
+            "object_pattern" | "array_pattern" | "rest_pattern" => {
+                pending.extend(pattern.children());
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The JSX runtime of an ECMA file (`file.jsxRuntime`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JsxRuntime {
+    React,
+    /// Another JSX library's.
+    Other,
+    Unknown,
+}
+
+impl JsxRuntime {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "react" => Some(Self::React),
+            "other" => Some(Self::Other),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+/// The JSX libraries whose `h` or `createElement` a file that imports one renders its JSX with.
+const JSX_FACTORY_SOURCES: [&str; 7] = [
+    "@stencil/core",
+    "preact",
+    "vue",
+    "solid-js",
+    "solid-js/h",
+    "hyperapp",
+    "mithril",
+];
+
+/// `@jsxImportSource` packages that are React's JSX runtime or wrap it (Emotion's and Theme UI's
+/// `css`/`sx` props); a subpath (`react/jsx-runtime`) counts as its package.
+const REACT_JSX_IMPORT_SOURCES: [&str; 4] =
+    ["react", "@emotion/react", "theme-ui", "@theme-ui/core"];
+/// `@jsxImportSource` packages of JSX libraries other than React; a subpath counts as its package.
+const OTHER_JSX_IMPORT_SOURCES: [&str; 9] = [
+    "preact",
+    "solid-js",
+    "vue",
+    "@stencil/core",
+    "hono",
+    "@builder.io/qwik",
+    "inferno",
+    "mithril",
+    "hyperapp",
+];
+
+static JSX_IMPORT_SOURCE_PRAGMA: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"@jsxImportSource\s+(\S+)").expect("the pragma pattern compiles")
+});
+static JSX_PRAGMA: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"@jsx\s+(\S+)").expect("the pragma pattern compiles"));
+
+/// Whether `source` is one of `packages` or a subpath of one.
+fn names_package(packages: &[&str], source: &str) -> bool {
+    packages.iter().any(|package| {
+        source
+            .strip_prefix(package)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
+
+/// The JSX runtime a JSX import source (a `@jsxImportSource` pragma, a `jsxImportSource`
+/// compiler option) names: React or a React wrapper, another JSX library, or neither (`None`).
+pub(crate) fn jsx_import_source_runtime(source: &str) -> Option<JsxRuntime> {
+    if names_package(&REACT_JSX_IMPORT_SOURCES, source) {
+        Some(JsxRuntime::React)
+    } else if names_package(&OTHER_JSX_IMPORT_SOURCES, source) {
+        Some(JsxRuntime::Other)
+    } else {
+        None
+    }
+}
+
+/// The JSX runtime an ECMA file's own text names: a `@jsxImportSource` pragma naming React or a
+/// React wrapper (React's) or another JSX library (`Other`), else a `@jsx` pragma naming `React` or
+/// `React.…` (React's), each from the first comment that has one, as eslint-plugin-react reads its
+/// pragma; else a top-level static import of `h` or `createElement` from another JSX library.
+/// A pragma naming anything else is no evidence either way (Emotion's `@jsx jsx` renders React), so
+/// `None` where the text names no runtime, and the file's manifest decides
+/// (`Manifest::jsx_runtime`).
+pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
+    root: &ast_grep_core::Node<'_, D>,
+) -> Option<JsxRuntime> {
+    if root.text().contains("@jsx") {
+        let comments = root
+            .dfs()
+            .filter(|node| node.kind() == "comment")
+            .map(|node| node.text().into_owned())
+            .collect::<Vec<_>>();
+        let pragma = |pattern: &regex::Regex| {
+            comments
+                .iter()
+                .find_map(|comment| Some(pattern.captures(comment)?.get(1)?.as_str().to_owned()))
+        };
+        if let Some(source) = pragma(&JSX_IMPORT_SOURCE_PRAGMA) {
+            if let Some(runtime) = jsx_import_source_runtime(&source) {
+                return Some(runtime);
+            }
+        } else if pragma(&JSX_PRAGMA)
+            .is_some_and(|factory| factory == "React" || factory.starts_with("React."))
+        {
+            return Some(JsxRuntime::React);
+        }
+    }
+    let unquoted = |text: &str| text.trim_matches(['"', '\'']).to_owned();
+    root.children()
+        .filter(|child| child.kind() == "import_statement")
+        .any(|statement| {
+            statement.field("source").is_some_and(|source| {
+                JSX_FACTORY_SOURCES.contains(&unquoted(&source.text()).as_str())
+            }) && statement.dfs().any(|node| {
+                node.kind() == "import_specifier"
+                    && node.field("name").is_some_and(|name| {
+                        matches!(unquoted(&name.text()).as_str(), "h" | "createElement")
+                    })
+            })
+        })
+        .then_some(JsxRuntime::Other)
+}
+
+/// An ECMA query's `file.package`: conditions on the file's nearest `package.json`. `bin`,
+/// `dependsOn` and `path` need one, so a file without one fails them, `bin: false` included;
+/// `nodeVersion` reads eslint-plugin-n's default range there.
+#[derive(Debug)]
+pub(crate) struct PackageCondition {
+    /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
+    pub(crate) bin: Option<bool>,
+    /// The range the file's configured Node range must be a subset of.
+    pub(crate) node_version: Option<Range>,
+    /// Names one of which the manifest must list as a dependency of any kind.
+    pub(crate) depends_on: Option<Vec<String>>,
+    /// Over the file's path relative to the manifest's folder.
+    pub(crate) path: Option<TextCondition>,
+    /// Whether the file is in its Next app's server module graph (`Manifest::in_server_graph`).
+    pub(crate) server_graph: Option<bool>,
+}
+
+impl PackageCondition {
+    fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
+        self.bin
+            .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
+            && self.node_version.as_ref().is_none_or(|range| {
+                manifest
+                    .map_or(&*DEFAULT_NODE_RANGE, Manifest::node_range)
+                    .is_subset_of(range)
+            })
+            && self
+                .depends_on
+                .as_ref()
+                .is_none_or(|names| manifest.is_some_and(|manifest| manifest.depends_on(names)))
+            && self.path.as_ref().is_none_or(|condition| {
+                manifest
+                    .and_then(|manifest| manifest.relative_path(path))
+                    .is_some_and(|relative| condition.holds(relative))
+            })
+            && self.server_graph.is_none_or(|member| {
+                manifest.and_then(|manifest| manifest.in_server_graph(path)) == Some(member)
+            })
+    }
 }
 
 /// An ast query's `file` condition: every key set must hold, or the query does not apply to the
@@ -924,6 +1268,11 @@ pub(crate) struct FileCondition {
     pub(crate) package: Option<TextCondition>,
     /// Python: whether the host supplied a module path.
     pub(crate) in_package: Option<bool>,
+    /// TypeScript: the file's nearest `package.json` (`file.package`).
+    pub(crate) manifest: Option<PackageCondition>,
+    /// TypeScript: the JSX runtimes the file's may be one of. Its text can decide it, so it is
+    /// checked once the file is read (`run_clause`), not by `holds`.
+    pub(crate) jsx_runtime: Option<Vec<JsxRuntime>>,
 }
 
 /// A text condition: `regex` (unanchored, as ast-grep's) must match, `notRegex` must not.
@@ -944,9 +1293,15 @@ impl TextCondition {
 }
 
 impl FileCondition {
-    /// Whether a file at `path` with this module path satisfies the condition. A module path's
-    /// text condition needs a module path (`package` one in a package), `notRegex` too.
-    pub(crate) fn holds(&self, path: &str, module: Option<&ModulePath>) -> bool {
+    /// Whether a file at `path` with this module path and nearest `package.json` satisfies the
+    /// condition, `jsx_runtime` aside. A module path's text condition needs a module path
+    /// (`package` one in a package), `notRegex` too.
+    pub(crate) fn holds(
+        &self,
+        path: &str,
+        module: Option<&ModulePath>,
+        manifest: Option<&Manifest>,
+    ) -> bool {
         self.path
             .as_ref()
             .is_none_or(|condition| condition.holds(path))
@@ -966,6 +1321,10 @@ impl FileCondition {
             && self
                 .in_package
                 .is_none_or(|in_package| module.is_some_and(ModulePath::in_package) == in_package)
+            && self
+                .manifest
+                .as_ref()
+                .is_none_or(|condition| condition.holds(path, manifest))
     }
 }
 

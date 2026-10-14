@@ -761,6 +761,143 @@ fn language_options_limit_global_to_the_declared_globals() {
     assert_eq!(found(&result, source), ["3:String"], "{result}");
 }
 
+/// `compiled` over one file at `path`, of the dialect its suffix selects, with the host's
+/// `package` (a root manifest of that `type`) where given.
+fn evaluate_in_package(
+    compiled: &CompiledCodeRuleDsl,
+    path: &str,
+    package_type: Option<&str>,
+    source: &str,
+) -> Value {
+    let language = crate::code_rule_dsl::language::label_of_path(path).expect("a dialect file");
+    let mut file = json!({ "language": language, "path": path, "source": source });
+    if let Some(package_type) = package_type {
+        file["package"] = json!({ "folder": "", "type": package_type });
+    }
+    let snapshot = json!({
+        "facts": [], "files": [file], "format": "rerail.repository-snapshot/v1", "revision": 0,
+    });
+    let output = compiled
+        .evaluate(snapshot.to_string(), "report".to_owned())
+        .expect("evaluation succeeds");
+    serde_json::from_str(&output).expect("evaluation is JSON")
+}
+
+#[test]
+fn without_a_source_type_each_file_has_its_own_module_system() {
+    let run = |rule: &CompiledCodeRuleDsl, path: &str, package: Option<&str>, source: &str| {
+        found(&evaluate_in_package(rule, path, package, source), source)
+    };
+    let source = "require; module;\n";
+    let both = ["1:require", "1:module"];
+    let neither: [&str; 0] = [];
+    let unpinned = with_options(&["require", "module"], json!({}));
+    // ESLint's default config: `.cjs` is CommonJS, the rest modules, a `.js` without a manifest
+    // included; TypeScript's `.cts` and `.mts` follow theirs.
+    for path in ["a.cjs", "a.cts"] {
+        assert_eq!(run(&unpinned, path, None, source), both, "{path}");
+    }
+    for path in ["a.mjs", "a.mts", "a.ts", "a.tsx", "a.js", "a.jsx"] {
+        assert_eq!(run(&unpinned, path, None, source), neither, "{path}");
+    }
+    // A `.js` or `.ts` file follows its package's `type`, as Node runs it; the suffixes that name
+    // a module system, `.tsx` (which Node does not run) and declaration files do not.
+    assert_eq!(run(&unpinned, "a.js", Some("module"), source), neither);
+    assert_eq!(run(&unpinned, "a.jsx", Some("commonjs"), source), both);
+    assert_eq!(run(&unpinned, "a.mjs", Some("commonjs"), source), neither);
+    assert_eq!(run(&unpinned, "a.cjs", Some("module"), source), both);
+    assert_eq!(run(&unpinned, "a.ts", Some("commonjs"), source), both);
+    assert_eq!(run(&unpinned, "a.ts", Some("module"), source), neither);
+    for path in ["a.tsx", "a.mts", "a.d.ts", "a.d.css.ts", "a.d.mts"] {
+        assert_eq!(
+            run(&unpinned, path, Some("commonjs"), source),
+            neither,
+            "{path}"
+        );
+    }
+    // A `.d.cts` declares a CommonJS module, as TypeScript reads it, whatever the package's type.
+    assert_eq!(run(&unpinned, "a.d.cts", Some("module"), source), both);
+    // Node strips types before it detects: what type stripping erases is no module syntax, and
+    // TypeScript's CommonJS forms are none either.
+    for (ts, line) in [
+        ("import x from 'x';\n", false),
+        ("import { type A } from 'x';\n", false),
+        ("export const a: number = 1;\n", false),
+        ("import type { A } from 'x';\n", true),
+        ("export type { A };\n", true),
+        ("export type A = number;\n", true),
+        ("export interface A {}\n", true),
+        ("export declare const a: number;\n", true),
+        ("import x = require('x');\n", true),
+        // An abstract class is a class once stripped, so redeclaring a wrapper name makes a
+        // module; a `declare` one is erased with its name.
+        ("abstract class require {}\n", false),
+        ("abstract class Other {}\n", true),
+        ("declare class __dirname {}\n", true),
+        ("declare const __filename: string;\n", true),
+    ] {
+        let source = format!("{ts}require; module;\n");
+        let expected: &[&str] = if line {
+            &["2:require", "2:module"]
+        } else {
+            &[]
+        };
+        assert_eq!(
+            run(&unpinned, "a.ts", Some("unset"), &source),
+            expected,
+            "{ts}"
+        );
+    }
+    // Without a valid `type`, Node's detection: a static `import` or `export` declaration at the
+    // top level, or `import.meta`, makes a module; a dynamic `import()` does not.
+    assert_eq!(run(&unpinned, "a.js", Some("unset"), source), both);
+    for (esm, line) in [
+        ("import x from 'x';\n", false),
+        ("export const a = 1;\n", false),
+        ("function f() { return import.meta.url; }\n", false),
+        ("import('x');\n", true),
+        ("const exported = 'export default 1';\n", true),
+        // Node also detects a top-level `await` and a lexical redeclaration of a CommonJS wrapper
+        // name; an `await` inside a function is a CommonJS file's.
+        ("await Promise.resolve();\n", false),
+        (
+            "let { __dirname: dir } = x;\nlet __filename = dir;\n",
+            false,
+        ),
+        ("async function f() { await x; }\n", true),
+    ] {
+        let source = format!("{esm}require; module;\n");
+        let expected: &[&str] = if line {
+            &["2:require", "2:module"]
+        } else {
+            &[]
+        };
+        assert_eq!(
+            run(&unpinned, "a.js", Some("unset"), &source),
+            expected,
+            "{esm}"
+        );
+    }
+    // A `sourceType` the query pins wins over the file's.
+    let pinned_module = with_options(&["require", "module"], json!({ "sourceType": "module" }));
+    assert_eq!(run(&pinned_module, "a.cjs", None, source), neither);
+    let pinned_commonjs = with_options(&["require", "module"], json!({ "sourceType": "commonjs" }));
+    assert_eq!(run(&pinned_commonjs, "a.mjs", Some("module"), source), both);
+    // Without `languageOptions`, `unresolved` reads the defaults, the file's own module system
+    // included; `this` reads a CommonJS file's top level as no-eval does.
+    let unresolved =
+        typescript(json!({ "rule": { "kind": "identifier", "resolves": { "unresolved": true } } }));
+    assert_eq!(run(&unresolved, "a.cjs", None, source), neither);
+    assert_eq!(run(&unresolved, "a.mjs", None, source), both);
+    let this = typescript(json!({
+        "languageOptions": {},
+        "rule": { "kind": "this", "resolves": { "this": "global" } },
+    }));
+    assert_eq!(run(&this, "a.cjs", None, "this;\n"), ["1:this"]);
+    assert_eq!(run(&this, "a.js", Some("unset"), "this;\n"), ["1:this"]);
+    assert_eq!(run(&this, "a.mjs", None, "this;\n"), neither);
+}
+
 #[test]
 fn lib_adds_typescript_eslint_lib_globals_in_their_namespaces() {
     // typescript-eslint 8.70.1's `dom` lib: `NodeListOf` is a type, `NodeList` a type and a value;
@@ -1615,7 +1752,7 @@ fn a_file_condition_reads_the_files_path_in_every_language() {
         (
             "typescript",
             json!({}),
-            "/clauses/0/forbid/ast/file must set `path` or `declaration`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `package` or `jsxRuntime`",
         ),
         (
             "typescript",
@@ -2624,6 +2761,137 @@ fn a_source_gate_makes_a_query_apply_only_to_its_source_types_and_features() {
 }
 
 #[test]
+fn a_source_gate_without_a_source_type_reads_each_files_own() {
+    let source = "a;\n";
+    let applies = |options: Option<Value>, path: &str, package: Option<&str>, source: &str| {
+        let mut ast =
+            json!({ "when": { "sourceType": "commonjs" }, "rule": { "kind": "identifier" } });
+        if let Some(options) = options {
+            ast["languageOptions"] = options;
+        }
+        !found(
+            &evaluate_in_package(&typescript(ast), path, package, source),
+            source,
+        )
+        .is_empty()
+    };
+    for options in [
+        None,
+        Some(json!({})),
+        Some(json!({ "globals": { "a": "readonly" } })),
+    ] {
+        for (path, package, expected) in [
+            ("a.cjs", None, true),
+            ("a.cts", None, true),
+            ("a.js", Some("commonjs"), true),
+            ("a.js", Some("unset"), true),
+            ("a.mjs", None, false),
+            ("a.ts", None, false),
+            ("a.ts", Some("commonjs"), true),
+            ("a.ts", Some("unset"), true),
+            ("a.tsx", Some("commonjs"), false),
+            ("a.d.ts", Some("commonjs"), false),
+            ("a.js", None, false),
+            ("a.js", Some("module"), false),
+        ] {
+            assert_eq!(
+                applies(options.clone(), path, package, source),
+                expected,
+                "{options:?} {path} {package:?}"
+            );
+        }
+        // The syntax decides an unset package's `.js` file once it is read: a declaration, a
+        // top-level `await` (not one inside a function) or a lexical redeclaration of a CommonJS
+        // wrapper name (not a `var` one) makes a module.
+        for (syntax, commonjs) in [
+            ("export {};\n", false),
+            ("await Promise.resolve();\n", false),
+            ("if (a) { for await (const b of c) {} }\n", false),
+            ("const require = createRequire(import.meta.url);\n", false),
+            ("let { module } = b;\n", false),
+            ("class exports {}\n", false),
+            ("async function f() { await b; }\n", true),
+            ("const f = async () => { await b; };\n", true),
+            ("var require = b;\n", true),
+            ("const other = 1;\n", true),
+            ("const { b = require } = c;\n", true),
+            // A class member's computed name runs where the class is defined; its body and a
+            // field initializer do not.
+            ("class C { [await b]() {} }\n", false),
+            ("class C { static [await b] = 1; }\n", false),
+            ("({ [await b]() {} });\n", false),
+            ("class C { async m() { await b; } }\n", true),
+            ("class C { x = async () => { await b; }; }\n", true),
+        ] {
+            let source = format!("{syntax}a;\n");
+            assert_eq!(
+                applies(options.clone(), "a.js", Some("unset"), &source),
+                commonjs,
+                "{options:?} {syntax}"
+            );
+        }
+        // In a `.ts` file, after type stripping: an abstract class is a class, while `declare`
+        // declarations and type-only imports are erased.
+        for (syntax, commonjs) in [
+            ("abstract class exports {}\n", false),
+            ("export abstract class B {}\n", false),
+            ("declare class exports {}\n", true),
+            ("declare const require: unknown;\n", true),
+            ("import type { B } from 'b';\n", true),
+        ] {
+            let source = format!("{syntax}a;\n");
+            assert_eq!(
+                applies(options.clone(), "a.ts", Some("unset"), &source),
+                commonjs,
+                "{options:?} {syntax}"
+            );
+        }
+    }
+    // A pinned `sourceType` decides for every file.
+    let pinned = Some(json!({ "sourceType": "commonjs" }));
+    assert!(applies(pinned.clone(), "a.mjs", None, source));
+    assert!(applies(pinned, "a.js", Some("module"), source));
+    assert!(!applies(
+        Some(json!({ "sourceType": "module" })),
+        "a.cjs",
+        None,
+        source
+    ));
+}
+
+/// Node's syntax detection reads an untyped package's file however deeply its top level nests:
+/// a binary chain far deeper than the native stack allows recursion over, with `await` and a
+/// destructured wrapper name only in its text, still decides the module system.
+#[test]
+fn syntax_detection_reads_a_deeply_nested_top_level() {
+    let rule =
+        typescript(json!({ "when": { "sourceType": "commonjs" }, "rule": { "kind": "program" } }));
+    let deep = format!("// await\nx = {}a;\n", "a + ".repeat(200_000));
+    assert_eq!(
+        found(
+            &evaluate_in_package(&rule, "a.js", Some("unset"), &deep),
+            &deep
+        )
+        .len(),
+        1,
+        "no top-level await: CommonJS"
+    );
+    let nested = format!(
+        "const {}require{} = x;\n",
+        "{ a: [".repeat(50_000),
+        "] }".repeat(50_000)
+    );
+    assert!(
+        found(
+            &evaluate_in_package(&rule, "a.js", Some("unset"), &nested),
+            &nested
+        )
+        .is_empty(),
+        "a destructured wrapper name: a module"
+    );
+}
+
+#[test]
 fn a_gate_that_does_not_hold_keeps_the_querys_captures() {
     // Captures, `constraints`, `compare`, capture anchors and message and fix templates are
     // checked against the whole query whether its gate holds or not; it just matches no file.
@@ -3218,5 +3486,740 @@ fn any_mode_resolves_are_source_incomplete_under_syntax_errors() {
             result["failures"][0]["code"], "source-incomplete",
             "{result}"
         );
+    }
+}
+
+/// A syntax error leaves a stateless evaluation incomplete only in a file the query's file gates
+/// admit: as `run_clause` reads it, a file they exclude matches nothing, errors or not.
+#[test]
+fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
+    // A negated outward relation: unsound under syntax errors, so an admitted errored file fails.
+    let gated = |file: Option<Value>| {
+        let mut ast = json!({ "when": { "sourceType": "commonjs" },
+            "rule": { "kind": "identifier",
+                "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } });
+        if let Some(file) = file {
+            ast["file"] = file;
+        }
+        typescript(ast)
+    };
+    let incomplete = |rule: &CompiledCodeRuleDsl, files: &[(&str, &str)]| {
+        let files = files
+            .iter()
+            .map(|(path, source)| {
+                let language =
+                    crate::code_rule_dsl::language::label_of_path(path).unwrap_or("json");
+                json!({ "language": language, "path": path, "source": source })
+            })
+            .collect::<Vec<_>>();
+        let snapshot = json!({
+            "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        let result: Value = serde_json::from_str(
+            &rule
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        result["failures"]
+            .as_array()
+            .expect("failures")
+            .iter()
+            .filter(|failure| failure["code"] == "source-incomplete")
+            .map(|failure| failure["path"].as_str().expect("a path").to_owned())
+            .collect::<Vec<_>>()
+    };
+    // Node's syntax detection makes esm.js a module, which the commonjs-gated query skips.
+    let typeless = [
+        ("package.json", r#"{ "name": "a" }"#),
+        ("esm.js", "import x from 'x';\nfunction f() { x(; }\n"),
+        ("cjs.js", "require('x');\nfunction f() { x(; }\n"),
+    ];
+    assert_eq!(incomplete(&gated(None), &typeless), ["cjs.js"]);
+    assert_eq!(
+        incomplete(&gated(None), &typeless[..2]),
+        Vec::<String>::new()
+    );
+    // A file whose JSX runtime the query does not list is skipped too.
+    let react = gated(Some(json!({ "jsxRuntime": ["react"] })));
+    assert_eq!(
+        incomplete(
+            &react,
+            &[("a.cjs", "/** @jsxImportSource preact */\nx(;\n")]
+        ),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        incomplete(&react, &[("a.cjs", "/** @jsxImportSource react */\nx(;\n")]),
+        ["a.cjs"]
+    );
+}
+
+/// The paths among `files` (path and source; a `package.json` is a JSON entry) that a TypeScript
+/// query over each file's `program` with this `file` condition matches, in a stateless snapshot.
+/// A `package` given with a file is the host's.
+fn matched_paths(file: Value, files: &[(&str, &str, Option<Value>)]) -> Vec<String> {
+    let rule = typescript(json!({ "file": file, "rule": { "kind": "program" } }));
+    let files = files
+        .iter()
+        .map(|(path, source, package)| {
+            let language = crate::code_rule_dsl::language::label_of_path(path).unwrap_or("json");
+            let mut file = json!({ "language": language, "path": path, "source": source });
+            if let Some(package) = package {
+                file["package"] = package.clone();
+            }
+            file
+        })
+        .collect::<Vec<_>>();
+    let snapshot = json!({
+        "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
+    });
+    let result: Value = serde_json::from_str(
+        &rule
+            .evaluate(snapshot.to_string(), "report".to_owned())
+            .expect("evaluation succeeds"),
+    )
+    .expect("evaluation is JSON");
+    assert_eq!(result["failures"], json!([]), "{result}");
+    let mut paths = result["violations"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .map(|violation| violation["path"].as_str().expect("a path").to_owned())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+/// `matched_paths` over files that carry no host `package`.
+fn matched(file: Value, files: &[(&str, &str)]) -> Vec<String> {
+    let files = files
+        .iter()
+        .map(|(path, source)| (*path, *source, None))
+        .collect::<Vec<_>>();
+    matched_paths(file, &files)
+}
+
+#[test]
+fn file_package_bin_reads_the_manifests_bin_targets() {
+    let bin = |value: bool| json!({ "package": { "bin": value } });
+    // The string form, resolved against the manifest's folder like eslint-plugin-n's `isBinFile`:
+    // the target itself, or the file without `.js`, or without `.js` and `/index`.
+    let string = [
+        ("package.json", r#"{ "bin": "./cli.js" }"#),
+        ("cli.js", ""),
+        ("lib.js", ""),
+        ("tools/package.json", r#"{ "bin": "bin" }"#),
+        ("tools/bin/index.js", ""),
+        ("tools/bin.js", ""),
+        ("tools/bin/other.js", ""),
+    ];
+    assert_eq!(
+        matched(bin(true), &string),
+        ["cli.js", "tools/bin.js", "tools/bin/index.js"]
+    );
+    assert_eq!(
+        matched(bin(false), &string),
+        ["lib.js", "tools/bin/other.js"]
+    );
+    // The object form: every string value, resolved through `..` as `path.resolve` does; one that
+    // ends outside the folder or is absolute names nothing below it.
+    let object = [
+        (
+            "pkg/package.json",
+            r#"{ "bin": { "a": "./bin/a", "b": "lib/../b.js", "c": "../pkg/c.js", "d": "/pkg/d.js", "e": "../d.js", "f": 3 } }"#,
+        ),
+        ("pkg/bin/a.js", ""),
+        ("pkg/b.js", ""),
+        ("pkg/c.js", ""),
+        ("pkg/d.js", ""),
+    ];
+    assert_eq!(
+        matched(bin(true), &object),
+        ["pkg/b.js", "pkg/bin/a.js", "pkg/c.js"]
+    );
+    assert_eq!(matched(bin(false), &object), ["pkg/d.js"]);
+    // Without a manifest neither holds, as eslint-plugin-n's hashbang rule reports nothing there.
+    let bare = [("cli.js", "")];
+    assert!(matched(bin(true), &bare).is_empty());
+    assert!(matched(bin(false), &bare).is_empty());
+    // The nearest manifest decides, whatever a farther one lists.
+    let nested = [
+        ("package.json", r#"{ "bin": "sub/cli.js" }"#),
+        ("sub/package.json", "{}"),
+        ("sub/cli.js", ""),
+    ];
+    assert_eq!(matched(bin(false), &nested), ["sub/cli.js"]);
+}
+
+#[test]
+fn file_package_depends_on_and_path_read_the_nearest_manifest() {
+    let files = [
+        ("package.json", r#"{ "dependencies": { "next": "15" } }"#),
+        ("app/page.tsx", ""),
+        (
+            "apps/web/package.json",
+            r#"{ "peerDependencies": { "next": "15" } }"#,
+        ),
+        ("apps/web/app/page.tsx", ""),
+        (
+            "apps/vite/package.json",
+            r#"{ "devDependencies": { "vite": "7" } }"#,
+        ),
+        ("apps/vite/app/page.tsx", ""),
+        ("apps/broken/package.json", "{"),
+        ("apps/broken/app/page.tsx", ""),
+    ];
+    let next = json!({ "package": { "dependsOn": ["next", "nuxt"] } });
+    assert_eq!(
+        matched(next, &files),
+        ["app/page.tsx", "apps/web/app/page.tsx"]
+    );
+    // `path` is relative to the manifest's folder.
+    let app = json!({ "package": { "path": { "regex": "^app/page\\.tsx$" } } });
+    assert_eq!(
+        matched(app.clone(), &files),
+        [
+            "app/page.tsx",
+            "apps/broken/app/page.tsx",
+            "apps/vite/app/page.tsx",
+            "apps/web/app/page.tsx"
+        ]
+    );
+    let next_app = json!({ "package": { "dependsOn": ["next"], "path": { "regex": "^app/" } } });
+    assert_eq!(
+        matched(next_app, &files),
+        ["app/page.tsx", "apps/web/app/page.tsx"]
+    );
+    // Without a manifest `dependsOn` and `path` fail, `notRegex` included.
+    let bare = [("app/page.tsx", "")];
+    assert!(matched(json!({ "package": { "dependsOn": ["next"] } }), &bare).is_empty());
+    assert!(matched(app, &bare).is_empty());
+    assert!(matched(json!({ "package": { "path": { "notRegex": "x" } } }), &bare).is_empty());
+}
+
+#[test]
+fn file_package_node_version_reads_eslint_plugin_ns_configured_range() {
+    let subset_of = |range: &str| json!({ "package": { "nodeVersion": { "subsetOf": range } } });
+    let at = |manifest: &str, range: &str| {
+        !matched(
+            subset_of(range),
+            &[("package.json", manifest), ("a.js", "")],
+        )
+        .is_empty()
+    };
+    // `engines.node`.
+    assert!(at(r#"{ "engines": { "node": ">=18.18" } }"#, ">=18"));
+    assert!(!at(r#"{ "engines": { "node": ">=18.18" } }"#, ">=20"));
+    assert!(at(r#"{ "engines": { "node": "^20 || ^22" } }"#, ">=20.0.0"));
+    // `devEngines.runtime` (one entry or a list, the first named `node` with a string version)
+    // where `engines.node` is absent or not a range.
+    let dev = r#"{ "devEngines": { "runtime": { "name": "node", "version": ">=22" } } }"#;
+    assert!(at(dev, ">=20"));
+    let listed = r#"{ "engines": { "node": "latest" },
+        "devEngines": { "runtime": [{ "name": "bun", "version": "1" }, { "name": "node", "version": "22.x" }] } }"#;
+    assert!(at(listed, ">=22"));
+    // `engines.node` wins over `devEngines`; a range neither gives is eslint-plugin-n's
+    // `>=16.0.0`, also without a manifest.
+    let both = r#"{ "engines": { "node": ">=14" }, "devEngines": { "runtime": { "name": "node", "version": ">=22" } } }"#;
+    assert!(!at(both, ">=20"));
+    for manifest in ["{}", r#"{ "engines": { "node": "lts" } }"#, "["] {
+        assert!(at(manifest, ">=16"), "{manifest}");
+        assert!(!at(manifest, ">=18"), "{manifest}");
+    }
+    assert!(!matched(subset_of(">=16"), &[("a.js", "")]).is_empty());
+    assert!(matched(subset_of(">=18"), &[("a.js", "")]).is_empty());
+}
+
+/// An editor's edit of a `package.json` gives the files whose `package` the snapshot derived
+/// theirs again, as a fresh snapshot of the same final texts reads them: its `type`, engines,
+/// `bin` and dependencies alike, for the files below it only. A host's own `package` stays.
+#[test]
+fn an_editor_edit_of_a_package_json_rederives_the_packages_below_it() {
+    let clause = |id: &str, ast: Value| {
+        json!({ "id": id, "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id } })
+    };
+    let program = |id: &str, package: Value| {
+        clause(
+            id,
+            json!({ "language": "typescript", "file": { "package": package }, "rule": { "kind": "program" } }),
+        )
+    };
+    let compiled = compile_document_with(
+        json!({ "format": "rerail.policy/v1", "id": "editor-manifests", "revision": 1, "mode": "block",
+            "clauses": [
+                clause("require", json!({ "language": "typescript", "languageOptions": {},
+                    "rule": { "kind": "identifier", "resolves": { "global": ["require"] } } })),
+                program("bin", json!({ "bin": true })),
+                program("node", json!({ "nodeVersion": { "subsetOf": ">=20" } })),
+                program("next", json!({ "dependsOn": ["next"] })),
+            ] }),
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let source = "module.exports = require('x');\n";
+    // A `.ts` file reads its package as a `.js` one does; its type-only import is stripped.
+    let typed = "import type { A } from 'a';\nmodule.exports = require('x');\n";
+    let snapshot = |manifest: &str| {
+        json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": [
+            { "language": "json", "path": "package.json", "source": manifest },
+            { "language": "javascript", "path": "lib/plain.js", "source": source },
+            { "language": "typescript", "path": "lib/typed.ts", "source": typed },
+            { "language": "json", "path": "sub/package.json", "source": r#"{ "type": "commonjs" }"# },
+            { "language": "javascript", "path": "sub/nested.js", "source": source },
+            { "language": "javascript", "path": "host.js", "source": source,
+                "package": { "folder": "", "type": "commonjs", "bin": ["host.js"] } },
+        ] })
+        .to_string()
+    };
+    // Each violation as `path CODE`, sorted.
+    let reported = |result: &str| {
+        let result: Value = serde_json::from_str(result).expect("evaluation is JSON");
+        assert_eq!(result["failures"], json!([]), "{result}");
+        let mut violations = result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|violation| {
+                format!(
+                    "{} {}",
+                    violation["path"].as_str().expect("a path"),
+                    violation["code"].as_str().expect("a code")
+                )
+            })
+            .collect::<Vec<_>>();
+        violations.sort();
+        violations
+    };
+    // The host's file and the one below the nearer manifest never change.
+    let expected = |plain: &[&str]| {
+        let mut expected = ["host.js BIN", "host.js REQUIRE", "sub/nested.js REQUIRE"]
+            .iter()
+            .chain(plain)
+            .map(|violation| (*violation).to_owned())
+            .collect::<Vec<_>>();
+        expected.sort();
+        expected
+    };
+    let mut current = r#"{ "type": "commonjs" }"#.to_owned();
+    let mut editor = compiled.open_editor(snapshot(&current)).unwrap();
+    assert_eq!(
+        reported(&editor.evaluate("report".to_owned()).unwrap()),
+        expected(&["lib/plain.js REQUIRE", "lib/typed.ts REQUIRE"])
+    );
+    let edits: [(&str, &[&str]); 5] = [
+        (r#"{ "type": "module" }"#, &[]),
+        (
+            r#"{ "type": "module", "engines": { "node": ">=22" } }"#,
+            &["lib/plain.js NODE", "lib/typed.ts NODE"],
+        ),
+        (
+            r#"{ "type": "module", "engines": { "node": ">=22" }, "bin": "./lib/plain.js", "dependencies": { "next": "15" } }"#,
+            &[
+                "lib/plain.js BIN",
+                "lib/plain.js NEXT",
+                "lib/plain.js NODE",
+                "lib/typed.ts NEXT",
+                "lib/typed.ts NODE",
+            ],
+        ),
+        // No `type`: Node's detection reads both files as CommonJS.
+        ("{}", &["lib/plain.js REQUIRE", "lib/typed.ts REQUIRE"]),
+        (
+            r#"{ "type": "commonjs" }"#,
+            &["lib/plain.js REQUIRE", "lib/typed.ts REQUIRE"],
+        ),
+    ];
+    for (revision, (manifest, plain)) in (1..).zip(edits) {
+        let edit = json!({ "revision": revision, "path": "package.json", "startByte": 0,
+            "oldEndByte": current.len(), "newText": manifest });
+        let edited = editor
+            .apply_edit(edit.to_string(), "report".to_owned())
+            .unwrap();
+        let fresh = compiled
+            .evaluate(snapshot(manifest), "report".to_owned())
+            .unwrap();
+        assert_eq!(reported(&edited), expected(plain), "{manifest}");
+        assert_eq!(reported(&fresh), expected(plain), "{manifest}");
+        current = manifest.to_owned();
+    }
+}
+
+/// `file.package.serverGraph` reads the module graph of the file set's Next app (NER-1806): a
+/// module only a `"use client"` module imports is client code. An editor edit of a source the
+/// graph reads gives the same answer as a fresh snapshot; a host's own fact stays.
+#[test]
+fn file_package_server_graph_reads_the_next_apps_module_graph() {
+    let program = |id: &str, member: bool| {
+        json!({ "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": member } }, "rule": { "kind": "program" } } } })
+    };
+    let compiled = compile_document_with(
+        json!({ "format": "rerail.policy/v1", "id": "server-graph", "revision": 1, "mode": "block",
+            "clauses": [program("server", true), program("client", false)] }),
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let widget = "'use client';\nimport { useThing } from './adapters/react';\nexport default function Widget() { useThing(); }\n";
+    let snapshot = |widget: &str| {
+        json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": [
+            { "language": "json", "path": "package.json", "source": r#"{ "dependencies": { "next": "15" } }"# },
+            { "language": "tsx", "path": "app/page.tsx", "source": "import Widget from './widget';\nexport default function Page() {}\n" },
+            { "language": "tsx", "path": "app/widget.tsx", "source": widget },
+            { "language": "typescript", "path": "app/adapters/react.ts", "source": "import { useState } from 'react';\nexport const useThing = () => useState(0);\n" },
+            // A package that names no `next` has no graph: neither value holds.
+            { "language": "json", "path": "vite/package.json", "source": "{}" },
+            { "language": "tsx", "path": "vite/app/page.tsx", "source": "export default 1;\n" },
+            // A host's fact for its own file.
+            { "language": "typescript", "path": "host.ts", "source": "export {};\n",
+                "package": { "folder": "", "type": "unset", "dependencies": ["next"], "serverGraph": true } },
+        ] })
+        .to_string()
+    };
+    let reported = |result: &str| {
+        let result: Value = serde_json::from_str(result).expect("evaluation is JSON");
+        assert_eq!(result["failures"], json!([]), "{result}");
+        let mut violations = result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|violation| {
+                format!(
+                    "{} {}",
+                    violation["path"].as_str().expect("a path"),
+                    violation["code"].as_str().expect("a code")
+                )
+            })
+            .collect::<Vec<_>>();
+        violations.sort();
+        violations
+    };
+    let client = [
+        "app/adapters/react.ts CLIENT",
+        "app/page.tsx SERVER",
+        "app/widget.tsx CLIENT",
+        "host.ts SERVER",
+    ];
+    assert_eq!(
+        reported(
+            &compiled
+                .evaluate(snapshot(widget), "report".to_owned())
+                .unwrap()
+        ),
+        client
+    );
+    // Without its directive the widget, and the module it imports, join the server graph.
+    let mut editor = compiled.open_editor(snapshot(widget)).unwrap();
+    let server = [
+        "app/adapters/react.ts SERVER",
+        "app/page.tsx SERVER",
+        "app/widget.tsx SERVER",
+        "host.ts SERVER",
+    ];
+    let directive = "'use client';\n";
+    let edit = json!({ "revision": 1, "path": "app/widget.tsx", "startByte": 0,
+        "oldEndByte": directive.len(), "newText": "" });
+    let edited = editor
+        .apply_edit(edit.to_string(), "report".to_owned())
+        .unwrap();
+    assert_eq!(reported(&edited), server);
+    assert_eq!(
+        reported(
+            &compiled
+                .evaluate(snapshot(&widget[directive.len()..]), "report".to_owned())
+                .unwrap()
+        ),
+        server
+    );
+}
+
+#[test]
+fn file_jsx_runtime_reads_pragmas_then_imports_then_the_manifest() {
+    let runtime = |runtimes: &[&str], manifest: Option<&str>, source: &str| {
+        let mut files = vec![("a.tsx", source)];
+        if let Some(manifest) = manifest {
+            files.push(("package.json", manifest));
+        }
+        !matched(json!({ "jsxRuntime": runtimes }), &files).is_empty()
+    };
+    let react = Some(r#"{ "dependencies": { "react": "19", "react-dom": "19" } }"#);
+    let preact = Some(r#"{ "dependencies": { "preact": "10" } }"#);
+    let both = Some(r#"{ "dependencies": { "next": "15" }, "devDependencies": { "vue": "3" } }"#);
+    let plain = "export const a = <div />;\n";
+    // The manifest: React's packages alone, another library's alone, both or neither.
+    assert!(runtime(&["react"], react, plain));
+    assert!(runtime(&["other"], preact, plain));
+    assert!(runtime(&["unknown"], both, plain));
+    assert!(runtime(&["unknown"], Some("{}"), plain));
+    assert!(runtime(&["unknown"], None, plain));
+    assert!(!runtime(&["react", "other"], None, plain));
+    // A static import of another library's `h` or `createElement` beats the manifest.
+    let preact_h = "import { h, Fragment } from 'preact';\nexport const a = <div />;\n";
+    assert!(runtime(&["other"], react, preact_h));
+    assert!(runtime(
+        &["other"],
+        None,
+        "import { createElement as c } from \"vue\";\n"
+    ));
+    assert!(runtime(
+        &["react"],
+        react,
+        "import { render } from 'preact';\n"
+    ));
+    // A pragma beats both; `@jsxImportSource` beats `@jsx`.
+    let pragma = |comment: &str| format!("{comment}\n{preact_h}");
+    assert!(runtime(
+        &["react"],
+        preact,
+        &pragma("/** @jsx React.createElement */")
+    ));
+    assert!(runtime(&["other"], react, &pragma("/* @jsx h */")));
+    assert!(runtime(
+        &["react"],
+        None,
+        &pragma("// @jsxImportSource react/jsx-runtime")
+    ));
+    // A React wrapper's import source is React's, even over another library's import.
+    for source in ["@emotion/react", "theme-ui", "react/jsx-dev-runtime"] {
+        let comment = format!("/** @jsxImportSource {source} */");
+        assert!(runtime(&["react"], preact, &pragma(&comment)), "{source}");
+    }
+    for source in [
+        "preact",
+        "solid-js/h",
+        "vue",
+        "@builder.io/qwik",
+        "hono/jsx",
+    ] {
+        let comment = format!("/** @jsxImportSource {source} */\n{plain}");
+        assert!(runtime(&["other"], react, &comment), "{source}");
+    }
+    assert!(runtime(
+        &["react"],
+        preact,
+        &pragma("/* @jsx h */\n/* @jsxImportSource react */")
+    ));
+    // Any other pragma is no evidence: the imports and then the manifest decide, so Emotion's
+    // classic `@jsx jsx` in a React package is React's and `@jsx h` with Preact's `h` is not.
+    let emotion =
+        "/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nexport const a = <div />;\n";
+    assert!(runtime(&["react"], react, emotion));
+    assert!(runtime(&["unknown"], None, emotion));
+    assert!(runtime(
+        &["react"],
+        react,
+        &format!("/** @jsxImportSource @acme/jsx */\n{plain}")
+    ));
+}
+
+/// The package's `tsconfig.json` (else `jsconfig.json`) `jsxImportSource` names its JSX runtime
+/// before its dependencies do, through relative `extends`; a file's own pragma or imports still
+/// win. An editor edit of the configuration gives the fresh snapshot's answer.
+#[test]
+fn file_jsx_runtime_reads_the_packages_jsx_import_source() {
+    let mixed = r#"{ "dependencies": { "react": "19", "preact": "10" } }"#;
+    let plain = "export const a = <div />;\n";
+    let runtime = |runtimes: &[&str], files: &[(&str, &str)]| {
+        !matched(json!({ "jsxRuntime": runtimes }), files).is_empty()
+    };
+    let config = |source: &str| {
+        format!(
+            "{{\n  // the JSX transform\n  \"compilerOptions\": {{ \"jsx\": \"react-jsx\", \"jsxImportSource\": \"{source}\", }},\n}}\n"
+        )
+    };
+    let preact = config("preact");
+    let emotion = config("@emotion/react");
+    // React and Preact both listed: the manifest alone says neither.
+    assert!(runtime(
+        &["unknown"],
+        &[("a.tsx", plain), ("package.json", mixed)]
+    ));
+    assert!(runtime(
+        &["other"],
+        &[
+            ("a.tsx", plain),
+            ("package.json", mixed),
+            ("tsconfig.json", &preact)
+        ]
+    ));
+    assert!(runtime(
+        &["react"],
+        &[
+            ("a.tsx", plain),
+            ("package.json", mixed),
+            ("jsconfig.json", &emotion)
+        ]
+    ));
+    assert!(runtime(
+        &["other"],
+        &[
+            ("a.tsx", plain),
+            ("package.json", mixed),
+            ("tsconfig.json", r#"{ "extends": "./tsconfig.base" }"#),
+            ("tsconfig.base.json", &preact),
+        ]
+    ));
+    // A source naming no known runtime falls through to the dependencies; the file's pragma wins.
+    assert!(runtime(
+        &["unknown"],
+        &[
+            ("a.tsx", plain),
+            ("package.json", mixed),
+            ("tsconfig.json", &config("@acme/jsx"))
+        ]
+    ));
+    assert!(runtime(
+        &["react"],
+        &[
+            ("a.tsx", &format!("/** @jsxImportSource react */\n{plain}")),
+            ("package.json", mixed),
+            ("tsconfig.json", &preact),
+        ]
+    ));
+    let compiled = compile_document_with(
+        json!({ "format": "rerail.policy/v1", "id": "jsx-import-source", "revision": 1, "mode": "block",
+            "clauses": [{ "id": "other", "violation": { "anchor": "witness.span", "code": "OTHER", "message": "other" },
+                "forbid": { "ast": { "language": "typescript", "file": { "jsxRuntime": ["other"] }, "rule": { "kind": "program" } } } }] }),
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let snapshot = |config: &str| {
+        json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": [
+            { "language": "json", "path": "package.json", "source": mixed },
+            { "language": "json", "path": "tsconfig.json", "source": config },
+            { "language": "tsx", "path": "a.tsx", "source": plain },
+        ] })
+        .to_string()
+    };
+    let count = |result: &str| {
+        serde_json::from_str::<Value>(result).expect("JSON")["violations"]
+            .as_array()
+            .expect("violations")
+            .len()
+    };
+    let mut editor = compiled.open_editor(snapshot(&emotion)).unwrap();
+    assert_eq!(count(&editor.evaluate("report".to_owned()).unwrap()), 0);
+    let edit = json!({ "revision": 1, "path": "tsconfig.json", "startByte": 0,
+        "oldEndByte": emotion.len(), "newText": preact });
+    assert_eq!(
+        count(
+            &editor
+                .apply_edit(edit.to_string(), "report".to_owned())
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &compiled
+                .evaluate(snapshot(&preact), "report".to_owned())
+                .unwrap()
+        ),
+        1
+    );
+}
+
+#[test]
+fn a_snapshot_derives_package_facts_from_its_package_json_entries_unless_the_host_sends_them() {
+    let next = json!({ "package": { "dependsOn": ["next"] } });
+    let manifest = r#"{ "dependencies": { "next": "15" } }"#;
+    // Derived from the entry, as a workspace holding the same files does.
+    assert_eq!(
+        matched(next.clone(), &[("package.json", manifest), ("a.ts", "")]),
+        ["a.ts"]
+    );
+    // A host's `package` wins over the entries, and without either the file has no manifest.
+    let host = json!({ "folder": "", "type": "unset", "dependencies": ["react"] });
+    assert!(
+        matched_paths(
+            next.clone(),
+            &[
+                ("package.json", manifest, None),
+                ("a.ts", "", Some(host.clone()))
+            ]
+        )
+        .is_empty()
+    );
+    let host_next = json!({ "folder": "", "type": "unset", "dependencies": ["next"] });
+    assert_eq!(
+        matched_paths(next.clone(), &[("a.ts", "", Some(host_next))]),
+        ["a.ts"]
+    );
+    assert!(matched(next, &[("a.ts", "")]).is_empty());
+    // The entry's `type` decides a `.js` file's module system too.
+    let commonjs = with_options(&["require"], json!({}));
+    let evaluate = |files: Value| -> Value {
+        let snapshot = json!({
+            "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        serde_json::from_str(
+            &commonjs
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON")
+    };
+    let source = "require;\n";
+    let file = json!({ "language": "javascript", "path": "lib/a.js", "source": source });
+    let typed = |package_type: &str| json!({ "language": "json", "path": "package.json", "source": format!("{{ \"type\": \"{package_type}\" }}") });
+    assert_eq!(
+        found(&evaluate(json!([typed("commonjs"), file.clone()])), source),
+        ["1:require"]
+    );
+    assert!(found(&evaluate(json!([typed("module"), file.clone()])), source).is_empty());
+    assert!(found(&evaluate(json!([file])), source).is_empty());
+}
+
+#[test]
+fn malformed_package_and_jsx_runtime_conditions_are_rejected() {
+    let rule = json!({ "kind": "program" });
+    for (language, file, expected) in [
+        (
+            "typescript",
+            json!({ "package": {} }),
+            "must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "nodeVersion": { "subsetOf": ">=1.2.3.4" } } }),
+            "subsetOf must be an npm semver range",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "dependsOn": [] } }),
+            "dependsOn must be a non-empty list of package names",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "bin": "yes" } }),
+            "bin must be true or false",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "regex": "x" } }),
+            "typescript's package reads the nearest package.json",
+        ),
+        (
+            "typescript",
+            json!({ "jsxRuntime": ["preact"] }),
+            "jsxRuntime must be a non-empty list",
+        ),
+        (
+            "python",
+            json!({ "jsxRuntime": ["react"] }),
+            "JSX runtimes are TypeScript's; python has none",
+        ),
+        (
+            "python",
+            json!({ "package": { "bin": true } }),
+            "python's package is a regex or notRegex over the top package's name",
+        ),
+    ] {
+        let error = compile(language, json!({ "file": file, "rule": rule }))
+            .err()
+            .unwrap_or_else(|| panic!("{file} compiles"));
+        assert!(error.reason.contains(expected), "{file}: {}", error.reason);
     }
 }

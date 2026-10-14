@@ -1,12 +1,17 @@
+use super::GrammarMatcher;
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
 use crate::code_rule_dsl::language::adapter::{Adapter, Region, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::language::{SourceType, is_stub_file};
+use crate::code_rule_dsl::language::{
+    JsxRuntime, SourceType, has_module_syntax, is_stub_file, jsx_runtime_in_source,
+};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, SubTree};
+use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::package_manifest::Manifest;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
@@ -181,7 +186,7 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
     if !options.strict_mode() {
         return false;
     }
-    if options.all_strict() {
+    if options.all_strict(file_source_type()) {
         return true;
     }
     std::iter::once(node.clone())
@@ -250,10 +255,9 @@ impl Resolves {
         if self.item {
             let text = node.text();
             return (self.global_any || self.globals.contains(text.as_ref()))
-                && self
-                    .options
-                    .as_ref()
-                    .is_none_or(|options| options.declares_in(&text, VALUE, None));
+                && self.options.as_ref().is_none_or(|options| {
+                    options.declares_in(&text, VALUE, None, file_source_type())
+                });
         }
         if self.seen_before {
             return self.is_seen_before(node);
@@ -460,7 +464,7 @@ impl Resolves {
         let Some(options) = self
             .options
             .as_ref()
-            .filter(|options| options.source_type != SourceType::Module)
+            .filter(|options| options.source_type(file_source_type()) != SourceType::Module)
         else {
             return false;
         };
@@ -495,7 +499,7 @@ impl Resolves {
         let Some(options) = self
             .options
             .as_ref()
-            .filter(|options| options.global_top_level())
+            .filter(|options| options.global_top_level(file_source_type()))
         else {
             return false;
         };
@@ -544,7 +548,7 @@ impl Resolves {
             && self
                 .options
                 .as_ref()
-                .is_some_and(|options| options.global_top_level())
+                .is_some_and(|options| options.global_top_level(file_source_type()))
             && let Some(reference) = table.reference(&node.range())
             && let Some((0, _)) = table.resolve_lexical_scope(reference, name)
         {
@@ -568,7 +572,7 @@ impl Resolves {
         if let Some(options) = &self.options {
             let directives = self.directives.then_some(&table.directives);
             return table.reference(&node.range()).is_some_and(|reference| {
-                options.declares_in(name, reference.spaces, directives)
+                options.declares_in(name, reference.spaces, directives, file_source_type())
                     && table
                         .resolve(reference, name)
                         .is_none_or(|binding| !binding.shadows())
@@ -890,6 +894,14 @@ struct FileScopes {
     has_errors: bool,
     /// Whether the file is a Python stub (`Reading::stub`).
     stub: bool,
+    /// The ECMA file's module system for queries that leave `sourceType` to it
+    /// (`SourceType::of_file`); `None` until its syntax decides it (`decide_file_source_type`).
+    source_type: Option<SourceType>,
+    /// The ECMA file's nearest `package.json`, which decides its JSX runtime where its text does
+    /// not (`decide_file_jsx_runtime`).
+    package: Option<Arc<Manifest>>,
+    /// The file's JSX runtime, once a `file.jsxRuntime` read it.
+    jsx_runtime: Option<JsxRuntime>,
     /// Values decoded so far, by node, grammar and reading (`value`, `compare` over values).
     values: HashMap<ValueKey, Rc<Value>>,
     /// Structures read so far, by node and equality (`compare`'s structural modes).
@@ -962,6 +974,9 @@ impl FileScopeSlot {
             usage_charged: Vec::new(),
             has_errors,
             stub: false,
+            source_type: Some(SourceType::Module),
+            package: None,
+            jsx_runtime: None,
             values: HashMap::new(),
             structures: HashMap::new(),
             parses: HashMap::new(),
@@ -986,14 +1001,17 @@ impl FileScopeSlot {
         Self { previous }
     }
 
-    /// Reads the file at the host's `path` (the one `file` conditions read) as a Python stub where
-    /// it is one (`is_stub_file`).
-    pub(crate) fn path(self, path: &str) -> Self {
-        let stub = is_stub_file(path);
+    /// Reads `file` at the host's path (the one `file` conditions read) as a Python stub where it
+    /// is one (`is_stub_file`), and as the module system its path and package type give it.
+    pub(crate) fn file(self, file: &FileInput) -> Self {
+        let stub = is_stub_file(&file.path);
+        let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
-                slot.path = Some(Arc::from(path));
+                slot.path = Some(Arc::from(file.path.as_str()));
+                slot.source_type = source_type;
+                slot.package.clone_from(&file.package);
             }
         });
         self
@@ -1023,6 +1041,92 @@ pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
 /// The host's path of the file being matched, if it gave one.
 fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
+}
+
+/// The module system of the file being matched, for queries that leave `sourceType` to it: its
+/// path's and package's, else Node's reading of `root`'s syntax (`has_module_syntax`), read once.
+/// ESLint's `module` outside a file evaluation.
+pub(super) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
+    if let Some(source_type) = FILE_SCOPES.with_borrow(|slot| match slot {
+        Some(slot) => slot.source_type,
+        None => Some(SourceType::Module),
+    }) {
+        return source_type;
+    }
+    let source_type = syntax_source_type(root);
+    FILE_SCOPES.with_borrow_mut(|slot| {
+        if let Some(slot) = slot {
+            slot.source_type = Some(source_type);
+        }
+    });
+    source_type
+}
+
+/// The module system Node gives a file its path and package leave to its syntax.
+fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
+    if has_module_syntax(root) {
+        SourceType::Module
+    } else {
+        SourceType::CommonJs
+    }
+}
+
+/// The JSX runtime of a file whose tree is `root` and whose nearest manifest is `package`: the
+/// one its text names (`jsx_runtime_in_source`), else its manifest's; `Unknown` without either.
+fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&Manifest>) -> JsxRuntime {
+    jsx_runtime_in_source(root)
+        .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, Manifest::jsx_runtime))
+}
+
+/// Whether `matcher`'s file gates (its `when.sourceType`, its `file.jsxRuntime`) admit `file`,
+/// whose tree is `root`, as `run_clause` reads them. A file they exclude matches nothing, so its
+/// syntax errors cannot leave the clause's result incomplete. Needs no file evaluation.
+pub(crate) fn file_gates_admit<D: Doc>(
+    matcher: &GrammarMatcher,
+    file: &FileInput,
+    root: &Node<'_, D>,
+) -> bool {
+    let runtimes = matcher
+        .file
+        .as_ref()
+        .and_then(|condition| condition.jsx_runtime.as_ref());
+    let source_type = matcher.source_types.as_ref().map(|_| {
+        SourceType::of_file(&file.language, &file.path, file.package_type())
+            .unwrap_or_else(|| syntax_source_type(root))
+    });
+    matcher.may_apply_to(source_type)
+        && runtimes.is_none_or(|runtimes| {
+            runtimes.contains(&jsx_runtime_of(root, file.package.as_deref()))
+        })
+}
+
+/// The module system `decide_file_source_type` gave the file being matched.
+pub(crate) fn file_source_type() -> SourceType {
+    FILE_SCOPES.with_borrow(|slot| {
+        slot.as_ref()
+            .and_then(|slot| slot.source_type)
+            .unwrap_or(SourceType::Module)
+    })
+}
+
+/// The JSX runtime of the file being matched (`file.jsxRuntime`): the one its text names
+/// (`jsx_runtime_in_source`), else its manifest's, read once. Without a manifest, or outside a
+/// file evaluation, a text that names none is `Unknown`.
+pub(super) fn decide_file_jsx_runtime<D: Doc>(root: &Node<'_, D>) -> JsxRuntime {
+    if let Some(runtime) =
+        FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.jsx_runtime))
+    {
+        return runtime;
+    }
+    let package =
+        FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.package.clone()));
+    let runtime = jsx_runtime_of(root, package.as_deref());
+    FILE_SCOPES.with_borrow_mut(|slot| {
+        if let Some(slot) = slot {
+            slot.jsx_runtime = Some(runtime);
+        }
+    });
+    runtime
 }
 
 /// A value decoded earlier in this file.
@@ -1341,7 +1445,9 @@ pub(super) fn unshadowed_global<D: Doc>(
         return None;
     }
     if python.is_some_and(|python| !python.declares(name))
-        || options.is_some_and(|options| !options.declares_in(name, VALUE | TYPE, None))
+        || options.is_some_and(|options| {
+            !options.declares_in(name, VALUE | TYPE, None, file_source_type())
+        })
     {
         return Some(false);
     }

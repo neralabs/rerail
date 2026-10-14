@@ -1,10 +1,10 @@
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::json::meta_name;
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
     FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
-    is_span_variable,
+    file_gates_admit, is_span_variable,
 };
 use crate::code_rule_dsl::model::{
     CodeRuleScope, FileInput, Limits, Metrics, Query, RegexSource, Snapshot, ViolationSpec,
@@ -454,6 +454,7 @@ impl<'a> Leaf<'a> {
                 // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
                 // program apart from its host reads only its own (`SyntaxErrors::of_doc`).
                 let errors = SyntaxErrors::of_doc(&doc);
+                let target = ast_grep_core::AstGrep::doc(doc);
                 let mut partial = None;
                 if !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
@@ -461,6 +462,15 @@ impl<'a> Leaf<'a> {
                         SyntaxReading::Partial(message) => message,
                         SyntaxReading::Unread(detail) => return Ok(FileStep::Failed(Some(detail))),
                     };
+                    // A file the query's file gates exclude matches nothing, errors or not, as
+                    // `run_clause` reads it without them.
+                    if !file_gates_admit(grammar, file, &target.root()) {
+                        return Ok(FileStep::Read {
+                            witnesses,
+                            partial: None,
+                            decided: false,
+                        });
+                    }
                     if errors.incomplete(grammar) {
                         return Ok(FileStep::Failed(None));
                     }
@@ -469,12 +479,12 @@ impl<'a> Leaf<'a> {
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
                     FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())
-                        .path(&file.path);
+                        .file(file);
                 let _calls = crate::code_rule_dsl::calls::FileCallsSlot::for_path(&file.path);
                 let decided = match evaluate_file_clause(
                     grammar,
                     file,
-                    doc,
+                    target,
                     Arc::clone(&lines),
                     &errors,
                     metrics,
@@ -700,7 +710,7 @@ pub(super) fn file_tape(
 fn evaluate_file_clause(
     grammar: &GrammarMatcher,
     file: &FileInput,
-    doc: crate::code_rule_dsl::tape::TapeDoc,
+    target: ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     lines: Arc<LineTable>,
     errors: &SyntaxErrors,
     metrics: &mut Metrics,
@@ -713,8 +723,7 @@ fn evaluate_file_clause(
 ) -> Result<FileOutcome> {
     use crate::code_rule_dsl::json::invalid;
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
-    let count = doc.transducer_len();
-    let target = ast_grep_core::AstGrep::doc(doc);
+    let count = target.root().get_doc().transducer_len();
     let visited = metrics.visited_nodes;
     let each = violation.and_then(|violation| violation.each.as_deref());
     let mut outcome = FileOutcome::Continue;
@@ -828,17 +837,21 @@ fn evaluate_file_clause(
     Ok(FileOutcome::Continue)
 }
 
+/// The matcher of `file`'s grammar whose `when` and `file` gates hold for it. A `when.sourceType`
+/// a file's syntax decides (`SourceType::of_file`) and a `file.jsxRuntime` are checked again
+/// once the file is read (`run_clause`).
 pub(crate) fn grammar_matcher<'a>(
     matchers: &'a [GrammarMatcher],
     file: &FileInput,
 ) -> Option<&'a GrammarMatcher> {
     let language = file_language(file)?;
+    let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
     matchers.iter().find(|grammar| {
         grammar.language == language
             && grammar.applies
-            && grammar
-                .file
-                .as_ref()
-                .is_none_or(|condition| condition.holds(&file.path, file.module.as_deref()))
+            && grammar.may_apply_to(source_type)
+            && grammar.file.as_ref().is_none_or(|condition| {
+                condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
+            })
     })
 }

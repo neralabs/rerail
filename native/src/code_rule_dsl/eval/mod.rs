@@ -4,10 +4,13 @@ mod query;
 
 use super::calls;
 use super::json::{invalid, json_error, required_str};
+use super::language::adapter::package_manifests;
 use super::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, FileInput, Metrics,
     Snapshot, Terms, package_marker_directory, python_module_in,
 };
+use super::module_graph;
+use super::package_manifest::{Manifest, manifest_directory, manifest_in};
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
@@ -20,13 +23,17 @@ pub(super) use query::{
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// A repository snapshot's files. A Python file without a host `module` is named, as the workspace
-/// names it, by the package markers (`__init__.py`) the snapshot holds (`python_module_in`), so a
-/// stateless evaluation of a file set and a workspace holding the same files read the same modules.
-pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
+/// names it, by the package markers (`__init__.py`) the snapshot holds (`python_module_in`), and
+/// an ECMA file without a host `package` reads the nearest `package.json` entry the snapshot holds
+/// (`derive_packages`), so a stateless evaluation of a file set and a workspace holding the same
+/// files read the same modules and manifests. With `server_graph`, a derived manifest naming
+/// `next` carries the server graph the snapshot's files give. Also returns the indices of the
+/// files whose `package` the snapshot derives.
+pub(super) fn parse_snapshot(source: &str, server_graph: bool) -> Result<(Snapshot, Vec<usize>)> {
     let value: Value = serde_json::from_str(source).map_err(json_error)?;
     let revision = value.get("revision").and_then(Value::as_u64).unwrap_or(0) as u32;
     let files = value
@@ -37,30 +44,108 @@ pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
         .iter()
         .filter_map(|file| package_marker_directory(file.get("path")?.as_str()?))
         .collect::<HashSet<_>>();
+    let mut derived = Vec::new();
     let files = files
         .iter()
         .enumerate()
         .map(|(index, file)| {
             let path = required_str(file, "path", "snapshot.files")?;
             let language = required_str(file, "language", "snapshot.files")?;
+            let at = format!("snapshot.files/{index}");
             // A `module` of another type is refused like a malformed one.
-            let derived = (crate::code_rule_dsl::language::adapter::packages(language)
+            let module = (crate::code_rule_dsl::language::adapter::packages(language)
                 && file.get("module").is_none()
                 && !packages.is_empty())
             .then(|| python_module_in(path, |directory| packages.contains(directory)))
             .flatten();
+            let package = match file.get("package") {
+                Some(package) => Some(Arc::new(Manifest::from_wire(package, &at)?)),
+                None => {
+                    if package_manifests(language) {
+                        derived.push(index);
+                    }
+                    None
+                }
+            };
             FileInput::new(
                 path.to_owned(),
                 language.to_owned(),
                 required_str(file, "source", "snapshot.files")?
                     .to_owned()
                     .into(),
-                file.get("module").or(derived.as_ref()),
-                &format!("snapshot.files/{index}"),
+                file.get("module").or(module.as_ref()),
+                package,
+                &at,
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(Snapshot { revision, files })
+    let mut snapshot = Snapshot { revision, files };
+    derive_packages(&mut snapshot, &derived, server_graph);
+    Ok((snapshot, derived))
+}
+
+/// Gives each file at `derived` the nearest `package.json` entry `snapshot` holds, read as on
+/// disk (`Manifest::parse`, `manifest_in`), with the `jsxImportSource` of the package's
+/// `tsconfig.json` or `jsconfig.json` entry, and with its package's server graph over the
+/// snapshot's files where `server_graph` asks for it (`module_graph::in_file_set`): once a
+/// snapshot is parsed, and again whenever an editor changes one of those entries or a file the
+/// graph reads.
+pub(super) fn derive_packages(snapshot: &mut Snapshot, derived: &[usize], server_graph: bool) {
+    let texts = snapshot
+        .files
+        .iter()
+        .filter(|file| module_graph::is_module_config(&file.path))
+        .map(|file| (file.path.as_str(), file.source.as_str()))
+        .collect::<HashMap<_, _>>();
+    let read = |path: &str| texts.get(path).map(|text| (*text).to_owned());
+    let parsed = snapshot
+        .files
+        .iter()
+        .filter_map(|file| {
+            let directory = manifest_directory(&file.path)?;
+            Some((
+                directory,
+                Manifest::parse(directory.to_owned(), file.source.as_bytes()),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let directories = parsed
+        .iter()
+        .map(|(directory, _)| *directory)
+        .collect::<HashSet<_>>();
+    let manifests = parsed
+        .into_iter()
+        .map(|(directory, manifest)| {
+            let config = module_graph::Config::read(directory, &read);
+            let manifest = manifest.with_jsx_import_source(config.jsx_import_source());
+            let manifest = if server_graph && manifest.has_server_graph() {
+                let members = module_graph::in_file_set(
+                    directory,
+                    snapshot
+                        .files
+                        .iter()
+                        .map(|file| (file.path.as_str(), file.source.as_str())),
+                    &|directory| directories.contains(directory),
+                    &config,
+                );
+                manifest.with_server_graph(members)
+            } else {
+                manifest
+            };
+            (directory, Arc::new(manifest))
+        })
+        .collect::<HashMap<_, _>>();
+    let packages = derived
+        .iter()
+        .map(|&index| {
+            manifest_in(&snapshot.files[index].path, |directory| {
+                manifests.get(directory)
+            })
+        })
+        .collect::<Vec<_>>();
+    for (&index, package) in derived.iter().zip(packages) {
+        snapshot.files[index].package = package;
+    }
 }
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).

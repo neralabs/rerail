@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `prefer-namespace-keyword` rule (https://typescript-eslint.io/rules/prefer-namespace-keyword). Flags `module Name {}` declarations with an identifier name; reports the whole declaration (from `declare` when present) and fixes the keyword.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },

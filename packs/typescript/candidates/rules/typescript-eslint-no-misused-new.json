@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `no-misused-new` rule (https://typescript-eslint.io/rules/no-misused-new). Reports a bodiless class method `new` returning its own class, an interface construct signature returning its own interface, and a `constructor` method signature in an interface or type literal.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },

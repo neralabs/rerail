@@ -211,6 +211,48 @@ describe("Rerail session startup", () => {
       begun.mockRestore();
     }
   });
+
+  it("treats a steer for a source the auditor revised without an edit of its own as stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-session-revised-"));
+    directories.push(root);
+    let delivery: RuleSteerDelivery | undefined;
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ steerDelivery }) => {
+        delivery = steerDelivery;
+        return {
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => ({
+            revision: batch.revision, disposition: "continue", violations: [], failures: [],
+          }),
+          close: async () => undefined,
+        };
+      },
+    });
+    const session = { host: "omp" as const, sessionId: "revised-source", cwd: root };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      const steer = { revision: 1, scope: ["lib/a.js"] };
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("queued");
+      // A package.json edit at revision 2 gave the source new facts.
+      delivery!.revised!(session.sessionId, 2, ["lib/a.js"]);
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("discarded");
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Refreshed", { revision: 2, scope: ["lib/a.js"] })).toBe("queued");
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });
 
 describe("A scan requested while the session's evaluator is still opening", () => {

@@ -542,6 +542,12 @@
                 "matches": "type-attribute"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -640,6 +646,12 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -700,6 +712,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -760,6 +778,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -820,6 +844,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -880,6 +910,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -940,6 +976,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1000,6 +1042,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1066,6 +1114,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1114,6 +1168,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1162,6 +1222,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1210,6 +1276,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1258,6 +1330,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1306,6 +1384,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1354,6 +1438,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1400,6 +1490,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

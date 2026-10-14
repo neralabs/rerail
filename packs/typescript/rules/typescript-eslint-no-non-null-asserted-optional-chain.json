@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `no-non-null-asserted-optional-chain` rule (https://typescript-eslint.io/rules/no-non-null-asserted-optional-chain). Flags a non-null assertion that ends an optional chain (`x?.y!`), and a parenthesized optional chain that is non-null asserted (`(x?.y)!`, reported at the chain).",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },

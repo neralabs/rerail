@@ -167,6 +167,7 @@ fn close_releases_idle_workspace_files() {
             language: "python".into(),
             source: Arc::new("print('secret')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -257,6 +258,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -455,6 +457,7 @@ fn close_cancels_busy_owner_without_waiting_for_its_lock() {
             language: "python".into(),
             source: Arc::new("print('x')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -495,6 +498,7 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -1264,6 +1268,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
                     language: "python".into(),
                     source: Arc::new(source.into()),
                     module: None,
+                    package: None,
                 },
                 1,
                 code_rules,
@@ -1382,6 +1387,7 @@ fn apply(state: &mut WorkspaceState, files: &[(&str, &str, &str)], removed: &[&s
                     language: language.to_owned(),
                     source: source.to_owned(),
                     module: None,
+                    package: None,
                 })
                 .collect(),
             removed: removed.iter().map(|path| (*path).to_owned()).collect(),

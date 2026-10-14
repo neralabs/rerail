@@ -141,6 +141,14 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# node-semver 7.8.5, ported to Rust (semver.rs); its subset() and new Range() answers recorded by
+# scripts/generate/semver/semver-subset-cases.mjs.
+[[annotations]]
+path = ["native/src/code_rule_dsl/semver.rs", "native/src/code_rule_dsl/semver_subset_cases.json"]
+precedence = "override"
+SPDX-FileCopyrightText = ["Isaac Z. Schlueter and Contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "ISC"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
@@ -942,6 +950,19 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
 SPDX-License-Identifier = "MIT"
+
+# The fixtures Rerail wrote among them, files and directories alike (packs/react/upstream/eslint-plugin-react/UPSTREAM.md,
+# packs/react/upstream/eslint-plugin-react-hooks/UPSTREAM.md).
+[[annotations]]
+path = [
+  "packs/react/upstream/eslint-plugin-react/fixtures/*/rerail-*",
+  "packs/react/upstream/eslint-plugin-react/fixtures/*/rerail-*/**",
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/*/rerail-*",
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/*/rerail-*/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
 
 # packs/node
 

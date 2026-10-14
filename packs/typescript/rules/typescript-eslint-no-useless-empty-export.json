@@ -4,7 +4,7 @@
   "revision": 3,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-useless-empty-export` rule (https://typescript-eslint.io/rules/no-useless-empty-export). Flags `export {}` when a sibling statement of the same module body is already an import or export; declaration files are excluded by scope.",
-  "scope": { "include": ["**/*"], "exclude": ["**/*.d.ts", "**/*.d.mts", "**/*.d.cts"] },
+  "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": ["**/*.d.ts", "**/*.d.mts", "**/*.d.cts"] },
   "clauses": [
     {
       "id": "useless-empty-export",

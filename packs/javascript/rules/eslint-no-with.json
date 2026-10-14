@@ -6,7 +6,10 @@
   "description": "Port of ESLint's `no-with` rule (https://eslint.org/docs/latest/rules/no-with). Reports every `with` statement, at its `with` keyword.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
     ],
     "exclude": []
   },

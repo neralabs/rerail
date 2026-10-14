@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `no-import-type-side-effects` rule (https://typescript-eslint.io/rules/no-import-type-side-effects). Flags an import whose specifiers are all inline `type` specifiers.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },
