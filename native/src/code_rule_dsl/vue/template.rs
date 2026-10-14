@@ -23,11 +23,14 @@ pub(crate) struct Directive<'t> {
 fn text<'t>(n: Node<'t>, s: &'t str) -> &'t str {
     &s[n.byte_range()]
 }
+/// `r` without its matching ASCII quotes, compared as bytes: an unquoted value may start or end
+/// with a multibyte character (`:title=名前`).
 fn unquote(r: Range<usize>, s: &str) -> Range<usize> {
+    let bytes = s.as_bytes();
     if r.end - r.start >= 2
         && matches!(
-            (&s[r.start..r.start + 1], &s[r.end - 1..r.end]),
-            ("\"", "\"") | ("'", "'")
+            (bytes[r.start], bytes[r.end - 1]),
+            (b'"', b'"') | (b'\'', b'\'')
         )
     {
         r.start + 1..r.end - 1

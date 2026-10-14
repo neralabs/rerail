@@ -1042,6 +1042,13 @@ mod tests {
         assert_eq!(view.text(), "{ if (a > 0 && b) { (c < d & e); } }");
     }
 
+    /// An unquoted value that starts or ends with a multibyte character is no quoted one.
+    #[test]
+    fn multibyte_unquoted_value() {
+        let source = "<template><div :title=名前></div><p :a=x名></p></template>";
+        assert_eq!(view(source).text(), "{ (名前); (x名); }");
+    }
+
     #[test]
     fn if_chain_across_a_comment() {
         let source = "<template>\n  <p v-if=\"a\">1</p>\n  <!-- c -->\n  <p v-else-if=\"b\">2</p>\n  <p v-else>3</p>\n  <p v-else>4</p>\n</template>";
