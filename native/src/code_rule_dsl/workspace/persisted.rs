@@ -19,6 +19,7 @@ use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput};
 use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
+use crate::code_rule_dsl::soundness::UNREAD;
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
@@ -121,12 +122,13 @@ pub(super) fn encode_local_result(
 /// each engine limit. Anything else (another build's vocabulary) is a cache miss, not an error.
 fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
     const CODES: [&str; 3] = ["budget-exceeded", "adapter-error", "source-incomplete"];
-    const MESSAGES: [&str; 11] = [
+    const MESSAGES: [&str; 12] = [
         "file input budget exceeded",
         "file match budget exceeded",
         "file line index could not be built",
         "file grammar cannot be taped",
         "file has syntax errors",
+        UNREAD,
         "file parsing time budget exceeded",
         "file tape encoding failed",
         "file tape revision mismatch",

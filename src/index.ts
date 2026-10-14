@@ -159,7 +159,6 @@ export {
   RULE_KINDS,
   RULE_ORIGINS,
   RULE_SCOPES,
-  RERAIL_SCHEMA_VERSION,
   events,
   audits,
   ruleCatalogIdentities,
@@ -182,6 +181,7 @@ export {
   type WorkLinkRow,
 } from "./engine/storage/schema.js";
 export { RERAIL_SCHEMA_SQL, RERAIL_SCHEMA_STATEMENTS } from "./engine/storage/schema-sql.generated.js";
+export { RERAIL_SCHEMA_VERSION } from "./engine/storage/migrations.js";
 export { defaultRerailDatabasePath, openRerailDatabase, type OpenRerailDatabaseOptions, type RerailDatabase } from "./engine/storage/database.js";
 export {
   SqliteRuleStore,
