@@ -2,8 +2,9 @@
 #
 # Nothing runs unless someone with write access requests the @neralabs/reviewer team as a reviewer, or
 # comments "@neralabs-ci review" ("@neralabs-ci help" lists the commands). The review reads the PR and its
-# CI results; it never builds, runs or pushes anything. Rollout phase 1: it comments and requests changes,
-# and never approves.
+# CI results; it never builds, runs or pushes anything. It approves only PRs that pass every low-risk rule
+# (neralabs/reviewer SPEC.md: no blockers, CI green, within REVIEW.md's size limits, no high-risk paths,
+# not from a fork or a bot, low risk), and its approval counts toward this repo's required review.
 name: reviewer
 
 on:
@@ -28,5 +29,5 @@ jobs:
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
       reviewer_ref: main # keep equal to the @ref above
-      allow_approve: false
+      allow_approve: true
     secrets: inherit
