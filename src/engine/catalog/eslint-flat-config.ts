@@ -142,6 +142,13 @@ class FlatConfigReader {
       const line = this.text.slice(0, code.start ?? 0).split("\n").length;
       throw new LintConfigFormatError(`it runs code Rerail does not read as data (line ${line}: ${this.#source(code)})`);
     }
+    // ESLint loads a TypeScript config through Jiti and takes `config.default ?? config`: an exported object that may
+    // hold `default` may be read as that instead.
+    const top = this.#unwrap(exported, 0);
+    if (top.type === "ObjectExpression"
+      && top.properties.some(property => property.type === "SpreadElement" || keyName(property.key, property.computed) === "default")) {
+      throw new LintConfigFormatError("it exports an object that may hold a `default` config, which ESLint's loader can take instead");
+    }
     this.#elements(exported, { kind: "all" }, 0);
     if (this.#unread.length > 0) {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);

@@ -809,6 +809,33 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     expect((await flat(allowed, ["javascript"], "eslint.config.cjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 
+  // Self-review round 11: ESLint 9.39.1 loads a TypeScript config through Jiti and takes `config.default ?? config`, so
+  // for the first case it reports no-console, which the outer object turns off.
+  it("reads nothing from an exported object that may hold a default config", async () => {
+    const cases: [string, string][] = [
+      ["eslint.config.cts", "module.exports = { default: [{ rules: { \"no-console\": \"error\" } }], rules: { \"no-console\": \"off\" } };"],
+      ["eslint.config.cts", "export = { default: [{ rules: { \"no-console\": \"error\" } }], rules: { \"no-console\": \"off\" } };"],
+      ["eslint.config.mjs", "import shared from \"shared\";\nexport default { ...shared, rules: { \"no-console\": \"off\" } };"],
+    ];
+    for (const [name, text] of cases) {
+      const proposed = await flat(text, ["javascript"], name);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([`${name} is not read: it exports an object that may hold a \`default\` config, which ESLint's loader can take instead. Rerail never runs your config.`]);
+    }
+    // An exported object without one is read as the one config it is.
+    expect((await flat("export default { rules: { \"no-console\": \"off\" } };", ["javascript"], "eslint.config.mjs")).settings)
+      .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
+  // Self-review round 11: a later severity alone for every file keeps the options an entry for some files set there
+  // (ESLint 9.39.1 allows only warn in tests/ for this config), so they differ from the repository's as before it.
+  it("keeps an entry's options for some files through a later severity alone for every file", async () => {
+    const text = "export default [{ rules: { \"no-console\": [\"error\", { allow: [\"log\"] }] } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", { allow: [\"warn\"] }] } }, { rules: { \"no-console\": \"error\" } }];";
+    expect((await flat(text, ["javascript"])).notes).toEqual([
+      "eslint-no-console: the options of eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"warn\"]}] for [\"tests/**\"] are not used: eslint.config.ts: \"no-console\": [\"error\",{\"allow\":[\"log\"]}] sets the rule for every file, and Rerail sets options for the whole repository only.",
+    ]);
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);

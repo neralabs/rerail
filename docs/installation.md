@@ -137,12 +137,15 @@ an object key JavaScript calls by itself (`toString`, `valueOf`, `toJSON`,
 `then`), an export named `then` and `export * from` a module named by path are
 code too, as is any global the file names other than in those calls, besides
 `process.env`, `__dirname`, `__filename`, `undefined`, `NaN` and `Infinity`
-(`require.cache`, `process.mainModule` and `globalThis` reach the config itself). A file with
+(`require.cache`, `process.mainModule` and `globalThis` reach the config itself), and
+an exported object that may hold a `default` key (ESLint's loader may take that
+instead). A file with
 anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
 after another, a later one replacing a rule's entry (and keeping its options
-when it sets only a severity, `"warn"`, `["warn"]` or `"off"`); within one
+when it sets only a severity, `"warn"`, `["warn"]` or `"off"`, for every file and
+for the files an earlier entry limited to some files set them for); within one
 `rules` object a later key replaces an earlier one or a spread whole, as
 JavaScript does. An entry in an object with `files`, `ignores` or `basePath`
 applies to some files only: its options become the port's options for the

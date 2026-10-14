@@ -405,12 +405,18 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
       }
       continue;
     }
-    scoped = scoped.filter(entry => entry.key !== key);
-    scopedUnresolved.delete(key);
-    // A severity alone ("off" included, as ESLint's rulesSchema.merge does) keeps the earlier options; a severity with
-    // options replaces them.
+    // A severity alone ("off" included, as ESLint's rulesSchema.merge does) keeps the earlier options, for every file
+    // and for the files an earlier entry limited to some files set them for; a severity with options replaces them.
     const alone = value.ok && severityAlone(value.value);
     const off = value.ok && severityOf(value.value, "eslint")?.off === true;
+    if (alone) {
+      scoped = scoped.flatMap(entry => (entry.key !== key ? [entry]
+        : severityAlone(entry.value) ? []
+        : [{ ...entry, value: withEarlierOptions(entry.value, value.value) }]));
+    } else {
+      scoped = scoped.filter(entry => entry.key !== key);
+      scopedUnresolved.delete(key);
+    }
     const earlier = unresolved.get(key);
     if (!value.ok) {
       unresolved.set(key, unread(value.why, shadowedBy));
