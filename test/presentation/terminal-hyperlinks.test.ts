@@ -15,6 +15,7 @@ describe("terminalDrawsHyperlinks", () => {
     const iterm = { ITERM_SESSION_ID: "w0t0p0", TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "tmux" };
     expect(terminalDrawsHyperlinks({ ...iterm, TERM_PROGRAM_VERSION: "3.4" })).toBe(true);
     expect(terminalDrawsHyperlinks({ ...iterm, TERM_PROGRAM_VERSION: "3.3a" })).toBe(false);
+    expect(terminalDrawsHyperlinks({ ORCA_TERMINAL_HANDLE: "term_1", TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "tmux", TERM_PROGRAM_VERSION: "3.5a" })).toBe(true);
     expect(terminalDrawsHyperlinks({ TERM_PROGRAM: "iTerm.app", STY: "1234.pts-0" })).toBe(false);
   });
 

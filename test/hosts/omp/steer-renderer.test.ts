@@ -26,6 +26,8 @@ const NO_FLOATING_PROMISES = {
 
 /** Tags each colour so the goldens read the structure rather than escape codes. */
 const theme: SteerTheme = { fg: (colour, text) => `<${colour}>${text}</${colour}>` };
+/** The coloured `R E R A I L`, tagged like the theme's colours. */
+const MARK = "<mark>R E R A I L</mark>";
 
 /** The host's components, reduced to what a golden needs: each row padded on the left as the host pads it. */
 class Text {
@@ -54,7 +56,7 @@ function registered(components: { Container?: unknown; Text?: unknown } | undefi
       renderer = render;
     },
     pi: components,
-  } as unknown as Pick<ExtensionAPI, "registerMessageRenderer"> & { pi?: Partial<Pick<ExtensionAPI["pi"], "Container" | "Text">> }, () => hyperlinks);
+  } as unknown as Pick<ExtensionAPI, "registerMessageRenderer"> & { pi?: Partial<Pick<ExtensionAPI["pi"], "Container" | "Text">> }, () => hyperlinks, () => MARK);
   return renderer!;
 }
 
@@ -78,10 +80,10 @@ describe("OMP steer renderer", () => {
     }
   });
 
-  it("leaves the why off a steer whose link never became absolute", () => {
-    const rows = formatOmpSteer(steerBlock("checkout", "Check checkout requirements.", { mode: "steer" }), { expanded: true, hyperlinks: true }, theme);
+  it("leaves the why? off a steer whose link never became absolute", () => {
+    const rows = formatOmpSteer(steerBlock("checkout", "Check checkout requirements.", { mode: "steer" }), { expanded: true, hyperlinks: true, mark: MARK }, theme);
     expect(rows.map(row => row.text)).toEqual([
-      "<accent>◆</accent> Rerail<dim> · </dim>checkout  <accent>steered</accent>",
+      "<accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>checkout  <accent>steered</accent>",
       "<dim>Set to Steer: fix it, or tell the person in one line why you won't.</dim>",
       "<dim>Check checkout requirements.</dim>",
     ]);
@@ -89,7 +91,7 @@ describe("OMP steer renderer", () => {
 
   it("strips terminal controls from the guidance a repository wrote", () => {
     const content = codeRuleSteer({ id: "local:shout", guidance: "Stop\u001b[2J here.\u0007" });
-    const rows = formatOmpSteer(content, { expanded: true, hyperlinks: false }, theme);
+    const rows = formatOmpSteer(content, { expanded: true, hyperlinks: false, mark: MARK }, theme);
     expect(rows.map(row => row.text)).toContain("<dim>Stop[2J here.</dim>");
     expect(rows.every(row => !/[\u0000-\u001f]/u.test(row.text))).toBe(true);
   });

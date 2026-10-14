@@ -51,7 +51,7 @@ export function codexHookOutput(hook: string, deliveries: readonly AdapterDelive
   }
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
-  // Codex draws hook text as plain text with no links, so each line prints its `why` link after it.
+  // Codex draws hook text as plain text with no links, so each line prints its `why?` link after it.
   const lines = content === undefined ? [] : steerHeadlines(content).map(headline => headlineText(headline, "plain"));
   const output = {
     ...(lines.length === 0 ? {} : { systemMessage: lines.join("\n") }),

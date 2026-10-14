@@ -1,11 +1,14 @@
 import { linkSteers, steerBlock, type AdapterDelivery } from "../../src/engine/index.js";
 
 /**
- * The steers of the session enforcement design (`PLAN-NER-1870.md`, scenes N4 and N4b), as each coding agent's
- * adapter receives them: linked to a loopback dashboard. Every agent's golden output renders these same deliveries.
+ * The steers of the session enforcement design (NER-1870, scenes N4 and N4b; docs/in-session-surfaces.md), as each
+ * coding agent's adapter receives them: linked to a loopback dashboard. Every agent's golden output renders these
+ * same deliveries.
  */
 export const SCENE_DASHBOARD = "http://127.0.0.1:4737/";
 export const SCENE_SESSION = "5f2c";
+/** The coloured `R E R A I L` a coding agent that draws colour shows for Rerail, tagged so a golden reads its place. */
+export const SCENE_MARK = "<mark>R E R A I L</mark>";
 
 function sceneSteer(ruleId: string, guidance: string): AdapterDelivery {
   const block = steerBlock(ruleId, guidance, { mode: "steer", origin: "From the TypeScript rule pack." });

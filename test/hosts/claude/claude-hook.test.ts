@@ -137,9 +137,10 @@ describe("Claude Code one-shot hook", () => {
       const steer = scriptedLoop({ result: [delivery("steer", steerBlock("acme:no-print", "Remove print.", { mode: "steer" }), ["acme:no-print"])] });
       const output = await handleClaudeEvent({
         ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "tool-1", tool_input: {}, tool_response: "ok",
-      }, steer, join(root, "sessions"), { TERM_PROGRAM: "iTerm.app" });
+      }, steer, join(root, "sessions"), { TERM_PROGRAM: "iTerm.app", COLORTERM: "truecolor" });
       expect(output).toMatchObject({
-        systemMessage: "◆ Rerail · acme:no-print  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/acme%3Ano-print\u0007why\u001b]8;;\u0007",
+        // Claude Code draws ANSI colour, so Rerail is its coloured mark, each letter its own colour.
+        systemMessage: expect.stringMatching(/^◆ \u001b\[38;2;165;173;251mR\u001b\[39m .* · acme:no-print {2}steered {2}· {2}\u001b\]8;;http:\/\/127\.0\.0\.1:4791\/#rule\/acme%3Ano-print\u0007why\?\u001b\]8;;\u0007$/u),
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
           additionalContext: expect.stringContaining("Remove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print"),
@@ -158,14 +159,14 @@ describe("Claude Code one-shot hook", () => {
       delivery("steer", steerBlock("a", "Fix a.", { mode: "steer" }), ["a"]),
       delivery("steer", steerBlock("b", "Fix b.", { mode: "steer" }), ["b"]),
     ];
-    // Without a daemon the links stay relative, so each line is the header alone.
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, {}))
-      .toEqual({ systemMessage: "\n◆ Rerail · a  steered\n◆ Rerail · b  steered" });
+    // Without a daemon the links stay relative, so each line is the header alone; without colour the mark is plain.
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, { NO_COLOR: "1" }))
+      .toEqual({ systemMessage: "\n◆ R E R A I L · a  steered\n◆ R E R A I L · b  steered" });
 
     const next = scriptedLoop({ "user-prompt": [delivery("steer", steerBlock("c", "Fix c.", { mode: "steer" }), ["c"])] });
-    const output = await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, next, storageRoot, {});
+    const output = await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, next, storageRoot, { NO_COLOR: "1" });
     expect(output).toEqual({
-      systemMessage: "◆ Rerail · c  steered",
+      systemMessage: "◆ R E R A I L · c  steered",
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringMatching(/Fix a\.[\s\S]*Fix b\.[\s\S]*Fix c\./u) },
     });
   });
@@ -173,7 +174,7 @@ describe("Claude Code one-shot hook", () => {
   it("prints the why link after the word when the terminal cannot draw links", () => {
     const block = steerBlock("a", "Fix a.", { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
     expect(claudeHookOutput("PostToolUse", [delivery("steer", block, ["a"])], { links: "plain" })).toMatchObject({
-      systemMessage: "◆ Rerail · a  steered  ·  why → http://127.0.0.1:4791/#rule/a",
+      systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a",
     });
   });
 

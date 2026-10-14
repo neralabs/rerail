@@ -105,7 +105,7 @@ describe("Codex one-shot hook", () => {
     const linked = (id: string) => steerBlock(id, `Fix ${id}.`, { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
     const steers = [delivery("steer", linked("a"), ["a"]), delivery("steer", linked("b"), ["b"])];
     expect(codexHookOutput("PostToolUse", steers)).toMatchObject({
-      systemMessage: "◆ Rerail · a  steered  ·  why → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why → http://127.0.0.1:4791/#rule/b",
+      systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
     });
     expect(codexHookOutput("Stop", steers)).toEqual({ decision: "block", reason: `${linked("a")}\n\n${linked("b")}` });
   });

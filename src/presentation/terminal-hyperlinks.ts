@@ -9,9 +9,13 @@ function tmuxForwardsLinks(version: string | undefined): boolean {
   return major > TMUX_HYPERLINKS.major || (major === TMUX_HYPERLINKS.major && minor >= TMUX_HYPERLINKS.minor);
 }
 
-/** Variables a terminal that draws OSC 8 sets in every shell it starts, tmux's included. */
+/**
+ * Variables a terminal that draws OSC 8 sets in every shell it starts, so they survive into tmux, which replaces
+ * `TERM_PROGRAM` with its own. Orca names each of its terminals in `ORCA_TERMINAL_HANDLE`.
+ */
 const LINKING_TERMINAL_MARKERS = [
   "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR", "WEZTERM_PANE", "ITERM_SESSION_ID", "VSCODE_PID", "ALACRITTY_WINDOW_ID", "WT_SESSION",
+  "ORCA_TERMINAL_HANDLE",
 ] as const;
 
 /**

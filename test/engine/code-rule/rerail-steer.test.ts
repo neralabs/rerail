@@ -56,17 +56,17 @@ describe("Rerail steer text", () => {
     expect(steerHeadlines(content).map(headline => headline.url)).toEqual([undefined, undefined]);
   });
 
-  it("puts the why link on the word where the agent can draw one, and prints it after the word where it cannot", () => {
+  it("puts the why? link on the word where the agent can draw one, and prints it after the word where it cannot", () => {
     const headline = { header: "◆ Rerail · a  steered", url: "http://127.0.0.1:4791/#rule/a" };
-    expect(headlineText(headline, "hyperlink")).toBe("◆ Rerail · a  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/a\u0007why\u001b]8;;\u0007");
-    expect(headlineText(headline, "markdown")).toBe("◆ Rerail · a  steered  ·  [why](http://127.0.0.1:4791/#rule/a)");
-    expect(headlineText(headline, "plain")).toBe("◆ Rerail · a  steered  ·  why → http://127.0.0.1:4791/#rule/a");
+    expect(headlineText(headline, "hyperlink")).toBe("◆ Rerail · a  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/a\u0007why?\u001b]8;;\u0007");
+    expect(headlineText(headline, "markdown")).toBe("◆ Rerail · a  steered  ·  [why?](http://127.0.0.1:4791/#rule/a)");
+    expect(headlineText(headline, "plain")).toBe("◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a");
     expect(headlineText({ ...headline, url: undefined }, "hyperlink")).toBe("◆ Rerail · a  steered");
   });
 
   it("keeps terminal control sequences in a rule id out of the person's line", () => {
     const [headline] = steerHeadlines(linkSteers(steerBlock("x\u001b[2Jy", "Text.", STEER), DASHBOARD));
-    expect(headlineText(headline!, "plain")).toBe("◆ Rerail · x[2Jy  steered  ·  why → http://127.0.0.1:4791/#rule/x%1B%5B2Jy");
+    expect(headlineText(headline!, "plain")).toBe("◆ Rerail · x[2Jy  steered  ·  why? → http://127.0.0.1:4791/#rule/x%1B%5B2Jy");
   });
 
   it("finds no headline in guidance that is not a Rerail steer, even when it mentions one", () => {

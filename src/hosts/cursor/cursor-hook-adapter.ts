@@ -121,7 +121,7 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
 
 /**
  * Cursor shows the person nothing from a hook, so the model is asked to relay each steer's one line itself. Cursor's
- * chat renders markdown, so the `why` link sits on the word.
+ * chat renders markdown, so the `why?` link sits on the word.
  */
 function relayedSteer(content: string): string {
   const lines = steerHeadlines(content).map(headline => headlineText(headline, "markdown"));

@@ -81,21 +81,25 @@ export function steerHeadlines(content: string): SteerHeadline[] {
 }
 
 /**
- * How a coding agent can show the `why` link: on the word itself (an OSC 8 terminal link, or a markdown link the
+ * How a coding agent can show the `why?` link: on the word itself (an OSC 8 terminal link, or a markdown link the
  * agent writes), or, where it can draw no link, printed after it.
  */
 export type HeadlineLinkStyle = "hyperlink" | "markdown" | "plain";
 
 const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
-/** The one line the person sees for a steer: `◆ Rerail · <rule>  steered  ·  why`, with the link in `style`. */
-export function headlineText({ header, url }: SteerHeadline, style: HeadlineLinkStyle): string {
-  const text = header.replace(CONTROL, "");
+/**
+ * The one line the person sees for a steer: `◆ Rerail · <rule>  steered  ·  why?`, with the link in `style`. A coding
+ * agent that draws colour passes `mark` (the coloured `R E R A I L`) to show in place of the word Rerail.
+ */
+export function headlineText({ header, url }: SteerHeadline, style: HeadlineLinkStyle, mark?: string): string {
+  const plain = header.replace(CONTROL, "");
+  const text = mark === undefined ? plain : plain.replace(/^([○◆■]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);
   if (url === undefined) return text;
   const target = url.replace(CONTROL, "");
-  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007why\u001b]8;;\u0007`;
-  if (style === "markdown") return `${text}  ·  [why](${target})`;
-  return `${text}  ·  why → ${target}`;
+  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007why?\u001b]8;;\u0007`;
+  if (style === "markdown") return `${text}  ·  [why?](${target})`;
+  return `${text}  ·  why? → ${target}`;
 }
 
 /** This session's dashboard page on `origin`. */

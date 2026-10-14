@@ -1,6 +1,7 @@
 import type { ExtensionAPI, Theme } from "@oh-my-pi/pi-coding-agent";
 import { RULE_MESSAGE_TYPE } from "../../engine/adapter-contract.js";
 import { steerHeadlines, type SteerHeadline } from "../../engine/code-rule/rerail-steer.js";
+import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 
 /** The theme colours the steer is drawn with: OMP's own, so it reads as part of the host and not as a Rerail banner. */
@@ -52,39 +53,42 @@ function steerBlocks(content: string): DrawnBlock[] {
   return blocks;
 }
 
-/** `◆ Rerail · <rule>  steered`: the glyph and state in the theme's accent, the separator dimmed. */
-function headerText(header: string, theme: SteerTheme): string {
+/**
+ * `◆ R E R A I L · <rule>  steered`: the glyph and state in the theme's accent, the separator dimmed, and Rerail as
+ * its mark, the footer's coloured letters.
+ */
+function headerText(header: string, mark: string, theme: SteerTheme): string {
   const parts = HEADER.exec(terminalText(header));
   if (parts === null) return terminalText(header);
   const [, glyph, ruleId, state] = parts;
-  return `${theme.fg("accent", glyph!)} Rerail${theme.fg("dim", " · ")}${ruleId}  ${theme.fg("accent", state!)}`;
+  return `${theme.fg("accent", glyph!)} ${mark}${theme.fg("dim", " · ")}${ruleId}  ${theme.fg("accent", state!)}`;
 }
 
-/** The `why` after a headline: the word itself linked where the terminal draws links, else the word and its address. */
+/** The `why?` after a headline: the word itself linked where the terminal draws links, else the word and its address. */
 function whyText(url: string, hyperlinks: boolean, theme: SteerTheme): string {
   const separator = theme.fg("dim", "  ·  ");
-  if (hyperlinks) return `${separator}${hyperlink(url, theme.fg("mdLink", "why"))}`;
-  return `${separator}${theme.fg("mdLink", "why")}${theme.fg("dim", " → ")}${theme.fg("mdLinkUrl", terminalText(url))}`;
+  if (hyperlinks) return `${separator}${hyperlink(url, theme.fg("mdLink", "why?"))}`;
+  return `${separator}${theme.fg("mdLink", "why?")}${theme.fg("dim", " → ")}${theme.fg("mdLinkUrl", terminalText(url))}`;
 }
 
 /**
- * The steer as the person sees it in OMP (design D4): one line per rule, `◆ Rerail · <rule>  steered  ·  why`, the
+ * The steer as the person sees it in OMP (design D4): one line per rule, `◆ R E R A I L · <rule>  steered  ·  why?`, the
  * same line Claude Code and Codex show. Expanded (Ctrl+O) adds each block's own lines beneath its headline, where the
  * rule comes from, its mode and the guidance, then the link written out, for copying; a terminal without links has
- * it written on the headline already. A headline whose link is still relative (no dashboard was known) has no `why`:
+ * it written on the headline already. A headline whose link is still relative (no dashboard was known) has no `why?`:
  * a link to nowhere would only mislead.
  */
-export function formatOmpSteer(content: string, options: { expanded: boolean; hyperlinks: boolean }, theme: SteerTheme): SteerRow[] {
+export function formatOmpSteer(content: string, options: { expanded: boolean; hyperlinks: boolean; mark: string }, theme: SteerTheme): SteerRow[] {
   return steerBlocks(content).flatMap(({ headline, detail }) => {
     const { url } = headline;
     const rows: SteerRow[] = [{
       detail: false,
-      text: `${headerText(headline.header, theme)}${url === undefined ? "" : whyText(url, options.hyperlinks, theme)}`,
+      text: `${headerText(headline.header, options.mark, theme)}${url === undefined ? "" : whyText(url, options.hyperlinks, theme)}`,
     }];
     if (!options.expanded) return rows;
     rows.push(...detail.map(line => ({ detail: true, text: theme.fg("dim", terminalText(line)) })));
     if (url !== undefined && options.hyperlinks) {
-      rows.push({ detail: true, text: `${theme.fg("dim", "why:")} ${hyperlink(url, theme.fg("mdLink", terminalText(url)))}` });
+      rows.push({ detail: true, text: `${theme.fg("dim", "why?")} ${hyperlink(url, theme.fg("mdLink", terminalText(url)))}` });
     }
     return rows;
   });
@@ -101,6 +105,7 @@ type HostComponents = Pick<ExtensionAPI["pi"], "Container" | "Text">;
 export function registerOmpSteerRenderer(
   pi: Pick<ExtensionAPI, "registerMessageRenderer"> & { pi?: Partial<HostComponents> },
   hyperlinks: () => boolean = terminalDrawsHyperlinks,
+  mark: () => string = () => rerailMark(colourDepth()),
 ): void {
   pi.registerMessageRenderer(RULE_MESSAGE_TYPE, ({ content }, { expanded }, theme) => {
     const { Container, Text } = pi.pi ?? {};
@@ -108,7 +113,7 @@ export function registerOmpSteerRenderer(
     const text = typeof content === "string"
       ? content
       : content.flatMap(block => (block.type === "text" ? [block.text] : [])).join("\n");
-    const rows = formatOmpSteer(text, { expanded, hyperlinks: hyperlinks() }, theme);
+    const rows = formatOmpSteer(text, { expanded, hyperlinks: hyperlinks(), mark: mark() }, theme);
     if (rows.length === 0) return undefined;
     const steer = new Container();
     for (const row of rows) steer.addChild(new Text(row.text, MARGIN + (row.detail ? DETAIL_INDENT : 0), 0));
