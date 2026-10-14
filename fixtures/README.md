@@ -48,6 +48,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
+| `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
 | `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |
@@ -62,15 +63,10 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 |
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
 
-`ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next,
+`ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next, vue,
 complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their
-upstream tools' copied tests and recordings, their candidates and their licence records. `vue/` has upstream
-recordings but no rules yet, so it has no pack directory: `vue/upstream/` holds the upstream linters' recorders,
-their copied tests (`<tool>/fixtures/`) and recordings on those tests and on pinned public corpora
-(`<tool>/corpus-<name>.expected.json`), laid out as a pack's `upstream/`, beside the planned rule list
-(`vue/upstream/rules.json`). When its pack gains its first rules, the list becomes `packs/vue/conformance.json` and
-`vue/upstream/` moves to `packs/vue/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the
-ESLint-based generators share.
+upstream tools' copied tests and recordings, their candidates and their licence records.
+`../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory; a family's shared generator modules sit at the family's

@@ -12,6 +12,8 @@ mod literal;
 mod matcher;
 mod model;
 mod module_path;
+mod php_literal;
+mod php_view;
 mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
@@ -25,6 +27,7 @@ mod test_support;
 mod transducer;
 mod value;
 mod violations;
+mod vue;
 mod workspace;
 
 /// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the

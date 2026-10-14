@@ -1,23 +1,26 @@
 {
   "format": "rerail.language/v1",
   "id": "vue",
-  "status": "planned",
+  "status": "supported",
   "family": "vue",
   "dialects": [
     {
       "label": "vue",
+      "variant": "Vue",
       "suffixes": [".vue"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:vue",
       "tapeTag": 12
     }
   ],
   "capabilities": {
-    "scope": "not-supported-yet",
-    "value": "not-supported-yet",
-    "arguments": "not-supported-yet",
-    "calls": "not-supported-yet",
-    "formatArgs": "not-supported-yet"
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "refused",
+    "formatArgs": "refused"
   },
-  "suppressions": [],
+  "suppressions": ["eslint"],
   "embeds": [
     {
       "language": "typescript",

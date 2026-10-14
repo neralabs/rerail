@@ -287,7 +287,5 @@ Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` an
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
-parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. Not moved yet: `vue`, which has upstream
-recordings but no rules: they stay in `fixtures/vue/upstream/` beside its draft rule list
-(`fixtures/vue/upstream/rules.json`) until its pack gains rules, when the draft becomes `packs/vue/conformance.json`
-and `upstream/` moves to `packs/vue/upstream/`.
+parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
+draft `rules.json` becoming `packs/vue/conformance.json`.

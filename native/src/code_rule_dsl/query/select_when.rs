@@ -5,8 +5,8 @@
 //! read file by file as `LeafRow`s: whether the leaf failed in the file (its witnesses there are
 //! unknown), whether the file was read around syntax errors, and how many witnesses the file
 //! holds. `answer` decides everything else: which sides are read at all, whether the answer is
-//! known, which witnesses are reported (a witness budget's worth, in row order) and which
-//! partially read files the answer relied on.
+//! known (and if not, at which failed row), which witnesses are reported (a witness budget's
+//! worth, in row order) and which partially read files the answer relied on.
 //!
 //! Rows come from the caller (`Leaves`), in the order the caller reads the leaf. Sides are read
 //! depth first, `exists` before `select`, and a `select` side only where its `exists` side is
@@ -64,6 +64,10 @@ pub(in crate::code_rule_dsl) struct Answer {
     pub(in crate::code_rule_dsl) partial: Vec<(usize, usize)>,
 }
 
+/// Where a plan's answer is unknown: the failed `(leaf, row)` it could not do without, the first
+/// failed row of the leaf that left it unknown.
+pub(in crate::code_rule_dsl) type Unknown = (usize, usize);
+
 impl<L> Plan<L> {
     /// `query`'s plan; `decision` when a single witness answers it. `leaf` names each regex or
     /// AST query, given whether its witnesses may be reported.
@@ -108,40 +112,41 @@ impl<L> Plan<L> {
         }
     }
 
-    /// Node `node`'s answer: `None` where unknown, else whether it holds a witness (known only
-    /// for a node read for a decision; `false` otherwise). Appends the witnesses and partial rows
-    /// of every leaf it reads to `answer`.
+    /// Node `node`'s answer: `Err` at the failed row where unknown, else whether it holds a
+    /// witness (known only for a node read for a decision; `false` otherwise). Appends the
+    /// witnesses and partial rows of every leaf it reads to `answer`.
     fn evaluate(
         &self,
         node: usize,
         cap: usize,
         leaves: &dyn Leaves,
         answer: &mut Answer,
-    ) -> Result<Option<bool>, String> {
+    ) -> Result<Result<bool, Unknown>, String> {
         match self.nodes[node] {
             Node::Leaf(leaf) => self.read(leaf, cap, leaves, answer),
             Node::SelectWhen { select } => match self.evaluate(node + 1, cap, leaves, answer)? {
-                Some(true) => self.evaluate(select, cap, leaves, answer),
+                Ok(true) => self.evaluate(select, cap, leaves, answer),
                 condition => Ok(condition),
             },
         }
     }
 
     /// Reads leaf `leaf`. Read for a decision, it ends at its first row holding a witness (one
-    /// witness of it reported) and is unknown only where it has none and a row failed. Otherwise
-    /// it is unknown at its first failed row, and reports its rows' witnesses in order until
-    /// `cap` of them are taken; the row where the budget runs out gives only what is left of it.
+    /// witness of it reported) and is unknown only where it has none and a row failed (at its
+    /// first failed row). Otherwise it is unknown at its first failed row, and reports its rows'
+    /// witnesses in order until `cap` of them are taken; the row where the budget runs out gives
+    /// only what is left of it.
     fn read(
         &self,
         leaf: usize,
         cap: usize,
         leaves: &dyn Leaves,
         answer: &mut Answer,
-    ) -> Result<Option<bool>, String> {
+    ) -> Result<Result<bool, Unknown>, String> {
         let Leaf {
             decision, reported, ..
         } = self.leaves[leaf];
-        let mut failed = false;
+        let mut failed = None;
         let mut before = 0usize;
         let mut position = 0;
         while let Some(row) = leaves.row(leaf, position)? {
@@ -153,12 +158,14 @@ impl<L> Plan<L> {
                     if reported {
                         answer.witnesses.push((leaf, position, 1));
                     }
-                    return Ok(Some(true));
+                    return Ok(Ok(true));
                 }
-                failed |= row.failed;
+                if row.failed {
+                    failed.get_or_insert(position);
+                }
             } else {
                 if row.failed {
-                    return Ok(None);
+                    return Ok(Err((leaf, position)));
                 }
                 if reported && row.witnesses > 0 && before < cap {
                     answer
@@ -169,17 +176,17 @@ impl<L> Plan<L> {
             }
             position += 1;
         }
-        Ok((!failed).then_some(false))
+        Ok(failed.map_or(Ok(false), |position| Err((leaf, position))))
     }
 }
 
-/// Answers `plan` over `leaves`' rows with a witness budget of `cap`: `None` where the answer is
-/// unknown. Only a reported leaf not read for a decision counts the budget.
+/// Answers `plan` over `leaves`' rows with a witness budget of `cap`: `Err` at the failed row
+/// where the answer is unknown. Only a reported leaf not read for a decision counts the budget.
 pub(in crate::code_rule_dsl) fn answer<L>(
     plan: &Plan<L>,
     cap: usize,
     leaves: &dyn Leaves,
-) -> Result<Option<Answer>, String> {
+) -> Result<Result<Answer, Unknown>, String> {
     let mut answer = Answer {
         witnesses: Vec::new(),
         partial: Vec::new(),
@@ -249,7 +256,7 @@ mod tests {
         }
     }
 
-    fn run(query: &Query, decision: bool, cap: usize, leaves: &Fixed) -> Option<Answer> {
+    fn run(query: &Query, decision: bool, cap: usize, leaves: &Fixed) -> Result<Answer, Unknown> {
         let plan = Plan::new(query, decision, |_, reported| reported);
         answer(&plan, cap, leaves).unwrap()
     }
@@ -265,8 +272,12 @@ mod tests {
 
     #[test]
     fn an_unknown_condition_is_the_answer_and_leaves_the_select_side_unread() {
-        let leaves = Fixed::new(vec![vec![PARTIAL, FAILED], vec![row(3)]]);
-        assert!(run(&when(leaf(), leaf()), false, 10, &leaves).is_none());
+        let leaves = Fixed::new(vec![vec![FAILED, PARTIAL, FAILED], vec![row(3)]]);
+        // Unknown at the condition's first failed row.
+        assert_eq!(
+            run(&when(leaf(), leaf()), false, 10, &leaves).err(),
+            Some((0, 0))
+        );
         assert_eq!(leaves.read.borrow()[1], 0);
     }
 
@@ -282,7 +293,10 @@ mod tests {
     #[test]
     fn a_failed_select_file_makes_the_answer_unknown() {
         let leaves = Fixed::new(vec![vec![row(1)], vec![row(2), FAILED, row(1)]]);
-        assert!(run(&when(leaf(), leaf()), false, 10, &leaves).is_none());
+        assert_eq!(
+            run(&when(leaf(), leaf()), false, 10, &leaves).err(),
+            Some((1, 1))
+        );
     }
 
     #[test]

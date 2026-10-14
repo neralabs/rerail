@@ -64,6 +64,10 @@ impl Adapter for Sql {
         value::sql::identifier(text)
     }
 
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        Cow::Borrowed(source)
+    }
+
     fn module_path(_: &Path) -> Option<Json> {
         None
     }
