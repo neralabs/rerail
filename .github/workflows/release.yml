@@ -104,7 +104,7 @@ jobs:
       - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -222,7 +222,7 @@ jobs:
       - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -327,7 +327,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -358,7 +358,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 
