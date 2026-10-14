@@ -7,14 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/index.js";
-import { CodeRuleBridge, type ConversationRule, linkSteers, steerBlock } from "../../../src/engine/index.js";
+import { CodeRuleBridge, type ConversationRule, linkSteers, steerBlock, steerOrigin } from "../../../src/engine/index.js";
 import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
 import { steerDashboard } from "../../../src/presentation/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 
 async function checkoutSteer(cwd: string): Promise<string> {
-  return linkSteers(steerBlock("checkout", "Check checkout requirements."), await steerDashboard(cwd));
+  return linkSteers(steerBlock("checkout", "Check checkout requirements.", { mode: "steer", origin: steerOrigin("checkout") }), await steerDashboard(cwd));
 }
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
