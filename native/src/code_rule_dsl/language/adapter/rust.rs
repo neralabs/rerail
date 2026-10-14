@@ -7,7 +7,7 @@
 
 use super::{
     Adapter, ArgumentFeature, ArgumentRules, CallFeature, CallRules, FormatArgFeature,
-    FormatArgRules, Refusal, Region, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules,
+    FormatArgRules, Refusal, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules,
     ValueFeature, ValueRules,
 };
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
@@ -59,16 +59,6 @@ impl Adapter for Rust {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text
-    }
-
-    fn regions<'r, D: Doc>(
-        root: &Node<'r, D>,
-        dialect: GrammarDialect,
-    ) -> impl Iterator<Item = Region<'r, D>> {
-        std::iter::once(Region {
-            root: root.clone(),
-            dialect,
-        })
     }
 
     fn module_path(_: &Path) -> Option<serde_json::Value> {
