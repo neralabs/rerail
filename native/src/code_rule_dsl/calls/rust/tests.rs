@@ -359,3 +359,121 @@ fn a_path_attribute_leaves_the_crates_links_open() {
     let (defs, open) = graph.link_of(&hit);
     assert!(open && defs.is_empty());
 }
+
+/// Whether a call of `a` in `main` (`src/lib.rs`, with `source` defining `a`) must reach a
+/// definition that calls `sink`, evaluated as a rule: `Some(true)` where it reaches, `Some(false)`
+/// where it does not, `None` where that is unknown (neither claim reports).
+fn a_reaches_sink(source: &str) -> Option<bool> {
+    use crate::code_rule_dsl::test_support::*;
+    let sink = serde_json::json!({ "has": {
+        "stopBy": { "kind": "function_item" }, "kind": "call_expression",
+        "has": { "field": "function", "regex": "^sink$" },
+    } });
+    let call_of_a = |calls: Value| {
+        serde_json::json!({
+            "kind": "call_expression",
+            "has": { "field": "function", "regex": "^a$" },
+            "all": [calls],
+        })
+    };
+    let source = format!("{source}\nfn sink() {{}}\npub fn main() {{ a(); }}\n");
+    let reported = |rule: Value| {
+        let document = clause_document(serde_json::json!({
+            "id": "reach",
+            "forbid": { "ast": { "language": "rust", "rule": rule } },
+            "violation": violation(),
+        }));
+        let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+        let compiled = compile_document_with(document, &capabilities)
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let snapshot = serde_json::json!({
+            "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
+            "files": [{ "language": "rust", "path": "src/lib.rs", "source": source }],
+        });
+        let output: Value = serde_json::from_str(
+            &compiled
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        assert_eq!(output["failures"], serde_json::json!([]), "{output}");
+        !output["violations"]
+            .as_array()
+            .expect("violations")
+            .is_empty()
+    };
+    let reaches = reported(call_of_a(serde_json::json!({ "calls": sink })));
+    let absent = reported(call_of_a(serde_json::json!({ "not": { "calls": sink } })));
+    match (reaches, absent) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        (false, false) => None,
+        (true, true) => panic!("a call both reaches and does not reach: {source}"),
+    }
+}
+
+#[test]
+fn a_call_in_a_macros_tokens_is_open_never_absent() {
+    let callees = "fn b() -> i32 { sink(); 1 }\nmacro_rules! m { () => { b() }; }\n";
+    // The control: a call outside a macro links, and a body that calls nothing reaches nothing.
+    assert_eq!(
+        a_reaches_sink(&format!("pub fn a() {{ b(); }}\n{callees}")),
+        Some(true)
+    );
+    assert_eq!(
+        a_reaches_sink(&format!("pub fn a() {{ let _ = 1; }}\n{callees}")),
+        Some(false)
+    );
+    // rustc 1.99.0: each of these calls `b`, so `a` reaches `sink`; read from tokens it is unknown.
+    for body in [
+        r#"println!("{}", b());"#,
+        "assert!(b() == 1);",
+        "let _ = vec![b()];",
+        r#"std::println!("{}", format!("{}", b()));"#,
+        "assert_eq!(1, Some(1).map(|_| b()).unwrap_or(0));",
+        "m!();",
+        r#"println!("{}", m!());"#,
+        "let _ = vec![b::<>()];",
+    ] {
+        assert_eq!(
+            a_reaches_sink(&format!("pub fn a() {{ {body} }}\n{callees}")),
+            None,
+            "{body}"
+        );
+    }
+    // The standard library's macros whose tokens hold no call call nothing of the crate.
+    for body in [
+        r#"println!("{} {x}", 1, x = 2);"#,
+        "assert!(true);",
+        "let _ = vec![1, 2];",
+        r#"assert_eq!(1, 1, "{}", "same");"#,
+        "let _ = matches!(1, 0..=2);",
+    ] {
+        assert_eq!(
+            a_reaches_sink(&format!("pub fn a() {{ {body} }}\n{callees}")),
+            Some(false),
+            "{body}"
+        );
+    }
+}
+
+/// A tree deeper than the scope table's nesting bound: the summary is open, and reading it uses
+/// no stack per level (a 256 KiB thread of a debug build).
+#[test]
+fn a_deep_file_summarizes_open_on_a_small_stack() {
+    use super::summary;
+    let terms = vec!["1"; 3000].join(" + ");
+    let parens = format!("{}1{}", "(".repeat(2000), ")".repeat(2000));
+    let source = format!("pub fn f() {{ let _ = {terms}; let _ = {parens}; }}\n");
+    std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(move || {
+            let root = GrammarDialect::Rust.ast_grep(&source);
+            let summary = summary(&root.root(), "src/lib.rs", None, false);
+            assert!(summary.open);
+            assert_eq!(summary.defs.len(), 1);
+        })
+        .expect("thread")
+        .join()
+        .expect("no stack overflow");
+}

@@ -2,8 +2,9 @@
 //! `call_expression` names where no type or runtime value is needed. A bare name resolves through
 //! the file's scope table (`scope::rust`), a path through its first segment, `Self::f` and
 //! `Type::f` through the `impl` blocks of the crate, `self.m()` through the `impl` it sits in. What
-//! needs types (other method calls, trait dispatch, closures and function pointers) is `Open`;
-//! calls inside macro token trees are not read.
+//! needs types (other method calls, trait dispatch, closures and function pointers) is `Open`.
+//! A macro's tokens are not parsed: a macro invocation whose expansion may call a function of the
+//! crate is `Open` (`macro_may_call`), so a call there is left open, never absent.
 
 use super::names::Name;
 use super::summary::{self, Def, OPEN, Summary};
@@ -166,14 +167,27 @@ impl Items {
         items
     }
 
-    /// Records the items among `node`'s descendants under `prefix`; impls wait in `pending`.
+    /// Records the items among `node`'s descendants under `prefix`; impls wait in `pending`. The
+    /// walk keeps its own stack: a file's nesting is not bounded.
     fn scan<'r, D: Doc>(
         &mut self,
         node: &Node<'r, D>,
         prefix: &str,
         pending: &mut Vec<Node<'r, D>>,
     ) {
-        for child in node.children().filter(|child| child.is_named()) {
+        let mut stack: Vec<(Node<'r, D>, Rc<str>)> = Vec::new();
+        let push_children =
+            |stack: &mut Vec<(Node<'r, D>, Rc<str>)>, node: &Node<'r, D>, prefix: Rc<str>| {
+                let children: Vec<_> = node.children().filter(|child| child.is_named()).collect();
+                stack.extend(
+                    children
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, Rc::clone(&prefix))),
+                );
+            };
+        push_children(&mut stack, node, Rc::from(prefix));
+        while let Some((child, prefix)) = stack.pop() {
             match child.kind().as_ref() {
                 "token_tree"
                 | "attribute_item"
@@ -188,7 +202,7 @@ impl Items {
                     self.types
                         .insert(name.range().start, (qualified.clone(), ItemKind::Module));
                     if let Some(body) = child.field("body") {
-                        self.scan(&body, &qualified, pending);
+                        push_children(&mut stack, &body, Rc::from(qualified));
                     }
                 }
                 "struct_item" | "union_item" | "enum_item" => {
@@ -210,7 +224,7 @@ impl Items {
                     self.types
                         .insert(name.range().start, (qualified.clone(), ItemKind::Trait));
                     if let Some(body) = child.field("body") {
-                        self.scan(&body, &qualified, pending);
+                        push_children(&mut stack, &body, Rc::from(qualified));
                     }
                 }
                 "impl_item" => pending.push(child),
@@ -221,7 +235,7 @@ impl Items {
                     let qualified = format!("{prefix}::{}", name.text());
                     self.functions.insert(name.range().start, qualified.clone());
                     if let Some(body) = child.field("body") {
-                        self.scan(&body, &qualified, pending);
+                        push_children(&mut stack, &body, Rc::from(qualified));
                     }
                 }
                 "extern_crate_declaration" => {
@@ -229,7 +243,7 @@ impl Items {
                         self.externs.insert(local.range().start);
                     }
                 }
-                _ => self.scan(&child, prefix, pending),
+                _ => push_children(&mut stack, &child, prefix),
             }
         }
     }
@@ -315,9 +329,9 @@ pub(crate) fn trait_names<D: Doc>(
 
 /// What each `call_expression` of a file calls, by the byte offset of the callee's name (the last
 /// path segment, the method name, or the callee expression where it has no name), in source order.
-/// Calls that build a value (a tuple struct or variant) have no entry, nor do calls in macro
-/// token trees. `module` is the file's `module_of`; `table` its scope table; `known` the crate's
-/// definitions.
+/// Calls that build a value (a tuple struct or variant) have no entry; a macro invocation that may
+/// call a function of the crate (`macro_may_call`) is `Open` at its macro's path. `module` is the
+/// file's `module_of`; `table` its scope table; `known` the crate's definitions.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn callees<D: Doc>(
     root: &Node<'_, D>,
@@ -543,7 +557,9 @@ pub(crate) fn callee_at<D: Doc>(
     }
 }
 
-/// Reads the calls among `node`'s descendants, skipping token trees.
+/// Reads the calls among `node`'s descendants, skipping token trees: a macro invocation that may
+/// call a function of the crate is `Open` at its macro's path. The walk keeps its own stack: a
+/// file's nesting is not bounded.
 fn visit_calls<D: Doc>(
     node: &Node<'_, D>,
     module: &[String],
@@ -552,20 +568,149 @@ fn visit_calls<D: Doc>(
     items: &Items,
     found: &mut Vec<(usize, Callee)>,
 ) {
-    for child in node.children().filter(|child| child.is_named()) {
-        if matches!(
-            child.kind().as_ref(),
-            "token_tree" | "attribute_item" | "inner_attribute_item" | "macro_definition"
-        ) {
-            continue;
+    let read = |child: &Node<'_, D>| {
+        child.is_named()
+            && !matches!(
+                child.kind().as_ref(),
+                "token_tree" | "attribute_item" | "inner_attribute_item" | "macro_definition"
+            )
+    };
+    let mut stack: Vec<_> = node.children().filter(read).collect();
+    stack.reverse();
+    while let Some(node) = stack.pop() {
+        match node.kind().as_ref() {
+            "call_expression" => {
+                if let Some(entry) = read_call(&node, module, table, known, items) {
+                    found.push(entry);
+                }
+            }
+            "macro_invocation" if macro_may_call(&node) => {
+                let at = node.field("macro").unwrap_or_else(|| node.clone());
+                found.push((at.range().start, Callee::Open));
+            }
+            _ => {}
         }
-        if child.kind() == "call_expression"
-            && let Some(entry) = read_call(&child, module, table, known, items)
-        {
-            found.push(entry);
-        }
-        visit_calls(&child, module, table, known, items, found);
+        let first = stack.len();
+        stack.extend(node.children().filter(read));
+        stack[first..].reverse();
     }
+}
+
+/// The standard library's macros whose expansion calls no function of the crate but those its
+/// arguments' tokens call: the formatting, assertion and constructor macros. `write!` and
+/// `writeln!` are not among them: they call a method of their destination (`dst.write_fmt(..)`),
+/// which needs its type.
+const STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "compile_error",
+    "concat",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "include_bytes",
+    "include_str",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "thread_local",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+];
+
+/// Whether the expansion of the macro invocation `invocation` may call a function of the crate:
+/// any macro but `STD_MACROS` may (its expansion is not read), and one of those may where its
+/// tokens hold a call (`call_in_tokens`).
+fn macro_may_call<D: Doc>(invocation: &Node<'_, D>) -> bool {
+    let Some(path) = invocation.field("macro") else {
+        return true;
+    };
+    let path: String = path.text().chars().filter(|c| !c.is_whitespace()).collect();
+    let path = path.strip_prefix("::").unwrap_or(&path);
+    let name = LIBRARY_ROOTS
+        .iter()
+        .find_map(|root| path.strip_prefix(root)?.strip_prefix("::"))
+        .unwrap_or(path);
+    if !STD_MACROS.contains(&name) {
+        return true;
+    }
+    invocation
+        .children()
+        .filter(|child| child.kind() == "token_tree")
+        .any(|tree| call_in_tokens(&tree))
+}
+
+/// Whether the tokens of `tree` (and of the token trees inside it) may hold a call: a
+/// parenthesized token tree after a name, a `>` or `>>` (a turbofish), a `?` or another token
+/// tree (`f(x)`, `a.m::<T>(x)`, `f(x)(y)`, `a[0](x)`), or a macro invocation of a macro that may
+/// call one (`m!(..)`, `std::format!(..)` whose tokens hold a call). A tuple struct's or
+/// variant's constructor (`Some(x)`) reads as a call: tokens are not resolved.
+fn call_in_tokens<'r, D: Doc>(tree: &Node<'r, D>) -> bool {
+    let mut trees = vec![tree.clone()];
+    while let Some(tree) = trees.pop() {
+        // The last four tokens before this one, nearest first.
+        let mut previous: [Option<Node<'r, D>>; 4] = [None, None, None, None];
+        for token in tree.children() {
+            let kind = token.kind();
+            if kind == "token_tree" {
+                let kind_of = |at: usize| previous[at].as_ref().map(|token| token.kind());
+                let is = |at: usize, want: &str| kind_of(at).is_some_and(|kind| kind == want);
+                if is(0, "!") && is(1, "identifier") {
+                    // Another macro's call: by its bare name, or the standard library's path.
+                    let library = !is(2, "::")
+                        || (is(3, "identifier")
+                            && previous[3]
+                                .as_ref()
+                                .is_some_and(|root| LIBRARY_ROOTS.contains(&root.text().as_ref())));
+                    let named = previous[1]
+                        .as_ref()
+                        .is_some_and(|name| STD_MACROS.contains(&name.text().as_ref()));
+                    if !library || !named {
+                        return true;
+                    }
+                } else if token.child(0).is_some_and(|open| open.kind() == "(")
+                    && kind_of(0).is_some_and(|kind| {
+                        matches!(
+                            kind.as_ref(),
+                            "identifier"
+                                | "self"
+                                | "super"
+                                | "crate"
+                                | ">"
+                                | ">>"
+                                | "?"
+                                | "token_tree"
+                        )
+                    })
+                {
+                    return true;
+                }
+                trees.push(token.clone());
+            }
+            if !matches!(kind.as_ref(), "line_comment" | "block_comment") {
+                previous.rotate_right(1);
+                previous[0] = Some(token);
+            }
+        }
+    }
+    false
 }
 
 /// The entry of one call expression, or `None` for a call that builds a value.
