@@ -12,16 +12,15 @@ mod sfc;
 mod template;
 pub(crate) mod view;
 
-pub(crate) use sfc::tape_script_dialect;
-
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::regions;
 use ast_grep_core::{Doc, Node};
 
-/// The program a Vue tape embeds: its root's last child, if that is a `program`. The dialect it
-/// is written in is its script's `lang` (`tape_script_dialect`).
+/// The program a Vue tape embeds (`adapter::regions`); `None` where it embeds none.
 pub(crate) fn program<'r, D: Doc>(root: &Node<'r, D>) -> Option<Node<'r, D>> {
-    root.children()
-        .last()
-        .filter(|last| last.kind() == "program" && last.is_named())
+    regions(root, GrammarDialect::Vue)
+        .next()
+        .map(|region| region.root)
 }
 
 #[cfg(test)]
@@ -171,7 +170,7 @@ mod tests {
         use crate::code_rule_dsl::soundness::SyntaxErrors;
         let source = "<script setup>\n// E2E-MARKER\nimport { ref } from 'vue'\nconst a = ref(1)\nconst b = a + 1\nconst c = a * 2\n</script>\n\n<template>\n  <div v-for=\"x in xs\">{{ x </div>\n  <p>{{ b }}</p>\n</template>\n";
         let doc = tape(source);
-        let errors = SyntaxErrors::of_doc(doc.root().get_doc(), GrammarDialect::Vue);
+        let errors = SyntaxErrors::of_doc(doc.root().get_doc());
         assert!(!errors.is_empty(), "the template has a syntax error");
         assert!(!errors.hide_bindings(), "the program has none of its own");
         let table = ScopeTable::build(doc.root(), GrammarDialect::Vue, usize::MAX, &|| false)

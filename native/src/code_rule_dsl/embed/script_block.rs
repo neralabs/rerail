@@ -12,6 +12,11 @@ pub(crate) struct ScriptBlock;
 impl Embedder for ScriptBlock {
     type Program = View;
 
+    /// The view is built from what the component's recovered tree holds, as vue-eslint-parser
+    /// recovers from a template's syntax errors and ESLint reads the scripts: a template's error
+    /// leaves a clause over a clean program complete.
+    const APART: bool = true;
+
     fn build(root: TsNode<'_>, source: &str) -> Option<Self::Program> {
         View::build(root, source)
     }

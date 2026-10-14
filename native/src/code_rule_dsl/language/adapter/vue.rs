@@ -1,38 +1,30 @@
 //! Vue single-file components: their semantics are those of the ECMAScript program their script
 //! blocks and template expressions make (`vue::view`, embedded by `embed::ScriptBlock`), which each
-//! concern reads with the Ecma family's code. Calls and format arguments are refused, as
+//! concern reads with the Ecma family's code. Scope is Ecma's, which reads the program as the
+//! document's region (`adapter::regions`). Calls and format arguments are refused, as
 //! ECMAScript's are: vue-eslint-parser hands the scripts to ESLint, which has neither.
 //! Suppressions are ESLint's: its directive comments in the `<script>` blocks, and
 //! eslint-plugin-vue's template comment directives (`suppress::vue`).
 
 use super::syntax::QueryOptions;
 use super::{
-    Adapter, Ecma, Refusal, Refused, Region, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules,
-    ValueFeature, ValueRules,
+    Adapter, Ecma, Refusal, Refused, SyntaxFeature, SyntaxRules, ValueFeature, ValueRules,
 };
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{
-    ScopeName, Unresolved, file_eslint_directives, file_vue_directives,
-};
+use crate::code_rule_dsl::matcher::{file_eslint_directives, file_vue_directives};
 use crate::code_rule_dsl::model::ViolationSpec;
-use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::usage::{Steps, Usage};
-use crate::code_rule_dsl::scope::{
-    Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeTable,
-};
 use crate::code_rule_dsl::suppress::{Suppress, VueDirectives, vue_script_directives};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
-use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};
+use crate::code_rule_dsl::value::{BigInt, Context, Value};
 use crate::code_rule_dsl::vue;
 use ast_grep_core::{Doc, Language, Node};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::path::Path;
-use std::sync::Arc;
 
 /// Vue single-file components (`.vue`).
 pub(crate) struct Vue;
@@ -43,11 +35,7 @@ impl Adapter for Vue {
     const TERMINATORS: Terminators = <Ecma as Adapter>::TERMINATORS;
     const PACKAGES: bool = <Ecma as Adapter>::PACKAGES;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
-    /// The program is a tree of its own beside the component's (`vue::program`): a template's
-    /// syntax error leaves a clause over a clean program complete, as vue-eslint-parser recovers
-    /// from it and ESLint reads the scripts.
-    const PROGRAM_APART: bool = true;
-    type Scope = Self;
+    type Scope = Ecma;
     type Value = Self;
     type Arguments = Ecma;
     type Calls = Refused;
@@ -63,23 +51,6 @@ impl Adapter for Vue {
         } else {
             <Ecma as Adapter>::name(text)
         }
-    }
-
-    /// The program the component embeds (`vue::program`), read as the dialect its script's `lang`
-    /// names (`vue::tape_script_dialect`); none where the script is in another language
-    /// (`lang="coffee"`) or the component holds nothing Vue compiles.
-    fn regions<'r, D: Doc>(
-        root: &Node<'r, D>,
-        _: GrammarDialect,
-    ) -> impl Iterator<Item = Region<'r, D>> {
-        vue::program(root)
-            .and_then(|program| {
-                Some(Region {
-                    dialect: vue::tape_script_dialect(root)?,
-                    root: program,
-                })
-            })
-            .into_iter()
     }
 
     fn module_path(file: &Path) -> Option<serde_json::Value> {
@@ -105,136 +76,6 @@ impl Adapter for Vue {
                 template.suppresses(rules, at, lines)
             }
         })
-    }
-}
-
-/// ECMAScript's scope (eslint-scope's, as vue-eslint-parser builds it for the scripts), over the
-/// program the scripts and template expressions make: the template's references are read in the
-/// scopes Vue's compiler gives them. Everything but the visit, which reads the program, is
-/// Ecma's.
-impl ScopeRules for Vue {
-    const SUPPORTED: bool = true;
-    const FLOW: bool = <Ecma as ScopeRules>::FLOW;
-    const STUBS: bool = <Ecma as ScopeRules>::STUBS;
-    const REDEFINES_SHADOWED: bool = <Ecma as ScopeRules>::REDEFINES_SHADOWED;
-    const REFERENCE_KINDS: &'static [&'static str] = <Ecma as ScopeRules>::REFERENCE_KINDS;
-    const ANNOTATION_STRING_KINDS: &'static [&'static str] =
-        <Ecma as ScopeRules>::ANNOTATION_STRING_KINDS;
-    const NAME_KINDS: &'static [&'static str] = <Ecma as ScopeRules>::NAME_KINDS;
-    const PRIVATE_NAME_KINDS: &'static [&'static str] = <Ecma as ScopeRules>::PRIVATE_NAME_KINDS;
-    const FORMS: &'static [(&'static str, Form)] = <Ecma as ScopeRules>::FORMS;
-    const SCOPES: &'static [(&'static str, ScopeName)] = <Ecma as ScopeRules>::SCOPES;
-    const REFUSED_FILTERS: &'static [&'static str] = <Ecma as ScopeRules>::REFUSED_FILTERS;
-
-    fn visit<D: Doc>(
-        builder: &mut Builder<'_>,
-        root: &Node<'_, D>,
-        reading: Reading,
-    ) -> Result<(), BuildError> {
-        for region in <Self as Adapter>::regions(root, GrammarDialect::Vue) {
-            <Ecma as ScopeRules>::visit(builder, &region.root, reading)?;
-        }
-        Ok(())
-    }
-
-    fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
-        for region in <Self as Adapter>::regions(root, GrammarDialect::Vue) {
-            <Ecma as ScopeRules>::finish(table, &region.root);
-        }
-    }
-
-    fn resolve<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<&'t Binding> {
-        <Ecma as ScopeRules>::resolve(table, reference, name)
-    }
-
-    fn binding<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(&'t Binding, Option<NodeRef>)> {
-        <Ecma as ScopeRules>::binding(table, reference, name)
-    }
-
-    fn binding_by<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-        lookup: Lookup,
-    ) -> Option<(&'t Binding, Option<NodeRef>)> {
-        <Ecma as ScopeRules>::binding_by(table, reference, name, lookup)
-    }
-
-    fn index(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        lookup: Lookup,
-    ) -> Option<(u32, usize)> {
-        <Ecma as ScopeRules>::index(table, reference, name, lookup)
-    }
-
-    fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
-        <Ecma as ScopeRules>::undecided(table, reference)
-    }
-
-    fn unbound_annotation(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(u32, usize)> {
-        <Ecma as ScopeRules>::unbound_annotation(table, reference, name)
-    }
-
-    fn unresolved(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        mode: Unresolved,
-        python: &PythonOptions,
-        options: Option<&LanguageOptions>,
-        directives: Option<&Directives>,
-    ) -> bool {
-        <Ecma as ScopeRules>::unresolved(table, reference, name, mode, python, options, directives)
-    }
-
-    fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
-        <Ecma as ScopeRules>::eslint_options(options)
-    }
-
-    fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
-        <Ecma as ScopeRules>::ruff_options(python)
-    }
-
-    #[cfg(test)]
-    fn unbound_locally(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        builtin: bool,
-    ) -> bool {
-        <Ecma as ScopeRules>::unbound_locally(table, reference, name, builtin)
-    }
-
-    /// The program's usage: a file without one has no bindings.
-    fn usage<D: Doc>(
-        table: &ScopeTable,
-        root: &Node<'_, D>,
-        steps: &mut Steps<'_>,
-    ) -> Result<Usage, BuildError> {
-        let program = vue::program(root).unwrap_or_else(|| root.clone());
-        <Ecma as ScopeRules>::usage(table, &program, steps)
-    }
-
-    fn unpackaged_module(path: &str) -> Option<ModulePath> {
-        <Ecma as ScopeRules>::unpackaged_module(path)
-    }
-
-    fn feature(feature: ScopeFeature) -> Result<(), Refusal> {
-        <Ecma as ScopeRules>::feature(feature)
     }
 }
 
@@ -387,8 +228,8 @@ fn template_text(source: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Adapter, Vue};
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::language::adapter::regions;
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use ast_grep_core::AstGrep;
     use std::sync::Arc;
@@ -429,7 +270,7 @@ mod tests {
                     .expect("restores"),
             );
             let root = doc.root();
-            let dialects = Vue::regions(&root, GrammarDialect::Vue)
+            let dialects = regions(&root, GrammarDialect::Vue)
                 .map(|region| region.dialect)
                 .collect::<Vec<_>>();
             assert_eq!(dialects, [dialect], "{source:?}");
