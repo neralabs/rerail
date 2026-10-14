@@ -106,6 +106,7 @@ impl ScopeRules for Sql {
         &[("query", ScopeName::Kind(ScopeKind::Query))];
     const REFUSED_FILTERS: &'static [&'static str] =
         &["exported", "latest", "outer", "builtin", "directives"];
+    const IMPORT_PATHS: bool = false;
 
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
@@ -214,6 +215,10 @@ impl ScopeRules for Sql {
     }
 
     fn unpackaged_module(_: &str) -> Option<ModulePath> {
+        None
+    }
+
+    fn import_path<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: Option<&str>) -> Option<String> {
         None
     }
 
