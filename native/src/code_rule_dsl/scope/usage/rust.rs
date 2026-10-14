@@ -7,6 +7,8 @@ use super::super::rust::{MACRO, resolve_index};
 use super::super::{Access, Import, NodeRef, Reference, ScopeKind, ScopeTable, TYPE, VALUE};
 use super::{Facts, Steps};
 use crate::code_rule_dsl::scope::BuildError;
+#[cfg(test)]
+use crate::code_rule_dsl::test_support::{Walk, record_walk};
 use ast_grep_core::{Doc, Node};
 use foldhash::HashMap;
 
@@ -51,6 +53,13 @@ pub(super) fn build<D: Doc>(
         }
     }
     let mut referenced = vec![HashMap::<Box<str>, Vec<bool>>::default(); table.scopes.len()];
+    let nodes = nodes_at(
+        root,
+        table
+            .references
+            .iter()
+            .map(|reference| (reference.start, reference.end)),
+    );
     for reference in &table.references {
         steps.take()?;
         let Some(name) = text.get(reference.start - base..reference.end - base) else {
@@ -76,11 +85,11 @@ pub(super) fn build<D: Doc>(
                 fact.nested += 1;
             }
         }
-        if let Some(node) = node_ref(root, reference.start, reference.end) {
+        if let Some(node) = nodes.get(&(reference.start, reference.end)) {
             occurrences
                 .entry((scope, name.into()))
                 .or_default()
-                .push(node);
+                .push(*node);
         }
     }
     // `use super::x`, `use self::m::y` and `use crate::z` read the module binding they start
@@ -216,12 +225,24 @@ fn innermost(table: &ScopeTable, at: usize) -> u32 {
     best as u32
 }
 
-/// The node spanning exactly `start..end` under `root`.
-fn node_ref<D: Doc>(root: &Node<'_, D>, start: usize, end: usize) -> Option<NodeRef> {
-    root.dfs()
-        .filter(|node| node.range() == (start..end))
-        .last()
-        .map(|node| NodeRef::of(&node))
+/// The deepest node spanning exactly each of `ranges` under `root`, read in one walk of the tree.
+fn nodes_at<D: Doc>(
+    root: &Node<'_, D>,
+    ranges: impl Iterator<Item = (usize, usize)>,
+) -> HashMap<(usize, usize), NodeRef> {
+    let wanted: foldhash::HashSet<(usize, usize)> = ranges.collect();
+    let mut found = HashMap::default();
+    for node in root.dfs() {
+        #[cfg(test)]
+        record_walk(Walk::UsageNode);
+        let range = node.range();
+        let key = (range.start, range.end);
+        if wanted.contains(&key) {
+            // A later node of the walk is a deeper one of the same span.
+            found.insert(key, NodeRef::of(&node));
+        }
+    }
+    found
 }
 
 /// The byte ranges of the names macro token trees mention: their identifier tokens, and the
