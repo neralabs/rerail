@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({ command: vi.fn(), presentation: vi.fn() }));
 vi.mock("../../../src/setup/claude-status-store.js", () => ({ readClaudeStatusCommand: mocks.command }));
 vi.mock("../../../src/presentation/session-presentation.js", () => ({
   readPresentation: mocks.presentation,
-  formatTerminalStatus: () => "Rerail | 2 rules | steered 1×",
+  fallbackPresentation: (reason: string) => ({ text: reason }),
+  formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
 import { runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
 
@@ -103,7 +104,7 @@ describe("composed Claude status", () => {
     const script = "let n=0; process.stdin.on('data', b => n+=b.length); process.stdin.on('end', () => process.stdout.write(String(n)))";
     mocks.command.mockReturnValue(nodePredecessor(script));
     const input = Buffer.alloc(1_048_577, 0x61);
-    expect((await render(input)).toString()).toMatch(new RegExp(`^${input.length}\\n\\w+ \\| session unavailable\\n$`, "u"));
+    expect((await render(input)).toString()).toBe(`${input.length}\nsession unavailable\n`);
     expect(mocks.presentation).not.toHaveBeenCalled();
   });
 });

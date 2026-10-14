@@ -82,6 +82,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "Johnathon Koster"
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter/tree-sitter-javascript 0.25.0, vendored with Rerail's patches
+# (native/grammars/tree-sitter-javascript/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-javascript/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
@@ -775,6 +783,13 @@ path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# The fixtures Rerail wrote among them (packs/typescript/upstream/eslint-plugin-vitest/UPSTREAM.md).
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/*/rerail-*"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
 
 # typescript-eslint 8.70.1 (packs/typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
