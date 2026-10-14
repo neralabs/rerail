@@ -165,8 +165,8 @@ impl Embedded {
 /// being none). A later one shares an earlier one's code for a kind of the same name, namedness
 /// and visibility, and for a field of the same name, and adds codes for the rest: the grammars a
 /// file's program may be written in (a Vue file's TypeScript, TSX or JavaScript) are mostly one
-/// language, and a tape's codes are 10 bits for kinds and 6 for fields. A tape holds one program,
-/// so a shared code never stands for two grammars' nodes in one tape.
+/// language, and a tape's codes are 10 bits for kinds and 6 for fields. A shared code does not
+/// tell which grammar a program is in: the tape records each program's (`tape::EmbeddedProgram`).
 fn number_embedded(
     own_kinds: usize,
     own_fields: usize,
@@ -313,7 +313,6 @@ fn unique(mut ids: Vec<u16>) -> Vec<u16> {
 /// (`name`, `value`, `arguments`) has one id. Rules and tapes read kinds and fields only here.
 #[derive(Clone, Copy)]
 pub(crate) struct KindCatalog {
-    dialect: GrammarDialect,
     own: OwnKinds,
     embedded: &'static [Embedded],
 }
@@ -339,6 +338,12 @@ impl KindCatalog {
         !self.embedded.is_empty()
     }
 
+    /// The grammars the dialect's tapes embed, in numbering order: a tape names each program's
+    /// dialect by its index here (`tape::EmbeddedProgram`), as kind codes cannot tell it.
+    pub(crate) fn embeddings(self) -> &'static [Embedded] {
+        self.embedded
+    }
+
     /// The embedded grammar a kind code belongs to, if not the dialect's own: the one that added
     /// it (a code embedded grammars share is the first's), and the kind id in its grammar.
     fn embedded_home(self, id: u16) -> Option<(&'static Embedded, u16)> {
@@ -350,13 +355,6 @@ impl KindCatalog {
     /// Whether a kind id is an embedded program's (a Blade tape's PHP), not the dialect's own.
     pub(crate) fn is_embedded_kind(self, id: u16) -> bool {
         self.embedded_home(id).is_some()
-    }
-
-    /// The dialect a node of kind `id` is read as: the embedded grammar's that added the code
-    /// (`number_embedded`), or the dialect's own. ERROR is the dialect's own.
-    pub(crate) fn dialect_of_kind(self, id: u16) -> GrammarDialect {
-        self.embedded_home(id)
-            .map_or(self.dialect, |(embedded, _)| embedded.dialect)
     }
 
     /// The tree-sitter grammar a kind id is a symbol of, and its id there; `None` for one of
@@ -525,7 +523,6 @@ impl KindCatalog {
     #[cfg(test)]
     fn with_embedded(own: GrammarDialect, embedded: &'static [Embedded]) -> Self {
         Self {
-            dialect: own,
             own: OwnKinds::Grammar(own.grammar().expect("a tree-sitter dialect")),
             embedded,
         }
@@ -577,7 +574,6 @@ impl GrammarDialect {
                 .collect()
         });
         KindCatalog {
-            dialect: self,
             own: self.own_kinds(),
             embedded: &EMBEDDED[&self],
         }
@@ -605,6 +601,11 @@ impl GrammarDialect {
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
         self.kinds().kind_is_supertype(id)
+    }
+
+    /// Every dialect, test-only grammars included.
+    pub(crate) fn all() -> &'static [Self] {
+        Self::ALL
     }
 
     pub(crate) fn field_id(self, name: &str) -> Option<u16> {
@@ -742,8 +743,26 @@ const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 
 /// Grammars only tests parse (tape round trips over other shapes); no file or code rule selects them.
 #[cfg(test)]
-const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] =
-    &[(GrammarDialect::Scala, 4), (GrammarDialect::Go, 5)];
+const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
+    (GrammarDialect::Scala, 4),
+    (GrammarDialect::Go, 5),
+    (GrammarDialect::Html, 250),
+];
+
+/// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and
+/// event handlers, one TypeScript, TSX or JavaScript program (`embed::TestScript`), so tests
+/// encode, restore and read an embedded ECMAScript program as an embedding language's would be.
+#[cfg(test)]
+const fn test_embeds(dialect: GrammarDialect) -> &'static [(Via, GrammarDialect)] {
+    match dialect {
+        GrammarDialect::Html => &[
+            (Via::TestScript, GrammarDialect::TypeScript),
+            (Via::TestScript, GrammarDialect::Tsx),
+            (Via::TestScript, GrammarDialect::JavaScript),
+        ],
+        _ => &[],
+    }
+}
 
 fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
     DIALECTS.iter().find(|dialect| dialect.lang == lang)
@@ -1026,7 +1045,7 @@ mod tests {
         for id in 0..u16::try_from(php.node_kind_count()).unwrap() {
             assert_eq!(php_numbering.kind_code(id), id + offset, "{id}");
             assert!(blade.is_embedded_kind(id + offset), "{id}");
-            assert_eq!(blade.dialect_of_kind(id + offset), GrammarDialect::Php);
+            assert_eq!(added_by(blade, id + offset), Some(GrammarDialect::Php));
             assert_eq!(
                 blade.kind_name(id + offset),
                 php.node_kind_for_id(id),
@@ -1133,17 +1152,17 @@ mod tests {
                 );
             }
         }
-        // A kind only Scala has is Scala's.
+        // A kind only Scala has is a code Scala adds; a shared one, the code Go added.
         let only_scala = (0..u16::try_from(scala.node_kind_count()).unwrap())
             .find(|&id| grammar_kind_absent(go, scala, id))
             .expect("Scala has a kind Go has not");
         assert_eq!(
-            catalog.dialect_of_kind(second.kind_code(only_scala)),
-            GrammarDialect::Scala
+            added_by(catalog, second.kind_code(only_scala)),
+            Some(GrammarDialect::Scala)
         );
         assert_eq!(
-            catalog.dialect_of_kind(first.kind_code(identifier(go))),
-            GrammarDialect::Go
+            added_by(catalog, first.kind_code(identifier(go))),
+            Some(GrammarDialect::Go)
         );
         // JSON has no `identifier`: a rule's `kind: identifier` names the one code.
         assert_eq!(
@@ -1154,13 +1173,21 @@ mod tests {
             catalog.kind_id("identifier"),
             catalog.kind_ids("identifier")[0]
         );
-        assert_eq!(catalog.dialect_of_kind(u16::MAX), GrammarDialect::Json);
+        assert_eq!(added_by(catalog, u16::MAX), None);
         assert_eq!(catalog.kind_name(0), json.node_kind_for_id(0));
         assert!(std::ptr::eq(
             catalog.embedding(GrammarDialect::Scala).unwrap(),
             second
         ));
         assert!(catalog.embedding(GrammarDialect::Python).is_none());
+    }
+
+    /// The embedded grammar that added kind code `code` (`number_embedded`): `None` for the
+    /// dialect's own codes and ERROR.
+    fn added_by(catalog: KindCatalog, code: u16) -> Option<GrammarDialect> {
+        catalog
+            .embedded_home(code)
+            .map(|(embedded, _)| embedded.dialect)
     }
 
     /// Whether `other`'s kind `id` has no kind of its name, namedness and visibility in `grammar`.
@@ -1247,13 +1274,18 @@ mod tests {
         };
         assert_ne!(jsx(tsx), u16::MAX);
         assert_eq!(jsx(javascript), jsx(tsx));
-        assert_eq!(catalog.dialect_of_kind(jsx(tsx)), GrammarDialect::Tsx);
+        assert_eq!(added_by(catalog, jsx(tsx)), Some(GrammarDialect::Tsx));
         assert_eq!(catalog.kind_ids("jsx_element"), [jsx(tsx)]);
+        // Every grammar's `program` is TypeScript's code: a code does not tell which grammar a
+        // tape's program is in, so the tape records it (`tape::EmbeddedProgram`).
+        let program = |embedded: &Embedded| {
+            embedded.kind_code(embedded.grammar.id_for_node_kind("program", true))
+        };
+        assert_eq!(program(javascript), program(typescript));
+        assert_eq!(program(tsx), program(typescript));
         assert_eq!(
-            catalog.dialect_of_kind(
-                typescript.kind_code(typescript.grammar.id_for_node_kind("program", true))
-            ),
-            GrammarDialect::TypeScript
+            added_by(catalog, program(typescript)),
+            Some(GrammarDialect::TypeScript)
         );
 
         for embedded in [typescript, tsx, javascript] {

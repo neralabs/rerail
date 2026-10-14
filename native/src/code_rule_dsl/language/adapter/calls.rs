@@ -434,7 +434,7 @@ pub(super) mod kit {
                 .expect("restores"),
         );
         let root = doc.root();
-        let read = A::regions(&root, dialect)
+        let read = crate::code_rule_dsl::language::adapter::regions(&root, dialect)
             .flat_map(|region| {
                 let summary = <C<A> as CallRules>::summary(&region.root, "kit", None, None, false);
                 summary

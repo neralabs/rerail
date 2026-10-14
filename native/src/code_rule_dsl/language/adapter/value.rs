@@ -610,9 +610,9 @@ impl ValueRules for Blade {
     }
 
     /// Whether no token of the node is one the view writes (`@unless`'s `!(`), which a
-    /// comparison of tokens must not read as the template's (`blade::rewritten`).
+    /// comparison of tokens must not read as the template's (`embed::rewritten`).
     fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::blade::rewritten(node)
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
@@ -701,9 +701,12 @@ pub(super) mod kit {
         with: impl FnOnce(&ast_grep_core::Node<'_, TapeDoc>) -> T,
     ) -> T {
         let root = doc.root();
-        let node = A::regions(&root, *ast_grep_core::Doc::get_lang(root.get_doc()))
-            .find_map(|region| region.root.dfs().find(|node| node.kind() == kind))
-            .unwrap_or_else(|| panic!("no {kind}"));
+        let node = crate::code_rule_dsl::language::adapter::regions(
+            &root,
+            *ast_grep_core::Doc::get_lang(root.get_doc()),
+        )
+        .find_map(|region| region.root.dfs().find(|node| node.kind() == kind))
+        .unwrap_or_else(|| panic!("no {kind}"));
         with(&node)
     }
 
@@ -746,7 +749,7 @@ pub(super) mod kit {
         let doc = tape(source, dialect);
         let root = doc.root();
         assert_eq!(
-            A::regions(&root, dialect)
+            crate::code_rule_dsl::language::adapter::regions(&root, dialect)
                 .all(|region| <A::Value as ValueRules>::spelled(&region.root)),
             spelled,
             "{source:?}"
