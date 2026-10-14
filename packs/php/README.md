@@ -45,8 +45,36 @@ The title is what `pack.json` lists for a candidate once it ships; its group is 
 | `psalm-unused-variable` | Psalm UnusedVariable: Unused variable |
 | `psalm-forbidden-code` | Psalm ForbiddenCode: Forbidden code |
 
-Two candidates carried an example pair while they shipped, checked through the engine; they go back into `pack.json`
-with their rules:
+Three candidates carried an example pair while they shipped. `test/engine/catalog/candidate-examples.test.ts` still
+checks each pair below through the engine, and the pairs go back into `pack.json` with their rules:
+
+### `phpcs-squiz-php-disallow-size-functions-in-loops`
+
+Caught (`app/print.php`):
+
+```php
+<?php
+
+function printAll(array $items): void
+{
+    for ($i = 0; $i < count($items); $i++) {
+        echo $items[$i];
+    }
+}
+```
+
+Passes (`app/drain.php`):
+
+```php
+<?php
+
+function drain(array $queue): void
+{
+    while (count($queue) > 0) {
+        run(array_shift($queue));
+    }
+}
+```
 
 ### `phpcs-squiz-php-eval`
 

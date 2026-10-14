@@ -2,7 +2,7 @@
 // publish gate's reading of the pack validation.
 
 import { describe, expect, it } from "vitest";
-import { gateFailures, packIds, planPacks, syncPackLockfile } from "../../scripts/release/packs.mjs";
+import { gateFailures, packIds, planPacks, releasePacks, syncPackLockfile } from "../../scripts/release/packs.mjs";
 
 const pack = (id, version) => ({ id, name: `@neralabs/rerail-pack-${id}`, version });
 
@@ -62,5 +62,42 @@ describe("packIds", () => {
 
   it("refuses an id that is not a pack", () => {
     expect(() => packIds(["a", "c"], packs)).toThrow("not a pack under packs/: c");
+  });
+});
+
+describe("releasePacks", () => {
+  const entry = (id, version) => ({ name: `@neralabs/rerail-pack-${id}`, version, file: `${id}-${version}.tgz` });
+  const conflict = "npm error 403 403 Forbidden - PUT https://registry.npmjs.org/@neralabs%2frerail-pack-a - You cannot publish over the previously published versions: 0.2.0.";
+
+  /** Steps that record what they do; `published` maps a tarball to npm publish's result. */
+  function recording(published = {}) {
+    const calls = [];
+    return {
+      calls,
+      steps: {
+        publish: (file) => (calls.push(`publish ${file}`), published[file] ?? { ok: true, output: "" }),
+        assertRestricted: async (name) => void calls.push(`restricted ${name}`),
+        tag: (tag) => void calls.push(`tag ${tag}`),
+        log: () => {},
+      },
+    };
+  }
+
+  it("skips a version already tagged, so a re-run with the first run's tarballs reaches the rest", async () => {
+    const { calls, steps } = recording();
+    await releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], ["@neralabs/rerail-pack-a@0.2.0"], steps);
+    expect(calls).toEqual(["publish b-0.2.0.tgz", "restricted @neralabs/rerail-pack-b", "tag @neralabs/rerail-pack-b@0.2.0"]);
+  });
+
+  it("checks and tags a version the registry already has without its tag, without publishing it again", async () => {
+    const { calls, steps } = recording({ "a-0.2.0.tgz": { ok: false, output: conflict } });
+    await releasePacks([entry("a", "0.2.0")], [], steps);
+    expect(calls).toEqual(["publish a-0.2.0.tgz", "restricted @neralabs/rerail-pack-a", "tag @neralabs/rerail-pack-a@0.2.0"]);
+  });
+
+  it("stops at any other publish failure, tagging nothing", async () => {
+    const { calls, steps } = recording({ "a-0.2.0.tgz": { ok: false, output: "npm error code ENEEDAUTH" } });
+    await expect(releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], [], steps)).rejects.toThrow("npm publish @neralabs/rerail-pack-a@0.2.0 failed");
+    expect(calls).toEqual(["publish a-0.2.0.tgz"]);
   });
 });

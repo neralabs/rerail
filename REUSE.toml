@@ -825,6 +825,13 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
+# The fixtures Rerail wrote among them (packs/typescript/upstream/eslint-plugin-vitest/UPSTREAM.md).
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/*/rerail-*"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # typescript-eslint 8.70.1 (packs/typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "packs/typescript/upstream/typescript-eslint/fixtures/**"

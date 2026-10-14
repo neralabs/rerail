@@ -229,8 +229,9 @@ for its initial rules.
    - `npm publish --access restricted --tag next` with npm trusted publishing (the `release` environment, so a
      reviewer approves the run), a check that the registry refuses the package to an anonymous reader, and the tag.
 
-   Packs are published one by one: a re-run publishes those not yet tagged. A pull request that touches packs runs
-   the gate and the packing as a dry run.
+   Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
+   one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
+   published again. A pull request that touches packs runs the gate and the packing as a dry run.
 3. **Promote.** A version reaches `latest` only when promoted, pack by pack: run the workflow from `main`
    (Actions → Release packs → Run workflow) with the pack's id and, optionally, the version (default: the one in its
    `package.json`). Only a version with its release tag can be promoted. By hand, from a 2FA npm login:
@@ -245,8 +246,10 @@ npm only lets a trusted publisher be configured for a package that exists, and a
 publish uses it within 2 days. So a pack's first version is published by hand, and the workflow publishes the next.
 Until then each release run reports the pack as needing its first publish and fails after publishing the others.
 
-1. From a clean checkout of `main`, with the native engine built (`npm ci && npm run build:native`) and an
-   interactive npm login with 2FA (`npm login`; a token that bypasses 2FA cannot configure trusted publishing):
+1. From a clean checkout of `main` whose commit is pushed, with the native engine built
+   (`npm ci && npm run build:native`), an interactive npm login with 2FA (`npm login`; a token that bypasses 2FA
+   cannot configure trusted publishing), and `gh` logged in with write access to `neralabs/rerail` (it creates the
+   release tag). The publish script checks the commit is on GitHub before it publishes anything:
    ```sh
    node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>   # the publish gate
    node scripts/release/packs-publish.mjs /tmp/rule-packs                       # publish under next, tag it

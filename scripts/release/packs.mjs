@@ -28,6 +28,41 @@ export const releaseTags = () =>
 /** Creates release tag `tag` at commit `sha` on GitHub. */
 export const createReleaseTag = (tag, sha) => ghApi(["repos/{owner}/{repo}/git/refs", "-f", `ref=refs/tags/${tag}`, "-f", `sha=${sha}`, "--silent"]);
 
+/** Fails unless commit `sha` is on GitHub and gh can read the repository: a tag can only name a pushed commit. */
+export function assertCommitOnGitHub(sha) {
+  try {
+    ghApi([`repos/{owner}/{repo}/commits/${sha}`, "--silent"]);
+  } catch {
+    throw new Error(`commit ${sha} is not on GitHub, or gh cannot read the repository: push it, and run gh auth login with write access`);
+  }
+}
+
+/** Whether npm publish's output says the registry already has this version. */
+export const alreadyOnRegistry = (output) => /cannot publish over the previously published versions?|EPUBLISHCONFLICT/iu.test(output);
+
+/**
+ * Releases each `{ name, version, file }` of a packs-pack.ts manifest, so that any failed run can be run again:
+ * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
+ * publishing) is not published again, only checked and tagged. `steps` does the I/O: `publish(file)` returns
+ * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure.
+ */
+export async function releasePacks(manifest, tags, steps) {
+  const existing = new Set(tags);
+  for (const { name, version, file } of manifest) {
+    const tag = releaseTag(name, version);
+    if (existing.has(tag)) {
+      steps.log(`${tag} is already released; skipped`);
+      continue;
+    }
+    const published = steps.publish(file);
+    if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
+    if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
+    await steps.assertRestricted(name);
+    steps.tag(tag);
+    steps.log(`released ${tag} under ${PUBLISH_TAG}`);
+  }
+}
+
 /** Every pack under `packsDirectory`: `{ id, name, version }`, sorted by id. */
 export function listPacks(packsDirectory = PACKS) {
   return readdirSync(packsDirectory, { withFileTypes: true })
