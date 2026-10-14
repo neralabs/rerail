@@ -16,8 +16,9 @@ import { EXEMPLAR } from "../support/exemplar-registry.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
 
-// The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
-// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
+// The exemplar is a language only tests plan: the registry module lists it for this file, and a stand-in engine refuses
+// a rule naming it as a planned language, every other rule compiling in the real engine (test/engine/support/
+// exemplar-registry.ts, exemplar-engine.ts). The real engine's own refusal is language-not-supported-engine.test.ts's.
 vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
   (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
 vi.mock("../../../src/engine/native/native.js", async importOriginal =>
