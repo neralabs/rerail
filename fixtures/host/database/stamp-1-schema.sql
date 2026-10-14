@@ -1,5 +1,5 @@
--- The schema at the migration baseline (schema v3), as the generated DDL created it. Never edit: a file
--- created from it and migrated by every step must match a new file (test/engine/storage/database-baseline.test.ts).
+-- The schema main creates before the migration path (origin/main 3eb54d7c, version 0.1.0-next.1, stamp 1), from its generated DDL.
+-- Never edit: a file created from it and stamped 1 must be adopted at the baseline (test/engine/storage/database-baseline.test.ts).
 
 CREATE TABLE IF NOT EXISTS `sessions` (
 	`session_id` text PRIMARY KEY NOT NULL,
@@ -276,9 +276,4 @@ CREATE TABLE IF NOT EXISTS `library_rules` (
 	`updated_at` integer NOT NULL,
 	CONSTRAINT "library_rules_kind" CHECK("library_rules"."kind" IN ('code', 'conversation')),
 	CONSTRAINT "library_rules_revision" CHECK("library_rules"."revision" > 0)
-);
-
-CREATE TABLE IF NOT EXISTS `schema_migrations` (
-	`id` text PRIMARY KEY NOT NULL,
-	`applied_at` integer NOT NULL
 );

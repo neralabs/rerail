@@ -9,6 +9,7 @@ import { LazyReadonlyRerailDatabase, openRerailDatabase } from "../../../src/eng
 import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_SCHEMA_VERSION, addColumn, type Migration } from "../../../src/engine/storage/migrations.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql.generated.js";
+import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
@@ -214,11 +215,45 @@ describe("the baseline schema", () => {
     expect(() => readFileSync(path)).toThrow();
   });
 
-  it.each([1, 2])("refuses a file stamped %i, from before the migration baseline, and leaves it untouched", async version => {
+  it("refuses a file stamped 2, from before the migration baseline, and leaves it untouched", async () => {
     const path = await temporaryDatabase();
-    stampedFile(path, `PRAGMA user_version = ${version}`);
+    stampedFile(path, "PRAGMA user_version = 2");
     const before = settledBytes(path);
-    expectRefused(path, unreadable(path, `schema v${version}, from a development build before the migration baseline`));
+    expectRefused(path, unreadable(path, "schema v2, from a development build before the migration baseline"));
+    expect(readFileSync(path)).toEqual(before);
+  });
+
+  // Review of #49 (F1, user decision): 0.1.0-next.1 (main before the migration path) wrote files stamped 1 in the
+  // baseline's shape without `schema_migrations`; Rerail adopts them at the baseline. Any other file stamped 1 (such
+  // as 0.1.0-next.0's, whose tables differ) is still refused and left as it is.
+  it("adopts a file stamped 1 in 0.1.0-next.1's shape at the baseline, with its rows, writable or read-only", async () => {
+    for (const readonly of [false, true]) {
+      const path = await temporaryDatabase();
+      await mkdir(dirname(path), { recursive: true });
+      const created = new Database(path);
+      try {
+        created.exec(readFileSync(fixturesPath("host", "database", "stamp-1-schema.sql"), "utf8"));
+        created.exec("INSERT INTO sessions (session_id, host, cwd, started_at) VALUES ('kept', 'claude', '/work', 1)");
+        created.pragma("user_version = 1");
+      } finally {
+        created.close();
+      }
+      const database = openRerailDatabase(path, { readonly });
+      try {
+        expect(database.$client.prepare("SELECT session_id FROM sessions").pluck().all()).toEqual(["kept"]);
+      } finally {
+        database.$client.close();
+      }
+      expect(stampOf(path)).toEqual({ tables: BASELINE_TABLES, version: RERAIL_SCHEMA_VERSION });
+    }
+  });
+
+  it("refuses a file stamped 1 in any other shape, and leaves it untouched", async () => {
+    const path = await temporaryDatabase();
+    // A current file stamped 1 holds `schema_migrations`, which no file stamped 1 was written with.
+    stampedFile(path, "PRAGMA user_version = 1");
+    const before = settledBytes(path);
+    expectRefused(path, unreadable(path, "schema v1 in a shape this build does not know, such as 0.1.0-next.0's"));
     expect(readFileSync(path)).toEqual(before);
   });
 
@@ -286,7 +321,7 @@ describe("the migration path", () => {
     await mkdir(dirname(baseline), { recursive: true });
     const created = new Database(baseline);
     try {
-      created.exec(readFileSync(fixturesPath("host", "database", "baseline-schema.sql"), "utf8"));
+      for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) created.exec(statement);
       created.pragma(`user_version = ${RERAIL_BASELINE_SCHEMA_VERSION}`);
     } finally {
       created.close();
@@ -402,11 +437,22 @@ describe("the migration path", () => {
 
   // Self-review: a reader that cannot write the file used to get it in its old shape, which this build's readers would
   // fail on; it is refused with the steps and the reason instead, and the file is left as it is.
-  it("leaves a step that raises the floor to the writer, and refuses a read-only open of a file it cannot upgrade", async () => {
-    const raising = await temporaryDatabase();
-    stampedFile(raising, SETTING_ROW);
-    openRerailDatabase(raising, { readonly: true, migrations: [noteStep({ count: 0 }, RERAIL_BASELINE_SCHEMA_VERSION + 1)] }).$client.close();
-    expect(migrationState(raising)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+  // Review of #49 (F5): a step that raises the floor is the writer's; a reader that skipped every step because one
+  // raises it would then query a shape the file lacks, so a read-only open says what to do instead.
+  it("leaves a step that raises the floor to the writer, also with an additive one pending, and refuses a read-only open of a file it cannot upgrade", async () => {
+    for (const migrations of [
+      [noteStep({ count: 0 }, RERAIL_BASELINE_SCHEMA_VERSION + 1)],
+      [noteStep({ count: 0 }), { id: "raise-floor", floor: RERAIL_BASELINE_SCHEMA_VERSION + 1, up: () => {} }],
+    ]) {
+      const raising = await temporaryDatabase();
+      stampedFile(raising, SETTING_ROW);
+      const ids = migrations.map(migration => migration.id).join(", ");
+      expect(() => openRerailDatabase(raising, { readonly: true, migrations })).toThrow(new Error(
+        `${raising} needs this Rerail's schema steps (${ids}) before it can be read, and ${migrations.filter(migration => migration.floor !== undefined).map(migration => migration.id).join(", ")} `
+          + "raise its schema floor, which a read-only open does not do. Run a rerail command that writes it first (rerail state).",
+      ));
+      expect(migrationState(raising)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+    }
 
     const locked = await temporaryDatabase();
     stampedFile(locked, SETTING_ROW);
@@ -423,5 +469,15 @@ describe("the migration path", () => {
       chmodSync(locked, 0o600);
     }
     expect(migrationState(locked)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+  });
+
+  // Review of #49 (F6): only a reader that may not write the file is told to fix permissions; any other failure of the
+  // upgrading open is reported as itself.
+  it("reports a failed upgrade before reading as itself, not as permissions", async () => {
+    const path = await temporaryDatabase();
+    stampedFile(path, SETTING_ROW);
+    const failing: Migration = { id: "fails", up: () => { throw new Error("step failed"); } };
+    expect(() => openRerailDatabase(path, { readonly: true, migrations: [failing] })).toThrow(new Error("step failed"));
+    expect(migrationState(path)).toEqual({ recorded: [], note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
   });
 });
