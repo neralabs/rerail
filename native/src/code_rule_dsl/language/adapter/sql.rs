@@ -10,7 +10,7 @@
 //! SQL has no format function (PostgreSQL's `format()` and SQLite's `printf()` are extensions).
 
 use super::{
-    Adapter, ArgumentFeature, ArgumentRules, Refusal, Refused, Region, ScopeFeature, ScopeRules,
+    Adapter, ArgumentFeature, ArgumentRules, Refusal, Refused, ScopeFeature, ScopeRules,
     SyntaxFeature, SyntaxRules, ValueFeature, ValueRules,
 };
 use crate::code_rule_dsl::compile::config::Options;
@@ -62,16 +62,6 @@ impl Adapter for Sql {
     /// PostgreSQL's identifier: a naked name folds to lower case, a quoted one is exact.
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         value::sql::identifier(text)
-    }
-
-    fn regions<'r, D: Doc>(
-        root: &Node<'r, D>,
-        dialect: GrammarDialect,
-    ) -> impl Iterator<Item = Region<'r, D>> {
-        std::iter::once(Region {
-            root: root.clone(),
-            dialect,
-        })
     }
 
     fn module_path(_: &Path) -> Option<Json> {

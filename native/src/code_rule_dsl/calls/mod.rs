@@ -960,7 +960,8 @@ pub(crate) fn summarize<D: Doc>(
     // embedded program's, PHP's (a template without one calls nothing). Summaries name ids local
     // to one region, so a family whose documents hold several regions does not read calls (Vue's
     // are refused).
-    let mut summary = with_adapter!(Family::of(language), A => A::regions(&root, language).next())
+    let mut summary = crate::code_rule_dsl::language::adapter::regions(&root, language)
+        .next()
         .map_or_else(Summary::default, |region| {
             with_adapter!(Family::of(region.dialect), A => {
                 <<A as Adapter>::Calls as CallRules>::summary(

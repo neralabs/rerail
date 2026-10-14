@@ -593,6 +593,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
     for via in &unique_vias {
         let _ = writeln!(out, "    {},", pascal(via));
     }
+    out.push_str("    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(test)]\n    TestScript,\n");
     out.push_str("}\n\nimpl GrammarDialect {\n");
     out.push_str("    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n");
     out.push_str("    pub(crate) const fn embeds(self) -> &'static [(Via, GrammarDialect)] {\n        match self {\n");
@@ -622,7 +623,9 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
             let _ = writeln!(out, "            Self::{host} => &[{embeds}],");
         }
     }
-    out.push_str("            #[cfg(test)]\n            _ => &[],\n        }\n    }\n}\n\n");
+    out.push_str(
+        "            #[cfg(test)]\n            _ => test_embeds(self),\n        }\n    }\n}\n\n",
+    );
     out.push_str("/// Evaluates `$body` with `$e` the embedder of `$via` (`embed::<Via>`): one arm per `Via`.\n");
     out.push_str("macro_rules! with_embedder {\n    ($via:expr, $e:ident => $body:expr) => {\n        match $via {\n");
     for via in &unique_vias {
@@ -632,6 +635,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
             "            $crate::code_rule_dsl::language::Via::{via} => {{\n                type $e = $crate::code_rule_dsl::embed::{via};\n                $body\n            }}"
         );
     }
+    out.push_str("            #[cfg(test)]\n            $crate::code_rule_dsl::language::Via::TestScript => {\n                type $e = $crate::code_rule_dsl::embed::TestScript;\n                $body\n            }\n");
     out.push_str("        }\n    };\n}\n\npub(crate) use with_embedder;\n\n");
 
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
@@ -1031,8 +1035,11 @@ mod tests {
             &[supported("one", ".one", 1), planned("two", ".two")],
         )
         .generate();
-        assert!(generated.contains("pub(crate) enum Via {\n}\n"));
-        assert!(generated.contains("match $via {\n        }\n"));
+        // Only the test-only via, which tests embed through (`test_embeds`).
+        assert!(generated.contains(
+            "pub(crate) enum Via {\n    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(test)]\n    TestScript,\n}\n"
+        ));
+        assert!(generated.contains("match $via {\n            #[cfg(test)]\n"));
         assert!(!generated.contains("GrammarDialect::Two"));
     }
 

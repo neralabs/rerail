@@ -14,6 +14,9 @@ pub(crate) struct CompiledView;
 impl Embedder for CompiledView {
     type Program = View;
 
+    /// The view reads the template through its syntax errors (`blade::view`), and carries them.
+    const APART: bool = false;
+
     /// No tree-sitter host compiles to a view: Blade's is built from its Forte tree.
     fn build(_: TsNode<'_>, _: &str) -> Option<Self::Program> {
         None
