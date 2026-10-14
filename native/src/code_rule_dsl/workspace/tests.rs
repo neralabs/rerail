@@ -13,10 +13,13 @@ use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
 use napi::Task;
+use parking_lot::Mutex;
 use serde_json::{Value, json};
-use std::sync::{Arc as StdArc, Mutex};
+use std::sync::Arc as StdArc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Serializes the tests that share process-wide state. A parking_lot mutex never poisons, so a
+/// failing test cannot fail every test that takes the slot after it.
 pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
@@ -217,7 +220,7 @@ fn close_clears_poisoned_scope_metadata() {
 
 #[test]
 fn poisoned_state_rejections_and_close_release_resident_sources() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = CodeRuleDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": "poisoned-workspace", "revision": 1,
@@ -315,7 +318,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
 
 #[test]
 fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -531,7 +534,7 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
 
 #[test]
 fn deferred_global_flush_uses_complete_taped_evidence() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -649,7 +652,7 @@ fn tape_test_apply(workspace: &CodeRuleDslWorkspace, revision: u32, files: Vec<V
 
 #[test]
 fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let source = "print('binary')\n";
     let metadata = json!({
         "revision": 1,
@@ -686,7 +689,7 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
 
 #[test]
 fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let database = std::env::temp_dir().join(format!(
         "rerail-policy-storage-{}.sqlite",
         std::process::id()
@@ -1005,7 +1008,7 @@ fn paging_workspace() -> CodeRuleDslWorkspace {
 
 #[test]
 fn result_page_request_leaves_the_index_build_to_its_pool_task() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     RESULT_PAGE_SORTS.set(0);
     RESULT_PAGE_WITNESSES_VISITED.set(0);
@@ -1028,7 +1031,7 @@ fn result_page_request_leaves_the_index_build_to_its_pool_task() {
 
 #[test]
 fn memory_profile_counts_an_open_result_page_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let profile =
         || -> Value { serde_json::from_str(&workspace.memory_profile().unwrap()).unwrap() };
@@ -1053,7 +1056,7 @@ fn memory_profile_counts_an_open_result_page_index() {
 
 #[test]
 fn last_result_page_releases_the_result_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let first: Value = serde_json::from_str(&result_page(&workspace, 0, 1).unwrap()).unwrap();
     assert!(!first["done"].as_bool().unwrap());
@@ -1072,7 +1075,7 @@ fn last_result_page_releases_the_result_index() {
 
 #[test]
 fn result_page_cursor_is_stale_after_an_apply() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let first: Value = serde_json::from_str(&result_page(&workspace, 0, 1).unwrap()).unwrap();
     assert!(!first["done"].as_bool().unwrap());
@@ -1090,7 +1093,7 @@ fn result_page_cursor_is_stale_after_an_apply() {
 
 #[test]
 fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = tape_test_code_rule();
     // A tree-sitter tree, Forte's tree, and a restored document.
     let python = json!({
@@ -1205,7 +1208,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
 
 #[test]
 fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violations() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = tape_test_code_rule();
     let original = json!({ "path": "active.py", "language": "python",
         "source": "print('stale')\n" });
@@ -1496,7 +1499,7 @@ fn subset_churn_reclaims_keys_payloads_and_contracted_bucket_storage() {
 
 #[test]
 fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = workspace(&["**/a/**", "**/b/**"], false);
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
@@ -1570,9 +1573,7 @@ fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
         .add_code_rule(&compiled, None)
         .expect("policy is added");
     // `compute` refuses to wait for the process-wide CPU slot; serialize the tests instead.
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     revisions
         .into_iter()
         .enumerate()
@@ -2201,7 +2202,7 @@ fn a_transform_reads_each_matchs_regex_group() {
 }
 #[test]
 fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_evaluation() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2277,7 +2278,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
 
 #[test]
 fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2351,7 +2352,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
 /// these 50,000 is suppressed, so the second ends the enumeration.
 #[test]
 fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
     capabilities["limits"]["maxWitnesses"] = json!(1);
     let code_rule = json!({
@@ -2420,7 +2421,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
 
 #[test]
 fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2510,7 +2511,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
 fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
     // An `exists` side only asks whether a witness exists: more matches than the witness budget
     // in a file, or a later root over a limit, must not make the condition unknown.
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },

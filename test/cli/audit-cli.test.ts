@@ -144,7 +144,7 @@ describe("rerail scan and settings CLI", () => {
       auditGeneratedEdits: async () => ({ revision: 0, disposition: "continue", violations: [], failures: [] }),
       // The diagnostic is claimed and finished per checkout through the audit hooks, as the router does.
       audit: async (sessionId, input) => {
-        if (input.audit !== undefined && !input.audit.claim(options.workspaceRoot)) return [];
+        if (input.audit !== undefined && !input.audit.claim(options.workspaceRoot, "test-catalog")) return [];
         automaticAuditRequests.push({ sessionId, scope: input.scope, mode: input.mode });
         const auditId = options.audits.start({
           sessionId,

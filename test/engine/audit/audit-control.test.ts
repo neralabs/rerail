@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
+import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { omittedFailuresSummary, type AuditFailure } from "../../../src/engine/audit/audit.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 
@@ -35,20 +37,81 @@ describe("audit controls", () => {
     reopened.close(); sessionStore.close();
   });
 
-  it("never repeats a failed first repository audit in a later session", async () => {
+  it("retries an interrupted repository audit in a later session, and never a completed one", async () => {
     const { root, controls, sessionStore } = await fixture();
     const checkout = realpathSync(root);
     expect(controls.claimRepositoryAudit("a", checkout)).toBe(true);
-    controls.finishRepositoryAudit("a", checkout, "failed-run", "failed", "Evaluation failed");
+    controls.interruptRepositoryAudit("a");
     sessionStore.openSession({ host: "omp", sessionId: "later", cwd: root });
-    expect(controls.claimRepositoryAudit("later", checkout)).toBe(false);
-    expect(controls.getSettings("later").repositoryAudit).toMatchObject({
-      sessionId: "a",
-      auditId: "failed-run",
-      status: "failed",
-      error: "Evaluation failed",
-    });
+    expect(controls.claimRepositoryAudit("later", checkout)).toBe(true);
+    expect(controls.getSettings("later").repositoryAudit).toMatchObject({ sessionId: "later", auditId: null, status: "running", error: null });
+    controls.interruptRepositoryAudit("later");
+    sessionStore.openSession({ host: "omp", sessionId: "third", cwd: root });
+    expect(controls.claimRepositoryAudit("third", checkout)).toBe(true);
+    controls.finishRepositoryAudit("third", checkout, "completed-run", "completed");
+    sessionStore.openSession({ host: "omp", sessionId: "fourth", cwd: root });
+    expect(controls.claimRepositoryAudit("fourth", checkout)).toBe(false);
+    expect(controls.getSettings("fourth").repositoryAudit).toMatchObject({ sessionId: "third", auditId: "completed-run", status: "completed" });
     controls.close(); sessionStore.close();
+  });
+
+  describe("a failed repository audit", () => {
+    const sourceGap = { clauseId: "source", code: "source-partial" as const, message: "file has syntax errors", path: "a.ts", stage: "read" as const };
+    const scanLimit = {
+      clauseId: "scan", code: "budget-exceeded" as const, message: "Repository scan stopped after reaching 20 failures", stage: "scan" as const,
+    };
+    const budget = {
+      clauseId: "scan", code: "budget-exceeded" as const, message: "Repository scan exceeded its five-minute work budget", stage: "scan" as const,
+    };
+    const adapterError = { clauseId: "catalog", code: "adapter-error" as const, message: "Workspace unavailable", stage: "evaluate" as const };
+
+    /** A checkout whose repository audit failed with `failures` against the catalog `ranAgainst`, and a later session. */
+    async function failedAudit(failures: AuditFailure[], ranAgainst = "catalog-1") {
+      const { root, controls, sessionStore } = await fixture();
+      const checkout = realpathSync(root);
+      const audits = new SqliteAuditStore(sessionStore.path);
+      const auditId = audits.start({
+        sessionId: "a", workspaceRoot: checkout, scope: "repository", mode: "log", revision: 0, catalogRevision: ranAgainst, ruleRevisions: [], paths: [],
+      });
+      audits.finish(auditId, { status: "failed", violations: [], failures });
+      audits.close();
+      expect(controls.claimRepositoryAudit("a", checkout, ranAgainst)).toBe(true);
+      controls.finishRepositoryAudit("a", checkout, auditId, "failed", "Evaluation failed");
+      sessionStore.openSession({ host: "omp", sessionId: "later", cwd: root });
+      return { checkout, controls, close: () => { controls.close(); sessionStore.close(); } };
+    }
+
+    it("runs again when it failed only for files read in part, which the old rule counted", async () => {
+      const { checkout, controls, close } = await failedAudit([sourceGap, scanLimit]);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(true);
+      close();
+    });
+
+    it("runs again when it failed only for files read in part and the failures its cap dropped were counted", async () => {
+      const { checkout, controls, close } = await failedAudit([sourceGap, omittedFailuresSummary(4)]);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(true);
+      close();
+    });
+
+    it("does not run again for a budget, while its catalog is the one it ran against", async () => {
+      const { checkout, controls, close } = await failedAudit([sourceGap, budget]);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(false);
+      close();
+    });
+
+    it("does not run again for an adapter error, while its catalog is the one it ran against", async () => {
+      const { checkout, controls, close } = await failedAudit([adapterError]);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(false);
+      expect(controls.claimRepositoryAudit("later", checkout)).toBe(false);
+      close();
+    });
+
+    it("runs again once the compiled catalog is another one, and not before", async () => {
+      const { checkout, controls, close } = await failedAudit([adapterError, budget]);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(false);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-2")).toBe(true);
+      close();
+    });
   });
 
   it("keeps one repository audit per checkout and shows a session the audit of the checkout it is in", async () => {

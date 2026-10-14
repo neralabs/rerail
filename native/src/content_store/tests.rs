@@ -934,9 +934,9 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
     let (workspace, catalog) = local_result_workspace(&store, "publication-reprepare");
     store.put_source(b"pass\n", &[]).unwrap();
     ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
-    *AFTER_PUBLICATION_READ_HOOK.lock() = Some(Box::new(move || {
+    AFTER_PUBLICATION_READ_HOOK.set(Some(Box::new(move || {
         ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
-    }));
+    })));
     let polls = AtomicUsize::new(0);
     let result = store.publish_overlay_files_cancellable(
         workspace,
@@ -973,9 +973,9 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
         raw_length: 6,
         frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
     };
-    *BEFORE_RELATIONSHIP_WRITE_HOOK.lock() = Some(Box::new(move || {
+    BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
         ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
-    }));
+    })));
     let stored = store
         .publish_overlay_file(
             workspace,
@@ -1007,7 +1007,7 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
 fn reconciliation_revalidates_path_collected_before_relationship_write() {
     let (path, store) = store("publication-revalidate-path");
     let (workspace, catalog) = local_result_workspace(&store, "publication-revalidate-path");
-    *BEFORE_RELATIONSHIP_WRITE_HOOK.lock() = Some(Box::new(move || {
+    BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
         let connection = Connection::open(path).unwrap();
         connection
             .execute(
@@ -1016,7 +1016,7 @@ fn reconciliation_revalidates_path_collected_before_relationship_write() {
                 ["src/revalidate-path.py"],
             )
             .unwrap();
-    }));
+    })));
     store
         .publish_overlay_file(
             workspace,
@@ -1108,6 +1108,8 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
     assert_eq!(stored_source_count, 1);
 }
 
+/// A writer held for 3 s, longer than many SQLite busy timeouts, before the object pass and again
+/// before the relationship pass delays an overlay publication at each; it does not fail it.
 #[test]
 fn overlay_publication_reports_busy_retries() {
     let (path, store) = store("overlay-retries");
@@ -1122,31 +1124,317 @@ fn overlay_publication_reports_busy_retries() {
     let workspace = store
         .open_workspace("/retry", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    let blocker = Connection::open(&path).unwrap();
-    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let publisher = std::thread::spawn(move || {
-        store
-            .publish_overlay_files(
-                workspace,
-                &[OverlayFilePublication {
-                    path: "src/a.py",
-                    state_id: 1,
-                    source: b"x = 1\n",
-                    aliases: &[],
-                    tape: None,
-                    catalog: candidate_catalog("retry"),
-                    candidates: &[],
-                    local_results: &[],
-                    candidates_current: false,
-                }],
-            )
-            .unwrap()
-    });
-    std::thread::sleep(Duration::from_millis(600));
-    blocker.execute_batch("COMMIT").unwrap();
-    let result = publisher.join().unwrap();
-    assert!(result.retries >= 1);
+    // Each hold lasts 3 s from when it is taken: before the object pass, and again before the
+    // relationship pass.
+    let hold = |path: &std::path::Path| {
+        let blocker = Connection::open(path).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(3));
+            blocker.execute_batch("COMMIT").unwrap();
+        })
+    };
+    let (holders, held) = std::sync::mpsc::channel();
+    holders.send(hold(&path)).unwrap();
+    BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
+        holders.send(hold(&path)).unwrap();
+    })));
+    let result = store
+        .publish_overlay_files(
+            workspace,
+            &[OverlayFilePublication {
+                path: "src/a.py",
+                state_id: 1,
+                source: b"x = 1\n",
+                aliases: &[],
+                tape: None,
+                catalog: candidate_catalog("retry"),
+                candidates: &[],
+                local_results: &[],
+                candidates_current: false,
+            }],
+        )
+        .unwrap();
+    let holders = held.try_iter().collect::<Vec<_>>();
+    assert_eq!(holders.len(), 2, "both passes found the store held");
+    for holder in holders {
+        holder.join().unwrap();
+    }
+    assert!(
+        result.retries >= 2,
+        "each held pass retries: {}",
+        result.retries
+    );
     assert_eq!(result.files.len(), 1);
+}
+
+/// Resets this thread's busy-wait test settings and hooks when a test ends, whichever way.
+struct BusyTestState;
+
+impl Drop for BusyTestState {
+    fn drop(&mut self) {
+        BUSY_DEADLINE_OVERRIDE.set(None);
+        BUSY_TIMEOUT_OVERRIDE.set(None);
+        BUSY_ATTEMPT_HOOK.set(None);
+        BUSY_WAIT_HOOK.set(None);
+        BEFORE_RELATIONSHIP_WRITE_HOOK.set(None);
+        AFTER_GIT_TREE_TRANSACTION.set(None);
+    }
+}
+
+/// Another connection that holds the store's write lock until it commits or drops.
+fn hold_writer(path: &std::path::Path) -> Connection {
+    let blocker = Connection::open(path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    blocker
+}
+
+/// How much of a deadline a test's busy attempt spends without sleeping it (`BUSY_ATTEMPT_HOOK`).
+const SPENT_PER_ATTEMPT: Duration = Duration::from_millis(600);
+
+/// Makes each of this thread's busy write attempts spend `SPENT_PER_ATTEMPT` of its deadline
+/// without sleeping, so a deadline is reached by counting attempts, not by waiting out the clock;
+/// the first one also releases `holder`. Returns the operation's wait each attempt found spent.
+fn spend_deadline_per_attempt(
+    holder: Connection,
+) -> std::rc::Rc<std::cell::RefCell<Vec<Duration>>> {
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorded = std::rc::Rc::clone(&seen);
+    let mut holder = Some(holder);
+    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |waited| {
+        recorded.borrow_mut().push(waited);
+        drop(holder.take());
+        SPENT_PER_ATTEMPT
+    })));
+    seen
+}
+
+/// The writes of one operation wait out other writers for one write deadline in all: a writer
+/// that keeps the store busy through both passes of one publication (it lets go, and another
+/// takes the store before the relationship pass) fails the publication once the deadline is
+/// spent, not once each pass has waited a deadline of its own. Each busy attempt spends 600 ms of
+/// the 1 s deadline; the second pass finds the first pass's share already spent, so it makes one
+/// busy attempt, where a deadline of its own would allow two.
+#[test]
+fn one_operation_deadline_bounds_the_wait_across_publication_passes() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_secs(1)));
+    let (path, store) = store("operation-deadline-passes");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::git_sha1([9; 20])),
+            1,
+            HashKey::sha256(b"grammar"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/deadline", "repo", "owner", snapshot, 1, 100)
+        .unwrap();
+    let _operation = OperationDeadline::enter();
+    // The object pass finds a writer that its first busy attempt releases; another writer then
+    // takes the store for the relationship pass and keeps it.
+    let seen = spend_deadline_per_attempt(hold_writer(&path));
+    let (holders, held) = std::sync::mpsc::channel();
+    let second_path = path.clone();
+    BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
+        holders.send(hold_writer(&second_path)).unwrap();
+    })));
+    let mut busy = BusyRetries::default();
+    let result = store.publish_overlay_files_reporting_busy(
+        workspace,
+        &[OverlayFilePublication {
+            path: "src/a.py",
+            state_id: 1,
+            source: b"x = 1\n",
+            aliases: &[],
+            tape: None,
+            catalog: candidate_catalog("deadline"),
+            candidates: &[],
+            local_results: &[],
+            candidates_current: false,
+        }],
+        &|| false,
+        &mut busy,
+    );
+    assert_eq!(
+        held.try_iter().count(),
+        1,
+        "the second pass found the store held"
+    );
+    assert!(
+        matches!(result, Err(StoreError::Busy)),
+        "{:?}",
+        result.err()
+    );
+    let seen = seen.borrow();
+    assert_eq!(
+        seen.len(),
+        2,
+        "one busy attempt in each pass, none after the deadline was spent: {seen:?}"
+    );
+    assert!(
+        seen[1] >= SPENT_PER_ATTEMPT,
+        "the second pass starts from what the first spent: {seen:?}"
+    );
+}
+
+/// Only writes under an `OperationDeadline` share one; others (maintenance) keep a deadline of
+/// their own. Each of three renewals finds a writer that its first busy attempt releases, and
+/// that attempt spends 600 ms of the 1 s deadline: apart they all start from nothing and
+/// succeed; under one deadline the second finds the first's share spent and reports `Busy`.
+#[test]
+fn writes_outside_an_operation_deadline_keep_a_deadline_each() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_secs(1)));
+    let (path, store) = store("operation-deadline-standalone");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::git_sha1([10; 20])),
+            1,
+            HashKey::sha256(b"grammar"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/standalone", "repo", "owner", snapshot, 1, 100)
+        .unwrap();
+    let renew_held = || {
+        let seen = spend_deadline_per_attempt(hold_writer(&path));
+        let renewed = store.renew_workspace_lease(workspace, "owner", 40);
+        (renewed, seen.take())
+    };
+    for _ in 0..2 {
+        let (renewed, seen) = renew_held();
+        assert!(renewed.is_ok(), "{renewed:?}");
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0] < SPENT_PER_ATTEMPT, "{seen:?}");
+    }
+
+    let _operation = OperationDeadline::enter();
+    let (renewed, seen) = renew_held();
+    assert!(renewed.is_ok(), "{renewed:?}");
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    let (renewed, seen) = renew_held();
+    assert!(matches!(renewed, Err(StoreError::Busy)), "{renewed:?}");
+    assert_eq!(
+        seen.len(),
+        1,
+        "no retry once the deadline was spent: {seen:?}"
+    );
+    assert!(seen[0] >= SPENT_PER_ATTEMPT, "{seen:?}");
+}
+
+/// A write that got the lock after waiting for it inside SQLite (one attempt, no retry) still
+/// spent that wait of the operation's deadline: the next write finds the deadline spent and makes
+/// one attempt, where an unspent deadline would retry it.
+#[test]
+fn a_write_that_waited_for_the_lock_spends_the_operation_deadline() {
+    let _state = BusyTestState;
+    // One attempt waits as long as it takes: the writer is released from inside the wait.
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_secs(30)));
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_millis(100)));
+    let (path, store) = store("operation-deadline-waited-attempt");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::git_sha1([11; 20])),
+            1,
+            HashKey::sha256(b"grammar"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/waited", "repo", "owner", snapshot, 1, 100)
+        .unwrap();
+    let _operation = OperationDeadline::enter();
+    // The ninth check of the lock (after 128 ms of waiting, more than the whole deadline) finds
+    // the writer gone.
+    let mut holder = Some(hold_writer(&path));
+    BUSY_WAIT_HOOK.set(Some(Box::new(move |checks| {
+        if checks == 9 {
+            holder.take().unwrap().execute_batch("COMMIT").unwrap();
+        }
+    })));
+    let attempts = std::rc::Rc::new(std::cell::Cell::new(0_usize));
+    let counted = std::rc::Rc::clone(&attempts);
+    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |_| {
+        counted.set(counted.get() + 1);
+        Duration::ZERO
+    })));
+    store
+        .renew_workspace_lease(workspace, "owner", 40)
+        .expect("the writer let go inside the one attempt");
+    assert_eq!(attempts.get(), 0, "the attempt got the lock: no busy retry");
+    assert!(
+        operation_waited().unwrap() >= Duration::from_millis(128),
+        "the attempt's wait inside SQLite is spent: {:?}",
+        operation_waited()
+    );
+
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(20)));
+    BUSY_WAIT_HOOK.set(None);
+    let _writer = hold_writer(&path);
+    let renewed = store.renew_workspace_lease(workspace, "owner", 40);
+    assert!(matches!(renewed, Err(StoreError::Busy)), "{renewed:?}");
+    assert_eq!(
+        attempts.get(),
+        1,
+        "a spent deadline allows the one attempt, not a retry"
+    );
+}
+
+/// The Git trees of a snapshot and the snapshot itself are written in several transactions that
+/// wait on other writers for one deadline in all. Each busy attempt spends 600 ms of the 1 s
+/// deadline: the writer released during the first batch's wait is replaced by another before the
+/// next transaction, which finds the first batch's share spent and makes one busy attempt, where
+/// a deadline per write would allow two.
+#[test]
+fn snapshot_publication_waits_one_deadline_across_its_transactions() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_secs(1)));
+    let (path, store) = store("snapshot-one-deadline");
+    // Two 300-entry trees do not fit one batch (512 entries): two batches, then the snapshot.
+    let trees = [three_hundred_entry_tree(61), three_hundred_entry_tree(62)];
+    let seen = spend_deadline_per_attempt(hold_writer(&path));
+    let (holders, held) = std::sync::mpsc::channel();
+    let second_path = path.clone();
+    AFTER_GIT_TREE_TRANSACTION.set(Some(Box::new(move || {
+        // Runs once: only the first batch commits before the store is held again.
+        holders.send(hold_writer(&second_path)).unwrap();
+    })));
+    let published = store.publish_snapshot(
+        &trees,
+        trees[1].id,
+        1,
+        HashKey::sha256(b"grammar"),
+        1,
+        &WorkspaceRegistration {
+            root: "/snapshot-one-deadline",
+            repository: "repository",
+            owner: "owner",
+            generation: 1,
+            lease_seconds: 120,
+        },
+    );
+    assert!(matches!(published, Err(StoreError::Busy)), "{published:?}");
+    assert_eq!(
+        held.try_iter().count(),
+        1,
+        "the second batch found the store held"
+    );
+    let seen = seen.borrow();
+    assert_eq!(
+        seen.len(),
+        2,
+        "one busy attempt per write, none after the deadline was spent: {seen:?}"
+    );
+    assert!(
+        seen[1] >= SPENT_PER_ATTEMPT,
+        "the second write starts from what the first spent: {seen:?}"
+    );
 }
 
 #[test]
@@ -1492,6 +1780,26 @@ fn concurrent_open_serializes_schema_creation() {
     }
 }
 
+/// Opening a store whose schema is current only reads it, so another process's write
+/// transaction never fails the open. The writer holds the lock until the open returns; a short
+/// write deadline makes an open that needed the lock fail promptly instead of after the real one.
+#[test]
+fn opening_a_current_store_never_needs_the_write_lock() {
+    let (path, store) = store("open-under-writer");
+    drop(store);
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_millis(200)));
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let reopened = ContentStore::open(&path);
+    blocker.execute_batch("COMMIT").unwrap();
+    BUSY_DEADLINE_OVERRIDE.set(None);
+    assert!(
+        reopened.is_ok(),
+        "a held writer failed the open: {:?}",
+        reopened.err()
+    );
+}
+
 #[test]
 fn pins_protect_unpublished_objects() {
     let (_path, store) = store("pins");
@@ -1559,6 +1867,34 @@ fn workspace_leases_renew_in_one_bulk_statement() {
             .unwrap(),
         0
     );
+}
+
+/// The maintenance thread's lease renewal makes a single attempt, so a close that joins the thread
+/// never waits out another writer: a writer holding the store past one busy timeout fails the
+/// renewal, though it lets go long before the write deadline.
+#[test]
+fn bulk_lease_renewal_does_not_wait_out_another_writer() {
+    let (path, store) = store("lease-busy");
+    let snapshot = store
+        .put_snapshot(
+            published_tree(&store, HashKey::sha256(b"lease-busy-snapshot")),
+            1,
+            HashKey::sha256(b"lease-grammars"),
+            1,
+        )
+        .unwrap();
+    let workspace = store
+        .open_workspace("/lease-busy", "repo", "owner", snapshot, 1, 20)
+        .unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let holder = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(2));
+        blocker.execute_batch("COMMIT").unwrap();
+    });
+    let renewed = store.renew_workspace_leases(&[(workspace, "owner")], 40);
+    holder.join().unwrap();
+    assert!(matches!(renewed, Err(StoreError::Busy)), "{renewed:?}");
 }
 #[test]
 fn collection_in_another_store_cannot_alias_cached_object_ids() {
@@ -1713,6 +2049,112 @@ fn cold_git_tree_publication_batches_whole_trees_per_transaction() {
     };
     assert_eq!(count("git_trees"), 303);
     assert_eq!(count("git_tree_entries"), 300 * 8 + 8 + 5_000 + 8);
+}
+
+/// The SQLite VM steps this thread's store connection runs while `work` does.
+fn vm_steps(store: &ContentStore, work: impl FnOnce()) -> u64 {
+    let steps = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counter = Arc::clone(&steps);
+    store
+        .connection
+        .lock()
+        .unwrap()
+        .progress_handler(
+            1,
+            Some(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                false
+            }),
+        )
+        .unwrap();
+    work();
+    store
+        .connection
+        .lock()
+        .unwrap()
+        .progress_handler(1, None::<fn() -> bool>)
+        .unwrap();
+    steps.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Publishing a snapshot's trees costs work proportional to its entries, not to the store's path
+/// names: every entry resolves its name through the name's hash, so the writer lock is held for
+/// the batch's own entries however many unrelated names the store holds.
+#[test]
+fn tree_publication_work_follows_its_entries_not_the_stores_path_names() {
+    let trees = (0..4_u8)
+        .map(|seed| GitTree {
+            id: HashKey::git_sha1([100 + seed; 20]),
+            prefix: format!("dir-{seed}/"),
+            entries: (0..150_u16)
+                .map(|index| {
+                    let mut target = [200 + seed; 20];
+                    target[..2].copy_from_slice(&index.to_be_bytes());
+                    GitTreeEntry {
+                        name: format!("entry-{seed}-{index}"),
+                        mode: 0o100644,
+                        target: HashKey::git_sha1(target),
+                    }
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let steps = |unrelated_names: usize| {
+        let (_path, store) = store(&format!("tree-work-{unrelated_names}"));
+        store
+            .immediate_transaction(|transaction| {
+                for index in 0..unrelated_names {
+                    super::rows::intern_string(
+                        transaction,
+                        STRING_PATH_COMPONENT,
+                        &format!("unrelated-{index}"),
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        vm_steps(&store, || store.put_git_trees_bulk(&trees).unwrap())
+    };
+    let fresh = steps(0);
+    let crowded = steps(20_000);
+    assert!(
+        crowded * 2 <= fresh * 3,
+        "publishing 600 entries took {fresh} VM steps in a fresh store and {crowded} in one \
+         holding 20,000 unrelated path names"
+    );
+}
+
+/// A writer that holds the store longer than SQLite's per-attempt busy timeout delays a snapshot
+/// publication; it does not fail it.
+#[test]
+fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
+    let (path, store) = store("held-writer");
+    let tree = three_hundred_entry_tree(60);
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let holder = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(3));
+        blocker.execute_batch("COMMIT").unwrap();
+    });
+    let published = store.publish_snapshot(
+        std::slice::from_ref(&tree),
+        tree.id,
+        1,
+        HashKey::sha256(b"grammar"),
+        1,
+        &WorkspaceRegistration {
+            root: "/held-writer",
+            repository: "repository",
+            owner: "owner",
+            generation: 1,
+            lease_seconds: 120,
+        },
+    );
+    holder.join().unwrap();
+    assert!(
+        published.is_ok(),
+        "a writer held for 3 s failed the publication: {published:?}"
+    );
 }
 
 #[test]

@@ -11,6 +11,10 @@ import {
 export interface PiNativeSessionOptions {
   entries(context?: ExtensionContext): readonly unknown[];
   appendEntry(customType: string, data: unknown): void;
+  /** The session Pi is in right now, as its last session event delivered it; a closing client's final gap marker goes only to this one. */
+  liveSessionId?(): string | undefined;
+  /** Shows how many session events the client's open gap holds; 0 clears it. */
+  reportDropped?(count: number): void;
   deliver(client: NativeSessionClient, deliveries: readonly AdapterDelivery[]): void | Promise<void>;
   /** The extension's serialized initialize; a faulted client asks for it to rebuild the session. */
   reattach(context: ExtensionContext): Promise<unknown>;
@@ -68,10 +72,17 @@ export class PiNativeSession {
       },
       entries: activeContext => this.#options.entries(activeContext ?? this.#context),
       appendEntry: this.#options.appendEntry,
+      liveSessionId: () => this.#options.liveSessionId?.(),
+      reportDropped: this.#options.reportDropped,
       deliver: this.#options.deliver,
       reattach: this.#options.reattach,
     } satisfies NativeSessionHost<ExtensionContext>;
     return createNativeSession(host, context, session, rebuild, initialization);
+  }
+
+  /** Gives the attached client's open gap marker its count so far, while the session it belongs to is still the one Pi is in. */
+  markGapFinal(sessionId: string): void {
+    if (this.#session?.sessionId === sessionId) this.#client?.markGapFinal();
   }
 
   async close(): Promise<void> {

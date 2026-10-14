@@ -354,7 +354,7 @@ fn commit(repository: &std::path::Path, message: &str) {
 
 #[test]
 fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("package-marker-refresh");
     let root = directory.0.join("repo");
     let sibling = root.join("pkg/mod.py");
@@ -429,7 +429,7 @@ fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
 
 #[test]
 fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("directory-reuse");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -507,7 +507,7 @@ fn assert_hidden_edit_is_read(tag: &str, edited: &str, hide: impl FnOnce(&std::p
 
 #[test]
 fn a_warm_index_reads_an_assume_unchanged_edit() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("assume-unchanged", "api/a.py", |root| {
         git(root, &["update-index", "--assume-unchanged", "api/a.py"]);
         std::fs::write(root.join("api/a.py"), "print(1)\n").unwrap();
@@ -516,7 +516,7 @@ fn a_warm_index_reads_an_assume_unchanged_edit() {
 
 #[test]
 fn a_warm_index_reads_a_skip_worktree_edit() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("skip-worktree", "api/a.py", |root| {
         git(root, &["update-index", "--skip-worktree", "api/a.py"]);
         std::fs::write(root.join("api/a.py"), "print(1)\n").unwrap();
@@ -525,7 +525,7 @@ fn a_warm_index_reads_a_skip_worktree_edit() {
 
 #[test]
 fn a_warm_index_reads_an_edit_under_a_case_variant_builtin_directory_when_git_ignores_case() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("ignorecase-builtin", "api/Tmp/a.py", |root| {
         git(root, &["config", "core.ignorecase", "true"]);
         std::fs::write(root.join("api/Tmp/a.py"), "print(1)\n").unwrap();
@@ -534,7 +534,7 @@ fn a_warm_index_reads_an_edit_under_a_case_variant_builtin_directory_when_git_ig
 
 #[test]
 fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("plan-interleave");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -627,7 +627,7 @@ fn storage_workspace(root: &std::path::Path, store: PathBuf) -> CodeRuleDslWorks
 
 #[test]
 fn repository_index_skips_only_the_nested_checkouts_the_host_names() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository("nested-checkouts", &[("main.py", b"print(1)\n")]);
     let root = directory.0.join("repo");
     for path in [
@@ -692,7 +692,7 @@ fn repository_index_skips_only_the_nested_checkouts_the_host_names() {
 
 #[test]
 fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_resident() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     const FILES: usize = 80;
     let source = "value = 1\n".repeat(4 * 1024);
     let paths = (0..FILES)
@@ -739,7 +739,7 @@ fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_residen
 
 #[test]
 fn repository_index_reports_paths_relative_to_the_storage_root() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository(
         "rooted-index",
         &[
@@ -772,7 +772,7 @@ fn repository_index_reports_paths_relative_to_the_storage_root() {
 
 #[test]
 fn repository_index_reports_unreadable_sources_as_failures() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let large = "print(2)\n".repeat(100);
     let directory = committed_repository(
         "index-failures",
@@ -825,7 +825,7 @@ fn snapshot_holds(store: &std::path::Path, path: &str) -> bool {
 
 #[test]
 fn host_files_with_clean_blob_bytes_are_aliased_and_promoted() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository(
         "host-aliases",
         &[("pkg/a.py", b"print(1)\n"), ("pkg/b.py", b"print(2)\n")],
@@ -870,7 +870,7 @@ fn host_files_with_clean_blob_bytes_are_aliased_and_promoted() {
 
 #[test]
 fn restored_results_keep_partial_source_diagnostics() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("restored-partial-source");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -906,7 +906,7 @@ fn restored_results_keep_partial_source_diagnostics() {
 
 #[test]
 fn a_storage_prefetch_failure_keeps_dirty_files_for_the_next_revision() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("storage-prefetch-retry");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/storage-prefetch-retry", &print_code_rule());
@@ -937,7 +937,7 @@ fn a_storage_prefetch_failure_keeps_dirty_files_for_the_next_revision() {
 
 #[test]
 fn a_recovered_file_is_replaced_with_later_revision_changes() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("storage-prefetch-replacement");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/storage-prefetch-replacement", &print_code_rule());
@@ -969,7 +969,7 @@ fn a_recovered_file_is_replaced_with_later_revision_changes() {
 }
 #[test]
 fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_requests() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("package-marker-overlays");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = package_marker_code_rule();
@@ -1012,7 +1012,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
 
 #[test]
 fn removing_a_package_marker_never_reintroduces_the_removed_file() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("removed-package-marker");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1057,7 +1057,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
 
 #[test]
 fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .add_code_rule(&package_marker_code_rule(), None)
@@ -1088,7 +1088,7 @@ fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
 
 #[test]
 fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let repository = package_repository("ingestion");
     let root = repository.0.join("repo");
     let code_rule = module_code_rule();
@@ -1130,7 +1130,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
 
 #[test]
 fn identical_source_in_two_packages_never_reuses_a_wrong_result() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     for first in ["alpha", "beta"] {
         let directory = TempDir::new(&format!("packages-{first}"));
         let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
@@ -1181,7 +1181,7 @@ fn restored_results(workspace: &CodeRuleDslWorkspace) -> usize {
 
 #[test]
 fn another_engine_build_never_reuses_stored_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("engine-build");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = module_code_rule();
@@ -1217,7 +1217,7 @@ fn another_engine_build_never_reuses_stored_results() {
 
 #[test]
 fn select_when_leaves_never_restore_each_others_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("leaves");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1250,7 +1250,7 @@ fn select_when_leaves_never_restore_each_others_results() {
 /// and a marked first row still silences the group's violation.
 #[test]
 fn restored_budget_rows_keep_their_rerail_ignore_marks() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "budget-marks",
         json!([{
@@ -1313,7 +1313,7 @@ fn restored_budget_rows_keep_their_rerail_ignore_marks() {
 
 #[test]
 fn transient_timeouts_are_retried_and_never_persisted() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1362,7 +1362,7 @@ fn transient_timeouts_are_retried_and_never_persisted() {
 
 #[test]
 fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("unobserved-deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1401,7 +1401,7 @@ fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
 
 #[test]
 fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("unobserved-ast-deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1445,7 +1445,7 @@ fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
 /// they lack.
 #[test]
 fn a_registered_code_rule_reports_ast_violations_and_missing_llm_capability() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "ast-and-llm",
         json!([
@@ -1502,7 +1502,7 @@ fn every_engine_limit_failure_round_trips_through_the_local_result_codec() {
 
 #[test]
 fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("paging");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let rule = json!({ "kind": "comparison_operator",
@@ -1578,7 +1578,7 @@ fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i6
 
 #[test]
 fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trips() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("round-trips");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1683,9 +1683,7 @@ fn resolve(workspace: &CodeRuleDslWorkspace, reference: &str) -> Result<Value> {
 
 #[test]
 fn selector_index_misses_keep_input_budget_failures() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("selector-limits");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let files = json!([{ "path": "plain.py", "language": "python", "source": "value = 1\n" }]);
@@ -1734,7 +1732,7 @@ fn selector_index_misses_keep_input_budget_failures() {
 
 #[test]
 fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("references");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/references", &print_code_rule());
@@ -1828,7 +1826,7 @@ fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
 
 #[test]
 fn javascript_and_php_documents_have_distinct_persisted_grammars() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("javascript-php-grammars");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1869,7 +1867,7 @@ fn javascript_and_php_documents_have_distinct_persisted_grammars() {
 
 #[test]
 fn an_empty_resident_document_resolves_without_a_store() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&print_code_rule(), None).unwrap();
     apply_json(
@@ -1887,7 +1885,7 @@ fn an_empty_resident_document_resolves_without_a_store() {
 
 #[test]
 fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("eviction");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = print_code_rule();
@@ -1976,7 +1974,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
 
 #[test]
 fn an_evicted_workspace_pages_its_complete_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("complete-pages");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/complete-pages", &print_code_rule());
@@ -2030,7 +2028,7 @@ fn an_evicted_workspace_pages_its_complete_results() {
 
 #[test]
 fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     const FILES: usize = 2_000;
     const BATCH: usize = 32;
     let code_rule = compile(
@@ -2082,7 +2080,7 @@ fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
 #[test]
 
 fn repository_index_carries_each_verified_blob_hash_to_publication() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("blob-hash-once");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -2111,7 +2109,7 @@ fn resident_module(workspace: &CodeRuleDslWorkspace, path: &str) -> Option<Strin
 
 #[test]
 fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives_siblings() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("restored-marker");
     let root = directory.0.join("repo");
     let code_rule = module_code_rule();
@@ -2174,7 +2172,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
 
 #[test]
 fn a_package_marker_offered_inline_names_unhosted_siblings() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "inline-marker",
         json!([{
@@ -2265,7 +2263,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("undecodable-backlog");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let mut undecodable = Vec::new();
@@ -2390,7 +2388,7 @@ fn backdated_repository(tag: &str, files: &[(&str, &[u8])]) -> TempDir {
 /// restore does not trust discovery's clean status for it.
 #[test]
 fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-stat",
         &[("api/a.py", b"pront(1)\n"), ("lib/b.py", b"x = 2\n")],
@@ -2438,7 +2436,7 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
 /// neither converted checkout holds, so each warm index restores only results of its own bytes.
 #[test]
 fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "checkout-bytes",
         json!([
@@ -2522,9 +2520,7 @@ fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() 
 
 #[test]
 fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("selectors");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let file =
