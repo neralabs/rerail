@@ -415,7 +415,10 @@ impl Reader {
     /// overflow the call stack; `charge` pays for each node. Each node is read with the block it
     /// belongs to; a `select`, `update`, `delete` or `insert` child opens a block, and the siblings
     /// after it (`from`, `where`, `order_by`, ...) belong to that block, as the grammar writes them
-    /// beside the keyword node rather than inside it.
+    /// beside the keyword node rather than inside it. An `INSERT`'s `ON CONFLICT` or `ON DUPLICATE
+    /// KEY UPDATE` action, from its `ON` on, is the insert's again, not its `SELECT`'s: SQLFluff
+    /// 4.4.0 RF01 (dialect postgres) reports no qualifier there, neither `EXCLUDED.y` nor an
+    /// unknown `zz.y`, as for `INSERT ... VALUES`.
     fn read<D: Doc>(
         &mut self,
         root: &Node<'_, D>,
@@ -434,6 +437,14 @@ impl Reader {
             };
             self.read_node(&node, &kind, &children, block);
             let mut current = block;
+            let action = if kind == "insert" {
+                children
+                    .iter()
+                    .find(|child| child.kind() == "keyword_on")
+                    .map(|child| child.range().start)
+            } else {
+                None
+            };
             let mut pushed = Vec::with_capacity(children.len());
             for child in children {
                 let child_kind = match child.kind().as_ref() {
@@ -442,9 +453,14 @@ impl Reader {
                     "insert" => Some(BlockKind::Insert),
                     _ => None,
                 };
+                let start = child.range().start;
                 if let Some(child_kind) = child_kind {
-                    let range = child.range().start..node.range().end;
-                    current = Some(self.open(block, child_kind, range));
+                    let end = action
+                        .filter(|&action| action > start)
+                        .unwrap_or(node.range().end);
+                    current = Some(self.open(block, child_kind, start..end));
+                } else if action == Some(start) {
+                    current = block;
                 }
                 pushed.push((child, current));
             }
@@ -880,6 +896,25 @@ mod tests {
         let source =
             "DELETE FROM s.t AS d WHERE EXISTS (SELECT 1 FROM u WHERE u.k = d.k AND w.k = 1)";
         assert_eq!(read_scopes(source).unresolved(), vec![at(source, "w", 0)]);
+    }
+
+    /// SQLFluff 4.4.0 RF01 (`sqlfluff lint --dialect postgres --rules RF01`) reports nothing in an
+    /// `INSERT`'s conflict action, after a `SELECT` as after `VALUES`, and still reports the
+    /// `SELECT`'s own unknown qualifier.
+    #[test]
+    fn insert_conflict_actions_are_not_the_selects() {
+        for source in [
+            "INSERT INTO t (x, y) SELECT s.a, s.b FROM s ON CONFLICT (x) DO UPDATE SET y = EXCLUDED.y;",
+            "INSERT INTO t (x, y) SELECT s.a, s.b FROM s ON CONFLICT (x) DO UPDATE SET y = excluded.y;",
+            "INSERT INTO t (x, y) VALUES (1, 2) ON CONFLICT (x) DO UPDATE SET y = EXCLUDED.y;",
+            "INSERT INTO t (x, y) VALUES (1, 2) ON CONFLICT (x) DO UPDATE SET y = excluded.y;",
+            "INSERT INTO t (x, y) SELECT s.a, s.b FROM s ON CONFLICT (x) DO UPDATE SET y = zz.y \
+             WHERE qq.y = 1;",
+        ] {
+            assert!(read_scopes(source).unresolved().is_empty(), "{source}");
+        }
+        let source = "INSERT INTO t (x, y) SELECT s.a, zz.b FROM s ON CONFLICT (x) DO NOTHING;";
+        assert_eq!(read_scopes(source).unresolved(), vec![at(source, "zz", 0)]);
     }
 
     #[test]
