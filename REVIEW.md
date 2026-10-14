@@ -61,7 +61,8 @@ Machine-readable. Size limits can only be tightened below the defaults (400 chan
     "model/",
     "packs/*/upstream/",
     "packs/node/rules/",
-    "packs/node/candidates/"
+    "packs/node/candidates/",
+    "packs/typescript/candidates/rules/vitest-*.json"
   ]
 }
 ```

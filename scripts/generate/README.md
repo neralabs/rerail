@@ -62,3 +62,6 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `packs/node/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every rule but `n-no-process-exit.json`, which is written by hand |
 | `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/` |
 | `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/` |
+| `packs/typescript/candidates/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 candidates) |
+| `packs/typescript/candidates/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/typescript/candidates/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
