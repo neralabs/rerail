@@ -43,7 +43,7 @@ tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.0"
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.25"
-zstd = "=0.13.3"
+zstd = "=0.14.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
