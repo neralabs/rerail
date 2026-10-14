@@ -152,51 +152,180 @@ fn parse(comment: &str) -> Option<(Option<Action>, Option<Vec<String>>)> {
     ))
 }
 
-/// Python's `fnmatch.fnmatchcase`, without filesystem normalization.
-fn fnmatchcase(pattern: &str, text: &str) -> bool {
-    fn matches(pattern: &[char], text: &[char]) -> bool {
-        match pattern.first() {
-            None => text.is_empty(),
-            Some('*') => {
-                matches(&pattern[1..], text)
-                    || text.first().is_some_and(|_| matches(pattern, &text[1..]))
+/// One step of a translated `fnmatch` pattern.
+#[derive(Debug, PartialEq, Eq)]
+enum Glob {
+    /// `*`, consecutive stars collapsed.
+    Star,
+    /// One character: `?` (any), a literal, or a bracket set.
+    One(Set),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Set {
+    Any,
+    Char(char),
+    /// A bracket expression: its characters and inclusive ranges, negated with `!`.
+    Class {
+        negated: bool,
+        chars: Vec<char>,
+        ranges: Vec<(char, char)>,
+    },
+}
+
+impl Set {
+    fn contains(&self, value: char) -> bool {
+        match self {
+            Set::Any => true,
+            Set::Char(c) => *c == value,
+            Set::Class {
+                negated,
+                chars,
+                ranges,
+            } => {
+                let hit = chars.contains(&value)
+                    || ranges.iter().any(|&(lo, hi)| lo <= value && value <= hi);
+                hit != *negated
             }
-            Some('?') => text
-                .first()
-                .is_some_and(|_| matches(&pattern[1..], &text[1..])),
-            Some('[') => {
-                let Some(end) = pattern.iter().position(|c| *c == ']') else {
-                    return text.first() == Some(&'[')
-                        && matches(&pattern[1..], text.get(1..).unwrap_or_default());
-                };
-                let mut i = 1;
-                let negated = pattern.get(i) == Some(&'!');
-                if negated {
-                    i += 1;
-                }
-                let mut hit = false;
-                let value = match text.first() {
-                    Some(value) => *value,
-                    None => return false,
-                };
-                while i < end {
-                    if i + 2 < end && pattern[i + 1] == '-' {
-                        hit |= pattern[i] <= value && value <= pattern[i + 2];
-                        i += 3;
-                    } else {
-                        hit |= pattern[i] == value;
-                        i += 1;
-                    }
-                }
-                (hit != negated) && matches(&pattern[end + 1..], &text[1..])
-            }
-            Some(ch) => text.first() == Some(ch) && matches(&pattern[1..], &text[1..]),
         }
     }
-    matches(
-        &pattern.chars().collect::<Vec<_>>(),
-        &text.chars().collect::<Vec<_>>(),
-    )
+}
+
+/// Python 3.12's `fnmatch.translate`, as steps: `*` (collapsed), `?`, `[...]` sets, literals.
+fn translate(pattern: &[char]) -> Vec<Glob> {
+    let mut globs = Vec::new();
+    let mut i = 0;
+    while i < pattern.len() {
+        let c = pattern[i];
+        i += 1;
+        match c {
+            '*' => {
+                if globs.last() != Some(&Glob::Star) {
+                    globs.push(Glob::Star);
+                }
+            }
+            '?' => globs.push(Glob::One(Set::Any)),
+            '[' => {
+                let mut j = i;
+                if pattern.get(j) == Some(&'!') {
+                    j += 1;
+                }
+                if pattern.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < pattern.len() && pattern[j] != ']' {
+                    j += 1;
+                }
+                if j >= pattern.len() {
+                    globs.push(Glob::One(Set::Char('[')));
+                } else {
+                    globs.push(Glob::One(class(&pattern[i..j])));
+                    i = j + 1;
+                }
+            }
+            c => globs.push(Glob::One(Set::Char(c))),
+        }
+    }
+    globs
+}
+
+/// The set a bracket expression's body (between `[` and `]`) matches, as `translate` builds it:
+/// the body splits into chunks at each hyphen that makes a range (not one right after the opening
+/// or its `!`, nor one right after a range's end); a range between the last character of one chunk
+/// and the first of the next is dropped, with both, when it is empty; a `!` the result then starts
+/// with negates; every other character, hyphens included, is itself.
+fn class(body: &[char]) -> Set {
+    let mut chunks: Vec<Vec<char>> = Vec::new();
+    if body.contains(&'-') {
+        let mut start = 0;
+        let mut k = if body.first() == Some(&'!') { 2 } else { 1 };
+        while let Some(offset) = body
+            .get(k..)
+            .and_then(|rest| rest.iter().position(|&c| c == '-'))
+        {
+            let hyphen = k + offset;
+            chunks.push(body[start..hyphen].to_vec());
+            start = hyphen + 1;
+            k = hyphen + 3;
+        }
+        if start < body.len() {
+            chunks.push(body[start..].to_vec());
+        } else if let Some(last) = chunks.last_mut() {
+            last.push('-');
+        }
+        for k in (1..chunks.len()).rev() {
+            let (Some(&end), Some(&first)) = (chunks[k - 1].last(), chunks[k].first()) else {
+                continue;
+            };
+            if end > first {
+                let next = chunks.remove(k);
+                let previous = &mut chunks[k - 1];
+                previous.pop();
+                previous.extend_from_slice(&next[1..]);
+            }
+        }
+    } else {
+        chunks.push(body.to_vec());
+    }
+    let negated = chunks[0].first() == Some(&'!');
+    if negated {
+        chunks[0].remove(0);
+    }
+    let mut chars = Vec::new();
+    let mut ranges = Vec::new();
+    let count = chunks.len();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let from = usize::from(index > 0);
+        let to = if index + 1 < count {
+            chunk.len().saturating_sub(1)
+        } else {
+            chunk.len()
+        };
+        chars.extend(chunk.get(from..to.max(from)).unwrap_or_default());
+        if index + 1 < count {
+            if let (Some(&lo), Some(&hi)) = (chunk.last(), chunks[index + 1].first()) {
+                ranges.push((lo, hi));
+            }
+        }
+    }
+    Set::Class {
+        negated,
+        chars,
+        ranges,
+    }
+}
+
+/// Python's `fnmatch.fnmatchcase`, without filesystem normalization: the translated pattern
+/// matched over the whole text. Every step but `*` takes one character, so the classic
+/// backtrack-to-the-last-star walk decides it in time linear in the pattern times the text,
+/// without recursion.
+fn fnmatchcase(pattern: &str, text: &str) -> bool {
+    let globs = translate(&pattern.chars().collect::<Vec<_>>());
+    let text: Vec<char> = text.chars().collect();
+    let (mut g, mut t) = (0, 0);
+    // The step after the last star, and the text position that star resumes from.
+    let mut resume: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match globs.get(g) {
+            Some(Glob::Star) => {
+                g += 1;
+                resume = Some((g, t));
+            }
+            Some(Glob::One(set)) if set.contains(text[t]) => {
+                g += 1;
+                t += 1;
+            }
+            _ => match resume {
+                Some((after, from)) => {
+                    g = after;
+                    t = from + 1;
+                    resume = Some((after, from + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    globs[g..].iter().all(|glob| *glob == Glob::Star)
 }
 
 #[cfg(test)]
@@ -244,6 +373,111 @@ mod tests {
         assert!(index.suppresses(&refs("CV05"), 8));
         assert!(index.suppresses(&refs("CV05"), 9));
         assert!(!index.suppresses(&refs("CV05"), 10));
+    }
+
+    /// Python 3.12's `fnmatch.fnmatchcase(text, pattern)` on each case, as the SQL tool venv's
+    /// interpreter answers it.
+    #[test]
+    fn fnmatchcase_agrees_with_python() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("CV*", "CV05", true),
+            ("*", "convention.is_null", true),
+            ("**", "x", true),
+            ("*.*", "convention.is_null", true),
+            ("*.is_*", "convention.is_null", true),
+            ("*a*b", "ab", true),
+            ("*a*b", "aab", true),
+            ("*a*b", "abba", false),
+            ("a*", "a", true),
+            ("*z", "convention.is_null", false),
+            ("c*n*l", "convention.is_null", true),
+            ("?V05", "CV05", true),
+            ("?", "", false),
+            ("[CV]V0[58]", "CV05", true),
+            ("[!C]V05", "CV05", false),
+            ("[!X]V05", "CV05", true),
+            ("[]]", "]", true),
+            ("[]a]", "a", true),
+            ("[!]]", "x", true),
+            ("[!]]", "]", false),
+            ("[!]", "!", false),
+            ("[!]", "[", false),
+            ("[!]x", "[!]x", true),
+            ("[", "[", true),
+            ("[a", "[a", true),
+            ("a[", "a[", true),
+            ("[a-c]", "b", true),
+            ("[a-c]", "-", false),
+            ("[c-a]", "b", false),
+            ("[!c-a]", "b", true),
+            ("[a-]", "-", true),
+            ("[-a]", "-", true),
+            ("[!-a]", "-", false),
+            ("[!-a]", "b", true),
+            ("[a-c-e]", "-", true),
+            ("[a-c-e]", "d", false),
+            ("[a-c-e]", "e", true),
+            ("[z-a-q]", "-", true),
+            ("[z-a-q]", "q", true),
+            ("[z-a-q]", "b", false),
+            ("[\\]", "\\", true),
+            ("[^a]", "^", true),
+            ("[^a]", "b", false),
+            ("[[]", "[", true),
+            ("[a&&b]", "&", true),
+            ("[a|b]", "|", true),
+            ("[~]", "~", true),
+            ("*[0-9]", "CV05", true),
+            ("CV0[!0-4]", "CV05", true),
+            ("CV0[!0-5]", "CV05", false),
+            ("[a-cx-z]", "y", true),
+            ("[a-cx-z]", "-", false),
+            ("[ab-]", "-", true),
+            ("[!z-ab-c]", "b", false),
+            ("[!z-ab-c]", "z", true),
+            ("*?*", "a", true),
+            ("*?*", "", false),
+            ("a*?", "a", false),
+            ("a*?", "ab", true),
+            ("?*\n", "x\n", true),
+            ("*", "", true),
+            ("", "", true),
+            ("", "a", false),
+            ("a\\b", "a\\b", true),
+            ("[.]*", ".", true),
+            ("*********************Z", "convention.is_null", false),
+            // An empty range dropped from the front leaves a `!` that negates.
+            ("[z-a!]", "x", true),
+            ("[z-a!]", "!", true),
+            ("[z-a!b]", "b", false),
+            ("[z-a!b]", "c", true),
+        ];
+        for &(pattern, text, expected) in cases {
+            assert_eq!(
+                fnmatchcase(pattern, text),
+                expected,
+                "{pattern:?} on {text:?}"
+            );
+        }
+    }
+
+    /// A `noqa` comment's stars cannot make matching exponential: each check is linear in the
+    /// pattern times the reference.
+    #[test]
+    fn many_stars_match_in_bounded_time() {
+        let started = std::time::Instant::now();
+        let pattern = format!("{}Z", "*".repeat(200));
+        let alternating = format!("{}Z", "a*".repeat(200));
+        let index = SqlfluffIndex::from_comments([
+            (1, format!("-- noqa: {pattern}").as_str()),
+            (2, format!("-- noqa: {alternating}").as_str()),
+        ]);
+        assert!(!index.suppresses(&refs("CV05"), 1));
+        assert!(!index.suppresses(&refs("CV05"), 2));
+        let long = "a".repeat(400);
+        assert!(!fnmatchcase(&alternating, &long));
+        assert!(fnmatchcase(&alternating, &format!("{long}Z")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     const ORACLE: &str = oracle!("sql/suppress/sqlfluff.expected.json");
