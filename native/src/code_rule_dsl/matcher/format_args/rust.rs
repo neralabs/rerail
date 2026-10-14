@@ -1,9 +1,10 @@
 //! `formatArgs` for Rust: a `format_args!`-family macro call read from tree-sitter-rust's token
 //! tree, as rustc 1.99.0 splits its arguments. The macro's arguments are tokens, not expressions:
-//! the call is split at the token tree's top-level commas, so a comma inside a turbofish
-//! (`HashMap::<K, V>::new()`) or after `as` (`x as Foo<A, B>`) is kept by tracking the angle
-//! brackets that open there; any other bare angle brackets, and a closure's parameter list
-//! written as a whole argument (`|a, b| ..`), are not told from comparisons and parameters.
+//! the call is split at the token tree's top-level commas, so a comma between angle brackets that
+//! open generics is kept: a turbofish (`HashMap::<K, V>::new()`), a qualified path
+//! (`<HashMap<K, V> as Default>::default()`) and a cast's type (`x as Foo<A, B>`). After a cast's
+//! type a binary operator is one (`a as i32 + 1 < b`), as rustc reads it. A closure's parameter
+//! list written as a whole argument (`|a, b| ..`) is not told from two arguments.
 
 use crate::code_rule_dsl::value::rust::{RustValue, literal};
 use ast_grep_core::{Doc, Node};
@@ -127,25 +128,30 @@ fn split_arguments<'r, D: Doc>(tokens: &[Node<'r, D>]) -> Option<Vec<Vec<Node<'r
     let mut segments: Vec<Vec<Node<'r, D>>> = Vec::new();
     let mut current: Vec<Node<'r, D>> = Vec::new();
     let mut angles = 0usize;
-    let mut after_as = false;
+    let mut cast = Cast::None;
     for token in tokens {
         let kind = token.kind();
+        // A cast's type at the top level: generics open after its path, and any other token
+        // after a whole type ends it (`as i32 + 1`).
+        if angles == 0 {
+            cast = cast.next(&kind);
+        }
         let opens_angle = kind == "<"
-            && (after_as
-                || angles > 0
+            && (angles > 0
+                || matches!(cast, Cast::Type | Cast::Path)
                 || current
                     .last()
-                    .is_some_and(|previous| previous.kind() == "::"));
+                    .is_none_or(|previous| operand_next(&previous.kind())));
         match kind.as_ref() {
             "," if angles == 0 => {
                 if current.is_empty() {
                     return None;
                 }
                 segments.push(std::mem::take(&mut current));
-                after_as = false;
+                cast = Cast::None;
                 continue;
             }
-            "as" => after_as = true,
+            "as" if angles == 0 => cast = Cast::Type,
             ">" => angles = angles.saturating_sub(1),
             ">>" => angles = angles.saturating_sub(2),
             _ if opens_angle => angles += 1,
@@ -157,6 +163,89 @@ fn split_arguments<'r, D: Doc>(tokens: &[Node<'r, D>]) -> Option<Vec<Vec<Node<'r
         segments.push(current);
     }
     Some(segments)
+}
+
+/// Where the tokens of a top-level `as` cast's type are. The angle brackets a `<` opens are read
+/// whole: the state is not stepped until they close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cast {
+    /// No cast's type.
+    None,
+    /// A type is next: after `as`, `::`, `&`, `*`, `mut`, `const`, `unsafe`, `fn` or `->`.
+    Type,
+    /// A lifetime's name is next (`&'a T`).
+    Lifetime,
+    /// A path's segment was read: `::` continues it, `<` opens its generics (rustc reads
+    /// `x as usize < y` so too), and any other token ends the type.
+    Path,
+    /// A type no generics follow was read (`[u8; 4]`, `(A, B)`, `_`, `!`, `Fn(A)`): only `->`
+    /// continues it.
+    Closed,
+}
+
+impl Cast {
+    /// The state after the top-level token `kind`.
+    fn next(self, kind: &str) -> Self {
+        match (self, kind) {
+            (Self::None, _) => Self::None,
+            (Self::Lifetime, _) => Self::Type,
+            (Self::Type, "'") => Self::Lifetime,
+            (
+                Self::Type,
+                "::" | "&" | "&&" | "*" | "mutable_specifier" | "const" | "unsafe" | "fn",
+            ) => Self::Type,
+            (Self::Type, "identifier" | "primitive_type" | "self" | "super" | "crate") => {
+                Self::Path
+            }
+            // `<` opens a qualified type's angles (`as <T as Tr>::A`) or a path's generics; after
+            // they close the path goes on.
+            (Self::Type | Self::Path, "<") => Self::Path,
+            (Self::Type, "token_tree" | "_" | "!") | (Self::Path, "token_tree") => Self::Closed,
+            (Self::Path, "::") | (Self::Path | Self::Closed, "->") => Self::Type,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Whether an operand, not an operator, follows the token `kind`: a `<` there opens a qualified
+/// path's angles (`== <T as Tr>::C`, `::<T>`), where after an operand it compares.
+fn operand_next(kind: &str) -> bool {
+    matches!(
+        kind,
+        "::" | "="
+            | "=="
+            | "!="
+            | "<"
+            | "<="
+            | ">="
+            | "+"
+            | "-"
+            | "*"
+            | "/"
+            | "%"
+            | "^"
+            | "!"
+            | "&"
+            | "|"
+            | "&&"
+            | "||"
+            | "<<"
+            | "+="
+            | "-="
+            | "*="
+            | "/="
+            | "%="
+            | "^="
+            | "&="
+            | "|="
+            | "<<="
+            | ">>="
+            | ".."
+            | "..="
+            | "=>"
+            | ";"
+            | ":"
+    )
 }
 
 /// An argument's tokens as `name = value` or a bare value.

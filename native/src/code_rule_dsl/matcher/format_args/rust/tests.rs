@@ -564,6 +564,62 @@ fn turbofish_and_cast_generics_keep_their_commas() {
     assert_eq!((positional, arguments.len()), (2, 2));
 }
 
+/// rustc 1.99.0 compiles each of these and prints one value per placeholder: after a cast's type a
+/// `<` compares, unless it opens the type path's generics.
+#[test]
+fn a_comparison_after_a_cast_is_no_angle_bracket() {
+    let count = |src: &str| {
+        let (_, positional, _, arguments) = call_of(src).expect("a format call");
+        (positional, arguments)
+    };
+    for (src, arguments) in [
+        (
+            r#"println!("{} {}", a as i32 + 1 < b, c)"#,
+            ["a..b", "c..c"],
+        ),
+        (
+            r#"println!("{} {}", a as i64 - b < c, y)"#,
+            ["a..c", "y..y"],
+        ),
+        (
+            r#"println!("{} {}", f(a) as i32 * 2 < b, y)"#,
+            ["f..b", "y..y"],
+        ),
+        (
+            r#"println!("{} {}", a as u8 as i32 + 1 < b, y)"#,
+            ["a..b", "y..y"],
+        ),
+        (r#"println!("{} {}", x as Foo<A, B>, y)"#, ["x..>", "y..y"]),
+        (
+            r#"println!("{} {}", x as std::vec::Vec<(A, B)>, y)"#,
+            ["x..>", "y..y"],
+        ),
+        (
+            r#"println!("{} {}", x as &'static [u8; 4] < y, z)"#,
+            ["x..y", "z..z"],
+        ),
+        (
+            r#"println!("{:?} {}", <HashMap<K, V> as Default>::default(), y)"#,
+            ["<..()", "y..y"],
+        ),
+        (
+            r#"println!("{} {}", a == <T as Tr>::C, y)"#,
+            ["a..C", "y..y"],
+        ),
+    ] {
+        assert_eq!(
+            count(src),
+            (2, arguments.map(str::to_owned).to_vec()),
+            "{src}"
+        );
+    }
+    // `assert!`'s condition is no format argument: the call is read, with its one argument.
+    let (value, positional, _, arguments) =
+        call_of(r#"assert!(a as usize + 1 < b, "x {}", c)"#).expect("a format call");
+    assert_eq!((value.as_str(), positional), ("x {}", 1));
+    assert_eq!(arguments, ["c..c"]);
+}
+
 #[test]
 fn std_paths_and_other_macros() {
     assert!(call_of(r#"std::println!("{}", 1)"#).is_some());
