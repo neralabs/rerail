@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b610-django-extra-used",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
+  "description": "Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class whose bases name a QuerySet or Manager. A bare `extra(...)` call and `extra` on any other receiver (`parser.extra(...)`, `self.extra(...)` in an unrelated class) are not reported (NER-1827).",
   "scope": {
     "include": [
       "**/*"
@@ -19,13 +19,19 @@
           "rule": {
             "any": [
               {
-                "pattern": "extra($$$)"
-              },
-              {
                 "pattern": "$R.extra($$$)"
               }
             ],
             "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "has": {
+                    "field": "object",
+                    "matches": "queryset-receiver"
+                  }
+                }
+              },
               {
                 "any": [
                   {
@@ -99,6 +105,70 @@
             ]
           },
           "utils": {
+            "queryset-receiver": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)$"
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "kind": "attribute",
+                    "has": {
+                      "field": "object",
+                      "matches": "queryset-receiver"
+                    }
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^get_queryset$"
+                      },
+                      {
+                        "kind": "attribute",
+                        "has": {
+                          "field": "attribute",
+                          "regex": "^get_queryset$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^self$"
+                    },
+                    {
+                      "pattern": "super()"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "class_definition",
+                    "has": {
+                      "field": "superclasses",
+                      "regex": "(?:QuerySet|Manager)\\b"
+                    }
+                  }
+                }
+              ]
+            },
             "string": {
               "any": [
                 {
