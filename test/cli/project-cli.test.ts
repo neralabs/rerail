@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -199,7 +200,10 @@ describe("rerail update and rerail update rollback", () => {
     await updateWithSnapshot(updater, path, "2.0.0");
     migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
     writeFileSync(`${path}.restoring`, "");
-    await rollbackWithSnapshot(updater, path, async () => undefined);
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); return "stopped"; });
+    // Review of #49 (N8): the daemon is left running when another rollback already restores.
+    expect(stopped).toEqual([]);
     expect(existsSync(`${path}.restoring`)).toBe(true);
     expect(existsSync(`${path}.before-rollback`)).toBe(false);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
@@ -308,6 +312,11 @@ describe("rerail update and rerail update rollback", () => {
     await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
     expect(stopped).toEqual([]);
     expect(readFileSync(path)).toEqual(bytes);
+    // Review of #49 (F15): the person is told, and the record is not matched again.
+    expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(
+      `rerail: could not read the schema of ${preUpdateSnapshotPath(path)} (`,
+    ));
+    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
   });
 
   // Review of #49 (B1): the record is used once. A rollback after it, and another rollback back again, find no copy to
@@ -485,5 +494,53 @@ describe("rerail update and rerail update rollback", () => {
       + "recorded no version change, so Rerail does not put it back itself. If 0.1.0-next.1 refuses the database, stop Rerail, "
       + `keep ${path} elsewhere if you need what changed since that update, then copy ${preUpdateSnapshotPath(path)} to ${path}.\n`,
     );
+  });
+
+  // Review of #49 (F13): a rollback that told the person to put the copy back by hand does not put it back on a later
+  // rollback of the same change, after they moved forward again.
+  it("never puts back a copy a refused rollback left to the person, on a later rollback of the same change", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const session = new Database(path);
+    try {
+      session.pragma("journal_mode = WAL");
+      await rollbackWithSnapshot(updater, path, async () => undefined);
+    } finally {
+      session.close();
+    }
+    expect(existsSync(preUpdateSnapshotPath(path))).toBe(true);
+    expect(existsSync(`${preUpdateSnapshotPath(path)}.json`)).toBe(false);
+    await rollbackWithSnapshot(updater, path, async () => undefined);
+    expect(updater.current).toBe("2.0.0");
+    const latest = new Database(path);
+    latest.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('latest', 'latest', 0, 0)");
+    latest.close();
+    const stopped: string[] = [];
+    await rollbackWithSnapshot(updater, path, async () => { stopped.push("daemon"); });
+    expect(stopped).toEqual([]);
+    expect(repositoryKeys(path)).toEqual(["after", "before", "latest"]);
+  });
+
+  // Review of #49 (F14): a rollback killed while restoring left its file behind; it names a process that is gone, so
+  // it holds nothing back, and the next rollback takes it over. (N8) The message says the daemon was stopped.
+  it("takes over a restoring file a killed rollback left, and says it stopped the daemon", async () => {
+    const path = await database();
+    const updater = new FakeUpdater();
+    await updateWithSnapshot(updater, path, "2.0.0");
+    migrate(path, RERAIL_BASELINE_SCHEMA_VERSION + 1);
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(`${path}.restoring`, `${gone}\n`);
+    openRerailDatabase(path, { readonly: true, migrations: [afterUpdate(RERAIL_BASELINE_SCHEMA_VERSION + 1)] }).$client.close();
+    await rollbackWithSnapshot(updater, path, async () => "stopped");
+    expect(repositoryKeys(path)).toEqual(["before"]);
+    expect(existsSync(`${path}.restoring`)).toBe(false);
+    expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining(
+      "now holds the copy taken before the update",
+    ));
+    expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(expect.stringContaining(
+      "Rerail's daemon was stopped for this; rerail daemon start starts it again.",
+    ));
   });
 });
