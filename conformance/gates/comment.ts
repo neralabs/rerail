@@ -53,9 +53,10 @@ function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): st
  * The comment as Markdown. `rowLimit` caps each candidate group's table; the caller lowers it until the comment fits
  * (renderComment does).
  */
-function render(summary: Summary, context: CommentContext, rowLimit: number, blockerLimit: number): string {
+function render(summary: Summary, context: CommentContext, rowLimit: number, blockerLimit: number, promoteLimit = 30): string {
   const blocking = summary.blocking.length;
-  const verdict = summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`;
+  const ready = summary.promotable.length;
+  const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}`;
   const commit = context.commit === undefined || context.commit === "" ? "" : ` at \`${context.commit.slice(0, 10)}\``;
   const run = context.runUrl === undefined || context.runUrl === "" ? "" : ` · [job summary and reports](${context.runUrl})`;
   const candidatesByPack = new Map<string, (BlockingRow & { toolPack: string })[]>();
@@ -69,7 +70,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     `Shipped rules (\`rules/\`) must pass every gate; candidates (\`candidates/\`) are only reported${commit}${run}.`,
     "",
     ...table(
-      ["Tool-pack", "Shipped rules passing", "Candidates passing every gate"],
+      ["Tool-pack", "Shipped rules passing", "Candidates ready to promote"],
       [
         ...summary.toolPacks.map((entry) => [entry.toolPack, entry.shipped, entry.candidates]),
         ["**All**", `**${summary.shipped.pass}/${summary.shipped.rules}**`, `**${summary.candidates.pass}/${summary.candidates.rules}**`],
@@ -93,6 +94,19 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
           `${summary.engineGaps.length} of them blocked only by engine gaps (the fix is the engine's, NER-1764)`,
           summary.engineGaps.slice(0, blockerLimit).map((row) => `- ${row.pack} \`${row.rule}\`: ${trim(row.detail)}`),
         )),
+    "### Ready to promote",
+    "",
+    ...(ready === 0
+      ? ["No candidate passes every gate yet.", ""]
+      : [
+          `${ready} candidate${ready === 1 ? " passes" : "s pass"} every gate: the signal to promote ${ready === 1 ? "it" : "them"} into \`rules/\` and \`pack.json\`. Passing the gates is necessary, not sufficient; a reviewer still decides. *Starts* is what upstream-status sets for \`on\`.`,
+          "",
+          ...table(["Tool-pack", "Rule", "Upstream rule", "Starts"], summary.promotable.slice(0, promoteLimit).map((entry) => [entry.toolPack, `\`${entry.rule}\``, entry.upstreamRule, entry.startsOn ? "on" : "off"])),
+          "",
+          ...(ready > promoteLimit
+            ? details(`${ready - promoteLimit} more ready to promote`, table(["Tool-pack", "Rule", "Upstream rule", "Starts"], summary.promotable.slice(promoteLimit).map((entry) => [entry.toolPack, `\`${entry.rule}\``, entry.upstreamRule, entry.startsOn ? "on" : "off"])))
+            : []),
+        ]),
     "### Candidates",
     "",
     ...table(
@@ -102,12 +116,6 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     "",
     "Each gate column counts the candidates that stop there first.",
     "",
-    ...(summary.promotable.length === 0
-      ? []
-      : details(
-          `${summary.promotable.length} candidate${summary.promotable.length === 1 ? " passes" : "s pass"} every gate (promotable: necessary, not sufficient)`,
-          summary.promotable.map((entry) => `- ${entry.toolPack} \`${entry.rule}\``),
-        )),
     ...[...candidatesByPack.entries()].flatMap(([toolPack, rows]) =>
       details(`${toolPack}: ${rows.length} candidate${rows.length === 1 ? " stops" : "s stop"} at a gate`, rowLimit === 0 ? ["Too many to list here: see the job summary."] : byGate(rows, rowLimit)),
     ),
@@ -127,6 +135,6 @@ export function renderComment(summary: Summary, context: CommentContext = {}): s
     const text = render(summary, context, rowLimit, 50);
     if (text.length <= COMMENT_LIMIT) return text;
   }
-  const text = render(summary, context, 0, 10);
+  const text = render(summary, context, 0, 10, 10);
   return text.length <= COMMENT_LIMIT ? text : `${text.slice(0, COMMENT_LIMIT - 200)}\n\n…truncated: see the job summary.\n`;
 }

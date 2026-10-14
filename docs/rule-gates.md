@@ -65,7 +65,8 @@ The engine is this checkout's (`npm run build:native` first). The first run fetc
 ## Read the report
 
 On a pull request, CI posts the results as a comment: each tool-pack's shipped and candidate counts, every shipped
-rule that blocks and why, and the candidates grouped by the gate they stop at, each list collapsed. A new run collapses
+rule that blocks and why, the candidates **ready to promote** (they pass every gate: the signal to move them into
+`rules/`, with the `on` that upstream-status sets), and the other candidates grouped by the gate they stop at, collapsed. A new run collapses
 the earlier comments as outdated, so the pull request keeps its history. The comment stays under GitHub's size limit by
 shortening long lists; the job summary and the uploaded reports have everything. The job summary reads top to bottom:
 

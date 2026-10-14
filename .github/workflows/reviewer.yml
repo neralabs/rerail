@@ -4,8 +4,8 @@
 # every push, until someone removes the team or comments "@neralabs-ci stop". "@neralabs-ci review" asks for
 # one review ("@neralabs-ci help" lists the commands). Only people with write access can trigger it. The
 # review reads the PR and its CI results; it never builds, runs or pushes anything. It approves only PRs that
-# pass every low-risk rule (neralabs/reviewer SPEC.md: no blockers, CI green, within REVIEW.md's size limits,
-# no high-risk paths, not from a fork or a bot, low risk), and its approval counts toward this repo's required
+# pass every low-risk rule (neralabs/reviewer SPEC.md: no blockers, CI green, no high-risk paths, not from a
+# fork or a bot, low risk), and its approval counts toward this repo's required
 # review. Approving subscribes the PR, so the approval is withdrawn as soon as new commits land.
 name: reviewer
 

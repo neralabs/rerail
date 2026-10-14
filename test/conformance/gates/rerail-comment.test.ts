@@ -23,7 +23,7 @@ function summary(candidates: number, blocking: number): Summary {
       check: "identical-results",
       why: "x".repeat(400),
     })),
-    promotable: [{ toolPack: "python/ruff", rule: "ruff-candidate-0-with-a-long-descriptive-name" }],
+    promotable: [{ toolPack: "python/ruff", rule: "ruff-candidate-0-with-a-long-descriptive-name", upstreamRule: "X100", startsOn: true, startReason: "on in default" }],
     onOff: [],
     toolPacks: [{ toolPack: "python/ruff", shipped: `${100 - blocking}/100`, candidates: `1/${candidates}`, failedGate: {}, integrity: [], gapCandidates: 0, toolPackChecks: true }],
     pass: blocking === 0,
@@ -45,4 +45,12 @@ test("thousands of candidates still fit in one comment: lists shrink, counts sta
   assert.match(text, /✅ every shipped rule passes/u);
   assert.match(text, /python\/ruff: 2999 candidates stop at a gate/u);
   assert.match(text, /more: see the job summary|Too many to list here/u);
+});
+
+test("candidates that pass every gate are called out, outside any collapsed section", () => {
+  const text = renderComment(summary(3000, 0));
+  assert.match(text, /🟢 1 candidate ready to promote/u);
+  const section = text.slice(text.indexOf("### Ready to promote"), text.indexOf("### Candidates"));
+  assert.match(section, /`ruff-candidate-0-with-a-long-descriptive-name` \| X100 \| on/u);
+  assert.doesNotMatch(section, /<details>/u);
 });

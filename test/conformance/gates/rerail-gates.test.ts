@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "vitest";
 
 import { ruleKey, type SharedKeyInputs } from "../../../conformance/gates/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/gates/checks/matches-upstream-tests.js";
+import { sparseDirectoryPattern } from "../../../conformance/gates/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/gates/process.js";
 import { blockingFailures, packDocuments, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import { summarize } from "../../../conformance/gates/summary.js";
@@ -97,7 +98,7 @@ describe("location-based blocking", () => {
   it("the summary lists shipped failures as blocking and candidates in the funnel, and fails on a missing report", () => {
     const summary = summarize([report([rule("a", "shipped", { loads: "schema" }), rule("b", "candidate"), rule("c", "candidate", { loads: "json" })])], noUngated, [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }]);
     assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.check]), [["python/bandit", "a", "schema"], ["python/ruff", "(every rule)", "report"]]);
-    assert.deepEqual(summary.promotable, [{ toolPack: "python/bandit", rule: "b" }]);
+    assert.deepEqual(summary.promotable.map(({ toolPack, rule }) => ({ toolPack, rule })), [{ toolPack: "python/bandit", rule: "b" }]);
     assert.equal(summary.pass, false);
   });
 
@@ -234,5 +235,14 @@ describe("not gated and pending", () => {
     const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { base, runner });
     assert.equal(failing(result.checks).length, 2);
     assert.match(result.checks.find((check) => !check.ok)!.detail, /fails closed/u);
+  });
+});
+
+describe("upstream's test files", () => {
+  it("are checked out by their directory, glob characters escaped", () => {
+    assert.equal(sparseDirectoryPattern("test/unit/eslint-plugin-next/custom-pages/[profile]/index.tsx"), "/test/unit/eslint-plugin-next/custom-pages/\\[profile\\]/");
+    assert.equal(sparseDirectoryPattern("test/unit/eslint-plugin-next/with-app-dir/app/@modal/default.tsx"), "/test/unit/eslint-plugin-next/with-app-dir/app/@modal/");
+    assert.equal(sparseDirectoryPattern("a/*?/b.py"), "/a/\\*\\?/");
+    assert.equal(sparseDirectoryPattern("setup.py"), "/");
   });
 });

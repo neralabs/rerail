@@ -671,8 +671,10 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
       repository: pack.upstream.repository,
       commit: pack.upstream.commit,
       version: pack.upstream.version,
+      // The runtime's pinned packages, not Node: Node is whichever the recording machine runs (CI's floats within a
+      // major), and a recording names nothing of the machine, so the nightly check compares like with like.
       runtime: [`eslint ${facts.eslint}`, ...(setup.plugin === null ? [] : [`${setup.plugin.package} ${facts.plugin}`]), `${facts.configs.package} ${facts.configs.version}`,
-        `typescript ${runtimeTs.version}`, `node ${facts.node.replace(/^v/u, "")}`].filter((part, index, parts) => parts.indexOf(part) === index).join(", "),
+        `typescript ${runtimeTs.version}`].filter((part, index, parts) => parts.indexOf(part) === index).join(", "),
       ...(setup.environment === undefined ? {} : {
         environment: `${setup.environment.package} ${setup.environment.version} (${setup.environment.source.repository} ${setup.environment.source.path} at ${setup.environment.source.commit}): its file globs, parsers and globals, without its plugins, rules or settings; a test case's own parser and globals give way to them`,
       }),
