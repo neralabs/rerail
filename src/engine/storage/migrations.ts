@@ -46,6 +46,11 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   {
     // Rule settings gain `suppressions` and `config_json`, and a row may set only those: the
     // `rule_settings_value` CHECK changes, which SQLite can only do by rebuilding the table.
+    // No floor, by choice: builds at the baseline keep opening the file, so agent hosts on
+    // different installed versions keep sharing the one database. They read only `on` and
+    // `mode`: they ignore a row's `suppressions` and `config_json` (the rule runs with its
+    // default options and honours suppression comments), and when one resets that rule's or
+    // pack's on/off and mode, its `writeSetting` deletes the row and both values with it.
     id: "rule-settings-suppressions-config",
     up(database) {
       rebuildTable(
