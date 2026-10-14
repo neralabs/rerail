@@ -53,7 +53,8 @@ describe("the language registry", () => {
     ]);
     // Supported languages come first, in the order they were added; planned ones follow.
     const firstPlanned = entries.findIndex(entry => entry.status === "planned");
-    expect(entries.slice(firstPlanned).every(entry => entry.status === "planned")).toBe(true);
+    const trailing = firstPlanned === -1 ? [] : entries.slice(firstPlanned);
+    expect(trailing.every(entry => entry.status === "planned")).toBe(true);
   });
 
   it("keeps the test-only exemplar out of the product registry and the host module", () => {
@@ -155,7 +156,7 @@ describe("the language registry", () => {
   });
 
   it("routes a planned language's files to no dialect, reading them as text", () => {
-    for (const entry of LANGUAGE_REGISTRY.filter(entry => entry.status === "planned")) {
+    for (const entry of LANGUAGE_REGISTRY.filter(entry => (entry.status as string) === "planned")) {
       for (const { label, suffixes } of entry.dialects) {
         expect(Object.keys(CODE_RULE_DIALECTS)).not.toContain(label);
         for (const suffix of suffixes) {
