@@ -131,7 +131,10 @@ be the config itself, nor a Node module that runs code, such as `node:vm`),
 `require("<package>")`, `new URL(…)`, `process.cwd()` and `import.meta.resolve(…)`,
 and none of the file's own `const`s handed to a call (except `defineConfig(...)`
 and typescript-eslint's `config(...)`, which Rerail takes to do what their
-documentation says, as it takes the packages the file imports). A file with
+documentation says, as it takes the packages the file imports). A key computed
+from anything but a literal, a `constructor`, `prototype` or `__proto__` key, and
+an object key JavaScript calls by itself (`toString`, `valueOf`, `toJSON`) are
+code too. A file with
 anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object

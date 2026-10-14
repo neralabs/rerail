@@ -756,6 +756,24 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
       .toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 
+  // Self-review round 8: `.constructor` of an imported function is `Function`, and JavaScript calls `toString` itself
+  // inside a template, so this changes the exported config at load time (ESLint 9.39.1 reports no-console).
+  it("reads nothing from a flat config that reaches Function through a member, or hands JavaScript a function to call", async () => {
+    const payload = "\"process.getBuiltinModule('module')\"";
+    const cases = [
+      `const path = require("node:path");\nmodule.exports = [{ rules: { "no-console": "off" } }];\nconst changed = \`\${{ toString: path.join.constructor(${payload}) }}\`;`,
+      `const path = require("node:path");\nmodule.exports = [{ rules: { "no-console": "off" } }];\nconst changed = path.join["constructor"](${payload})();`,
+      `const path = require("node:path");\nconst key = "con" + "structor";\nmodule.exports = [{ rules: { "no-console": "off" } }];\nconst changed = path.join[key](${payload})();`,
+      "const path = require(\"node:path\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = `${{ valueOf: path.join }}`;",
+      "const vm = require(\"node:vm\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = `${{ [Symbol.toPrimitive]: vm.runInThisContext }}`;",
+    ];
+    for (const text of cases) {
+      const proposed = await flat(text, ["javascript"], "eslint.config.cjs");
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);

@@ -62,6 +62,20 @@ const MAX_DEPTH = 64;
 const CODE_NAMES = new Set(["eval", "module", "exports", "arguments"]);
 /** Node modules that run code, or reach the module system or the process, and so can change anything when called. */
 const CODE_MODULES = new Set(["vm", "module", "inspector", "repl", "process", "worker_threads", "child_process", "v8", "wasi"]);
+/** Keys through which a value reaches `Function`, a prototype, or its own accessors. */
+const REFLECTIVE_KEYS = new Set([
+  "constructor", "prototype", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+]);
+/** Keys JavaScript calls by itself when it turns an object into a primitive or JSON. */
+const COERCION_KEYS = new Set(["toString", "valueOf", "toJSON", "toLocaleString"]);
+
+/** The name of a member or object key, or undefined when it is computed from anything but a literal. */
+function keyName(key: t.Node, computed: boolean): string | undefined {
+  if (!computed && key.type === "Identifier") return key.name;
+  if (key.type === "StringLiteral") return key.value;
+  if (key.type === "NumericLiteral") return String(key.value);
+  return undefined;
+}
 
 /** `<folder>/**` or `<folder>/**\/*`: every file under one folder. A `./` start is allowed. */
 export function folderOfGlob(pattern: string): string | undefined {
@@ -222,22 +236,36 @@ class FlatConfigReader {
       case "RegExpLiteral":
       case "MetaProperty":
         return undefined;
-      case "Identifier":
+      case "Identifier": {
         if (CODE_NAMES.has(node.name) && !this.#locals.has(node.name) && !this.#imports.has(node.name)) return node;
+        // A code-running Node module is code wherever it is named: a value read from it can run code when coerced.
+        const from = this.#imports.get(node.name)?.module;
+        if (from !== undefined && CODE_MODULES.has(from.replace(/^node:/u, ""))) return node;
         return given && this.#locals.has(node.name) ? node : undefined;
+      }
       case "TemplateLiteral":
         return all(node.expressions, given);
       case "MemberExpression":
-      case "OptionalMemberExpression":
-        return all([node.object, node.computed ? node.property : undefined], given);
+      case "OptionalMemberExpression": {
+        // `.constructor` of any function is `Function`; a key Rerail cannot read may be that one.
+        const key = keyName(node.property, node.computed);
+        if (key === undefined || REFLECTIVE_KEYS.has(key)) return node;
+        return this.#nonData(node.object, given);
+      }
       case "ArrayExpression":
         return all(node.elements, given);
       case "ObjectExpression": {
         for (const property of node.properties) {
           if (property.type === "ObjectMethod") return property;
-          const code = property.type === "SpreadElement"
-            ? this.#nonData(property.argument, given)
-            : all([property.computed ? property.key : undefined, property.value], given);
+          if (property.type === "SpreadElement") {
+            const code = this.#nonData(property.argument, given);
+            if (code !== undefined) return code;
+            continue;
+          }
+          // JavaScript calls `toString`, `valueOf` or `toJSON` itself when it turns the object into a string or JSON.
+          const key = keyName(property.key, property.computed);
+          if (key === undefined || REFLECTIVE_KEYS.has(key) || COERCION_KEYS.has(key)) return property;
+          const code = this.#nonData(property.value, given);
           if (code !== undefined) return code;
         }
         return undefined;
