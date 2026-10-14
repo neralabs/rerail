@@ -922,7 +922,9 @@ export interface CodeRuleDslResolves {
 
 /**
  * How a name is bound: the construct its binding site is. `field`, `method` and `accessor` are TypeScript's private
- * names (`#a`), bindings of their class body that `binds` matches at each declaration's name.
+ * names (`#a`), bindings of their class body that `binds` matches at each declaration's name. `relation` (a SQL
+ * `FROM`/`JOIN` relation: its alias, else its table name's last part), `cte` and `target` (an `UPDATE`, `DELETE` or
+ * `INSERT` table) are SQL's.
  */
 export type CodeRuleDslBindingForm =
   | "assignment"
@@ -944,13 +946,17 @@ export type CodeRuleDslBindingForm =
   | "deletion"
   | "field"
   | "method"
-  | "accessor";
+  | "accessor"
+  | "relation"
+  | "cte"
+  | "target";
 /**
  * The kind of scope a binding is held in. Python: `module`, `class`, `function`, `lambda`, `comprehension`,
  * `typeParameters`. TypeScript, as eslint-scope names them: `global` (a script's top level), `module` (a module's or
  * CommonJS file's top level), `function` (arrows and static blocks too), `class` (a class expression's own name),
  * `block` (blocks, loops, `switch`, `catch`, enum bodies), `namespace`, `typeParameters` (type declarations and
- * signatures) and `functionName` (a named function expression's own name).
+ * signatures) and `functionName` (a named function expression's own name). SQL: `query` (a query block, or the block
+ * around a `WITH` statement that binds its CTE names).
  */
 export type CodeRuleDslScopeKind =
   | "module"
@@ -962,7 +968,8 @@ export type CodeRuleDslScopeKind =
   | "global"
   | "block"
   | "namespace"
-  | "functionName";
+  | "functionName"
+  | "query";
 
 /**
  * Filters over a binding; each listed one must hold. `used`, `referenced`, `nestedUse` and `exported` are three-valued:

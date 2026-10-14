@@ -29,7 +29,7 @@ family's grammar) is the engine's answer alone. The host's schema checks a rule'
 
 ## The engine adapter
 
-Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
+Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`, `Sql`) implementing `Adapter`. The
 `with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family, and the
 registry also generates `Family`, `GrammarDialect`, `Family::of` and `honours`, so no enum is edited by hand. Every
 other call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
@@ -39,19 +39,46 @@ semantics (`truthy`, `type_name`, `equals`, `order`, `relation`, `numeric`, `int
 
 | Part | Holds |
 |---|---|
-| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`), module paths from package markers (Python), and inline suppression comments |
-| `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, and refusals of binding and resolution features |
+| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC, SQL's PostgreSQL case folding), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`), module paths from package markers (Python), and inline suppression comments |
+| `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, SQL's query blocks, and refusals of binding and resolution features |
 | `ValueRules` (`adapter/value.rs`) | Value decoding, kinds, structures, names, keys and references for comparisons, type names, and refusals of compare modes |
 | `ArgumentRules` (`adapter/arguments.rs`) | Call kinds, the arguments a call passes, and refusals of signature markers and modes |
 | `CallRules` (`adapter/calls.rs`) | Call and function kinds, per-file call summaries, call-graph links and labels |
 | `FormatArgRules` (`adapter/format_args.rs`) | The format styles a family reads |
 | `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's text-only patterns |
 
-A concern the registry does not mark `supported` for a family is `Refused` (Ecma's `calls` and `formatArgs`). An
+A concern the registry does not mark `supported` for a family is `Refused` (Ecma's and Sql's `calls` and `formatArgs`). An
 embedding family reuses the embedded language's concerns (Blade's delegate to PHP's) and overrides only what reads
 the template itself. Refusals go through one gate (`gate`), which reports a refused feature as invalid and a planned
 one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite over every adapter, and
 checks that each family's adapter reads exactly the capabilities its registry entries support.
+
+### The SQL adapter
+
+`adapter/sql.rs` reads SQL as SQLFluff 4.4.0 does, over one generic dialect (`GrammarDialect::Sql`, the vendored
+tree-sitter-sql with Rerail's patches, `native/grammars/tree-sitter-sql/PATCHES.md`) for PostgreSQL, SQLite, MySQL
+and ANSI files. Where the dialects read a file differently it reads PostgreSQL's, and the pack declares the other
+readings as divergences. Each concern and its oracle:
+
+| Concern | What it reads | Oracle |
+|---|---|---|
+| `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); one region, the file's root; SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
+| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's RF01 and AL05 recordings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`), with the declared ANSI-versus-PostgreSQL mismatches |
+| `ValueRules` | Literals and names (`value/sql.rs`) only where PostgreSQL's and SQLite's readings agree; `type`, the key, member, reference and structural compare modes are refused | `fixtures/sql/scope/postgres.expected.json` (PostgreSQL 18.6 through libpg_query) and `fixtures/sql/value/sqlite.expected.json` (SQLite 3.50.4) |
+| `ArgumentRules` | An `invocation`'s arguments as PostgreSQL 18.6's parser binds them (`matcher/arguments_sql.rs`): by position, then by name; signature markers, `syntactic` and `estree` are refused | `fixtures/sql/matcher/arguments/postgres.expected.json`, 47 of 47 calls |
+| `SyntaxRules` | No literal grammar (`parse`) and no `languageOptions`; `when` reads the document's options | |
+
+`calls` and `formatArgs` are `refused` in `languages/sql.json`, because SQL gives the engine nothing to read for them
+(the evidence is in the module doc of `adapter/sql.rs`):
+
+- `calls`: no SQLFluff rule follows a call into a routine. A routine's body is a string literal of another language
+  (`$$ ... $$`, PL/pgSQL), not SQL the grammar parses, and a `.sql` file has no workspace-resolvable call graph: no
+  import or module links one file's routines to another's.
+- `formatArgs`: no SQLFluff rule reads a format string, and ISO SQL has no format function; PostgreSQL's `format()`
+  and SQLite's `printf()` are dialect extensions.
+
+A rule reading either is invalid for `sql`, never `language-not-supported`. The pack's ports read `syntax`, `value`,
+`compare`, `scope` and `suppression`; none reads `arguments`, which the capability's own oracle proves.
 
 ## The registry entry
 
@@ -81,7 +108,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Reserved today: Rust 9, SQL 10 and Vue 12 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
-| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`) |
+| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `phpstan`, `psalm`, `phpcs`, `sqlfluff`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
 `parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
