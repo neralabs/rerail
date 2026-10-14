@@ -5,7 +5,8 @@ each one checked only by an `EarlyLintPass` (AST, no types). Run offline, never 
     python3 generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
     python3 generate.py corpus <cargo target root> <name>=<corpus checkout> [...]
 
-`fixtures` copies each lint's own UI tests (rust-clippy `tests/ui/**`, `tests/ui-toml/**`, commit
+`fixtures` writes Rerail's own cases (`PROBES`, listed in UPSTREAM.md) to fixtures/rerail/ and
+copies each lint's own UI tests (rust-clippy `tests/ui/**`, `tests/ui-toml/**`, commit
 49e2f89a2605a9a340e04955fdbefa9803e6027a) to fixtures/ under their upstream paths, with the `auxiliary/` crates they
 `//@aux-build` and the `clippy.toml` each test reads (licenses/clippy/UPSTREAM.md lists them), then runs the pinned
 clippy-driver on each test as rust-clippy's tests/compile-test.rs (ui_test 0.30.7) does: edition 2024 unless
@@ -103,6 +104,145 @@ TESTS = {
     ],
     "unusual_byte_groupings": ["tests/ui/literals.rs", "tests/ui/large_digit_groups.rs"],
     "zero_prefixed_literal": ["tests/ui/literals.rs"],
+}
+# Ours: inputs the ports once misread, each a golden case (fixtures/rerail/<lint>.rs). Each is recorded with every
+# ported lint on, like Clippy's own tests, and its `//~` annotations are checked against the faithful run.
+PROBES = {
+    "allow_attributes": """\
+#![warn(clippy::allow_attributes)]
+
+#[cfg_attr(test, allow(dead_code))]
+fn off_in_a_build_without_tests() {}
+
+#[cfg_attr(all(), allow(dead_code), allow(unused_variables))]
+//~^ allow_attributes
+//~| allow_attributes
+fn two_expanded_allows() {}
+
+#[cfg_attr(clippy, allow(dead_code))]
+//~^ allow_attributes
+fn clippy_is_on() {}
+""",
+    "allow_attributes_without_reason": """\
+#![warn(clippy::allow_attributes_without_reason)]
+
+#[cfg_attr(test, allow(dead_code))]
+fn off_in_a_build_without_tests() {}
+
+#[cfg_attr(all(), allow(dead_code), allow(unused_variables, reason = "documented"))]
+//~^ allow_attributes_without_reason
+fn first_allow_has_no_reason() {}
+
+#[cfg_attr(all(), allow(dead_code, reason = "documented"), allow(unused_variables))]
+//~^ allow_attributes_without_reason
+fn second_allow_has_no_reason() {}
+
+#[cfg_attr(all(), allow(dead_code, reason = "a"), allow(unused_variables, reason = "b"))]
+fn both_have_reasons() {}
+""",
+    "double_parens": """\
+#![warn(clippy::double_parens)]
+
+fn f(_: i32, _: i32) -> i32 {
+    0
+}
+
+fn g(_: i32) -> i32 {
+    0
+}
+
+fn spaced() -> i32 {
+    ( (0))
+    //~^ double_parens
+}
+
+fn newline() -> i32 {
+    (
+        (0)
+    )
+    //~^^^ double_parens
+}
+
+fn comments() -> i32 {
+    // a comment between the parentheses: Clippy's source check rejects it
+    (/* c */ (0))
+}
+
+fn unit() {
+    let _ = ( ());
+    //~^ double_parens
+    let _ = (());
+    //~^ double_parens
+}
+
+fn tuple() {
+    let _ = ( (1, 2));
+    //~^ double_parens
+}
+
+fn call_arguments() {
+    let _ = f((1), 2);
+    let _ = f(1, (2));
+    let _ = g( (1));
+    //~^ double_parens
+    let _ = g((1)) + 2;
+    //~^ double_parens
+    let _ = 2 + g((1));
+    //~^ double_parens
+}
+""",
+    "redundant_static_lifetimes": """\
+#![warn(clippy::redundant_static_lifetimes)]
+
+fn take(_: &str) {}
+
+const FN_POINTER: fn(&'static str) = take;
+const FN_POINTER_RETURN: fn() -> &'static str = || "";
+const BOXED: Option<Box<dyn Fn(&'static str)>> = None;
+const REFERENCE_TO_DYN: &'static dyn Send = &0;
+const REFERENCE_TO_REFERENCE: &'static &'static str = &"";
+//~^ redundant_static_lifetimes
+const ARRAY_OF_REFERENCES: [&'static str; 1] = [""];
+//~^ redundant_static_lifetimes
+const TUPLE_OF_REFERENCES: (&'static str, u8) = ("", 0);
+//~^ redundant_static_lifetimes
+const GENERIC_ARGUMENT: Option<&'static str> = None;
+const LOCAL: usize = {
+    let _: &'static str = "";
+    0
+};
+""",
+    "unnested_or_patterns": """\
+#![warn(clippy::unnested_or_patterns)]
+
+struct T5(u8, u8, u8, u8, u8);
+struct T6(u8, u8, u8, u8, u8, u8);
+
+fn tuples(a: (u8, u8, u8, u8, u8), b: (u8, u8, u8, u8, u8, u8)) {
+    if let (1, 2, 3, 4, 5) | (1, 2, 3, 4, 6) = a {}
+    //~^ unnested_or_patterns
+    if let (1, 2, 3, 4, 5, 6) | (1, 2, 3, 4, 5, 7) = b {}
+    //~^ unnested_or_patterns
+    // two elements differ: not nestable
+    if let (1, 2, 3, 4, 5) | (1, 2, 3, 6, 6) = a {}
+}
+
+fn slices(a: &[u8], b: &[u8]) {
+    if let [1, 2, 3, 4, 5] | [1, 2, 3, 4, 6] = a {}
+    //~^ unnested_or_patterns
+    if let [1, 2, 3, 4, 5, 6] | [1, 2, 3, 4, 5, 7] = b {}
+    //~^ unnested_or_patterns
+    if let [1, 2, 3, 4, 5] | [1, 2, 3, 6, 6] = a {}
+}
+
+fn tuple_structs(a: T5, b: T6) {
+    if let T5(1, 2, 3, 4, 5) | T5(1, 2, 3, 4, 6) = a {}
+    //~^ unnested_or_patterns
+    if let T6(1, 2, 3, 4, 5, 6) | T6(1, 2, 3, 4, 5, 7) = b {}
+    //~^ unnested_or_patterns
+    if let T5(1, 2, 3, 4, 5) | T5(1, 2, 3, 6, 6) = a {}
+}
+""",
 }
 BASE_ARGUMENTS = ["--error-format=json", "-Aunused", "-Ainternal_features", "-Zui-testing",
                   "-Zdeduplicate-diagnostics=no"]
@@ -341,6 +481,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     for stale in ("aux", "out"):
         shutil.rmtree(scratch / stale, ignore_errors=True)
     tests = sorted({test for files in TESTS.values() for test in files})
+    probes = {f"rerail/{name}.rs": text for name, text in PROBES.items()}
     copies = set(tests) | {"tests/clippy.toml"}
     pending = list(tests)
     while pending:
@@ -353,6 +494,10 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     for copy in sorted(copies):
         (target / copy).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(checkout / copy, target / copy)
+    for path, text in probes.items():
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_text(text)
+    tests = sorted(tests + list(probes))
     builder = Builder(driver, target, scratch, dependencies(checkout, scratch))
     findings = {}
     check = {}
@@ -363,6 +508,8 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
         stderr = checkout / pathlib.PurePosixPath(test).with_suffix(".stderr")
         faithful = builder.test(test, [])
         differences = compare(test, text, stderr.read_text() if stderr.exists() else None, faithful, ported)
+        if test in probes:  # ours have no `.stderr`: only the `//~` annotations are checked
+            differences = [d for d in differences if "stderr" not in d["kind"]]
         if differences:
             check[test] = differences
         for d in builder.test(test, record_flags):
@@ -375,7 +522,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     (HERE / "fixtures.upstream-check.json").write_text(json.dumps(
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,
          "differences": check}, indent=1, sort_keys=True) + "\n")
-    print(f"{len(tests)} tests, {len(copies)} files copied, {len(findings)} findings; per lint:")
+    print(f"{len(tests)} tests ({len(probes)} ours), {len(copies)} files copied, {len(findings)} findings; per lint:")
     for lint, count in sorted(Counter(key[0] for key in findings).items()):
         print(f"  {lint}: {count}")
     for test, differences in sorted(check.items()):

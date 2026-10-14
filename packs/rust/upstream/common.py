@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-PACK = HERE.parent.parent / "conformance.json"
+PACK = HERE.parent / "conformance.json"
 
 TOOLCHAIN = "1.99.0"
 RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"
@@ -48,8 +48,8 @@ def tool_version() -> str:
 
 
 def lints() -> list[str]:
-    """The clippy lints the pack ports, without the `clippy::` prefix."""
-    return sorted(rule["upstream"]["rule"] for rule in pack()["rules"] if rule["upstream"]["tool"] == TOOL)
+    """The clippy lints the pack ports, without the `clippy::` prefix (a lint ported as several rules once)."""
+    return sorted({rule["upstream"]["rule"] for rule in pack()["rules"] if rule["upstream"]["tool"] == TOOL})
 
 
 def check_toolchain() -> pathlib.Path:

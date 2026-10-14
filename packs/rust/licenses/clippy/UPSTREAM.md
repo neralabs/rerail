@@ -2,7 +2,7 @@
 
 Upstream: [rust-lang/rust-clippy](https://github.com/rust-lang/rust-clippy/tree/49e2f89a2605a9a340e04955fdbefa9803e6027a) at tag `rust-1.99.0` (commit `49e2f89a2605a9a340e04955fdbefa9803e6027a`), the clippy shipped as `clippy 0.1.99 (b940084d7e 2026-09-28)` with Rust 1.99.0. License: MIT OR Apache-2.0 (Copyright (c) The Rust Project Contributors); [`LICENSE-MIT`](LICENSE-MIT), [`LICENSE-APACHE`](LICENSE-APACHE) and [`COPYRIGHT`](COPYRIGHT) are the upstream license files, copied verbatim at that tag.
 
-The files listed below are UI tests of the clippy lints the Rust pack ports (`packs/rust/conformance.json`), the auxiliary crates those tests build, and the `clippy.toml` files they read. They remain under clippy's license. Every other file under `upstream/clippy/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `generate.py`, `../common.py` and the recordings they write by running clippy (`fixtures.expected.json`, `fixtures.upstream-check.json`, `corpus-*.expected.json`).
+The files listed below are UI tests of the clippy lints the Rust pack ports (`packs/rust/conformance.json`), the auxiliary crates those tests build, and the `clippy.toml` files they read. They remain under clippy's license. Every other file under `upstream/clippy/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`; `upstream/clippy/UPSTREAM.md` lists the cases under `fixtures/rerail/`): `generate.py`, `../common.py` and the recordings they write by running clippy (`fixtures.expected.json`, `fixtures.upstream-check.json`, `corpus-*.expected.json`).
 
 Paths are relative to `packs/rust/`; each file keeps its upstream path under `upstream/clippy/fixtures/`.
 
