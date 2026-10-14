@@ -143,7 +143,7 @@
     "@oh-my-pi/pi-coding-agent": "18.0.4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "24.10.0",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.3",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
     "tsx": "4.23.13",
