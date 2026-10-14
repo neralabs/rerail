@@ -1684,6 +1684,67 @@
                 "has": {
                   "matches": "vitest-assertion-callee"
                 }
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-assertion-callee"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string"
+                        },
+                        {
+                          "kind": "identifier"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-asserting-helper": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "function_declaration",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "vitest-assertion-callee"
+                        },
+                        "not": {
+                          "has": {
+                            "field": "arguments",
+                            "kind": "template_string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-asserting-helper"
+                }
               }
             ]
           },
@@ -2217,28 +2278,7 @@
                       },
                       {
                         "has": {
-                          "kind": "identifier",
-                          "resolves": {
-                            "binding": {
-                              "site": {
-                                "kind": "function_declaration",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "call_expression",
-                                  "has": {
-                                    "field": "function",
-                                    "matches": "vitest-assertion-callee"
-                                  },
-                                  "not": {
-                                    "has": {
-                                      "field": "arguments",
-                                      "kind": "template_string"
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
+                          "matches": "vitest-asserting-helper"
                         }
                       }
                     ]
