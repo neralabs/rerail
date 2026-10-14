@@ -23,6 +23,7 @@ const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "typescript-eslint-no-unused-expressions";
 
 const evaluationSchema = z.object({
+  status: z.string(),
   violations: z.array(z.object({ path: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),
   failures: z.array(z.unknown()).default([]),
 });
@@ -43,6 +44,7 @@ function reportedLines(compiled: NativeCompiledCodeRuleDsl, source: string): num
     files: [{ language: "typescript", path: "src/types.test.ts", source }],
   });
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
+  expect(result.status).toBe("completed");
   expect(result.failures).toEqual([]);
   return result.violations.map(violation => violation.span.startLine + 1).sort((a, b) => a - b);
 }
