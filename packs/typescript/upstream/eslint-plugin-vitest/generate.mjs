@@ -714,6 +714,10 @@ function extractFixtures() {
   const authored = [];
   for (const { rule, name, code, reports = {} } of AUTHORED) {
     if (!RULES.includes(`${PREFIX}${rule}`)) throw new Error(`AUTHORED ${name}: ${rule} is not a pack rule`);
+    // A misspelled rule would be read as 0 findings by authoredMismatches and pass silently.
+    for (const key of Object.keys(reports)) {
+      if (!RULES.includes(`${PREFIX}${key}`)) throw new Error(`AUTHORED ${name}: reports names ${key}, which is not a pack rule`);
+    }
     const file = `${rule}/rerail-${name}.test.ts`;
     mkdirSync(join(fixtures, rule), { recursive: true });
     writeFileSync(join(fixtures, file), code);
