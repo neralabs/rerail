@@ -24,20 +24,10 @@ import type { RuleDocument } from "../catalog/rule-store.js";
  * resolved for a repository before evaluation.
  *
  * These Drizzle tables are the schema. `schema-sql.ts` is generated from them
- * (`npm run generate:schema`) and applied verbatim when a database is opened.
- * `database.ts` stamps `PRAGMA user_version` with `RERAIL_SCHEMA_VERSION`.
+ * (`npm run generate:schema`) and applied verbatim when a database is opened. A change to the shape of an
+ * existing table also needs a step in `migrations.ts`, which brings existing files to it and owns the
+ * schema version `database.ts` stamps in `PRAGMA user_version`.
  */
-/**
- * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
- * newer version. Until the first release the version stays 1 and the tables are edited in place;
- * the DDL only creates what is missing, so a database created by an earlier development build
- * keeps its old tables and has to be moved aside. From the first release on, new tables and
- * indexes need no bump: the DDL is idempotent and older builds ignore what they do not know. A
- * change an older build would misread, or one SQLite cannot apply idempotently, raises it.
- * Some development builds stamped their files 2 before the version went back to 1, so the first
- * raise goes to 3: such a file then stays refused instead of being read as current.
- */
-export const RERAIL_SCHEMA_VERSION = 1 as const;
 
 export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -441,6 +431,12 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   processId: integer("process_id").notNull(),
   token: text("token").notNull(),
   updatedAt: integer("updated_at").notNull(),
+});
+
+/** The `migrations.ts` steps a file has run, by id. */
+export const schemaMigrations = sqliteTable("schema_migrations", {
+  id: text("id").primaryKey(),
+  appliedAt: integer("applied_at").notNull(),
 });
 
 /**

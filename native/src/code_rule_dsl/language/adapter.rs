@@ -39,7 +39,9 @@ use crate::code_rule_dsl::suppress::{
     parent_statement, root,
 };
 use crate::code_rule_dsl::tape::TapeDoc;
-use ast_grep_core::{Doc, Node};
+use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_core::{AstGrep, Doc, Node};
+use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -123,6 +125,10 @@ pub(crate) trait Adapter: 'static {
     type FormatArgs: FormatArgRules;
     /// An identifier's text as the family compares names (Python: NFKC; others: as written).
     fn name(text: Cow<'_, str>) -> Cow<'_, str>;
+    /// The bytes tree-sitter parses for a file of the family, as long as `source` and with its
+    /// character boundaries and line ends: `source` itself, but for PHP's view of a template
+    /// (`php_view`). A tree of them reads `source`.
+    fn parse_input(source: &str) -> Cow<'_, str>;
     /// A file's module, from package markers on disk, in the shape hosts send as `module`
     /// (Python only).
     fn module_path(file: &Path) -> Option<serde_json::Value>;
@@ -154,6 +160,10 @@ impl Adapter for Python {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         python_name(text)
+    }
+
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        Cow::Borrowed(source)
     }
 
     fn module_path(file: &Path) -> Option<serde_json::Value> {
@@ -199,6 +209,10 @@ impl Adapter for Ecma {
         text
     }
 
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        Cow::Borrowed(source)
+    }
+
     fn module_path(_: &Path) -> Option<serde_json::Value> {
         None
     }
@@ -233,6 +247,10 @@ impl Adapter for Php {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text
+    }
+
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        crate::code_rule_dsl::php_view::view(source)
     }
 
     fn module_path(_: &Path) -> Option<serde_json::Value> {
@@ -280,6 +298,11 @@ impl Adapter for Blade {
         text
     }
 
+    /// Forte parses a template (`blade::forte`), never tree-sitter.
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        Cow::Borrowed(source)
+    }
+
     fn module_path(_: &Path) -> Option<serde_json::Value> {
         None
     }
@@ -310,6 +333,25 @@ pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value>
 pub(crate) fn packages(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
+}
+
+/// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
+pub(crate) fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
+    with_adapter!(Family::of(dialect), A => A::parse_input(source))
+}
+
+/// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
+pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
+    match parse_input(dialect, source) {
+        Cow::Borrowed(_) => dialect.ast_grep(source),
+        Cow::Owned(input) => {
+            let mut doc = StrDoc::new(&input, dialect);
+            // The input has `source`'s length and character boundaries, so every node's range
+            // reads `source`.
+            doc.src = source.to_owned();
+            AstGrep::doc(doc)
+        }
+    }
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.

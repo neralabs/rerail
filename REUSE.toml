@@ -97,6 +97,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "2018 Max Brunsfeld"
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter/tree-sitter-javascript 0.25.0, vendored with Rerail's patches
+# (native/grammars/tree-sitter-javascript/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-javascript/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with

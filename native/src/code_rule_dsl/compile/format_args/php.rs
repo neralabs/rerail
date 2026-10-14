@@ -6,7 +6,6 @@ use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::oracle;
 use crate::code_rule_dsl::test_support::*;
-use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -484,8 +483,7 @@ fn benchmark_php_format_corpus() {
             };
             // A file the grammar reads with errors is outside what Rerail decides, as tape
             // parity reports it.
-            if GrammarDialect::Php
-                .ast_grep(&source)
+            if crate::code_rule_dsl::language::adapter::ast_grep(GrammarDialect::Php, &source)
                 .root()
                 .dfs()
                 .any(|node| node.is_error() || node.is_missing())

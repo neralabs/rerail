@@ -5160,6 +5160,7 @@ TextCond = { "regex"?: Str, "notRegex"?: Str }</div></dd>
 <tr><td>utilities, calls</td><td>as their rule</td><td>walked once per negation and position</td></tr>
 <tr><td>regex queries, fact queries</td><td><span class="b ok">sound</span></td><td>only AST leaves mark a file partial</td></tr>
 </tbody></table></div>
+<p>A file whose error regions cover half of its bytes or more is not read at all: the grammar gave up there (tree-sitter often returns one ERROR over the whole file), so no AST clause runs on it, sound or not, and each reports <code>source-incomplete</code> with <code>file did not parse: error regions cover N% of it, first at line L, column C</code>. Regex clauses still run.</p>
 <p>Two refinements are recorded as limits: an outward relation's <em>first</em> binding can change around an error region (a rule reading such a capture stays classified sound), and tree-sitter's false positives (13 <code>web/src</code> files, mostly <code>&amp;</code> in JSX text) make <code>resolves</code> rules incomplete there. Every milestone re-evaluated all committed ports on files with syntax errors and required byte-identical results, except for intended flips.</p>
 
 <h2 id="captures">5. Captures <a class="anchor" href="#captures">#</a></h2>
@@ -5461,7 +5462,7 @@ TextCond = { "regex"?: Str, "notRegex"?: Str }</div></dd>
 <dt>Grammar gap, dialect</dt><dd>A kind, field or pattern one dialect of a language (TypeScript, TSX) cannot express; the rule compiles for the other and fails only when no dialect can.</dd>
 <dt>Unknown</dt><dd>A verdict the engine cannot decide from the file: no violation, negated or not.</dd>
 <dt>source-partial</dt><dd>A failure a sound clause reports on a file with syntax errors: it ran, and witnesses outside the error regions stand.</dd>
-<dt>source-incomplete</dt><dd>A failure an unsound clause reports on a file with syntax errors: it did not run there (or a cross-file source was incomplete).</dd>
+<dt>source-incomplete</dt><dd>A failure an unsound clause reports on a file with syntax errors, and every AST clause on a file whose error regions cover half of it or more (<code>file did not parse: …</code>): it did not run there (or a cross-file source was incomplete).</dd>
 <dt>budget-exceeded</dt><dd>A failure when a clause runs out of <code>maxVisitedNodes</code>, <code>maxWitnesses</code>, utility depth or its deadline on a file; never a false verdict.</dd>
 <dt>Scope table, usage index</dt><dd>The per-file bindings and references a language's scope rules produce (M7), and the reads each binding receives (M10), built lazily once per file revision and reading.</dd>
 <dt>Module path</dt><dd>A Python file's dotted module (the host's <code>module</code>, a string or a list of names as on disk), else its stem; it qualifies definitions and resolves relative imports.</dd>

@@ -70,6 +70,18 @@ export interface AuditFailure {
   stage?: "read" | "parse" | "evaluate" | "scan" | "scope" | "persistence" | undefined; // NOSONAR - as `path`
 }
 
+/**
+ * The head of the message every AST clause fails with (`source-incomplete`) on a file the parser did not read: its
+ * syntax-error regions cover half of its bytes or more. The full message follows it with `: error regions cover N% of
+ * it, first at line L, column C` (`native/src/code_rule_dsl/soundness.rs` `UNREAD`).
+ */
+export const UNREAD_FAILURE_HEAD = "file did not parse";
+
+/** Whether `failure` reports a file the parser did not read (`UNREAD_FAILURE_HEAD`), on any evaluation path. */
+export function isUnreadFailure(failure: { code: string; message: string }): boolean {
+  return failure.code === "source-incomplete" && failure.message.startsWith(`${UNREAD_FAILURE_HEAD}: `);
+}
+
 export const AUDIT_COVERAGE_STATUSES = ["complete", "partial", "failed"] as const;
 
 /** One failure code against a clause: how many failures, and at most three example paths, the first in path order. */

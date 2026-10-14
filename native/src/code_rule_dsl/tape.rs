@@ -847,9 +847,9 @@ impl TapeImage {
         })
     }
 
-    /// Parses `source` as `grammar`'s dialect and encodes its tape: with tree-sitter, or a Blade
-    /// template with Rerail's port of Forte (`encode_template`). `None` where tree-sitter gave up
-    /// (`budget` interrupted it).
+    /// Parses `source` as `grammar`'s dialect and encodes its tape: with tree-sitter (a PHP file's
+    /// view, `php_view`, against `source`), or a Blade template with Rerail's port of Forte
+    /// (`encode_template`). `None` where tree-sitter gave up (`budget` interrupted it).
     pub(super) fn parse(
         grammar: &Grammar,
         source: &str,
@@ -862,7 +862,8 @@ impl TapeImage {
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
         }
-        let bytes = source.as_bytes();
+        let parsed = super::language::adapter::parse_input(grammar.lang, source);
+        let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: tree_sitter::Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
             if budget() {
