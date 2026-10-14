@@ -412,8 +412,8 @@ impl<'a> Leaf<'a> {
                 };
                 let (doc, lines) = file_tape(grammar.language, file)?;
                 // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
-                // Vue file's program stands apart from the template (`SyntaxErrors::of_doc`).
-                let errors = SyntaxErrors::of_doc(&doc, grammar.language);
+                // program apart from its host reads only its own (`SyntaxErrors::of_doc`).
+                let errors = SyntaxErrors::of_doc(&doc);
                 let mut partial = None;
                 if !errors.is_empty() {
                     if errors.incomplete(grammar) {
@@ -612,7 +612,7 @@ pub(super) fn query_failure_path<'a>(
                     && grammar_matcher(matchers, file).is_some_and(|grammar| {
                         !grammar.sound_under_errors
                             && file_tape(grammar.language, file).is_ok_and(|(doc, _)| {
-                                SyntaxErrors::of_doc(&doc, grammar.language).incomplete(grammar)
+                                SyntaxErrors::of_doc(&doc).incomplete(grammar)
                             })
                     })
             })

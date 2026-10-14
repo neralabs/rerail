@@ -1,6 +1,6 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
-use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
+use super::{Adapter, Blade, Ecma, Php, Python, Refusal, regions};
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -420,12 +420,14 @@ impl ScopeRules for Ecma {
     ];
     const REFUSED_FILTERS: &'static [&'static str] = &["latest", "outer"];
 
+    /// Each region of the document (`regions`), read as its dialect: a TypeScript file's root,
+    /// or the program an embedding file's tape holds.
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
         root: &Node<'_, D>,
         _: Reading,
     ) -> Result<(), BuildError> {
-        ecma::visit_program(builder, root)
+        ecma::visit(builder, root)
     }
 
     fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
@@ -805,7 +807,7 @@ impl ScopeRules for Blade {
         root: &Node<'_, D>,
         _: Reading,
     ) -> Result<(), BuildError> {
-        for region in <Self as Adapter>::regions(root, GrammarDialect::Blade) {
+        for region in regions(root, GrammarDialect::Blade) {
             php::visit_blade_program(builder, &region.root)?;
         }
         Ok(())

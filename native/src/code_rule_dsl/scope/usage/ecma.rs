@@ -11,6 +11,7 @@ use super::super::{
     ScopeTable, stack_address,
 };
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
+use crate::code_rule_dsl::language::adapter::regions;
 use crate::code_rule_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -189,9 +190,9 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             self.comment(&node);
             return Ok(());
         }
-        // A tree's nodes start in walk order, but an embedded program's spans need not: Vue's
-        // view writes `if (C) { E }` where `C` is a directive that may follow `E`'s others. The
-        // cursors then seek back to the node's start.
+        // A tree's nodes start in walk order, but an embedded program's need not (`embed`): a
+        // handler the program reads after a script may stand before it in the file. The cursors
+        // then seek back to the node's start.
         if range.start < self.at {
             self.next_reference = self
                 .table
@@ -452,7 +453,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
     }
 
     fn reference(&mut self, reference: super::super::Reference, node: &Node<'r, D>) {
-        // The name as the family compares names: a Vue same-name shorthand's span is no name.
+        // The name as the family compares names (`Adapter::name`).
         let Some(name) = self.table.reference_name(&reference, self.text, self.base) else {
             return;
         };
@@ -1144,7 +1145,8 @@ fn anchor<D: Doc>(
         })
 }
 
-/// Builds the TypeScript facts of `table`, whose file's root is `root`.
+/// Builds the TypeScript facts of `table`, whose file's root is `root`: of each region the table
+/// read (`adapter::regions`).
 pub(super) fn build<'r, D: Doc>(
     table: &ScopeTable,
     root: &Node<'r, D>,
@@ -1191,7 +1193,9 @@ pub(super) fn build<'r, D: Doc>(
         classes: Vec::new(),
         privates: Vec::new(),
     };
-    walk.visit(root.clone())?;
+    for region in regions(root, table.language) {
+        walk.visit(region.root)?;
+    }
     let Walk {
         mut variables,
         comment_exports,

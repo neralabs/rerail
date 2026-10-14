@@ -16,15 +16,6 @@ mod oracle_tests;
 mod tests;
 pub(crate) mod view;
 
-use ast_grep_core::{Doc, Node};
-
-/// The PHP program a Blade tape embeds: its root's last child, if that is a `program`.
-pub(crate) fn program<'r, D: Doc>(root: &Node<'r, D>) -> Option<Node<'r, D>> {
-    root.children()
-        .last()
-        .filter(|last| last.kind() == "program" && last.is_named())
-}
-
 /// What a marker (`view`'s empty statement over a directive) does to the template's variables.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Marker {

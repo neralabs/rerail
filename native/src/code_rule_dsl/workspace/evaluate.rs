@@ -457,7 +457,7 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
-    let errors = SyntaxErrors::of_doc(&doc, language);
+    let errors = SyntaxErrors::of_doc(&doc);
     if !errors.is_empty() {
         for &id in &file.candidates.ast {
             if !file.failures.contains_key(&id)
