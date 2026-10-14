@@ -254,6 +254,30 @@ describe("the page's rule setting writes", () => {
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: PUT \/api\/repository\/settings answered 503/u));
   });
 
+  // Self-review round 10: a failed write puts back only what it showed and did not save, not the whole row as it was
+  // when the write started: a folder it saved, and a change made since by another write, stay.
+  it("keeps what was saved, and later changes, when a write fails", async () => {
+    const partial = page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.answer(200, {});
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    writes()[1]!.answer(503, { error: "daemon restarting" });
+    await partial;
+    expect(stored("eslint:no-var").folderStates.map(state => [state.suppressions, state.suppressionsSource])).toEqual([
+      ["ignore", inRepository("", "rule")], ["honour", packStart],
+    ]);
+
+    const enabling = page().setEnabled(["eslint:radix"], false, "Off.");
+    await vi.waitFor(() => expect(writes()).toHaveLength(3));
+    const ignoring = page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
+    await vi.waitFor(() => expect(writes()).toHaveLength(4));
+    writes()[3]!.answer(200, {});
+    await ignoring;
+    writes()[2]!.answer(503, { error: "daemon restarting" });
+    await enabling;
+    expect(stored("eslint:radix")).toMatchObject({ enabled: true, suppressions: "ignore", suppressionsSource: inRepository("", "rule") });
+  });
+
   it("sets a pack at every folder it is added at, shown on its rules that follow the pack", async () => {
     const saving = page().setPackSuppressions("eslint", "ignore", "Ignored for ESLint.");
 
@@ -318,7 +342,8 @@ describe("the page's rule setting writes", () => {
     writes()[1]!.answer(500, { error: "disk full" });
     await saving;
 
-    expect(stored("eslint:no-var").enabled).toBe(true);
-    expect(stored("eslint:radix").enabled).toBe(true);
+    // The repository root was saved: both rules are off there now, so neither is on in every folder.
+    expect(stored("eslint:no-var").enabled).toBe(false);
+    expect(stored("eslint:radix").enabled).toBe(false);
   });
 });

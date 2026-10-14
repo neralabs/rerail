@@ -32,11 +32,14 @@ export function settingWrites({ toast, invalidate, owner }) {
     const by = owner();
     const before = new Map(rules.map(r => [r, { ...r }]));
     for (const r of rules) show(r);
+    const shown = new Map(rules.map(r => [r, { ...r }]));
+    const saved = new Set();
     invalidate();
     let failure = null;
     try {
       for (const [folder, targets] of folders) {
         await send("PUT", SETTINGS, { ...scope.target, folder, owner: by, targets, ...setting });
+        saved.add(folder);
       }
     } catch (error) {
       failure = error;
@@ -46,7 +49,7 @@ export function settingWrites({ toast, invalidate, owner }) {
     if (failure === null) {
       toast(label);
     } else {
-      for (const [r, was] of before) Object.assign(r, was);
+      for (const r of rules) undo(r, before.get(r), shown.get(r), saved);
       toast(`Could not save: ${failure.message}`);
     }
     invalidate();
@@ -84,6 +87,22 @@ export function settingWrites({ toast, invalidate, owner }) {
   }
 
   return { setEnabled, setSuppressions, setPackSuppressions };
+}
+
+/**
+ * Put back on stored rule `r` what a failed write showed (`shown`, over `was`), except in the folders it did save
+ * (`saved`) and wherever a later change has replaced it since.
+ */
+function undo(r, was, shown, saved) {
+  r.folderStates = r.folderStates.map((state, index) => (
+    state === shown.folderStates[index] && state !== was.folderStates[index] && !saved.has(state.folder) ? was.folderStates[index] : state));
+  r.suppressions = r.folderStates[0]?.suppressions ?? r.suppressions;
+  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
+  // On is shown for the row: on in every folder. A saved off is off; an on holds only once every folder saved it.
+  if (r.enabled === shown.enabled && shown.enabled !== was.enabled) {
+    const savedAll = r.folders.every(folder => saved.has(folder)), savedAny = r.folders.some(folder => saved.has(folder));
+    r.enabled = savedAll ? shown.enabled : shown.enabled === false && savedAny ? false : was.enabled;
+  }
 }
 
 /**
