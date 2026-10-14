@@ -28,6 +28,16 @@
                   "kind": "column_definition",
                   "field": "name"
                 }
+              },
+              {
+                "kind": "literal",
+                "inside": {
+                  "kind": "field",
+                  "field": "column",
+                  "inside": {
+                    "kind": "index_fields"
+                  }
+                }
               }
             ],
             "not": {

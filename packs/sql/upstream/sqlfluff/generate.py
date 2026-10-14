@@ -75,6 +75,37 @@ RULES: dict[str, dict] = {
 }
 JINJA = ("{{", "{%", "{#")
 
+# Rerail's own cases, written to `fixtures/rerail/<dialect>/<CODE>/<name>.sql`: shapes the review of the port found
+# SQLFluff's YAML does not cover for PostgreSQL. SQLFluff 4.4.0 (postgres dialect) must give the stated verdict, as for
+# upstream cases: `(line, column)` of each finding of the rule on a fail case, none on a pass case.
+RERAIL_CASES: dict[str, list[tuple[str, str, list[tuple[int, int]]]]] = {
+    "AM05": [
+        ("fail_bare_join_lateral", "SELECT * FROM t JOIN LATERAL (SELECT 1) AS s ON TRUE;\n", [(1, 17)]),
+        ("pass_inner_join_lateral", "SELECT * FROM t INNER JOIN LATERAL (SELECT 1) AS s ON TRUE;\n", []),
+        ("pass_left_join_lateral", "SELECT * FROM t LEFT JOIN LATERAL (SELECT 1) AS s ON TRUE;\n", []),
+        ("pass_cross_join_lateral", "SELECT * FROM t CROSS JOIN LATERAL (SELECT 1) AS s;\n", []),
+    ],
+    "RF04": [
+        ("fail_postgres_and_mysql_unreserved_column_names",
+         "CREATE TABLE t (hash bigint NOT NULL, list text, PRIMARY KEY (hash));\n", [(1, 17), (1, 39)]),
+        ("pass_quoted_keyword_column_name", 'CREATE TABLE t ("hash" bigint);\n', []),
+    ],
+    "RF06": [
+        ("fail_quoted_index_column", 'CREATE INDEX i ON t (url, "timestamp");\n', [(1, 27)]),
+        ("fail_quoted_index_column_with_order", 'CREATE INDEX i ON t ("a" DESC, "B");\n', [(1, 22)]),
+    ],
+    "ST02": [
+        ("fail_quoted_same_case_then", 'SELECT CASE WHEN "a" IS NOT NULL THEN "a" END FROM t;\n', [(1, 18)]),
+        ("pass_quoted_different_case_then", 'SELECT CASE WHEN "a" IS NOT NULL THEN "A" END FROM t;\n', []),
+        ("pass_quoted_and_naked_then", 'SELECT CASE WHEN "a" IS NOT NULL THEN a END FROM t;\n', []),
+        ("fail_naked_different_case_then", "SELECT CASE WHEN a IS NOT NULL THEN A END FROM t;\n", [(1, 18)]),
+        ("fail_quoted_same_case_else", 'SELECT CASE WHEN "a" IS NULL THEN 1 ELSE "a" END FROM t;\n', [(1, 18)]),
+        ("pass_quoted_different_case_else", 'SELECT CASE WHEN "a" IS NULL THEN 1 ELSE "A" END FROM t;\n', []),
+        ("fail_qualified_quoted_part_same_case", 'SELECT CASE WHEN x."B" IS NOT NULL THEN X."B" END FROM t;\n', [(1, 18)]),
+        ("pass_qualified_quoted_part_different_case", 'SELECT CASE WHEN x."B" IS NOT NULL THEN X."b" END FROM t;\n', []),
+    ],
+}
+
 
 def rule_configs() -> dict:
     merged: dict = {}
@@ -185,8 +216,12 @@ def fixtures() -> None:
     for code in RULES:
         kept, left = load_cases(code)
         left_out[code] = left
+        for name, sql, positions in RERAIL_CASES.get(code, []):
+            kept.append({"rule": code, "case": name, "dialect": "postgres", "sql": sql, "own": True,
+                         "expect": "fail" if positions else "pass", "violations": positions or None,
+                         "lineNumbers": None})
         for case in kept:
-            relative = f"{case['dialect']}/{code}/{case['case']}.sql"
+            relative = f"{'rerail/' if case.get('own') else ''}{case['dialect']}/{code}/{case['case']}.sql"
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
             with open(target / relative, "w", encoding="utf-8", newline="") as handle:
                 handle.write(case["sql"])
@@ -194,9 +229,11 @@ def fixtures() -> None:
             assert not problems, (relative, problems)
             check_case(case, found)
             row = {"file": relative, "rule": code, "case": case["case"], "dialect": case["dialect"],
-                   "expect": case["expect"], "upstreamViolations": case["violations"],
+                   "expect": case["expect"], "upstreamViolations": None if case.get("own") else case["violations"],
                    "upstreamLineNumbers": case["lineNumbers"],
                    "reference": reference_verdict(case["sql"], case["dialect"])}
+            if case.get("own"):
+                row["rerail"] = True
             if case["dialect"] == "ansi":
                 as_postgres, problems = lint(case["sql"], "postgres")
                 row["postgresDialect"] = {"parses": not problems,

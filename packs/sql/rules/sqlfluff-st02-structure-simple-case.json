@@ -217,14 +217,28 @@
               },
               {
                 "compare": {
-                  "left": "X",
+                  "left": "XQ",
                   "op": "eq",
-                  "right": "E",
+                  "right": "EQ",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "XU",
+                  "op": "eq",
+                  "right": "EU",
                   "text": "source",
                   "collation": "fold-upper"
                 }
               }
             ]
+          },
+          "transform": {
+            "XQ": { "replace": { "source": "$X", "replace": "(\"[^\"]*\")|[^\"]", "by": "$1" } },
+            "XU": { "replace": { "source": "$X", "replace": "\"[^\"]*\"", "by": "\"\"" } },
+            "EQ": { "replace": { "source": "$E", "replace": "(\"[^\"]*\")|[^\"]", "by": "$1" } },
+            "EU": { "replace": { "source": "$E", "replace": "\"[^\"]*\"", "by": "\"\"" } }
           }
         }
       },
@@ -347,14 +361,28 @@
               },
               {
                 "compare": {
-                  "left": "X",
+                  "left": "XQ",
                   "op": "eq",
-                  "right": "T",
+                  "right": "TQ",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "XU",
+                  "op": "eq",
+                  "right": "TU",
                   "text": "source",
                   "collation": "fold-upper"
                 }
               }
             ]
+          },
+          "transform": {
+            "XQ": { "replace": { "source": "$X", "replace": "(\"[^\"]*\")|[^\"]", "by": "$1" } },
+            "XU": { "replace": { "source": "$X", "replace": "\"[^\"]*\"", "by": "\"\"" } },
+            "TQ": { "replace": { "source": "$T", "replace": "(\"[^\"]*\")|[^\"]", "by": "$1" } },
+            "TU": { "replace": { "source": "$T", "replace": "\"[^\"]*\"", "by": "\"\"" } }
           }
         }
       },

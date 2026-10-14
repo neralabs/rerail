@@ -15,7 +15,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`) |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`) |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## How the rules read SQL
@@ -44,7 +44,7 @@ fixtures outside its divergences. Corpus false negatives do not fail the gate.
 | `sqlfluff-al09-aliasing-self-alias-column` | AL09 | 18/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 | `sqlfluff-am01-ambiguous-distinct` | AM01 | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 | `sqlfluff-am02-ambiguous-union` | AM02 | 5/0/0 (1 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-am05-ambiguous-join` | AM05 | 13/0/0 | 26/0/8 | 4/0/1 | 2/0/0 | 0/0/2 | no |
+| `sqlfluff-am05-ambiguous-join` | AM05 | 14/0/0 | 26/0/8 | 4/0/1 | 2/0/0 | 0/0/2 | no |
 | `sqlfluff-am09-ambiguous-order-by-limit` | AM09 | 3/0/0 | 1/0/2 | 0/0/0 | 2/0/0 | 0/0/0 | yes |
 | `sqlfluff-cv02-convention-coalesce` | CV02 | 2/0/0 | 0/0/0 | 3/0/0 | 0/0/0 | 0/0/1 | no |
 | `sqlfluff-cv04-convention-count-rows` | CV04 | 3/0/0 | 0/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | no |
@@ -53,11 +53,11 @@ fixtures outside its divergences. Corpus false negatives do not fail the gate.
 | `sqlfluff-pg01-postgres-excessive-locks` | PG01 | 8/0/0 (1 div.) | 55/0/56 | 148/0/118 | 0/0/0 (3 div.) | 0/0/0 | yes |
 | `sqlfluff-pg02-postgres-not-valid-foreign-key` | PG02 | 1/0/0 | 0/0/1 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
 | `sqlfluff-rf01-references-from` | RF01 | 22/0/0 (6 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/7 | yes |
-| `sqlfluff-rf04-references-keywords` | RF04 | 2/0/0 (3 div.) | 28/0/78 | 54/0/88 | 0/0/1 (1 div.) | 0/0/0 | yes |
+| `sqlfluff-rf04-references-keywords` | RF04 | 4/0/0 (3 div.) | 28/0/78 | 55/0/87 | 0/0/1 (1 div.) | 0/0/0 | yes |
 | `sqlfluff-rf05-references-special-chars` | RF05 | 10/0/0 (4 div.) | 0/0/9 | 0/0/0 | 10/0/0 | 0/0/0 | yes |
-| `sqlfluff-rf06-references-quoting` | RF06 | 8/0/0 (47 div.) | 22/0/14 | 2/0/3 | 0/0/0 | 0/0/0 | yes |
+| `sqlfluff-rf06-references-quoting` | RF06 | 19/0/0 (47 div.) | 23/0/13 | 4/0/1 | 0/0/0 | 0/0/0 | yes |
 | `sqlfluff-st01-structure-else-null` | ST01 | 4/0/0 | 0/0/0 | 0/0/0 | 1/0/1 | 0/0/0 | no |
-| `sqlfluff-st02-structure-simple-case` | ST02 | 11/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
+| `sqlfluff-st02-structure-simple-case` | ST02 | 15/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
 | `sqlfluff-st08-structure-distinct` | ST08 | 7/0/0 | 0/0/1 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
 | `sqlfluff-st10-structure-constant-expression` | ST10 | 10/0/0 | 4/0/1 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 
@@ -72,7 +72,7 @@ others run around the errors (`source-partial`). Per source:
 
 | Source | Files | Left out (SQLFluff could not analyse them) | Scored | With a syntax error, skipped | Parsed cleanly |
 |---|---|---|---|---|---|
-| fixtures | 265 | 0 | 265 | 13 | 252 (95%) |
+| fixtures | 281 | 0 | 281 | 13 | 268 (95%) |
 | postgres | 629 | 342 | 287 | 202 | 85 (30%) |
 | mattermost | 560 | 0 | 560 | 262 | 298 (53%) |
 | anki | 112 | 15 | 97 | 33 | 64 (66%) |

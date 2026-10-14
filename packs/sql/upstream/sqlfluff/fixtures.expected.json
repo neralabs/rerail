@@ -117,6 +117,10 @@
    "ansi/AM05/test_pass_right_outer_join_default.sql",
    "ansi/AM05/test_pass_full_outer_join_default.sql",
    "ansi/AM05/test_pass_cross_join_default.sql",
+   "rerail/postgres/AM05/fail_bare_join_lateral.sql",
+   "rerail/postgres/AM05/pass_inner_join_lateral.sql",
+   "rerail/postgres/AM05/pass_left_join_lateral.sql",
+   "rerail/postgres/AM05/pass_cross_join_lateral.sql",
    "ansi/AM09/test_fail_limit_without_order_by.sql",
    "ansi/AM09/test_fail_limit_and_offset_without_order_by.sql",
    "ansi/AM09/test_pass_limit_with_order_by.sql",
@@ -219,6 +223,8 @@
    "ansi/RF04/test_fail_keyword_as_identifier_table_alias.sql",
    "ansi/RF04/test_pass_valid_identifier_not_alias.sql",
    "postgres/RF04/test_fail_keyword_as_column_name_postgres.sql",
+   "rerail/postgres/RF04/fail_postgres_and_mysql_unreserved_column_names.sql",
+   "rerail/postgres/RF04/pass_quoted_keyword_column_name.sql",
    "ansi/RF05/test_fail_special_chars_create_table_space.sql",
    "ansi/RF05/test_fail_special_chars_create_table_gt.sql",
    "ansi/RF05/test_fail_special_chars_create_table_lt.sql",
@@ -231,6 +237,8 @@
    "ansi/RF06/test_pass_default.sql",
    "postgres/RF06/test_fail_default_lowercase.sql",
    "ansi/RF06/test_fail_quoted_column_ansi.sql",
+   "rerail/postgres/RF06/fail_quoted_index_column.sql",
+   "rerail/postgres/RF06/fail_quoted_index_column_with_order.sql",
    "ansi/ST01/no_redundant_else_null.sql",
    "ansi/ST01/redundant_else_null.sql",
    "ansi/ST01/alternate_case_when_syntax.sql",
@@ -262,6 +270,14 @@
    "ansi/ST02/test_fail_unnecessary_case_11.sql",
    "ansi/ST02/test_pass_distinct_from_null_does_not_change_expression.sql",
    "ansi/ST02/test_pass_not_distinct_from_null_does_not_change_expression.sql",
+   "rerail/postgres/ST02/fail_quoted_same_case_then.sql",
+   "rerail/postgres/ST02/pass_quoted_different_case_then.sql",
+   "rerail/postgres/ST02/pass_quoted_and_naked_then.sql",
+   "rerail/postgres/ST02/fail_naked_different_case_then.sql",
+   "rerail/postgres/ST02/fail_quoted_same_case_else.sql",
+   "rerail/postgres/ST02/pass_quoted_different_case_else.sql",
+   "rerail/postgres/ST02/fail_qualified_quoted_part_same_case.sql",
+   "rerail/postgres/ST02/pass_qualified_quoted_part_different_case.sql",
    "ansi/ST08/test_fail_distinct_with_parenthesis_1.sql",
    "ansi/ST08/test_fail_distinct_with_parenthesis_2.sql",
    "ansi/ST08/test_fail_distinct_with_parenthesis_3.sql",
@@ -736,6 +752,12 @@
    "column": 1
   },
   {
+   "rule": "AM05",
+   "path": "rerail/postgres/AM05/fail_bare_join_lateral.sql",
+   "line": 1,
+   "column": 17
+  },
+  {
    "rule": "AM09",
    "path": "ansi/AM09/test_fail_limit_and_offset_without_order_by.sql",
    "line": 3,
@@ -928,6 +950,18 @@
    "column": 1
   },
   {
+   "rule": "PG01",
+   "path": "rerail/postgres/RF06/fail_quoted_index_column.sql",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "rerail/postgres/RF06/fail_quoted_index_column_with_order.sql",
+   "line": 1,
+   "column": 1
+  },
+  {
    "rule": "PG02",
    "path": "postgres/PG02/test_fail_add_foreign_key_without_not_valid.sql",
    "line": 1,
@@ -1079,6 +1113,30 @@
   },
   {
    "rule": "RF01",
+   "path": "rerail/postgres/ST02/fail_qualified_quoted_part_same_case.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "rerail/postgres/ST02/fail_qualified_quoted_part_same_case.sql",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "RF01",
+   "path": "rerail/postgres/ST02/pass_qualified_quoted_part_different_case.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF01",
+   "path": "rerail/postgres/ST02/pass_qualified_quoted_part_different_case.sql",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "RF01",
    "path": "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
    "line": 2,
    "column": 1
@@ -1124,6 +1182,18 @@
    "path": "postgres/RF04/test_fail_keyword_as_column_name_postgres.sql",
    "line": 1,
    "column": 26
+  },
+  {
+   "rule": "RF04",
+   "path": "rerail/postgres/RF04/fail_postgres_and_mysql_unreserved_column_names.sql",
+   "line": 1,
+   "column": 17
+  },
+  {
+   "rule": "RF04",
+   "path": "rerail/postgres/RF04/fail_postgres_and_mysql_unreserved_column_names.sql",
+   "line": 1,
+   "column": 39
   },
   {
    "rule": "RF05",
@@ -1462,6 +1532,72 @@
    "column": 46
   },
   {
+   "rule": "RF06",
+   "path": "rerail/postgres/RF04/pass_quoted_keyword_column_name.sql",
+   "line": 1,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/RF06/fail_quoted_index_column.sql",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/RF06/fail_quoted_index_column_with_order.sql",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_else.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_else.sql",
+   "line": 1,
+   "column": 42
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_then.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_then.sql",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/pass_qualified_quoted_part_different_case.sql",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/pass_quoted_and_naked_then.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/pass_quoted_different_case_else.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "RF06",
+   "path": "rerail/postgres/ST02/pass_quoted_different_case_then.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
    "rule": "ST01",
    "path": "ansi/ST01/alternate_case_when_syntax.sql",
    "line": 2,
@@ -1550,6 +1686,30 @@
    "path": "ansi/ST02/test_fail_unnecessary_case_9.sql",
    "line": 5,
    "column": 13
+  },
+  {
+   "rule": "ST02",
+   "path": "rerail/postgres/ST02/fail_naked_different_case_then.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "ST02",
+   "path": "rerail/postgres/ST02/fail_qualified_quoted_part_same_case.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "ST02",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_else.sql",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "ST02",
+   "path": "rerail/postgres/ST02/fail_quoted_same_case_then.sql",
+   "line": 1,
+   "column": 18
   },
   {
    "rule": "ST08",
