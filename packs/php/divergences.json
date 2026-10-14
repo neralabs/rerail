@@ -1774,5 +1774,37 @@
     "line": 55,
     "kind": "upstream-wrong",
     "evidence": "Two of the three size calls in this condition measure values the loop changes: it drains `$values` with `array_shift($values)` and appends to `$temp` with `$temp[] = …`, so `\\count($values)` (column 20) and `\\count($temp)` (column 39) must be re-read on each pass; hoisting either one stops the loop from ending when it should. The port does not report a size call whose value the loop writes, and still reports `\\count($subarray)` (column 55), which the loop leaves alone (NER-1812)."
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/Flysystem/Tests/FlysystemKeyLoaderTest.php",
+    "line": 185,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/GoogleCloudKms/Tests/ServiceAccountTokenProviderTest.php",
+    "line": 225,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Tests/KeyMaterialTest.php",
+    "line": 54,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/VarDumper/Tests/Cloner/VarClonerTest.php",
+    "line": 457,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_clean()` in the next statement, so its output is captured into a string the test then asserts on (`assertStringMatchesFormat(..., ob_get_clean())` checks what var_dump prints for a cloned Data object); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
   }
 ]
