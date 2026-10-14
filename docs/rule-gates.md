@@ -80,7 +80,8 @@ A rule that fails: fix the rule (the check's detail names the first difference),
 
 ## What the gates read
 
-Upstream linters never run in pull request CI. The gates read what a recorder wrote into the pack:
+Upstream linters never run in pull request CI. The gates read what a recorder wrote into the pack, and fetch only the
+pinned real-code corpus and upstream's pinned test files:
 
 ```text
 packs/<id>/upstream/<tool>/
@@ -101,8 +102,9 @@ npm run gates:record -- --pack python --tool ruff
 `rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
 matches the pinned upstream, then judges every rule again with the cache off.
 
-One difference from V1: `not-overfit` runs a rule's regexes over the copied test files only, where V1 read every
-upstream test file; the test words it judges names against are still all of upstream's.
+`not-overfit` runs a rule's regexes over every upstream test file, as V1 did. Those files are not copied into the pack:
+the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit (sparse,
+cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed.
 
 ## CI
 

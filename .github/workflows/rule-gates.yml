@@ -3,8 +3,8 @@ name: Rule gates
 # The rule gates (docs/rule-gates.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine), and by
 # rule-gates-nightly.yml with the result cache off. The gates read each pack's recordings
-# (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code corpora are
-# fetched, and they are cached by their pins.
+# (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code corpora and
+# upstream's pinned test files are fetched, and they are cached by their pins.
 
 on:
   workflow_call:
@@ -48,12 +48,15 @@ jobs:
         with:
           built: "true"
 
-      # The corpus is keyed by its pins; a partial match is reused, since every checkout in it is keyed by commit.
-      - name: Restore the real-code corpus
+      # The real-code corpus and upstream's pinned test files are keyed by their pins; a partial match is reused, since
+      # every checkout in them is keyed by commit.
+      - name: Restore the real-code corpus and upstream's test files
         uses: actions/cache/restore@v6
         with:
-          path: .rerail/gates/corpus
-          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack)) }}
+          path: |
+            .rerail/gates/corpus
+            .rerail/gates/upstream
+          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
           restore-keys: |
             rule-gates-corpus-${{ matrix.pack }}-
 
@@ -78,12 +81,14 @@ jobs:
           npm run gates -- --pack "$PACK" --tool "$TOOL" --out "$RUNNER_TEMP/gates" $NO_CACHE
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Save the corpus
+      - name: Save the corpus and upstream's test files
         if: always()
         uses: actions/cache/save@v6
         with:
-          path: .rerail/gates/corpus
-          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack)) }}
+          path: |
+            .rerail/gates/corpus
+            .rerail/gates/upstream
+          key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
         continue-on-error: true
 
       - name: Save the rule results
