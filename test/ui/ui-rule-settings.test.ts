@@ -281,6 +281,17 @@ describe("the page's rule setting writes", () => {
     expect(stored("eslint:radix")).toMatchObject({ enabled: true, suppressions: "ignore", suppressionsSource: inRepository("", "rule") });
   });
 
+  // Self-review round 12: a write another repository's page left unanswered does not hold this one's back.
+  it("sends a write once the page shows another repository, whatever the last one's write is doing", async () => {
+    void page().setSuppressions(["eslint:no-var"], "ignore", "Ignored.");
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    changeScope({ repository: "B", checkout: "/work/b" });
+    data.rules = toStoredRules([entry("eslint:radix", "")]);
+    void page().setSuppressions(["eslint:radix"], "ignore", "Ignored.");
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]!.body).toMatchObject({ repository: "B", targets: [{ kind: "rule", id: "eslint:radix" }] });
+  });
+
   it("sets a pack at every folder it is added at, shown on its rules that follow the pack", async () => {
     const saving = page().setPackSuppressions("eslint", "ignore", "Ignored for ESLint.");
 
