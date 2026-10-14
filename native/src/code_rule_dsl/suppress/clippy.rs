@@ -205,24 +205,42 @@ impl ClippyIndex {
                 .is_some_and(|needed| self.msrv(at).is_some_and(|msrv| msrv < needed))
     }
 
-    /// Whether an `allow`/`expect` naming one of `lints` is the level in force at byte `at`.
+    /// Whether an `allow`/`expect` is the level in force at byte `at` for the lint `lints` names.
+    /// As rustc resolves it, the level comes from the attributes naming the lint or a group of it;
+    /// `warnings` (when `lints` lists it) applies only where that level is Warn (or unset): it
+    /// lowers or raises warnings, never a lint denied or allowed by name.
     fn allowed(&self, lints: &[String], at: usize) -> bool {
+        let level = self.level(at, |name| {
+            name != "warnings" && lints.iter().any(|l| l == name)
+        });
+        let level = match level {
+            None | Some(Level::Warn) if lints.iter().any(|lint| lint == "warnings") => {
+                self.level(at, |name| name == "warnings").or(level)
+            }
+            _ => level,
+        };
+        matches!(level, Some(Level::Allow | Level::Expect))
+    }
+
+    /// The level in force at byte `at` from the attributes naming a lint `named` accepts; a
+    /// `forbid` anywhere over `at` cannot be lowered.
+    fn level(&self, at: usize, named: impl Fn(&str) -> bool) -> Option<Level> {
         let mut selected: Option<(&Attribute, Level)> = None;
         for attribute in self.covering(at) {
             let Setting::Level(level, names) = &attribute.setting else {
                 continue;
             };
-            if !names.iter().any(|name| lints.contains(name)) {
+            if !names.iter().any(|name| named(name)) {
                 continue;
             }
             if *level == Level::Forbid {
-                return false;
+                return Some(Level::Forbid);
             }
             if selected.is_none_or(|(old, _)| attribute.overrides(old)) {
                 selected = Some((attribute, *level));
             }
         }
-        matches!(selected, Some((_, Level::Allow | Level::Expect)))
+        selected.map(|(_, level)| level)
     }
 
     /// The version the `#[clippy::msrv]` in force at byte `at` names, if any.
@@ -436,6 +454,23 @@ mod tests {
     fn forbid_cannot_be_lowered() {
         let source = "#![forbid(clippy::double_parens)]\n#[allow(clippy::double_parens)]\nfn f() { ((1)); }\n";
         assert!(!suppressed(source, "clippy::double_parens", "((1))"));
+    }
+
+    #[test]
+    fn warnings_changes_only_a_lint_at_warn_level() {
+        // clippy-driver 0.1.99: ((1)) and ((4)) are denied, ((3)) and ((5)) silenced, ((2))
+        // allowed by name under `deny(warnings)`, and ((6)) allowed by name under
+        // `forbid(warnings)` (with a forbidden_lint_groups warning).
+        let source = "#[deny(clippy::double_parens)]\nmod m {\n    #![allow(warnings)]\n    fn f() { ((1)); }\n}\n#[allow(clippy::double_parens)]\nmod n {\n    #![deny(warnings)]\n    fn g() { ((2)); }\n}\n#[warn(clippy::double_parens)]\nmod o {\n    #![allow(warnings)]\n    fn h() { ((3)); }\n}\n#[allow(warnings)]\nmod p {\n    #![deny(clippy::double_parens)]\n    fn i() { ((4)); }\n}\nmod q {\n    #![allow(warnings)]\n    fn j() { ((5)); }\n}\nmod r {\n    #![forbid(warnings)]\n    #[allow(clippy::double_parens)]\n    fn k() { ((6)); }\n}\n";
+        let clippy = Clippy {
+            lints: lints_of("clippy::double_parens"),
+            msrv: None,
+        };
+        let verdicts: Vec<bool> = ["((1))", "((2))", "((3))", "((4))", "((5))", "((6))"]
+            .into_iter()
+            .map(|needle| silenced(source, &clippy, needle))
+            .collect();
+        assert_eq!(verdicts, [false, true, true, false, true, true]);
     }
 
     #[test]
