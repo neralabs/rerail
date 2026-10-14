@@ -473,7 +473,11 @@ fn evaluate_ast_file(
             SyntaxReading::Partial(message) => {
                 for &id in &file.candidates.ast {
                     if !file.failures.contains_key(&id)
-                        && errors.incomplete(candidate_grammar(&code_rules[id.0], id.1, &file.input))
+                        && errors.incomplete(candidate_grammar(
+                            &code_rules[id.0],
+                            id.1,
+                            &file.input,
+                        ))
                     {
                         file.failures
                             .insert(id, ("source-incomplete", "file has syntax errors"));
