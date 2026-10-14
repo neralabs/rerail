@@ -135,11 +135,13 @@ impl<'t> Directive<'t> {
             .find(|n| n.kind() == "directive_value")
             .copied();
         let arg = if let Some(d) = dyn_node {
+            // Inside the brackets; error recovery can leave a lone `[` (its `]` missing), whose
+            // inside is empty.
             let r = d.byte_range();
-            let inner = d
-                .named_child(0)
-                .map(|x| x.byte_range())
-                .unwrap_or(r.start + 1..r.end.saturating_sub(1));
+            let inner = d.named_child(0).map(|x| x.byte_range()).unwrap_or_else(|| {
+                let start = (r.start + 1).min(r.end);
+                start..r.end.saturating_sub(1).max(start)
+            });
             Arg::Dynamic(inner)
         } else if let Some(v) = normal {
             Arg::Static(v.byte_range())

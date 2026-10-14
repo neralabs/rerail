@@ -289,9 +289,10 @@ fn is_component(tag: &str) -> bool {
         && parts.all(is_identifier)
 }
 
-/// `range` of `source` without its surrounding whitespace, `None` where nothing else is left.
+/// `range` of `source` without its surrounding whitespace, `None` where nothing else is left or
+/// `range` is no range of `source`.
 fn trimmed(source: &str, range: Range<usize>) -> Option<Range<usize>> {
-    let text = &source[range.clone()];
+    let text = source.get(range.clone())?;
     let start = range.start + (text.len() - text.trim_start().len());
     let end = range.end - (text.len() - text.trim_end().len());
     (start < end).then_some(start..end)
@@ -1349,6 +1350,28 @@ mod tests {
         assert_eq!(view(template_only).dialect(), GrammarDialect::JavaScript);
         let style_only = "<style>p {}</style>";
         assert!(View::build(parse(style_only).root_node(), style_only).is_none());
+    }
+
+    /// Builds the view of `source`, whose template error recovery leaves a dynamic argument of
+    /// one `[` byte (its `]` missing): the argument is empty, so the view has none.
+    fn dynamic_argument_without_value(source: &str) {
+        let tree = parse(source);
+        assert!(tree.root_node().has_error(), "Vue tree of {source:?}");
+        let view = View::build(tree.root_node(), source);
+        assert!(
+            view.is_none_or(|view| !view.text().contains('[')),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_argument_without_value_before_tag_end() {
+        dynamic_argument_without_value("<template><a :[></a></template>");
+    }
+
+    #[test]
+    fn dynamic_argument_without_value_before_space() {
+        dynamic_argument_without_value("<template><a :[ ></a></template>");
     }
 
     /// The `.vue` files under `directory`, recursively.
