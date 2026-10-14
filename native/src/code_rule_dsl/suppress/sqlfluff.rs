@@ -282,10 +282,9 @@ fn class(body: &[char]) -> Set {
             chunk.len()
         };
         chars.extend(chunk.get(from..to.max(from)).unwrap_or_default());
-        if index + 1 < count {
-            if let (Some(&lo), Some(&hi)) = (chunk.last(), chunks[index + 1].first()) {
-                ranges.push((lo, hi));
-            }
+        let next = chunks.get(index + 1).and_then(|next| next.first());
+        if let (Some(&lo), Some(&hi)) = (chunk.last(), next) {
+            ranges.push((lo, hi));
         }
     }
     Set::Class {
