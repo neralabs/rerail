@@ -7,7 +7,6 @@ The files listed below are SQL strings taken from the YAML test cases of the SQL
 Paths are relative to the pack directory, `packs/sql/`.
 
 | File | Upstream path | Copy |
-| File | Upstream path | Copy |
 |---|---|---|
 | `upstream/sqlfluff/fixtures/ansi/AL04/test_fail_exactly_once_duplicated_aliases.sql` | `test/fixtures/rules/std_rule_cases/AL04.yml`, case `test_fail_exactly_once_duplicated_aliases` | `fail_str`, verbatim |
 | `upstream/sqlfluff/fixtures/ansi/AL04/test_fail_two_duplicated_aliases.sql` | `test/fixtures/rules/std_rule_cases/AL04.yml`, case `test_fail_two_duplicated_aliases` | `fail_str`, verbatim |
