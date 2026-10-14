@@ -66,8 +66,14 @@ const CODE_MODULES = new Set(["vm", "module", "inspector", "repl", "process", "w
 const REFLECTIVE_KEYS = new Set([
   "constructor", "prototype", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
 ]);
-/** Keys JavaScript calls by itself when it turns an object into a primitive or JSON. */
-const COERCION_KEYS = new Set(["toString", "valueOf", "toJSON", "toLocaleString"]);
+/**
+ * Keys JavaScript calls by itself: when it turns an object into a primitive or JSON, and `then` when it awaits a value
+ * (ESLint awaits the exported config).
+ */
+const COERCION_KEYS = new Set(["toString", "valueOf", "toJSON", "toLocaleString", "then"]);
+
+/** Whether `module` is named by a path (which may be the config itself or a file of the repository), not a package. */
+const isPathModule = (module: string): boolean => /^(?:\.|\/|[A-Za-z]:|file:)/u.test(module);
 
 /** The name of a member or object key, or undefined when it is computed from anything but a literal. */
 function keyName(key: t.Node, computed: boolean): string | undefined {
@@ -161,7 +167,11 @@ class FlatConfigReader {
     for (const statement of this.program.body) {
       switch (statement.type) {
         case "ImportDeclaration":
+          continue;
         case "ExportAllDeclaration":
+          // A module named by path may export `then` (see below), which a package is trusted not to.
+          if (isPathModule(statement.source.value)) return statement;
+          continue;
         case "EmptyStatement":
         case "TSTypeAliasDeclaration":
         case "TSInterfaceDeclaration":
@@ -176,6 +186,11 @@ class FlatConfigReader {
           continue;
         }
         case "ExportNamedDeclaration": {
+          // `import()` calls a module's own `then` export as it loads it, and ESLint loads the config with `import()`.
+          const exported = statement.declaration?.type === "VariableDeclaration"
+            ? statement.declaration.declarations.map(declarator => (declarator.id.type === "Identifier" ? declarator.id.name : undefined))
+            : statement.specifiers.map(specifier => (specifier.exported.type === "Identifier" ? specifier.exported.name : specifier.exported.value));
+          if (exported.includes("then")) return statement;
           // A const another module can import is not read: that module may change it.
           for (const specifier of statement.specifiers) {
             if (specifier.type === "ExportSpecifier") this.#consts.delete(specifier.local.name);
@@ -398,7 +413,7 @@ class FlatConfigReader {
     while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
     if (root.type !== "Identifier") return false;
     const from = this.#imports.get(root.name)?.module;
-    return from !== undefined && !/^(?:\.|\/|[A-Za-z]:|file:)/u.test(from) && !CODE_MODULES.has(from.replace(/^node:/u, ""));
+    return from !== undefined && !isPathModule(from) && !CODE_MODULES.has(from.replace(/^node:/u, ""));
   }
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */

@@ -774,6 +774,22 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     }
   });
 
+  // Self-review round 9: ESLint awaits the config and loads it with import(), and JavaScript calls a `then` it finds on
+  // either; `then: [].forEach` hands the loader element 0 (ESLint 9.39.1 reports no-console for the first case).
+  it("reads nothing from a flat config that JavaScript would call as it awaits or imports it", async () => {
+    const cases = [
+      "export default { 0: [{ rules: { \"no-console\": \"error\" } }], length: 1, then: [].forEach, rules: { \"no-console\": \"off\" } };",
+      "export const then = [].forEach;\nexport default [{ rules: { \"no-console\": \"off\" } }];",
+      "const forEach = [].forEach;\nexport { forEach as then };\nexport default [{ rules: { \"no-console\": \"off\" } }];",
+      "export * from \"./more.mjs\";\nexport default [{ rules: { \"no-console\": \"off\" } }];",
+    ];
+    for (const text of cases) {
+      const proposed = await flat(text, ["javascript"], "eslint.config.mjs");
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.mjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);
