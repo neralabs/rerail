@@ -161,8 +161,9 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
    embedded or not, as the file's tape numbers it (`scope::ecma::script`).
 4. A suppression kind the language needs and the engine lacks is one row in `suppression_kinds!` in
    `native/src/code_rule_dsl/suppress.rs` (`Variant key: Spec = linter::spec, "detail";`, its parser in
-   `suppress/<linter>.rs`), one entry in `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`,
-   its name in the registry entry's `suppressions`, and its use in the adapter's `suppresses`.
+   `suppress/<linter>.rs`), one entry in `codeRuleSuppressSchema` in
+   `src/engine/code-rule/code-rule-schema-semantic.ts`, its name in the registry entry's `suppressions`, and its use in
+   the adapter's `suppresses`.
 5. An embedding (`embeds` with a new `via`) adds `native/src/code_rule_dsl/embed/<via>.rs`, implementing `Embedder`
    (`APART`, whether its program is a tree apart from the host's that host syntax errors leave whole, and `build`)
    and `Program` (`dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's bytes to
