@@ -1,13 +1,13 @@
 # Rerail rule pack: Rust
 
-34 code rules for Rust, ported from Clippy 0.1.99. Each is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with every disagreement declared in `divergences.json` (218 entries, each with its evidence).
+Ports of 34 Clippy 0.1.99 lints, all candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass the V1 rule validation gates ([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). While `pack.json` lists no rules, the pack ships none and is never recommended. Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with every disagreement declared in `divergences.json` (218 entries, each with its evidence).
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group |
-| `rules/` | The code-rule documents (`rerail.policy/v1`) |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and no rules until a port passes |
+| `candidates/rules/` | The code-rule documents (`rerail.policy/v1`) of the ports, scored but never shipped |
 | `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool and corpora |
 | `divergences.json` | Declared disagreements with Clippy |
 | `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`) |
@@ -15,7 +15,7 @@ This pack follows the [pack structure and validation contract](../../docs/pack-f
 
 ## Scores
 
-Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
+Every port is a candidate: scored and reported, never gating a check. Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
 corpora). FP and FN count unexplained points only; an explained point is one a divergence names, and recall counts
 an explained FN against the pack.
 

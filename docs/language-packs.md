@@ -82,7 +82,7 @@ Suppression is `clippy` (`suppress/clippy.rs`): rustc's and Clippy's lint-level 
 and tokio corpora (`fixtures/rust/suppress`). The attributes are read per file: a level set in another file (a crate
 root's `#![allow(..)]` over its modules) or on the command line is not seen, and a `cfg` predicate other than
 `all`, `any` and `not` over `clippy` is false. Rust refuses `languageOptions`, `resolves.imported` and every other
-family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports.
+family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports as candidates, which ship no rules until they pass the V1 rule validation gates.
 
 ## The registry entry
 

@@ -3,50 +3,17 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "30 Clippy lints ported to Rerail, each scored against Clippy 0.1.99's recorded findings on its UI tests",
+  "covers": "No rules yet: its 34 Clippy 0.1.99 ports are candidates until they pass the V1 rule validation gates.",
   "reason": "matches Rust",
   "match": {
     "any": [
       {
-        "files": ["**/*.rs"],
+        "files": [
+          "**/*.rs"
+        ],
         "label": "*.rs files"
       }
     ]
   },
-  "rules": [
-    {"id":"clippy-precedence","document":"rules/clippy-precedence.json","title":"Clippy precedence: Precedence","group":"Clippy"},
-    {"id":"clippy-precedence-bits","document":"rules/clippy-precedence-bits.json","title":"Clippy precedence_bits: Precedence bits","group":"Clippy"},
-    {"id":"clippy-double-parens","document":"rules/clippy-double-parens.json","title":"Clippy double_parens: Double parens","group":"Clippy"},
-    {"id":"clippy-int-plus-one","document":"rules/clippy-int-plus-one.json","title":"Clippy int_plus_one: Int plus one","group":"Clippy"},
-    {"id":"clippy-redundant-static-lifetimes","document":"rules/clippy-redundant-static-lifetimes.json","title":"Clippy redundant_static_lifetimes: Redundant static lifetimes","group":"Clippy"},
-    {"id":"clippy-needless-arbitrary-self-type","document":"rules/clippy-needless-arbitrary-self-type.json","title":"Clippy needless_arbitrary_self_type: Needless arbitrary self type","group":"Clippy"},
-    {"id":"clippy-else-if-without-else","document":"rules/clippy-else-if-without-else.json","title":"Clippy else_if_without_else: Else if without else","group":"Clippy"},
-    {"id":"clippy-partial-pub-fields","document":"rules/clippy-partial-pub-fields.json","title":"Clippy partial_pub_fields: Partial pub fields","group":"Clippy"},
-    {"id":"clippy-unneeded-wildcard-pattern","document":"rules/clippy-unneeded-wildcard-pattern.json","title":"Clippy unneeded_wildcard_pattern: Unneeded wildcard pattern","group":"Clippy"},
-    {"id":"clippy-redundant-at-rest-pattern","document":"rules/clippy-redundant-at-rest-pattern.json","title":"Clippy redundant_at_rest_pattern: Redundant at rest pattern","group":"Clippy"},
-    {"id":"clippy-needless-else","document":"rules/clippy-needless-else.json","title":"Clippy needless_else: Needless else","group":"Clippy"},
-    {"id":"clippy-unnested-or-patterns","document":"rules/clippy-unnested-or-patterns.json","title":"Clippy unnested_or_patterns: Unnested or patterns","group":"Clippy"},
-    {"id":"clippy-option-env-unwrap","document":"rules/clippy-option-env-unwrap.json","title":"Clippy option_env_unwrap: Option env unwrap","group":"Clippy"},
-    {"id":"clippy-unreadable-literal","document":"rules/clippy-unreadable-literal.json","title":"Clippy unreadable_literal: Unreadable literal","group":"Clippy"},
-    {"id":"clippy-unreadable-literal-no-fractions","document":"rules/clippy-unreadable-literal-no-fractions.json","title":"Clippy unreadable_literal (unreadable-literal-lint-fractions = false): Unreadable literal","group":"Clippy"},
-    {"id":"clippy-inconsistent-digit-grouping","document":"rules/clippy-inconsistent-digit-grouping.json","title":"Clippy inconsistent_digit_grouping: Inconsistent digit grouping","group":"Clippy"},
-    {"id":"clippy-inconsistent-digit-grouping-no-fractions","document":"rules/clippy-inconsistent-digit-grouping-no-fractions.json","title":"Clippy inconsistent_digit_grouping (unreadable-literal-lint-fractions = false): Inconsistent digit grouping","group":"Clippy"},
-    {"id":"clippy-large-digit-groups","document":"rules/clippy-large-digit-groups.json","title":"Clippy large_digit_groups: Large digit groups","group":"Clippy"},
-    {"id":"clippy-unusual-byte-groupings","document":"rules/clippy-unusual-byte-groupings.json","title":"Clippy unusual_byte_groupings: Unusual byte groupings","group":"Clippy"},
-    {"id":"clippy-decimal-literal-representation","document":"rules/clippy-decimal-literal-representation.json","title":"Clippy decimal_literal_representation: Decimal literal representation","group":"Clippy"},
-    {"id":"clippy-decimal-literal-representation-threshold","document":"rules/clippy-decimal-literal-representation-threshold.json","title":"Clippy decimal_literal_representation (literal-representation-threshold = 0xFFFFFF): Decimal literal representation","group":"Clippy"},
-    {"id":"clippy-mixed-case-hex-literals","document":"rules/clippy-mixed-case-hex-literals.json","title":"Clippy mixed_case_hex_literals: Mixed case hex literals","group":"Clippy"},
-    {"id":"clippy-zero-prefixed-literal","document":"rules/clippy-zero-prefixed-literal.json","title":"Clippy zero_prefixed_literal: Zero prefixed literal","group":"Clippy"},
-    {"id":"clippy-octal-escapes","document":"rules/clippy-octal-escapes.json","title":"Clippy octal_escapes: Octal escapes","group":"Clippy"},
-    {"id":"clippy-needless-raw-strings","document":"rules/clippy-needless-raw-strings.json","title":"Clippy needless_raw_strings: Needless raw strings","group":"Clippy"},
-    {"id":"clippy-needless-raw-string-hashes","document":"rules/clippy-needless-raw-string-hashes.json","title":"Clippy needless_raw_string_hashes: Needless raw string hashes","group":"Clippy"},
-    {"id":"clippy-needless-raw-string-hashes-one-allowed","document":"rules/clippy-needless-raw-string-hashes-one-allowed.json","title":"Clippy needless_raw_string_hashes (allow-one-hash-in-raw-strings): Needless raw string hashes","group":"Clippy"},
-    {"id":"clippy-builtin-type-shadow","document":"rules/clippy-builtin-type-shadow.json","title":"Clippy builtin_type_shadow: Builtin type shadow","group":"Clippy"},
-    {"id":"clippy-redundant-field-names","document":"rules/clippy-redundant-field-names.json","title":"Clippy redundant_field_names: Redundant field names","group":"Clippy"},
-    {"id":"clippy-single-char-lifetime-names","document":"rules/clippy-single-char-lifetime-names.json","title":"Clippy single_char_lifetime_names: Single char lifetime names","group":"Clippy"},
-    {"id":"clippy-single-component-path-imports","document":"rules/clippy-single-component-path-imports.json","title":"Clippy single_component_path_imports: Single component path imports","group":"Clippy"},
-    {"id":"clippy-many-single-char-names","document":"rules/clippy-many-single-char-names.json","title":"Clippy many_single_char_names: Many single char names","group":"Clippy"},
-    {"id":"clippy-allow-attributes","document":"rules/clippy-allow-attributes.json","title":"Clippy allow_attributes: Allow attributes","group":"Clippy"},
-    {"id":"clippy-allow-attributes-without-reason","document":"rules/clippy-allow-attributes-without-reason.json","title":"Clippy allow_attributes_without_reason: Allow attributes without reason","group":"Clippy"}
-  ]
+  "rules": []
 }

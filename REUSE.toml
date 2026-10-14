@@ -649,7 +649,7 @@ SPDX-License-Identifier = "Apache-2.0 AND MIT"
 # packs/rust
 # Rule documents are Rerail's ports, published under the pack's Apache-2.0 AND MIT licence expression.
 [[annotations]]
-path = "packs/rust/rules/**"
+path = ["packs/rust/rules/**", "packs/rust/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
