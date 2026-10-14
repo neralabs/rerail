@@ -122,17 +122,23 @@ fn scan_quoted(s: &str, quote: char, backslashes: bool) -> Option<(String, usize
     None
 }
 
+/// An `E''` string's value. Octal and hexadecimal escapes are bytes (PostgreSQL's `scan.l` keeps
+/// an octal escape's low byte); the whole is a value only as valid UTF-8 without a NUL, which a
+/// UTF-8 database requires.
 fn e_string(s: &str) -> Option<String> {
     let (raw, used) = scan_quoted(s, '\'', true)?;
     if used != s.len() {
         return None;
     }
-    let mut out = String::new();
+    let mut out: Vec<u8> = Vec::with_capacity(raw.len());
+    let push = |out: &mut Vec<u8>, c: char| {
+        out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+    };
     let b: Vec<char> = raw.chars().collect();
     let mut i = 0;
     while i < b.len() {
         if b[i] != '\\' {
-            out.push(b[i]);
+            push(&mut out, b[i]);
             i += 1;
             continue;
         }
@@ -153,7 +159,7 @@ fn e_string(s: &str) -> Option<String> {
             _ => '\0',
         };
         if mapped != '\0' {
-            out.push(mapped);
+            push(&mut out, mapped);
             continue;
         }
         if ('0'..='7').contains(&c) {
@@ -166,7 +172,7 @@ fn e_string(s: &str) -> Option<String> {
                     break;
                 }
             }
-            out.push(char::from_u32(v)?);
+            out.push(v as u8);
         } else if c == 'x' {
             let n = (1..=2)
                 .rev()
@@ -176,7 +182,7 @@ fn e_string(s: &str) -> Option<String> {
                 return None;
             }
             let digits: String = b[i..i + n].iter().collect();
-            out.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
+            out.push(u8::from_str_radix(&digits, 16).ok()?);
             i += n;
         } else if c == 'u' || c == 'U' {
             let n = if c == 'u' { 4 } else { 8 };
@@ -184,17 +190,19 @@ fn e_string(s: &str) -> Option<String> {
                 return None;
             }
             let digits: String = b[i..i + n].iter().collect();
-            out.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
+            push(
+                &mut out,
+                char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?,
+            );
             i += n;
         } else {
-            out.push(c);
+            push(&mut out, c);
         }
     }
-    if out.chars().any(|c| c == '\0') {
-        None
-    } else {
-        Some(out)
+    if out.contains(&0) {
+        return None;
     }
+    String::from_utf8(out).ok()
 }
 
 fn plain_string(s: &str) -> Option<String> {
@@ -237,12 +245,18 @@ fn plain_string(s: &str) -> Option<String> {
     Some(out)
 }
 
+/// Whether `s` opens a Unicode-escaped string (`quote` `'`) or identifier (`"`): `U&` or `u&`.
+fn unicode_prefixed(s: &str, quote: char) -> bool {
+    s.strip_prefix(['U', 'u'])
+        .and_then(|rest| rest.strip_prefix('&'))
+        .is_some_and(|rest| rest.starts_with(quote))
+}
+
 fn unicode_string(s: &str, ident: bool) -> Option<String> {
-    let prefix = if ident { "U&\"" } else { "U&'" };
-    if !s.starts_with(prefix) {
+    let q = if ident { '\"' } else { '\'' };
+    if !unicode_prefixed(s, q) {
         return None;
     }
-    let q = if ident { '\"' } else { '\'' };
     let (raw, used) = quoted_body(&s[2..], q)?;
     let mut esc = '\\';
     let tail = &s[2 + used..];
@@ -326,7 +340,7 @@ pub(crate) fn literal(text: &str) -> Value {
             .map(Value::Str)
             .unwrap_or(Value::Unknown);
     }
-    if text.starts_with("U&'") || text.starts_with("u&'") {
+    if unicode_prefixed(text, '\'') {
         return unicode_string(text, false)
             .map(Value::Str)
             .unwrap_or(Value::Unknown);
@@ -381,9 +395,11 @@ pub(crate) fn literal(text: &str) -> Value {
     if !n.contains('.') && !n.contains('e') && !n.contains('E') && digits_ok(n, 10) {
         return signed(integer(n, 10).unwrap_or(Value::Unknown));
     }
-    float_literal(&format!("{}{}", sign.unwrap_or('+'), n))
-        .map(signed)
-        .unwrap_or(Value::Unknown)
+    // `n` is the unsigned magnitude: the sign, read above, applies once.
+    if n.starts_with(['-', '+']) {
+        return Value::Unknown;
+    }
+    float_literal(n).map(signed).unwrap_or(Value::Unknown)
 }
 
 pub(crate) fn equals(left: &Value, right: &Value) -> Option<bool> {
@@ -453,7 +469,7 @@ pub(crate) fn to_str(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn name(text: &str) -> Option<String> {
-    let mut out = if text.starts_with("U&\"") {
+    let mut out = if unicode_prefixed(text, '"') {
         unicode_string(text, true)?
     } else if text.starts_with('"') {
         let (x, n) = quoted_body(text, '"')?;
@@ -480,6 +496,7 @@ pub(crate) fn name(text: &str) -> Option<String> {
 pub(crate) fn identifier(text: Cow<'_, str>) -> Cow<'_, str> {
     let folded = text.len() <= 63
         && !text.starts_with(['"', '`', '['])
+        && !unicode_prefixed(&text, '"')
         && !text.bytes().any(|byte| byte.is_ascii_uppercase());
     if folded {
         return text;
@@ -778,5 +795,72 @@ mod tests {
         assert_eq!(name("\"x\"\"y\""), Some("x\"y".into()));
         assert_eq!(name("`x`"), None);
         assert_eq!(name("\"\""), None);
+    }
+
+    /// The literals of `source`, in order, as `decode` reads them; the source parses cleanly.
+    fn decoded(source: &str) -> Vec<Value> {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_language::LanguageExt;
+        let grep = GrammarDialect::Sql.ast_grep(source);
+        assert!(!grep.root().get_inner_node().has_error(), "{source}");
+        grep.root()
+            .dfs()
+            .filter(|node| node.kind() == "literal")
+            .map(|node| decode(&node))
+            .collect()
+    }
+
+    #[test]
+    fn negative_floats_carry_their_sign_once() {
+        assert_eq!(literal("-1.5"), Value::Float(-1.5));
+        assert_eq!(literal("-1e2"), Value::Float(-100.0));
+        assert_eq!(literal("- 2.25"), Value::Float(-2.25));
+        assert_eq!(literal("+1.5"), Value::Float(1.5));
+        assert_eq!(literal("--1.5"), Value::Unknown);
+        assert_eq!(
+            decoded("SELECT -1.5, -1e2, 2.5"),
+            [Value::Float(-1.5), Value::Float(-100.0), Value::Float(2.5)]
+        );
+    }
+
+    #[test]
+    fn escape_string_octal_and_hex_escapes_are_bytes() {
+        assert_eq!(literal(r"E'\xC3\xA9'"), Value::Str("é".into()));
+        assert_eq!(literal(r"E'\303\251'"), Value::Str("é".into()));
+        assert_eq!(
+            literal(r"e'caf\xc3\251 \u00e9!'"),
+            Value::Str("café é!".into())
+        );
+        assert_eq!(literal(r"E'\x41\101'"), Value::Str("AA".into()));
+        // PostgreSQL keeps an octal escape's low byte: `\501` is 0x141, the byte 0x41.
+        assert_eq!(literal(r"E'\501'"), Value::Str("A".into()));
+        // Bytes that are not UTF-8 make no string PostgreSQL accepts in a UTF-8 database.
+        assert_eq!(literal(r"E'\xC3'"), Value::Unknown);
+        assert_eq!(literal(r"E'\377'"), Value::Unknown);
+        assert_eq!(literal(r"E'a\0b'"), Value::Unknown);
+    }
+
+    #[test]
+    fn lowercase_unicode_prefixes_decode() {
+        assert_eq!(name(r#"u&"d\0061t""#), Some("dat".into()));
+        assert_eq!(name(r#"U&"d\0061t""#), Some("dat".into()));
+        assert_eq!(identifier(Cow::Borrowed(r#"u&"d\0061t""#)), "dat");
+        assert_eq!(literal(r"u&'d\0061t'"), Value::Str("dat".into()));
+        assert_eq!(literal(r"U&'d\0061t'"), Value::Str("dat".into()));
+    }
+
+    #[test]
+    fn dollar_quoted_strings_end_at_their_own_tag() {
+        for (source, body) in [
+            // A candidate tag that does not match leaves its `$` to start the next one.
+            ("SELECT $a$foo$bar$a$;", "foo$bar"),
+            ("SELECT $a$x$$a$;", "x$"),
+            ("SELECT $ab$x$a$ab$;", "x$a"),
+            // Tags compare by whole code points: U+0161 is not `a` (0x61).
+            ("SELECT $š$before $a$ after$š$;", "before $a$ after"),
+            ("SELECT $東$a$q$東$;", "a$q"),
+        ] {
+            assert_eq!(decoded(source), [Value::Str(body.into())], "{source}");
+        }
     }
 }
