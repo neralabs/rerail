@@ -128,7 +128,10 @@ package and never in the product:
   identity.
 - A host test mocks the generated module with `exemplarRegistryModule()` and the native module with
   `nativeRefusingExemplar` (`test/engine/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
-  loads is a product build and does not know it. The engine's own refusal, `language-not-supported`, is a native test.
+  loads is a product build and does not know it. `nativeRefusingExemplar` refuses only rules that name the exemplar and
+  hands every other rule to the real binding. The engine's own refusal, `language-not-supported`, is checked by a native
+  test and, through the real binding with nothing mocked, by `test/engine/code-rule/language-not-supported-engine.test.ts`,
+  which compiles a rule of a product language the registry still plans.
 
 Embedding has a test-only counterpart in the engine: the test-only HTML grammar embeds TypeScript, TSX and JavaScript
 through `Via::TestScript` (`language::test_embeds`, `native/src/code_rule_dsl/embed/test_script.rs`), whose program is
