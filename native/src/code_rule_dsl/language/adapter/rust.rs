@@ -7,8 +7,8 @@
 
 use super::{
     Adapter, ArgumentFeature, ArgumentRules, CallFeature, CallRules, FormatArgFeature,
-    FormatArgRules, Refusal, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules,
-    ValueFeature, ValueRules,
+    FormatArgRules, Refusal, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature,
+    ValueRules,
 };
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
