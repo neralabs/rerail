@@ -242,7 +242,7 @@ jobs:
           npm run build:ui
 
       - name: Download native engines
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: rerail-native-*
           path: native
@@ -332,7 +332,7 @@ jobs:
           node-version: "24"
 
       - name: Download release tarball
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rerail-package
           path: release
@@ -369,7 +369,7 @@ jobs:
           npm --version
 
       - name: Download release tarball
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rerail-package
           path: release
