@@ -56,10 +56,11 @@ const TYPESCRIPT_ESLINT_MODULES = new Set(["typescript-eslint"]);
 /** How deep a value may nest or a binding chain may go before it is not read. */
 const MAX_DEPTH = 64;
 /**
- * Globals through which code reaches the file's own bindings or its exported config without being handed them (in
- * CommonJS, `arguments[2]` is the module).
+ * The only globals a data file may name outside its trusted calls (`#trustedCall`): any other name the file neither
+ * declares nor imports (`require`, `module`, `process`, `globalThis`, `eval`, `arguments`, ...) can reach the
+ * exported config or run code.
  */
-const CODE_NAMES = new Set(["eval", "module", "exports", "arguments"]);
+const DATA_GLOBALS = new Set(["undefined", "NaN", "Infinity", "__dirname", "__filename"]);
 /** Node modules that run code, or reach the module system or the process, and so can change anything when called. */
 const CODE_MODULES = new Set(["vm", "module", "inspector", "repl", "process", "worker_threads", "child_process", "v8", "wasi"]);
 /** Keys through which a value reaches `Function`, a prototype, or its own accessors. */
@@ -252,7 +253,7 @@ class FlatConfigReader {
       case "MetaProperty":
         return undefined;
       case "Identifier": {
-        if (CODE_NAMES.has(node.name) && !this.#locals.has(node.name) && !this.#imports.has(node.name)) return node;
+        if (!this.#locals.has(node.name) && !this.#imports.has(node.name)) return DATA_GLOBALS.has(node.name) ? undefined : node;
         // A code-running Node module is code wherever it is named: a value read from it can run code when coerced.
         const from = this.#imports.get(node.name)?.module;
         if (from !== undefined && CODE_MODULES.has(from.replace(/^node:/u, ""))) return node;
@@ -265,6 +266,8 @@ class FlatConfigReader {
         // `.constructor` of any function is `Function`; a key Rerail cannot read may be that one.
         const key = keyName(node.property, node.computed);
         if (key === undefined || REFLECTIVE_KEYS.has(key)) return node;
+        // The environment's variables are strings: reading them reaches nothing else of the process.
+        if (key === "env" && node.object.type === "Identifier" && node.object.name === "process" && this.#isGlobal("process")) return undefined;
         return this.#nonData(node.object, given);
       }
       case "ArrayExpression":
@@ -289,11 +292,12 @@ class FlatConfigReader {
       case "OptionalCallExpression":
       case "NewExpression": {
         const helper = node.type === "CallExpression" && this.#isConfigHelper(node.callee);
-        // Only calls into the modules the file imports (which Rerail takes to behave as documented), `import.meta`,
-        // `require` of a module, `new URL(…)` and `process.cwd()`: a global such as `Object`, `Reflect`, `Function` or
-        // `globalThis.eval` can reach anything.
-        if (!helper && !this.#trustedCall(node)) return node;
-        return this.#nonData(node.callee, true) ?? all(node.arguments, given || !helper);
+        // Only calls into the packages the file imports and `require("<package>")`, `new URL(…)`, `process.cwd()` and
+        // `import.meta.resolve(…)`: a global such as `Object`, `Reflect`, `Function` or `globalThis.eval` can reach
+        // anything.
+        const trusted = helper ? "package" : this.#trustedCall(node);
+        if (trusted === undefined) return node;
+        return (trusted === "global" ? undefined : this.#nonData(node.callee, true)) ?? all(node.arguments, given || !helper);
       }
       case "UnaryExpression":
         return node.operator === "delete" ? node : this.#nonData(node.argument, given);
@@ -399,21 +403,27 @@ class FlatConfigReader {
    * replaced). A module the file names by path (`./x`, `/x`) may be the config itself, and a Node module that runs code
    * or reaches the module system (`node:vm`, `node:module`, ...) can change anything: calls into them are code.
    */
-  #trustedCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
-    const global = (name: string): boolean => !this.#locals.has(name) && !this.#imports.has(name);
+  #trustedCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): "global" | "package" | undefined {
     const callee = call.callee;
-    if (call.type === "CallExpression" && isRequire(call) && global("require")) return true;
-    if (call.type === "NewExpression" && callee.type === "Identifier" && callee.name === "URL" && global("URL")) return true;
+    if (call.type === "CallExpression" && isRequire(call) && this.#isGlobal("require")) return "global";
+    if (call.type === "NewExpression" && callee.type === "Identifier" && callee.name === "URL" && this.#isGlobal("URL")) return "global";
     if (call.type === "CallExpression" && callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier") {
       const object = callee.object;
-      if (object.type === "Identifier" && object.name === "process" && global("process") && callee.property.name === "cwd") return call.arguments.length === 0;
-      if (object.type === "MetaProperty" && object.meta.name === "import" && callee.property.name === "resolve") return true;
+      if (object.type === "Identifier" && object.name === "process" && this.#isGlobal("process") && callee.property.name === "cwd") {
+        return call.arguments.length === 0 ? "global" : undefined;
+      }
+      if (object.type === "MetaProperty" && object.meta.name === "import" && callee.property.name === "resolve") return "global";
     }
     let root: t.Node = callee;
     while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
-    if (root.type !== "Identifier") return false;
+    if (root.type !== "Identifier") return undefined;
     const from = this.#imports.get(root.name)?.module;
-    return from !== undefined && !isPathModule(from) && !CODE_MODULES.has(from.replace(/^node:/u, ""));
+    return from !== undefined && !isPathModule(from) && !CODE_MODULES.has(from.replace(/^node:/u, "")) ? "package" : undefined;
+  }
+
+  /** Whether `name` is the global of that name: the file neither declares nor imports it. */
+  #isGlobal(name: string): boolean {
+    return !this.#locals.has(name) && !this.#imports.has(name);
   }
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */

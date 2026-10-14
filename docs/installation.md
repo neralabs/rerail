@@ -135,7 +135,9 @@ documentation says, as it takes the packages the file imports). A key computed
 from anything but a literal, a `constructor`, `prototype` or `__proto__` key, and
 an object key JavaScript calls by itself (`toString`, `valueOf`, `toJSON`,
 `then`), an export named `then` and `export * from` a module named by path are
-code too. A file with
+code too, as is any global the file names other than in those calls, besides
+`process.env`, `__dirname`, `__filename`, `undefined`, `NaN` and `Infinity`
+(`require.cache`, `process.mainModule` and `globalThis` reach the config itself). A file with
 anything else is not read at all, and the screen says why. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object

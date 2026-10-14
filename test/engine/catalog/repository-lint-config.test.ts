@@ -790,6 +790,25 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     }
   });
 
+  // Self-review round 10: require.cache holds the config's own module, so a package helper handed its rules changes
+  // the export (ESLint 9.39.1 reports no-console for the first case); process, globalThis and the like reach it too.
+  it("reads nothing from a flat config that names a global other than its trusted calls", async () => {
+    const cases = [
+      "const util = require(\"node:util\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = util._extend(require.cache[__filename].exports[0].rules, { \"no-console\": \"error\" });",
+      "const util = require(\"node:util\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = util._extend(require.main, {});",
+      "const util = require(\"node:util\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = util._extend(process.mainModule, {});",
+      "const util = require(\"node:util\");\nmodule.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst changed = util._extend(globalThis, {});",
+    ];
+    for (const text of cases) {
+      const proposed = await flat(text, ["javascript"], "eslint.config.cjs");
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.cjs is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+    // Reading the environment, the config's own folder, and its trusted calls are still data.
+    const allowed = "const path = require(\"node:path\");\nconst root = path.join(__dirname, process.cwd());\nmodule.exports = [{ settings: { root, ci: process.env.CI }, rules: { \"no-console\": \"off\" } }];";
+    expect((await flat(allowed, ["javascript"], "eslint.config.cjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);
