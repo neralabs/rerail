@@ -380,10 +380,7 @@ class FlatConfigReader {
   /** The config objects `node` holds, in order, as ESLint flattens a config array. */
   #elements(node: t.Expression, scope: FlatConfigScope, depth: number): void {
     const value = this.#unwrap(node, depth);
-    if (depth > MAX_DEPTH) {
-      this.#unreadable(this.#source(node));
-      return;
-    }
+    if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
     if (value.type === "ArrayExpression") {
       for (const element of value.elements) {
         if (element === null) continue;
@@ -397,8 +394,35 @@ class FlatConfigReader {
         else if (isExpression(argument)) this.#elements(argument, scope, depth + 1);
       }
     } else {
-      this.#unreadable(this.#source(node));
+      this.#notRead(node, depth);
     }
+  }
+
+  /**
+   * Whether `node` is a value from a module the file imports: an imported config, a member of one, what a call into
+   * an imported package returns, or a choice between such values (or nothing: `cond ? shared : []`). Rerail names
+   * such a value as not read; it cannot read it without the module.
+   */
+  #fromImport(node: t.Expression, depth: number): boolean {
+    let root: t.Node = this.#unwrap(node, depth);
+    if (root.type === "ConditionalExpression") {
+      const branches = [root.consequent, root.alternate].map(branch => this.#unwrap(branch, depth + 1));
+      const empty = (branch: t.Expression): boolean => (branch.type === "ArrayExpression" && branch.elements.length === 0)
+        || (branch.type === "ObjectExpression" && branch.properties.length === 0);
+      return branches.every(branch => empty(branch) || this.#fromImport(branch, depth + 1)) && !branches.every(empty);
+    }
+    if ((root.type === "CallExpression" || root.type === "OptionalCallExpression") && this.#trustedCall(root) === "package") root = root.callee;
+    while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
+    return root.type === "Identifier" && this.#imports.has(root.name);
+  }
+
+  /**
+   * What Rerail does not read in place of `node`: a value from an imported module is named as not read (see
+   * `#unreadable`); anything of the file's own that Rerail cannot follow makes the file not statically readable.
+   */
+  #notRead(node: t.Expression, depth: number, own?: ReadonlyMap<string, Entry>): void {
+    if (!this.#fromImport(node, depth)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(node)} as data`);
+    this.#unreadable(this.#source(node), own);
   }
 
   /**
@@ -462,14 +486,19 @@ class FlatConfigReader {
     for (const property of object.properties) {
       if (property.type === "SpreadElement") {
         const spread = this.#unwrap(property.argument, depth);
-        const inner = spread.type === "ObjectExpression" ? this.#properties(spread, depth + 1) : undefined;
+        if (spread.type !== "ObjectExpression") {
+          // A spread imported config hides what the object holds; one of the file's own Rerail cannot follow is code.
+          if (!this.#fromImport(property.argument, depth)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property.argument)} as data`);
+          return undefined;
+        }
+        const inner = this.#properties(spread, depth + 1);
         if (inner === undefined) return undefined;
         for (const [name, value] of inner) properties.set(name, value);
         continue;
       }
-      if (property.type !== "ObjectProperty" || !isExpression(property.value)) return undefined;
-      const name = propertyName(property);
-      if (name === undefined) return undefined;
+      if (property.type !== "ObjectProperty" || !isExpression(property.value)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
+      const name = propertyName(property) ?? this.#computedKey(property, depth);
+      if (name === undefined) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
       properties.set(name, property.value);
     }
     return properties;
@@ -518,9 +547,10 @@ class FlatConfigReader {
   }
 
   #gatherRules(node: t.Expression, scope: FlatConfigScope, depth: number, own: Map<string, Entry>): void {
+    if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
     const rules = this.#unwrap(node, depth);
-    if (rules.type !== "ObjectExpression" || depth > MAX_DEPTH) {
-      this.#unreadable(this.#source(node), own);
+    if (rules.type !== "ObjectExpression") {
+      this.#notRead(node, depth, own);
       return;
     }
     for (const property of rules.properties) {
@@ -529,10 +559,7 @@ class FlatConfigReader {
         continue;
       }
       const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
-      if (key === undefined) {
-        this.#unreadable(`[${this.#source(property.key)}]`, own);
-        continue;
-      }
+      if (key === undefined) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
       if (property.type !== "ObjectProperty" || !isExpression(property.value)) {
         own.delete(key);
         continue;

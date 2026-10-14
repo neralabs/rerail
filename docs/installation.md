@@ -141,9 +141,12 @@ code too, as is any global the file names other than in those calls, besides
 a value of a module named by path handed to a call (it may be the config itself),
 and an exported object that may hold a `default` key (ESLint's loader may take that
 instead). A type-only import is erased, so its names are the globals. A file with
-anything else is not statically readable: Rerail cannot tell which rules it turns
-off, so every rule Rerail ports from ESLint starts off, with no options, and the
-screen says why (that note comes first). A config that is read, is read as ESLint applies it: its
+anything else, a value of its own Rerail cannot follow (a choice between local
+configs, an exported `const`), or a file Rerail cannot load (a link, or one over
+1 MiB) is not statically readable: Rerail cannot tell which rules it turns off,
+so every rule Rerail ports from ESLint starts off, with no options, and the
+screen says why first. Only a value from an imported module (a shared config, or
+a choice between one and nothing) is named as not read and read around. A config that is read, is read as ESLint applies it: its
 exported array (through `export default`, `module.exports`, same-file `const`s,
 spreads, `defineConfig(...)`, `config(...)` and `extends`), one config object
 after another, a later one replacing a rule's entry (and keeping its options

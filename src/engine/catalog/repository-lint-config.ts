@@ -451,22 +451,28 @@ function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
   const legacy = ESLINTRC_FILES.filter(name => readRootFile(root, name).present);
   if (flat.length > 0) {
     const used = flat[0]!;
-    // ESLint uses the first flat config it finds wherever there is one.
-    for (const name of [...flat.slice(1), ...legacy]) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
+    // ESLint uses the first flat config it finds wherever there is one; the files it then ignores are named after
+    // what Rerail made of that one, which may start every port off.
+    const ignored = (): void => {
+      for (const name of [...flat.slice(1), ...legacy]) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
+    };
+    /** A flat config Rerail cannot read statically: it cannot tell what it turns off, so every ESLint port starts off. */
+    const unreadable = (why: string): LintConfigRules => {
+      notes.push({ linter: "eslint", text: `${used} is not statically readable: ${why}. ${NEVER_RUN} The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.` });
+      ignored();
+      return { file: used, rules: {}, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), unreadable: why };
+    };
     const read = readRootFile(root, used);
-    if (read.present && read.text === undefined) {
-      notes.push({ linter: "eslint", text: `${used} is not read: ${NOT_A_FILE}` });
-      return undefined;
-    }
+    if (read.present && read.text === undefined) return unreadable(NOT_A_FILE.replace(/\.$/u, ""));
     let config: FlatConfigRead;
     try {
       config = readEslintFlatConfig(read.present ? read.text! : "", used);
     } catch (error) {
       if (!(error instanceof LintConfigFormatError)) throw error;
-      notes.push({ linter: "eslint", text: `${used} is not statically readable: ${error.message}. ${NEVER_RUN} The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.` });
-      return { file: used, rules: {}, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), unreadable: error.message };
+      return unreadable(error.message);
     }
     for (const note of config.notes) notes.push({ linter: "eslint", text: `${used}: ${note}` });
+    ignored();
     return flatRules(used, config);
   }
   const used = legacy[0];
