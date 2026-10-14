@@ -57,6 +57,28 @@ function assertEventHost(host: RerailHost): void {
   throw new Error(`Event runtime does not support host: ${host}`);
 }
 
+/**
+ * How long a one-shot hook (Claude Code, Codex, Cursor) waits after a tool for that edit's rule check, so a steer lands
+ * under the edit and the coding agent can act on it in the same turn. A check usually takes tens of milliseconds; one
+ * that runs longer is delivered at the next hook instead (at the turn's end in Claude Code), and the hook never waits
+ * past this. OMP and Pi run in process and always wait for the check.
+ */
+const HOOK_EDIT_CHECK_MS = 1_000;
+
+/**
+ * Waits for `work` up to `ms`; past the cap the work carries on in the background. The wait only decides when the
+ * hook answers, so a failure of the check is not raised here: the check records its own failures in its audit.
+ */
+async function settledWithin(work: Promise<void>, ms: number): Promise<void> {
+  const capped = Promise.withResolvers<void>();
+  const timer = setTimeout(capped.resolve, ms);
+  try {
+    await Promise.race([work.catch(() => undefined), capped.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "tool" {
   if (source === "user-input") return "user";
   if (source === "assistant-text") return "assistant";
@@ -579,9 +601,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
         await state.codeRuleBridge?.finish(call!.id, event.failed === true);
         await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-        if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") {
-          await state.codeRuleBridge?.settleGeneratedEdits();
-        }
+        const settled = state.codeRuleBridge?.settleGeneratedEdits();
+        if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") await settled;
+        else if (settled !== undefined) await settledWithin(settled, HOOK_EDIT_CHECK_MS);
       }
     }
     if (event.kind === "turn-end") {

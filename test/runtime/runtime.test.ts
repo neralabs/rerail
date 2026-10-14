@@ -119,6 +119,87 @@ describe("Rerail session startup", () => {
   });
 });
 
+describe("Rerail tool results from a one-shot hook", () => {
+  /** A Claude Code session whose edit check finishes, and steers, only once the test opens `check`. */
+  async function hookSession() {
+    const root = await mkdtemp(join(tmpdir(), "rerail-hook-check-"));
+    directories.push(root);
+    await writeFile(join(root, "a.ts"), "export const a = 1;\n");
+    const check = Promise.withResolvers<void>();
+    const checking = Promise.withResolvers<void>();
+    const steered = Promise.withResolvers<void>();
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ steerDelivery }) => {
+        let revision = 0;
+        return {
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => {
+            revision = batch.revision;
+            return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+          },
+          settleGeneratedEdits: async () => {
+            checking.resolve();
+            await check.promise;
+            await steerDelivery.requestSteer("hook-check", "steer", "Checked the edit.", { revision, scope: [], background: true });
+            steered.resolve();
+          },
+          close: async () => undefined,
+        };
+      },
+    });
+    const session = { host: "claude-code" as const, sessionId: "hook-check", cwd: root };
+    await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    await runtime.ingest({ kind: "call", eventId: "call", sessionId: session.sessionId, toolCallId: "t1", toolName: "Write", input: { file_path: join(root, "a.ts"), content: "x" } });
+    const result = () => runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, toolCallId: "t1", toolName: "Write", output: "ok" });
+    return { runtime, check, checking, steered, result };
+  }
+
+  it("waits for the edit's check, so its steer goes back with the tool result", async () => {
+    const { runtime, check, result } = await hookSession();
+    try {
+      const answering = result();
+      check.resolve();
+      expect((await answering).map(delivery => delivery.content)).toEqual(["Checked the edit."]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("answers after a second when the check is still running, and delivers its steer at the next event", async () => {
+    const { runtime, check, checking, steered, result } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let answered = false;
+      const answering = result().finally(() => { answered = true; });
+      // The hook's one-second wait starts as the check does.
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(999);
+      expect(answered).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+
+      check.resolve();
+      await steered.promise;
+      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" });
+      expect(next.map(delivery => delivery.content)).toEqual(["Checked the edit."]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+});
+
 describe("Rerail session restore", () => {
   it("skips a ledger rule mutation that no longer parses and replays the rest", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-session-restore-"));
