@@ -164,7 +164,8 @@ class FlatConfigReader {
   /** The first statement or expression of the file that is code rather than data (see the module comment). */
   #code(): t.Node | undefined {
     const declaration = (statement: t.VariableDeclaration): t.Node | undefined => {
-      if (statement.kind !== "const") return statement;
+      // A `declare const` is erased before the file runs: its name is the global of that name, not its initializer.
+      if (statement.kind !== "const" || statement.declare === true) return statement;
       for (const declarator of statement.declarations) {
         if (declarator.id.type !== "Identifier" || declarator.init == null) return declarator;
         const code = this.#nonData(declarator.init, false);

@@ -853,6 +853,19 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     }
   });
 
+  // Self-review round 13: a `declare const` is erased, so its name is the global (here the config's own path), not
+  // the initializer; ESLint 9.39.1 through Jiti reports console.log, which allow: ["log"] would let through.
+  it("reads nothing from a flat config with an ambient const", async () => {
+    for (const [name, text] of [
+      ["eslint.config.ts", "declare const __filename = \"log\";\nexport default [{ rules: { \"no-console\": [\"error\", { allow: [__filename] }] } }];"],
+      ["eslint.config.mts", "export declare const allowed = \"log\";\nexport default [{ rules: { \"no-console\": [\"error\", { allow: [allowed] }] } }];"],
+    ] as const) {
+      const proposed = await flat(text, ["javascript"], name);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.m?ts is not read: it runs code Rerail does not read as data \(line 1: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+  });
+
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
     const text = "import shared from \"./shared.js\";\nexport default [{ files: [\"tests/**\"], rules: { \"no-console\": shared.level } }, { files: [\"tests/**\"], rules: { \"no-console\": [\"error\", {}] } }];";
     expect((await flat(text, ["javascript"])).settings).toEqual([]);
