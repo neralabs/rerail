@@ -9,6 +9,7 @@ pub(crate) mod php_compare;
 pub(crate) mod php_structure;
 pub(crate) mod python;
 pub(crate) mod rust;
+pub(crate) mod sql;
 pub(crate) mod structure;
 pub(crate) mod text_regex;
 

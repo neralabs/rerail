@@ -16,6 +16,7 @@ pub(crate) use phpstan::PhpstanIndex;
 use psalm::Psalm;
 pub(crate) use psalm::PsalmIndex;
 use serde_json::Value;
+pub(crate) use sqlfluff::SqlfluffIndex;
 
 /// Names a `rules` or `codes` list may hold.
 const MAX_NAMES: usize = 256;
@@ -93,10 +94,7 @@ macro_rules! suppression_kinds {
 // - `linter::spec`, `fn(&Value, at: &str) -> napi::Result<Spec>`, parses it, in
 //   `suppress/<linter>.rs` beside the reader of the linter's suppressions;
 // - `"detail"` says whose they are, for a query of a family that does not honour them.
-// Nothing here assumes comments: Clippy's are attributes. SQLFluff's `-- noqa` comments, a
-// linter other than Ruff, would be their own kind:
-//     /// SQLFluff's `-- noqa` comments.
-//     Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
+// Nothing here assumes comments: Clippy's are attributes.
 // The host's twin is `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`.
 suppression_kinds! {
     /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
@@ -114,6 +112,9 @@ suppression_kinds! {
     /// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
     /// names that silence the violation.
     Clippy clippy: Clippy = clippy::spec, "#[allow] and #[expect] attributes are Clippy's";
+    /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
+    /// name the violation's rule by.
+    Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
 }
 
 /// `a, b, or c`: the keys a `suppress` may hold.
@@ -186,6 +187,7 @@ mod phpstan;
 mod psalm;
 #[cfg(test)]
 mod ruff;
+mod sqlfluff;
 
 #[cfg(test)]
 mod tests {
@@ -223,7 +225,7 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs", "clippy"
+                "eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs", "clippy", "sqlfluff"
             ]
         );
         for kind in Suppression::ALL {
@@ -241,7 +243,9 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, phpcs, or clippy"),
+                format!(
+                    "{at} must hold eslint, noqa, nosec, phpstan, psalm, phpcs, clippy, or sqlfluff"
+                ),
             ),
             (
                 "typescript",

@@ -14,6 +14,9 @@ const clippyLint = z
   .string()
   .regex(/^[a-z0-9_]+(?:::[a-z0-9_]+)?$/, "Must be a lint name as a lint attribute spells it (clippy::name, a group such as clippy::all, or a rustc lint or group).");
 const rustVersion = z.string().regex(/^[0-9]+\.[0-9]+(?:\.[0-9]+)?$/, "Must be a Rust version, major.minor or major.minor.patch (1.53).");
+const sqlfluffReference = z
+  .string()
+  .refine(name => name.length > 0 && !name.includes(",") && name.trim() === name, "Must be a rule's code, name, alias or group (non-empty, without commas or surrounding white space).");
 
 /**
  * A violation's `suppress`: the suppression kinds it may ask for, one entry per linter, in the engine's order (its table in
@@ -39,6 +42,8 @@ export const codeRuleSuppressSchema = z
      * with `msrv`, the Rust version the lint needs, also a `#[clippy::msrv = ".."]` in force naming an older one.
      */
     clippy: z.object({ lints: z.array(clippyLint).min(1).max(256), msrv: rustVersion.optional() }).strict().optional(),
+    /** SQLFluff's `-- noqa` comments: `rules` are the references SQLFluff knows the rule by (its code, name, aliases and groups), which a directive's code, name or glob may match. */
+    sqlfluff: z.object({ rules: z.array(sqlfluffReference).min(1).max(256) }).strict().optional(),
   })
   .strict()
   .refine(suppress => Object.values(suppress).some(value => value !== undefined), { error: () => `suppress must hold ${suppressionKinds()}.` });

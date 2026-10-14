@@ -1,0 +1,1048 @@
+{
+ "tool": "libpg_query",
+ "version": "pglast 8.5, PostgreSQL 18.6",
+ "source": "postgres.sql",
+ "calls": [
+  {
+   "kind": "FuncCall",
+   "line": 1,
+   "column": 8,
+   "name": [
+    "now"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": []
+  },
+  {
+   "kind": "CoalesceExpr",
+   "line": 2,
+   "column": 8,
+   "name": [
+    "coalesce"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 2,
+     "column": 17
+    },
+    {
+     "line": 2,
+     "column": 20
+    },
+    {
+     "line": 2,
+     "column": 23
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 3,
+   "column": 8,
+   "name": [
+    "substr"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 3,
+     "column": 15
+    },
+    {
+     "line": 3,
+     "column": 18
+    },
+    {
+     "line": 3,
+     "column": 21
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 4,
+   "column": 8,
+   "name": [
+    "pg_catalog",
+    "lower"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 4,
+     "column": 25
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 5,
+   "column": 8,
+   "name": [
+    "s",
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 5,
+     "column": 12
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 6,
+   "column": 8,
+   "name": [
+    "count"
+   ],
+   "star": true,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": []
+  },
+  {
+   "kind": "FuncCall",
+   "line": 7,
+   "column": 8,
+   "name": [
+    "count"
+   ],
+   "star": false,
+   "distinct": true,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 7,
+     "column": 23
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 8,
+   "column": 8,
+   "name": [
+    "count"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 8,
+     "column": 18
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 9,
+   "column": 8,
+   "name": [
+    "string_agg"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": true,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 9,
+     "column": 19
+    },
+    {
+     "line": 9,
+     "column": 22
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 10,
+   "column": 8,
+   "name": [
+    "count"
+   ],
+   "star": true,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": true,
+   "over": false,
+   "args": []
+  },
+  {
+   "kind": "FuncCall",
+   "line": 11,
+   "column": 8,
+   "name": [
+    "row_number"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": true,
+   "args": []
+  },
+  {
+   "kind": "FuncCall",
+   "line": 12,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 12,
+     "column": 10,
+     "name": "x",
+     "valueLine": 12,
+     "valueColumn": 15
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 13,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 13,
+     "column": 10,
+     "name": "x",
+     "valueLine": 13,
+     "valueColumn": 15
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 14,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 14,
+     "column": 10
+    },
+    {
+     "line": 14,
+     "column": 13,
+     "name": "y",
+     "valueLine": 14,
+     "valueColumn": 18
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 15,
+   "column": 8,
+   "name": [
+    "concat_ws"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": true,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 15,
+     "column": 18
+    },
+    {
+     "line": 15,
+     "column": 32
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 16,
+   "column": 8,
+   "name": [
+    "upper"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 16,
+     "column": 14
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 16,
+   "column": 14,
+   "name": [
+    "lower"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 16,
+     "column": 20
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 17,
+   "column": 8,
+   "name": [
+    "F"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 17,
+     "column": 12
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 18,
+   "column": 8,
+   "name": [
+    "Mixed"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 18,
+     "column": 16
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 19,
+   "column": 8,
+   "name": [
+    "extract"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 19,
+     "column": 16
+    },
+    {
+     "line": 19,
+     "column": 26
+    }
+   ],
+   "syntax": "sql"
+  },
+  {
+   "kind": "FuncCall",
+   "line": 20,
+   "column": 8,
+   "name": [
+    "substring"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 20,
+     "column": 18
+    },
+    {
+     "line": 20,
+     "column": 25
+    },
+    {
+     "line": 20,
+     "column": 31
+    }
+   ],
+   "syntax": "sql"
+  },
+  {
+   "kind": "FuncCall",
+   "line": 21,
+   "column": 8,
+   "name": [
+    "position"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 21,
+     "column": 24
+    },
+    {
+     "line": 21,
+     "column": 17
+    }
+   ],
+   "syntax": "sql"
+  },
+  {
+   "kind": "FuncCall",
+   "line": 22,
+   "column": 8,
+   "name": [
+    "trim"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 22,
+     "column": 27
+    },
+    {
+     "line": 22,
+     "column": 18
+    }
+   ],
+   "syntax": "sql"
+  },
+  {
+   "kind": "FuncCall",
+   "line": 23,
+   "column": 8,
+   "name": [
+    "overlay"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 23,
+     "column": 16
+    },
+    {
+     "line": 23,
+     "column": 26
+    },
+    {
+     "line": 23,
+     "column": 33
+    },
+    {
+     "line": 23,
+     "column": 39
+    }
+   ],
+   "syntax": "sql"
+  },
+  {
+   "kind": "CoalesceExpr",
+   "line": 25,
+   "column": 8,
+   "name": [
+    "coalesce"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 25,
+     "column": 17
+    },
+    {
+     "line": 25,
+     "column": 20
+    }
+   ]
+  },
+  {
+   "kind": "MinMaxExpr",
+   "line": 26,
+   "column": 8,
+   "name": [
+    "greatest"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 26,
+     "column": 17
+    },
+    {
+     "line": 26,
+     "column": 20
+    }
+   ]
+  },
+  {
+   "kind": "MinMaxExpr",
+   "line": 27,
+   "column": 8,
+   "name": [
+    "least"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 27,
+     "column": 14
+    },
+    {
+     "line": 27,
+     "column": 17
+    }
+   ]
+  },
+  {
+   "kind": "NullIfExpr",
+   "line": 28,
+   "column": 8,
+   "name": [
+    "nullif"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 28,
+     "column": 15
+    },
+    {
+     "line": 28,
+     "column": 18
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 29,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 29,
+     "column": 10
+    },
+    {
+     "line": 29,
+     "column": 21
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 30,
+   "column": 23,
+   "name": [
+    "lower"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 30,
+     "column": 29
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 31,
+   "column": 26,
+   "name": [
+    "upper"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 31,
+     "column": 32
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 32,
+   "column": 11,
+   "name": [
+    "count"
+   ],
+   "star": true,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": []
+  },
+  {
+   "kind": "FuncCall",
+   "line": 32,
+   "column": 36,
+   "name": [
+    "lower"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 32,
+     "column": 42
+    }
+   ]
+  },
+  {
+   "kind": "CoalesceExpr",
+   "line": 33,
+   "column": 27,
+   "name": [
+    "coalesce"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 33,
+     "column": 36
+    },
+    {
+     "line": 33,
+     "column": 40
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 34,
+   "column": 18,
+   "name": [
+    "lower"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 34,
+     "column": 24
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 34,
+   "column": 38,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 34,
+     "column": 40
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 35,
+   "column": 19,
+   "name": [
+    "upper"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 35,
+     "column": 25
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 35,
+   "column": 48,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 35,
+     "column": 50
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 36,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 36,
+     "column": 10
+    },
+    {
+     "line": 36,
+     "column": 16
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 36,
+   "column": 10,
+   "name": [
+    "g"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 36,
+     "column": 12
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 36,
+   "column": 16,
+   "name": [
+    "h"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 36,
+     "column": 18,
+     "name": "x",
+     "valueLine": 36,
+     "valueColumn": 23
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 37,
+   "column": 8,
+   "name": [
+    "array_to_string"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 37,
+     "column": 24
+    },
+    {
+     "line": 37,
+     "column": 37
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 38,
+   "column": 8,
+   "name": [
+    "f"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 38,
+     "column": 10
+    },
+    {
+     "line": 38,
+     "column": 34
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 38,
+   "column": 18,
+   "name": [
+    "max"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 38,
+     "column": 22
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 39,
+   "column": 8,
+   "name": [
+    "jsonb_build_object"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 39,
+     "column": 27
+    },
+    {
+     "line": 39,
+     "column": 32
+    },
+    {
+     "line": 39,
+     "column": 35
+    },
+    {
+     "line": 39,
+     "column": 40
+    }
+   ]
+  },
+  {
+   "kind": "CoalesceExpr",
+   "line": 39,
+   "column": 40,
+   "name": [
+    "coalesce"
+   ],
+   "star": false,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": false,
+   "args": [
+    {
+     "line": 39,
+     "column": 49
+    },
+    {
+     "line": 39,
+     "column": 52
+    }
+   ]
+  },
+  {
+   "kind": "FuncCall",
+   "line": 40,
+   "column": 8,
+   "name": [
+    "count"
+   ],
+   "star": true,
+   "distinct": false,
+   "variadic": false,
+   "order": false,
+   "filter": false,
+   "over": true,
+   "args": []
+  }
+ ]
+}

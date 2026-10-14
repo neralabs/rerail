@@ -14,6 +14,7 @@ mod format_args;
 mod kit;
 mod rust;
 mod scope;
+mod sql;
 mod syntax;
 mod value;
 
@@ -23,6 +24,7 @@ pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
 pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
+pub(crate) use sql::Sql;
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 

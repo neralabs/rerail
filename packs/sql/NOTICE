@@ -1,0 +1,7 @@
+Rerail rule pack: SQL
+Copyright 2026 Nera Software Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Its rules are ports of rules from SQLFluff (MIT). Its licence and the record of every file copied from it are in
+licenses/sqlfluff/.

@@ -82,6 +82,21 @@ precedence = "override"
 SPDX-FileCopyrightText = "Johnathon Koster"
 SPDX-License-Identifier = "MIT"
 
+# DerekStride/tree-sitter-sql 0.3.11 with Rerail's patches (native/grammars/tree-sitter-sql/PATCHES.md):
+# grammar.json regenerated from the patched grammar.js, scanner.c patched, rerail.patch the diff.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 Derek Stride"
+SPDX-License-Identifier = "MIT"
+
+# The parser headers `tree-sitter generate` 0.27.0 writes.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/src/tree_sitter/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018 Max Brunsfeld"
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
@@ -273,13 +288,6 @@ path = "packs/rust/upstream/clippy/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = "The Rust Project Contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
-
-# SQLFluff 4.4.0 (sql/licenses/sqlfluff/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/sql/upstream/sqlfluff/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
-SPDX-License-Identifier = "MIT"
 
 # eslint-plugin-vue 10.11.1 (vue/licenses/eslint-plugin-vue/UPSTREAM.md): verbatim
 [[annotations]]
@@ -726,6 +734,24 @@ SPDX-License-Identifier = "MIT"
 path = "packs/php/upstream/psalm/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2016 Vimeo"
+SPDX-License-Identifier = "MIT"
+
+# packs/sql
+
+# Rule documents: Rerail's re-implementations of SQLFluff's rules, annotated with the licence the pack publishes them
+# under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
+# (docs/pack-format.md#licensing).
+[[annotations]]
+path = ["packs/sql/rules/**", "packs/sql/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# SQLFluff 4.4.0 (packs/sql/licenses/sqlfluff/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/sql/upstream/sqlfluff/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
 SPDX-License-Identifier = "MIT"
 
 # packs/blade

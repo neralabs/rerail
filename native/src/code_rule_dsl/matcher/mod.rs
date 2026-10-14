@@ -1,6 +1,7 @@
 mod analysis;
 mod anchors;
 mod arguments;
+mod arguments_sql;
 mod binding;
 mod binds;
 mod call;
@@ -31,6 +32,7 @@ pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
+pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};
@@ -59,7 +61,7 @@ pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
     calls_tables, file_clippy, file_eslint_directives, file_lines, file_module, file_noqa,
-    file_nosec, file_phpcs, file_phpstan, file_psalm, table_reading,
+    file_nosec, file_phpcs, file_phpstan, file_psalm, file_sqlfluff, table_reading,
 };
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]

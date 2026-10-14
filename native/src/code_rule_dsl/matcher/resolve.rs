@@ -13,6 +13,7 @@ use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
     ClippyIndex, EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    SqlfluffIndex,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -912,6 +913,8 @@ struct FileScopes {
     phpcs: Option<Rc<PhpcsIndex>>,
     /// The file's Rust lint-level attributes (`suppress.clippy`), read on first use.
     clippy: Option<Rc<ClippyIndex>>,
+    /// The file's SQLFluff `-- noqa` directives (`suppress.sqlfluff`), read on first use.
+    sqlfluff: Option<Rc<SqlfluffIndex>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
@@ -959,6 +962,7 @@ impl FileScopeSlot {
             psalm: None,
             phpcs: None,
             clippy: None,
+            sqlfluff: None,
             php_names: None,
             php_names_failed_within: 0,
             php_names_charged: Vec::new(),
@@ -1172,6 +1176,23 @@ pub(crate) fn file_clippy(read: impl FnOnce() -> ClippyIndex) -> Rc<ClippyIndex>
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
             scopes.clippy = Some(Rc::clone(&index));
+        }
+    });
+    index
+}
+
+/// The SQLFluff `noqa` index of the file being matched: read once per file while a file is being
+/// matched, and fresh outside one.
+pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<SqlfluffIndex> {
+    if let Some(index) =
+        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.sqlfluff.clone()))
+    {
+        return index;
+    }
+    let index = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.sqlfluff = Some(Rc::clone(&index));
         }
     });
     index
