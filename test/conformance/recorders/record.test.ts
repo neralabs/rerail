@@ -7,7 +7,7 @@ import { test } from "vitest";
 import type { CorpusFile } from "../../../conformance/gates/corpus.js";
 import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/gates/recording.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/gates/types.js";
-import { diffRecording, recordToolPack, writeRecording, type AdapterFactory } from "../../../conformance/recorders/gates/record.js";
+import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/gates/record.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -99,6 +99,36 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
     cpSync(join(root, "packs/demo/upstream/bandit/gates.json"), join(root, "gates.json.bak"));
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.json"), "{}\n");
     assert.deepEqual(diffRecording(join(root, "packs/demo/upstream/bandit"), again).changed, ["gates.json"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an ESLint case reuses a committed source with its bytes, its own directory and file type first, or gets one of its own", () => {
+  const root = mkdtempSync(join(tmpdir(), "gates-layout-"));
+  try {
+    for (const [file, text] of [["fixtures/eqeqeq/001.js", "a == b"], ["fixtures/eqeqeq/002.ts", "a == b"], ["fixtures/yoda/001.js", "1 == a"]] as const) {
+      mkdirSync(join(root, file, ".."), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+    const committed = committedSources(root);
+    const layout = CASE_LAYOUTS.eslint;
+    const place = (code: string, path: string) => layout.file({ fixture: "tests/lib/rules/eqeqeq.js#0/valid[3]", path, bytes: Buffer.from(code) }, committed);
+    assert.equal(place("a == b", "eqeqeq/input.ts"), "fixtures/eqeqeq/002.ts");
+    assert.equal(place("a == b", "eqeqeq/input.jsx"), "fixtures/eqeqeq/001.js");
+    assert.equal(place("1 == a", "eqeqeq/input.js"), "fixtures/yoda/001.js");
+    assert.match(place("x === y", "src/App.JS")!, /^fixtures\/eqeqeq\/[0-9a-f]{12}\.js$/u);
+    assert.deepEqual(layout.row!("tests/lib/rules/eqeqeq.js#0/valid[3]"), { upstream: "tests/lib/rules/eqeqeq.js", copy: "derived" });
+
+    const table = ["# ESLint", "", "| File | Upstream path | Copy |", "|---|---|---|",
+      "| `upstream/eslint/fixtures/default-case/002.js` | `tests/lib/rules/default-case.js` | derived |",
+      "| `upstream/eslint/fixtures/default-case-last/001.js` | `tests/lib/rules/default-case-last.js` | derived |", ""].join("\n");
+    const copy = { file: "fixtures/default-case/0f0f0f0f0f0f.js", fixture: "tests/lib/rules/default-case.js#0/invalid[1]", bytes: Buffer.from("") };
+    assert.deepEqual(withUpstreamRows(table, "eslint", [copy], layout).split("\n").slice(4, 7), [
+      "| `upstream/eslint/fixtures/default-case/002.js` | `tests/lib/rules/default-case.js` | derived |",
+      "| `upstream/eslint/fixtures/default-case/0f0f0f0f0f0f.js` | `tests/lib/rules/default-case.js` | derived |",
+      "| `upstream/eslint/fixtures/default-case-last/001.js` | `tests/lib/rules/default-case-last.js` | derived |",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

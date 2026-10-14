@@ -4,7 +4,7 @@
  * gates.json, gates-corpus.json, and every case source the recording names that the directory lacks.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 
@@ -74,10 +74,22 @@ export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins
   return recorded;
 }
 
+/** A case as the layout places it: its upstream test file (`fixture`), the path it is read at, and its source's bytes. */
+export interface CaseSource {
+  fixture: string;
+  path: string;
+  bytes: Buffer;
+}
+
+/** The files under the tool-pack directory's fixtures/ with these bytes, relative to the tool-pack directory, sorted. */
+export type CommittedSources = (bytes: Buffer) => string[];
+
 /** Where a case's upstream test file is committed under the tool-pack directory, or null when it must not be copied. */
 export interface CaseLayout {
-  /** The committed path of an upstream test file, relative to the tool-pack directory; null for one that cannot be copied. */
-  file(fixture: string): string | null;
+  /** The committed path of a case's source, relative to the tool-pack directory; null for one that cannot be copied. */
+  file(testCase: CaseSource, committed: CommittedSources): string | null;
+  /** How UPSTREAM.md lists a new copy: the upstream file it comes from, and whether it is that file verbatim; verbatim when omitted. */
+  row?(fixture: string): { upstream: string; copy: "verbatim" | "derived" };
 }
 
 const RUFF_FIXTURES = "crates/ruff_linter/resources/test/fixtures/";
@@ -87,10 +99,19 @@ const RUFF_NOTEBOOK_FIXTURES = "crates/ruff_notebook/resources/test/fixtures/";
 /** Ruff's fixtures of pylint-derived (PL*) and flake8-builtins (A*) rules are GPL-derived and are never copied. */
 const RUFF_NOT_COPIED = ["pylint/", "flake8_builtins/"];
 
-/** The existing fixtures/ layouts: Ruff's resources/test/fixtures/<dir>/… and Bandit's examples/… map to fixtures/…. */
+/** An ESLint-family case's test file, without the run and case it names (`tests/lib/rules/eqeqeq.js#0/valid[3]`). */
+const eslintTestFile = (fixture: string): string => fixture.replace(/#.*$/u, "");
+
+/**
+ * The existing fixtures/ layouts: Ruff's resources/test/fixtures/<dir>/… and Bandit's examples/… map to fixtures/….
+ * An ESLint-family case is not a file but a RuleTester case's `code`, so each case is its own source: one the tool-pack
+ * already commits byte for byte (upstream/generate.mjs's fixtures/<rule>/<n>.<ext>) is reused, from the test file's own
+ * directory and with the case's file type first; any other is copied to fixtures/<test file>/<sha256 prefix><ext>, the
+ * extension of the path the case is read at, in lower case.
+ */
 export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
   ruff: {
-    file(fixture) {
+    file({ fixture }) {
       if (fixture.startsWith(RUFF_NOTEBOOK_FIXTURES)) return `fixtures/ruff_notebook/${fixture.slice(RUFF_NOTEBOOK_FIXTURES.length)}`;
       const rest = fixture.startsWith(RUFF_FIXTURES) ? fixture.slice(RUFF_FIXTURES.length) : fixture.startsWith(RUFF_TESTS) ? fixture.slice(RUFF_TESTS.length) : null;
       if (rest === null || RUFF_NOT_COPIED.some((prefix) => rest.startsWith(prefix))) return null;
@@ -98,12 +119,41 @@ export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
     },
   },
   bandit: {
-    file: (fixture) => (fixture.startsWith("examples/") ? `fixtures/${fixture.slice("examples/".length)}` : null),
+    file: ({ fixture }) => (fixture.startsWith("examples/") ? `fixtures/${fixture.slice("examples/".length)}` : null),
   },
   eslint: {
-    file: (fixture) => `fixtures/${fixture.replace(/#.*$/u, "")}`,
+    file({ fixture, path, bytes }, committed) {
+      const directory = `fixtures/${(eslintTestFile(fixture).split("/").pop() ?? "").replace(/(?:\.test)?\.[cm]?[jt]sx?$/u, "")}/`;
+      const extension = extname(path).toLowerCase();
+      const same = committed(bytes);
+      const own = same.filter((file) => file.startsWith(directory));
+      const typed = (file: string) => extname(file).toLowerCase() === extension;
+      return own.find(typed) ?? own[0] ?? same.find(typed) ?? same[0]
+        ?? `${directory}${sha256(bytes).slice(0, 12)}${extension}`;
+    },
+    row: (fixture) => ({ upstream: eslintTestFile(fixture), copy: "derived" }),
   },
 };
+
+/** Every file under the tool-pack directory's fixtures/, by the sha256 of its bytes. */
+export function committedSources(directory: string): CommittedSources {
+  const byDigest = new Map<string, string[]>();
+  const walk = (relativeDirectory: string): void => {
+    const absolute = join(directory, relativeDirectory);
+    if (!existsSync(absolute)) return;
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      const file = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) walk(file);
+      else if (entry.isFile()) {
+        const digest = sha256(readFileSync(join(directory, file)));
+        byDigest.set(digest, [...(byDigest.get(digest) ?? []), file]);
+      }
+    }
+  };
+  walk("fixtures");
+  for (const files of byDigest.values()) files.sort(byText);
+  return (bytes) => byDigest.get(sha256(bytes)) ?? [];
+}
 
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
 const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
@@ -198,6 +248,12 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     const path = join(checkout, fixture);
     return existsSync(path) ? readFileSync(path) : undefined;
   });
+  const fixtureBytes = new Map<string, Buffer | undefined>();
+  const upstreamBytesOf = (fixture: string): Buffer | undefined => {
+    if (!fixtureBytes.has(fixture)) fixtureBytes.set(fixture, upstreamBytes(fixture));
+    return fixtureBytes.get(fixture);
+  };
+  const committed = committedSources(toolPackDirectory(root, packId, tool));
 
   const nameSets: GatesRecording["nameSets"] = {};
   const rules: Record<string, RecordedRule> = {};
@@ -228,10 +284,9 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     const probe = adapter.toSpan(name, "a\nb", 0, 3);
     const cases: RecordedCase[] = adapter.cases(name).map((testCase) => {
       allCases.push(testCase);
-      const file = layout.file(testCase.fixture);
-      if (file !== null && !sources.has(file)) {
-        sources.set(file, { file, fixture: testCase.fixture, bytes: upstreamBytes(testCase.fixture) ?? Buffer.from(testCase.source, "utf8") });
-      }
+      const bytes = upstreamBytesOf(testCase.fixture) ?? Buffer.from(testCase.source, "utf8");
+      const file = layout.file({ fixture: testCase.fixture, path: readPath(testCase), bytes }, committed);
+      if (file !== null && !sources.has(file)) sources.set(file, { file, fixture: testCase.fixture, bytes });
       if (file !== null) {
         const entry = { path: readPath({ ...testCase, path: recordedPath(testCase.path, testCase.fixture) }), script: testCase.script === true, source: testCase.source, sha256: sha256(testCase.source) };
         verdictInputs.set(`${entry.path}\0${entry.script}\0${entry.sha256}`, entry);
@@ -371,19 +426,35 @@ export function diffRecording(directory: string, recorded: Recorded): RecordingD
 
 /**
  * Add a row for each new copy to licenses/<project>/UPSTREAM.md's file table (`| \`upstream/<tool>/<file>\` |
- * \`<upstream path>\` | verbatim |`), keeping the table sorted.
+ * \`<upstream path>\` | verbatim |`, or the layout's row). A table sorted as text stays sorted; in any other (the ESLint
+ * table, by rule and case number), the new rows go after the last row of their directory, in order, or at the end.
  */
-export function withUpstreamRows(text: string, tool: string, copies: CaseCopy[]): string {
+export function withUpstreamRows(text: string, tool: string, copies: CaseCopy[], layout?: CaseLayout): string {
   const lines = text.split("\n");
   const isRow = (line: string) => line.startsWith("| `upstream/");
   const first = lines.findIndex(isRow);
   if (first < 0) throw new Error("UPSTREAM.md has no file table to add the copies to");
   let last = first;
   while (last + 1 < lines.length && isRow(lines[last + 1]!)) last += 1;
-  const rows = new Set(lines.slice(first, last + 1));
-  for (const copy of copies) rows.add(`| \`upstream/${tool}/${copy.file}\` | \`${copy.fixture}\` | verbatim |`);
-  const sorted = [...rows].sort(byText);
-  return [...lines.slice(0, first), ...sorted, ...lines.slice(last + 1)].join("\n");
+  const existing = lines.slice(first, last + 1);
+  const known = new Set(existing);
+  const added = sortedUnique(copies.map((copy) => {
+    const { upstream, copy: kind } = layout?.row?.(copy.fixture) ?? { upstream: copy.fixture, copy: "verbatim" };
+    return `| \`upstream/${tool}/${copy.file}\` | \`${upstream}\` | ${kind} |`;
+  })).filter((row) => !known.has(row));
+  let table: string[];
+  if (existing.every((row, index) => index === 0 || byText(existing[index - 1]!, row) <= 0)) {
+    table = [...existing, ...added].sort(byText);
+  } else {
+    const directory = (row: string) => dirname(/^\| `([^`]*)`/u.exec(row)?.[1] ?? "");
+    table = [...existing];
+    for (const row of added) {
+      const at = table.findLastIndex((line) => directory(line) === directory(row));
+      if (at < 0) table.push(row);
+      else table.splice(at + 1, 0, row);
+    }
+  }
+  return [...lines.slice(0, first), ...table, ...lines.slice(last + 1)].join("\n");
 }
 
 /** Write the recording and the missing case sources into the tool-pack directory, and list the copies in UPSTREAM.md. */
@@ -398,9 +469,10 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     await writeFile(join(directory, copy.file), copy.bytes);
   }
   if (diff.missing.length > 0) {
-    const project = readGatesManifest(root, pack, tool).rerail.project;
+    const manifest = readGatesManifest(root, pack, tool);
+    const project = manifest.rerail.project;
     const upstreamMd = join(root, "packs", pack, "licenses", project, "UPSTREAM.md");
-    await writeFile(upstreamMd, withUpstreamRows(await readFile(upstreamMd, "utf8"), tool, diff.missing));
+    await writeFile(upstreamMd, withUpstreamRows(await readFile(upstreamMd, "utf8"), tool, diff.missing, CASE_LAYOUTS[manifest.adapter]));
   }
   return diff;
 }
