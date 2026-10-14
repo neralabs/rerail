@@ -13,12 +13,12 @@ function sceneSteer(ruleId: string, guidance: string): AdapterDelivery {
 }
 
 export const NO_EXPLICIT_ANY = sceneSteer(
-  "typescript-eslint:no-explicit-any",
+  "typescript-eslint-no-explicit-any",
   "Use unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)",
 );
 
 export const NO_FLOATING_PROMISES = sceneSteer(
-  "typescript-eslint:no-floating-promises",
+  "typescript-eslint-no-floating-promises",
   "Await the call or hand its promise on; a dropped promise swallows its errors. (web/src/features/orders/useOrders.ts:9:5)",
 );
 

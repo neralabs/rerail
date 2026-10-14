@@ -1,7 +1,7 @@
 {
-  "systemMessage": "◆ Rerail · typescript-eslint:no-explicit-any  steered  ·  why → http://127.0.0.1:4737/#rule/typescript-eslint%3Ano-explicit-any",
+  "systemMessage": "◆ Rerail · typescript-eslint-no-explicit-any  steered  ·  why → http://127.0.0.1:4737/#rule/typescript-eslint-no-explicit-any",
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "◆ Rerail · typescript-eslint:no-explicit-any  steered\nFrom the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.\nUse unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)\nWhy? → http://127.0.0.1:4737/#rule/typescript-eslint%3Ano-explicit-any"
+    "additionalContext": "◆ Rerail · typescript-eslint-no-explicit-any  steered\nFrom the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.\nUse unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)\nWhy? → http://127.0.0.1:4737/#rule/typescript-eslint-no-explicit-any"
   }
 }

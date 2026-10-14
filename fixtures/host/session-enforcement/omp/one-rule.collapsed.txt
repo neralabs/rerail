@@ -1,1 +1,1 @@
- <accent>◆</accent> Rerail<dim> · </dim>typescript-eslint:no-explicit-any  <accent>steered</accent><dim>  ·  </dim><link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint%3Ano-explicit-any><mdLink>why</mdLink></link>
+ <accent>◆</accent> Rerail<dim> · </dim>typescript-eslint-no-explicit-any  <accent>steered</accent><dim>  ·  </dim><link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any><mdLink>why</mdLink></link>

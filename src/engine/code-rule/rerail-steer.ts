@@ -5,10 +5,10 @@ import type { RuleMode } from "../catalog/rule-mode.js";
  * The steer, as the coding agent reads it (design N4): a header naming the rule and its state, where the rule comes
  * from and its mode, the guidance, and a `Why?` link to the rule in the dashboard.
  *
- *     ◆ Rerail · typescript-eslint:no-explicit-any  steered
+ *     ◆ Rerail · typescript-eslint-no-explicit-any  steered
  *     From the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.
  *     Use unknown or a real type in exported signatures. (src/useOrders.ts:1:33)
- *     Why? → http://127.0.0.1:4737/#rule/typescript-eslint%3Ano-explicit-any
+ *     Why? → http://127.0.0.1:4737/#rule/typescript-eslint-no-explicit-any
  *
  * The person sees only the header and the link, as one line per rule (`steerHeadlines`, `headlineText`).
  * Renderers write the link relative (`#rule/<id>`); `linkSteers` makes it absolute once the dashboard's origin is

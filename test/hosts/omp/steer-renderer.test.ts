@@ -16,11 +16,11 @@ function codeRuleSteer(...rules: Array<{ id: string; guidance: string }>): strin
 }
 
 const NO_EXPLICIT_ANY = {
-  id: "typescript-eslint:no-explicit-any",
+  id: "typescript-eslint-no-explicit-any",
   guidance: "Use unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)",
 };
 const NO_FLOATING_PROMISES = {
-  id: "typescript-eslint:no-floating-promises",
+  id: "typescript-eslint-no-floating-promises",
   guidance: "Await the promise, return it, or mark it with void. (web/src/features/orders/useOrders.ts:12:5)",
 };
 

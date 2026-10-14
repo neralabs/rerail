@@ -30,19 +30,19 @@ describe("Rerail steer text", () => {
   });
 
   it("tells the coding agent the rule's pack and mode, and steers a Block-mode rule until blocking ships", () => {
-    expect(steerBlock("complexity:cyclomatic-python", "Too complex.", { mode: "block", origin: steerOrigin("complexity:cyclomatic-python") }))
+    expect(steerBlock("complexity-cyclomatic-python", "Too complex.", { mode: "block", origin: steerOrigin("complexity-cyclomatic-python") }))
       .toBe([
-        "◆ Rerail · complexity:cyclomatic-python  steered",
+        "◆ Rerail · complexity-cyclomatic-python  steered",
         "From the Cyclomatic complexity (limit 6) rule pack. Set to Block, which steers until blocking ships: fix it, or tell the person in one line why you won't.",
         "Too complex.",
-        "Why? → #rule/complexity%3Acyclomatic-python",
+        "Why? → #rule/complexity-cyclomatic-python",
       ].join("\n"));
     expect(steerBlock("x", "Noted.", { mode: "log" }).split("\n").slice(0, 2)).toEqual(["○ Rerail · x  logged", "Set to Log: recorded only."]);
   });
 
   it("names where a rule comes from: its pack, the pack's id when the pack is not loaded, or the library", () => {
-    expect(steerOrigin("complexity:cyclomatic-python")).toBe("From the Cyclomatic complexity (limit 6) rule pack.");
-    expect(steerOrigin("typescript-eslint:no-explicit-any", { kind: "pack", packId: "typescript" })).toBe("From the typescript rule pack.");
+    expect(steerOrigin("complexity-cyclomatic-python")).toBe("From the Cyclomatic complexity (limit 6) rule pack.");
+    expect(steerOrigin("typescript-eslint-no-explicit-any", { kind: "pack", packId: "typescript" })).toBe("From the typescript rule pack.");
     expect(steerOrigin("mine", { kind: "library_rule", packId: null })).toBe("From your rule library.");
     expect(steerOrigin("local:unknown")).toBeUndefined();
   });
