@@ -28,12 +28,15 @@ fn reference(name: &str) -> bool {
     !name.is_empty() && !name.contains(',') && name.trim() == name
 }
 
+/// A directive's listed patterns, each translated once when the directive is read; `None` for
+/// all rules.
+type Patterns = Option<Vec<Vec<Glob>>>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Directive {
     line: usize,
     action: Option<Action>,
-    /// The listed patterns, each translated once when the directive is read; `None` for all rules.
-    patterns: Option<Vec<Vec<Glob>>>,
+    patterns: Patterns,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,7 +138,7 @@ fn in_dollar_quoted_body<D: Doc>(comment: &Node<'_, D>) -> bool {
         })
 }
 
-fn parse(comment: &str) -> Option<(Option<Action>, Option<Vec<Vec<Glob>>>)> {
+fn parse(comment: &str) -> Option<(Option<Action>, Patterns)> {
     let comment = comment.rsplit("--").next()?.trim();
     if !comment.starts_with("noqa") {
         return None;
