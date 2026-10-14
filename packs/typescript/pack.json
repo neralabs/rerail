@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "22 typescript-eslint rules ported to Rerail, 11 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "25 typescript-eslint rules ported to Rerail, 14 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -87,6 +87,12 @@
       "on": false
     },
     {
+      "id": "typescript-eslint-no-empty-object-type",
+      "document": "rules/typescript-eslint-no-empty-object-type.json",
+      "title": "typescript-eslint no-empty-object-type: Disallow accidentally using the \"empty object\" type",
+      "group": "typescript-eslint"
+    },
+    {
       "id": "typescript-eslint-no-extra-non-null-assertion",
       "document": "rules/typescript-eslint-no-extra-non-null-assertion.json",
       "title": "typescript-eslint no-extra-non-null-assertion: Disallow extra non-null assertions",
@@ -132,6 +138,12 @@
       "id": "typescript-eslint-no-unnecessary-type-constraint",
       "document": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
       "title": "typescript-eslint no-unnecessary-type-constraint: Disallow unnecessary constraints on generic types",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-unsafe-declaration-merging",
+      "document": "rules/typescript-eslint-no-unsafe-declaration-merging.json",
+      "title": "typescript-eslint no-unsafe-declaration-merging: Disallow unsafe declaration merging",
       "group": "typescript-eslint"
     },
     {
@@ -184,6 +196,22 @@
       "document": "rules/typescript-eslint-prefer-namespace-keyword.json",
       "title": "typescript-eslint prefer-namespace-keyword: Require using `namespace` keyword over `module` keyword to declare custom TypeScript modules",
       "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-triple-slash-reference",
+      "document": "rules/typescript-eslint-triple-slash-reference.json",
+      "title": "typescript-eslint triple-slash-reference: Disallow certain triple slash directives in favor of ES6-style import declarations",
+      "group": "typescript-eslint",
+      "examples": {
+        "caught": {
+          "path": "src/setup.ts",
+          "text": "/// <reference path=\"./globals.d.ts\" />\n\nexport function ready(): boolean {\n  return typeof window !== \"undefined\";\n}\n"
+        },
+        "passes": {
+          "path": "src/setup.ts",
+          "text": "import \"./globals.js\";\n\nexport function ready(): boolean {\n  return typeof window !== \"undefined\";\n}\n"
+        }
+      }
     }
   ]
 }

@@ -1,9 +1,9 @@
 # Rerail rule pack: TypeScript
 
-22 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
+25 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
 experimental. Each is scored against the tool's own findings on the tool's test fixtures and on a pinned corpus
-(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`: 4
+(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`: 6
 today, all `rerail-unknown`, each a file the tree-sitter grammars read with a syntax error. ESLint's core rules are in
 the [JavaScript pack](../javascript/README.md).
 
@@ -12,7 +12,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and, for a rule that starts off, `on`; one rule carries examples |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and, for a rule that starts off, `on`; two rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (vscode) |
 | `divergences.json` | Declared disagreements with the tools |
@@ -41,6 +41,14 @@ Every typescript-eslint 8.70.1 rule that needs no type information has a port he
 `no-restricted-types`. It reports only the types a project lists in its `types` option, and that list is empty by
 default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
 writes its own code rule.
+
+## `no-magic-numbers` passes the gates and stays a candidate
+
+It passes Gates 2 to 5 and agrees with typescript-eslint on every fixture and every vscode file. A shipped rule's vscode
+recording has to cover it, though, and at its default options it reports nearly every number literal: about 187,500
+findings in vscode's `src/`. That would grow `corpus-vscode.expected.json` from 4.5 MB to about 41 MB, so the rule
+stays in `candidates/` until the recording can hold it. It would start off anyway: no approved typescript-eslint
+configuration turns it on.
 
 ## `init-declarations` can't pass Gate 5
 

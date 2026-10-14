@@ -134,6 +134,19 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-empty-object-type",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-empty-object-type"
+      },
+      "policy": "rules/typescript-eslint-no-empty-object-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-extra-non-null-assertion",
       "upstream": {
         "tool": "typescript-eslint",
@@ -204,6 +217,20 @@
       "policy": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
       "capabilities": [
         "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unsafe-declaration-merging",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unsafe-declaration-merging"
+      },
+      "policy": "rules/typescript-eslint-no-unsafe-declaration-merging.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -305,6 +332,21 @@
       "policy": "rules/typescript-eslint-prefer-namespace-keyword.json",
       "capabilities": [
         "syntax"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-triple-slash-reference",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/triple-slash-reference"
+      },
+      "policy": "rules/typescript-eslint-triple-slash-reference.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -530,19 +572,6 @@
       "match": "line+column"
     },
     {
-      "id": "typescript-eslint-no-empty-object-type",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-empty-object-type"
-      },
-      "policy": "candidates/rules/typescript-eslint-no-empty-object-type.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "typescript-eslint-no-extraneous-class",
       "upstream": {
         "tool": "typescript-eslint",
@@ -705,20 +734,6 @@
       "match": "line+column"
     },
     {
-      "id": "typescript-eslint-no-unsafe-declaration-merging",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/no-unsafe-declaration-merging"
-      },
-      "policy": "candidates/rules/typescript-eslint-no-unsafe-declaration-merging.json",
-      "capabilities": [
-        "syntax",
-        "compare",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "typescript-eslint-no-unused-private-class-members",
       "upstream": {
         "tool": "typescript-eslint",
@@ -814,21 +829,6 @@
       "policy": "candidates/rules/typescript-eslint-prefer-function-type.json",
       "capabilities": [
         "syntax"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "typescript-eslint-triple-slash-reference",
-      "upstream": {
-        "tool": "typescript-eslint",
-        "rule": "@typescript-eslint/triple-slash-reference"
-      },
-      "policy": "candidates/rules/typescript-eslint-triple-slash-reference.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "compare",
-        "suppression"
       ],
       "match": "line+column"
     },
