@@ -142,8 +142,10 @@ a value of a module named by path handed to a call (it may be the config itself)
 and an exported object that may hold a `default` key (ESLint's loader may take that
 instead). A type-only import is erased, so its names are the globals. A file with
 anything else, a value of its own Rerail cannot follow (a choice between local
-configs, an exported `const`), or a file Rerail cannot load (a link, or one over
-1 MiB) is not statically readable: Rerail cannot tell which rules it turns off,
+configs, an exported `const`), a file Rerail cannot load (a link, or one over
+1 MiB), or one that takes more than 100,000 steps or builds more than 100,000
+values to read (a `const` named twice in the next, level after level, doubles
+both) is not statically readable: Rerail cannot tell which rules it turns off,
 so every rule Rerail ports from ESLint starts off, with no options, and the
 screen says why first. Only a value from an imported module (a shared config, or
 a choice between one and nothing) is named as not read and read around. A config that is read, is read as ESLint applies it: its
@@ -188,7 +190,9 @@ oxlint's `react/x`; eslint-plugin-n's `n/x` is oxlint's `node/x`), so
 `custom/no-console` (another plugin's rule) changes nothing; a Ruff selector
 that selects one of its `noqa.codes` (`E7` selects `E711`, `E` does not
 select `ERA001`, `ALL` selects every code). A rule set to `"off"`/`0` (oxlint
-also `"allow"`) for every file, or ignored by Ruff, starts off; when one
+also `"allow"`; an `.eslintrc` or `eslintConfig` severity in any case, `"OFF"`,
+as ESLint's eslintrc loader lower-cases it, and a flat config's in lower case
+only, as ESLint 9 refuses `"OFF"` there) for every file, or ignored by Ruff, starts off; when one
 config turns a rule off and another keeps it on, it starts off and the screen
 says so. ESLint options become the
 port's `config` when every value lands on an option its document declares:
@@ -198,7 +202,8 @@ object's keys keep their names and a nested object's keys are
 `@typescript-eslint/consistent-type-definitions` gives `option = "type"`.
 Options that do not map, or that the document rejects, are left at the port's
 defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
-symlink is not read, and a rule the person already set in the dashboard's
+symlink is not read, nor is a TOML file whose arrays or inline tables nest more
+than 64 deep, and a rule the person already set in the dashboard's
 review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
 the lint config.
 

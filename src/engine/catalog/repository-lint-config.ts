@@ -195,6 +195,11 @@ export interface LintConfigRules {
    * ports from this linter starts off, with no options.
    */
   readonly unreadable?: string;
+  /**
+   * Set for an ESLint config read the eslintrc way (an `.eslintrc` file, `package.json` `eslintConfig`). ESLint's
+   * eslintrc loader lower-cases a severity string, so `"OFF"` is `"off"` there; its flat config refuses `"OFF"`.
+   */
+  readonly eslintrc?: true;
 }
 
 /** A flat config entry Rerail cannot read: why, and what after it Rerail does not read either and may replace it. */
@@ -304,7 +309,15 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     ? eslintrcOverrides(file, config, notes)
     : { scoped: [], shadowedBy: config.overrides === undefined ? undefined : `${file} overrides` };
   const shadowed = new Map(overrides.shadowedBy === undefined ? [] : Object.keys(rules.data).map(key => [key, overrides.shadowedBy!] as const));
-  return { file, rules: rules.data, scoped: overrides.scoped, unresolved: new Map(), shadowed, optionsUnknown: new Map() };
+  return {
+    file,
+    rules: rules.data,
+    scoped: overrides.scoped,
+    unresolved: new Map(),
+    shadowed,
+    optionsUnknown: new Map(),
+    ...(linter === "eslint" ? { eslintrc: true as const } : {}),
+  };
 }
 
 const eslintrcOverride = z.looseObject({
@@ -724,11 +737,15 @@ export function ruffDecision(selection: RuffSelection, code: string): RuffDecisi
 
 const ruffText = ({ file, key, selector }: RuffSelector): string => `${file}: ${JSON.stringify(selector)} in ${key}`;
 
-/** A rule entry's severity: `off`, `on`, or undefined when it is not one the linter takes; with the options after it. */
-function severityOf(value: unknown, linter: "eslint" | "oxlint"): { off: boolean; options: unknown[] } | undefined {
-  const [level, ...options] = Array.isArray(value) ? value : [value];
-  const off = linter === "eslint" ? ["off", 0] : ["off", "allow", 0];
-  const on = linter === "eslint" ? ["warn", "error", 1, 2] : ["warn", "error", "deny", 1, 2];
+/**
+ * A rule entry's severity: `off`, `on`, or undefined when it is not one the linter takes; with the options after it.
+ * `eslint` is a flat config's, `eslintrc` the eslintrc loader's, which takes a severity string in any case.
+ */
+function severityOf(value: unknown, linter: "eslint" | "eslintrc" | "oxlint"): { off: boolean; options: unknown[] } | undefined {
+  const [written, ...options] = Array.isArray(value) ? value : [value];
+  const level: unknown = linter === "eslintrc" && typeof written === "string" ? written.toLowerCase() : written;
+  const off = linter === "oxlint" ? ["off", "allow", 0] : ["off", 0];
+  const on = linter === "oxlint" ? ["warn", "error", "deny", 1, 2] : ["warn", "error", 1, 2];
   if (off.includes(level as string)) return { off: true, options };
   if (on.includes(level as string)) return { off: false, options };
   return undefined;
@@ -839,6 +856,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
     return configured.ok ? config : { ok: false, reason: configured.reason };
   };
   const eslint = files.eslint;
+  const eslintSeverities = eslint?.eslintrc === true ? "eslintrc" : "eslint";
   for (const [ruleId, port] of ports) {
     for (const key of new Set(port.eslint)) {
       if (eslint === undefined) break;
@@ -861,21 +879,21 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       if (global) {
         const value = eslint.rules[key];
         const because = entryText(eslint.file, key, value);
-        const severity = severityOf(value, "eslint");
+        const severity = severityOf(value, eslintSeverities);
         const shadowedBy = eslint.shadowed.get(key);
         if (severity === undefined) {
           notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
         } else if (shadowedBy !== undefined) {
           notes.push(`${ruleId}: ${because} is not used: ${replacedBy(shadowedBy)}.`);
         } else {
-          const back = severity.off ? later.find(entry => severityOf(entry.value, "eslint")?.off === false) : undefined;
+          const back = severity.off ? later.find(entry => severityOf(entry.value, eslintSeverities)?.off === false) : undefined;
           if (back !== undefined) {
             notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
           } else {
             // Options for every file are the port's for the whole repository only when no entry for some files sets
             // others: there they would change what ESLint reports.
             const otherOptions = severity.off || severity.options.length === 0 ? undefined : later.find(entry => {
-              const scoped = entry.shadowedBy === undefined ? severityOf(entry.value, "eslint") : undefined;
+              const scoped = entry.shadowedBy === undefined ? severityOf(entry.value, eslintSeverities) : undefined;
               return scoped !== undefined && !scoped.off && scoped.options.length > 0 && stableJsonText(scoped.options) !== stableJsonText(severity.options);
             });
             const unknown = severity.off || severity.options.length === 0 ? undefined : eslint.optionsUnknown.get(key);
@@ -892,7 +910,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       }
       for (const [index, entry] of later.entries()) {
         const because = `${entryText(eslint.file, key, entry.value)} for ${entry.files}`;
-        const severity = severityOf(entry.value, "eslint");
+        const severity = severityOf(entry.value, eslintSeverities);
         if (severity === undefined) {
           notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
           continue;
@@ -903,7 +921,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
         }
         if (severity.off) {
           // A later entry that turns it back on may cover any of these files.
-          const back = later.slice(index + 1).find(next => severityOf(next.value, "eslint")?.off === false);
+          const back = later.slice(index + 1).find(next => severityOf(next.value, eslintSeverities)?.off === false);
           if (back !== undefined) {
             notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
           } else if (entry.folders !== undefined) {
@@ -914,7 +932,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
         } else if (severity.options.length > 0) {
           // A rule setting's config is for the whole repository, so options set for some files are used only when no
           // entry for every file sets the rule: otherwise they would change it for files they do not cover.
-          const forEvery = global ? severityOf(eslint.rules[key], "eslint") : undefined;
+          const forEvery = global ? severityOf(eslint.rules[key], eslintSeverities) : undefined;
           if (forEvery === undefined) add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
           // An entry for every file with options of its own says so above; one with a severity alone keeps the defaults.
           else if (forEvery.options.length === 0) {

@@ -138,6 +138,20 @@ describe("readTomlStringLists", () => {
     expect(() => readTomlStringLists("[tool.ruff.lint]\nignore = [\"E7\"] extra\n", PYPROJECT_KEYS)).toThrow("expected the end of the line");
     expect(() => readTomlStringLists("key = \"\\q\"\n", PYPROJECT_KEYS)).toThrow("unknown escape");
   });
+
+  // PR #50 review: values nested without end overflowed the stack, an error set-up does not catch.
+  it("refuses values nested more than 64 deep, and reads shallower ones", () => {
+    expect(readTomlStringLists("x = [[[\"a\"]]]\ny = { a = { b = { c = 1 } } }\n", []).paths).toEqual(["x", "y", "y.a", "y.a.b", "y.a.b.c"]);
+    expect(readTomlStringLists(`x = ${"[".repeat(64)}${"]".repeat(64)}\n`, []).paths).toEqual(["x"]);
+    expect(readTomlStringLists(`x = ${"{ a = ".repeat(63)}1${" }".repeat(63)}\n`, []).paths).toHaveLength(64);
+    expect(() => readTomlStringLists(`x = ${"[".repeat(65)}${"]".repeat(65)}\n`, [])).toThrow("line 1: values nest more than 64 deep");
+    expect(() => readTomlStringLists(`x = ${"{ a = ".repeat(65)}1${" }".repeat(65)}\n`, [])).toThrow("line 1: values nest more than 64 deep");
+    // A dotted key in an inline table nests a table for each part before the last.
+    expect(readTomlStringLists(`x = { ${"a.".repeat(63)}a = 1 }\n`, []).paths).toHaveLength(65);
+    expect(() => readTomlStringLists(`x = { ${"a.".repeat(64)}a = 1 }\n`, [])).toThrow("line 1: values nest more than 64 deep");
+    expect(() => readTomlStringLists(`x = ${"[".repeat(100_000)}\n`, [])).toThrow(LintConfigFormatError);
+    expect(() => readTomlStringLists(`x = { ${"a.".repeat(100_000)}a = 1 }\n`, [])).toThrow(LintConfigFormatError);
+  });
 });
 
 describe("ruffSelects", () => {
@@ -192,7 +206,7 @@ describe("readLintConfigFiles", () => {
   it("reads .eslintrc.json as JSONC, noting what besides its top-level rules it does not read", async () => {
     const root = await repository({ ".eslintrc.json": "{\n  // ours\n  \"extends\": [\"airbnb\"],\n  \"rules\": { \"no-console\": \"off\", },\n}\n" });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
+    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), eslintrc: true });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json: only its own rules are read, not extends."]);
   });
 
@@ -210,7 +224,7 @@ describe("readLintConfigFiles", () => {
 
   it("reads package.json eslintConfig where there is no config file", async () => {
     const root = await repository({ "package.json": JSON.stringify({ name: "acme", eslintConfig: { rules: { "no-console": 0 } } }) });
-    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
+    expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), eslintrc: true });
   });
 
   it("does not follow a symlinked config", async () => {
@@ -258,6 +272,12 @@ describe("readLintConfigFiles", () => {
     const unreadable = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = \"E7\"\n" });
     expect(readLintConfigFiles(unreadable).notes.map(note => note.text)).toEqual(["pyproject.toml is not read: line 2: tool.ruff.lint.ignore is not a list of strings."]);
   });
+
+  it("reports a Ruff config nested deeper than it reads as not read", async () => {
+    const root = await repository({ "ruff.toml": `[lint]\nignore = ["E7"]\nx = ${"[".repeat(100_000)}\n` });
+    expect(readLintConfigFiles(root)).toMatchObject({ ruff: undefined, notes: [{ linter: "ruff", text: "ruff.toml is not read: line 3: values nest more than 64 deep." }] });
+    expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({ settings: [], notes: ["ruff.toml is not read: line 3: values nest more than 64 deep."] });
+  });
 });
 
 describe("proposeLintConfigSettings", () => {
@@ -281,6 +301,44 @@ describe("proposeLintConfigSettings", () => {
       { ruleId: "eslint-no-console", folder: "", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"off\"" },
     ]);
     expect(readRepositoryLintConfig(root, bundle, ["typescript"]).settings).toEqual([]);
+  });
+
+  // PR #50 review: ESLint's eslintrc loader lower-cases a severity string. ESLint 9.39.1 with
+  // ESLINT_USE_FLAT_CONFIG=false reports no console call for "no-console": "OFF" and warns for "no-debugger": "Warn",
+  // from an .eslintrc.json and from package.json eslintConfig alike.
+  it("takes an .eslintrc or package.json eslintConfig severity in any case, as ESLint's eslintrc loader does", async () => {
+    const off = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": \"OFF\" } }" });
+    expect(readRepositoryLintConfig(off, bundle, ["javascript"])).toEqual({
+      settings: [{ ruleId: "eslint-no-console", folder: "", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"OFF\"" }],
+      notes: [],
+    });
+    const warn = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"Warn\", { \"allow\": [\"log\"] }] } }" });
+    expect(readRepositoryLintConfig(warn, bundle, ["javascript"])).toEqual({
+      settings: [{ ruleId: "eslint-no-console", folder: "", on: null, config: { allow: ["log"] }, because: ".eslintrc.json: \"no-console\": [\"Warn\",{\"allow\":[\"log\"]}]" }],
+      notes: [],
+    });
+    // An override's "WARN" turns the rule back on where it applies.
+    const back = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "no-console": "Off" }, overrides: [{ files: ["src/**/*.ts"], rules: { "no-console": "WARN" } }] }) });
+    expect(readRepositoryLintConfig(back, bundle, ["javascript"])).toEqual({
+      settings: [],
+      notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"Off\" turns it off, but .eslintrc.json: \"no-console\": \"WARN\" turns it back on for [\"src/**/*.ts\"]; it stays on."],
+    });
+    const manifest = await repository({ "package.json": JSON.stringify({ name: "acme", eslintConfig: { rules: { "no-console": "OFF" } } }) });
+    expect(readRepositoryLintConfig(manifest, bundle, ["javascript"]).settings).toEqual([
+      { ruleId: "eslint-no-console", folder: "", on: false, config: null, because: "package.json eslintConfig: \"no-console\": \"OFF\"" },
+    ]);
+  });
+
+  // ESLint 9.39.1 refuses this flat config: 'Configuration for rule "no-console" is invalid. Expected severity of
+  // "off", 0, "warn", 1, "error", or 2. You passed '"OFF"'.' (and the same for "Warn").
+  it("takes a flat config severity in lower case only, as ESLint 9 does", async () => {
+    for (const level of ["OFF", "Warn"]) {
+      const root = await repository({ "eslint.config.js": `export default [{ rules: { "no-console": "${level}" } }];` });
+      expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+        settings: [],
+        notes: [`eslint-no-console: eslint.config.js: "no-console": "${level}" is not a severity ESLint takes; not read.`],
+      });
+    }
   });
 
   it("maps an option object onto the options the port declares, and skips one it cannot map with a note", async () => {
@@ -914,5 +972,39 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     expect((await flat(`${start}, { rules: { "no-console": "error" } }];`, ["javascript"])).settings).toEqual([]);
     // An off after it is still an off.
     expect((await flat(`${start}];`, ["javascript"])).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+  });
+
+  // PR #50 review: a const named twice, a choice with the same const on both sides, or an array spread twice doubles
+  // what the reader walks at each level, so 40 levels would take it 2^40 visits, and a spread of over about 100,000
+  // items overflowed the stack.
+  describe("a config that doubles itself through consts", () => {
+    /** `const <name>0 = <first>;`, then `levels` consts, each made of the one before by `step`. */
+    const doubling = (name: string, first: string, step: (previous: string) => string, levels: number): string => [
+      `const ${name}0 = ${first};`,
+      ...Array.from({ length: levels }, (_, index) => `const ${name}${index + 1} = ${step(`${name}${index}`)};`),
+    ].join("\n");
+
+    async function expectTooLarge(text: string, why: string): Promise<void> {
+      const proposed = await flat(text, ["javascript"], "eslint.config.js");
+      expectEslintPortsOff(proposed.settings);
+      expect(proposed.notes).toEqual([
+        `eslint.config.js is not statically readable: ${why}. Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.`,
+      ]);
+    }
+
+    it("stops reading an array that names the one before it twice", async () => {
+      const text = `${doubling("a", "{ rules: { \"no-console\": \"off\" } }", a => `[${a}, ${a}]`, 40)}\nexport default a40;`;
+      await expectTooLarge(text, "it takes more than 100000 steps to read");
+    });
+
+    it("stops reading a choice between an imported config and itself", async () => {
+      const text = `import shared from "shared-config";\n${doubling("c", "shared", c => `undefined ? ${c} : ${c}`, 40)}\nexport default [c40, { rules: { "no-console": "off" } }];`;
+      await expectTooLarge(text, "it takes more than 100000 steps to read");
+    });
+
+    it("stops reading an array that spreads the one before it twice", async () => {
+      const text = `${doubling("s", "[\"src/**\"]", s => `[...${s}, ...${s}]`, 20)}\nexport default [{ files: s20, rules: { "no-console": "off" } }];`;
+      await expectTooLarge(text, "it builds more than 100000 values");
+    });
   });
 });

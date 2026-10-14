@@ -75,6 +75,11 @@ const BARE_KEY_TEXT = /^[A-Za-z0-9_-]+$/u;
 /** A key path as TOML writes it: bare parts as they are, others quoted, so `"lint.ignore"` is not `lint.ignore`. */
 const dottedPath = (parts: readonly string[]): string => parts.map(part => (BARE_KEY_TEXT.test(part) ? part : JSON.stringify(part))).join(".");
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", "\"": "\"", "\\": "\\" };
+/**
+ * How many arrays and inline tables a value may nest in (a dotted key in an inline table nests a table for each part
+ * before the last). The reader recurses into each, so a deeper file would overflow the stack.
+ */
+const MAX_NESTING = 64;
 
 /**
  * A TOML reader for exactly what set-up reads: the string lists at `wanted` key paths, in the `wantedTables` tables
@@ -164,17 +169,19 @@ class TomlReader {
     if (this.text[this.#index] !== "=") this.#fail("expected =");
     this.#index += 1;
     this.#skipBlank(false);
-    const value = this.#value();
+    const value = this.#value(0);
     if (this.#table !== undefined) this.#collect([...this.#table, ...key], value);
   }
 
-  #collect(path: readonly string[], value: TomlValue): void {
+  /** Records `value` at `path`; `depth` is how many tables of the key's value enclose it. */
+  #collect(path: readonly string[], value: TomlValue, depth = 0): void {
     const dotted = dottedPath(path);
     if (this.#paths.has(dotted) && !(value instanceof Map)) this.#fail(`${dotted} is set twice`);
     this.#paths.add(dotted);
     if (value instanceof Map) {
+      if (depth >= MAX_NESTING) this.#fail(`values nest more than ${MAX_NESTING} deep`);
       this.#wantedTable(dotted);
-      for (const [key, inner] of value) this.#collect([...path, key], inner);
+      for (const [key, inner] of value) this.#collect([...path, key], inner, depth + 1);
       return;
     }
     if (this.wantedTables.has(dotted)) this.#fail(`${dotted} is not a table`);
@@ -211,11 +218,14 @@ class TomlReader {
     }
   }
 
-  #value(): TomlValue {
+  /** A value inside `depth` arrays and inline tables. */
+  #value(depth: number): TomlValue {
     const char = this.text[this.#index];
     if (char === "\"" || char === "'") return this.#string();
-    if (char === "[") return this.#array();
-    if (char === "{") return this.#inlineTable();
+    if (char === "[" || char === "{") {
+      if (depth >= MAX_NESTING) this.#fail(`values nest more than ${MAX_NESTING} deep`);
+      return char === "[" ? this.#array(depth + 1) : this.#inlineTable(depth + 1);
+    }
     // A number, boolean or date: never wanted, so only its extent matters.
     const start = this.#index;
     while (this.#index < this.text.length && !"\n\r#,]}".includes(this.text[this.#index]!)) this.#index += 1;
@@ -225,13 +235,13 @@ class TomlReader {
     return { scalar };
   }
 
-  #array(): TomlValue[] {
+  #array(depth: number): TomlValue[] {
     this.#index += 1;
     const items: TomlValue[] = [];
     for (;;) {
       this.#skipBlank(true);
       if (this.text[this.#index] === "]") break;
-      items.push(this.#value());
+      items.push(this.#value(depth));
       this.#skipBlank(true);
       if (this.text[this.#index] === ",") this.#index += 1;
       else if (this.text[this.#index] !== "]") this.#fail("expected , or ] in a list");
@@ -240,7 +250,7 @@ class TomlReader {
     return items;
   }
 
-  #inlineTable(): Map<string, TomlValue> {
+  #inlineTable(depth: number): Map<string, TomlValue> {
     this.#index += 1;
     const table = new Map<string, TomlValue>();
     this.#skipBlank(false);
@@ -262,7 +272,7 @@ class TomlReader {
       }
       const last = key.at(-1)!;
       if (target.has(last)) this.#fail(`${key.join(".")} is set twice`);
-      target.set(last, this.#value());
+      target.set(last, this.#value(depth));
       this.#skipBlank(false);
       const char = this.text[this.#index];
       this.#index += 1;

@@ -56,6 +56,14 @@ const TYPESCRIPT_ESLINT_MODULES = new Set(["typescript-eslint"]);
 /** How deep a value may nest or a binding chain may go before it is not read. */
 const MAX_DEPTH = 64;
 /**
+ * How much work reading one file may take: the reader steps into a value (`#step`) and builds JSON values (`#built`).
+ * A const named twice (`const b = [a, a]`), a choice with it on both sides, or an array spread twice doubles both at
+ * each level, so 40 such levels in a small file would take 2^40 steps. A config written by hand takes far less: 1,000
+ * rules set to `["error", { ... }]` with ten options each take 13,000 steps and build 12,000 values.
+ */
+const MAX_STEPS = 100_000;
+const MAX_VALUES = 100_000;
+/**
  * The only globals a data file may name outside its trusted calls (`#trustedCall`): any other name the file neither
  * declares nor imports (`require`, `module`, `process`, `globalThis`, `eval`, `arguments`, ...) can reach the
  * exported config or run code.
@@ -117,6 +125,8 @@ class FlatConfigReader {
   readonly #entries: Entry[] = [];
   readonly #unread: string[] = [];
   readonly #notes: string[] = [];
+  #steps = 0;
+  #values = 0;
 
   constructor(readonly text: string, readonly program: t.Program) {}
 
@@ -361,6 +371,18 @@ class FlatConfigReader {
     return text.length > MAX_SOURCE_TEXT ? `${text.slice(0, MAX_SOURCE_TEXT - 1)}…` : text;
   }
 
+  /** One step into a value; throws once the file takes more than `MAX_STEPS`. */
+  #step(): void {
+    this.#steps += 1;
+    if (this.#steps > MAX_STEPS) throw new LintConfigFormatError(`it takes more than ${MAX_STEPS} steps to read`);
+  }
+
+  /** `count` more JSON values built; throws once the file builds more than `MAX_VALUES`. */
+  #built(count: number): void {
+    this.#values += count;
+    if (this.#values > MAX_VALUES) throw new LintConfigFormatError(`it builds more than ${MAX_VALUES} values`);
+  }
+
   /** `node` without TypeScript's type wrappers, and a same-file `const` it names replaced by its value. */
   #unwrap(node: t.Expression, depth: number): t.Expression {
     let current = node;
@@ -379,6 +401,7 @@ class FlatConfigReader {
 
   /** The config objects `node` holds, in order, as ESLint flattens a config array. */
   #elements(node: t.Expression, scope: FlatConfigScope, depth: number): void {
+    this.#step();
     const value = this.#unwrap(node, depth);
     if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
     if (value.type === "ArrayExpression") {
@@ -404,6 +427,7 @@ class FlatConfigReader {
    * such a value as not read; it cannot read it without the module.
    */
   #fromImport(node: t.Expression, depth: number): boolean {
+    this.#step();
     let root: t.Node = this.#unwrap(node, depth);
     if (root.type === "ConditionalExpression") {
       const branches = [root.consequent, root.alternate].map(branch => this.#unwrap(branch, depth + 1));
@@ -482,6 +506,7 @@ class FlatConfigReader {
    * anything) hides what they are.
    */
   #properties(object: t.ObjectExpression, depth: number): Map<string, t.Expression> | undefined {
+    this.#step();
     const properties = new Map<string, t.Expression>();
     for (const property of object.properties) {
       if (property.type === "SpreadElement") {
@@ -543,10 +568,11 @@ class FlatConfigReader {
   #rules(node: t.Expression, scope: FlatConfigScope, depth: number): void {
     const own = new Map<string, Entry>();
     this.#gatherRules(node, scope, depth, own);
-    this.#entries.push(...own.values());
+    for (const entry of own.values()) this.#entries.push(entry);
   }
 
   #gatherRules(node: t.Expression, scope: FlatConfigScope, depth: number, own: Map<string, Entry>): void {
+    this.#step();
     if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
     const rules = this.#unwrap(node, depth);
     if (rules.type !== "ObjectExpression") {
@@ -577,6 +603,7 @@ class FlatConfigReader {
 
   /** `node` as JSON where it is literal, through same-file `const` bindings and spreads; why not otherwise. */
   #resolve(node: t.Expression, depth: number): Resolved {
+    this.#step();
     if (depth > MAX_DEPTH) return { ok: false, why: "it nests too deep" };
     const value = this.#unwrap(node, depth);
     const unread = (): Resolved => ({ ok: false, why: `it is ${this.#source(value)}, which Rerail does not run` });
@@ -603,8 +630,10 @@ class FlatConfigReader {
           if (!inner.ok) return inner;
           if (element.type === "SpreadElement") {
             if (!Array.isArray(inner.value)) return unread();
-            items.push(...inner.value);
+            this.#built(inner.value.length);
+            for (const item of inner.value) items.push(item);
           } else {
+            this.#built(1);
             items.push(inner.value);
           }
         }
@@ -617,6 +646,7 @@ class FlatConfigReader {
             const inner = this.#resolve(property.argument, depth + 1);
             if (!inner.ok) return inner;
             if (inner.value === null || typeof inner.value !== "object" || Array.isArray(inner.value)) return unread();
+            this.#built(Object.keys(inner.value).length);
             Object.assign(object, inner.value);
             continue;
           }
@@ -624,6 +654,7 @@ class FlatConfigReader {
           if (key === undefined || property.type !== "ObjectProperty" || !isExpression(property.value)) return unread();
           const inner = this.#resolve(property.value, depth + 1);
           if (!inner.ok) return inner;
+          this.#built(1);
           Object.defineProperty(object, key, { value: inner.value, enumerable: true, writable: true, configurable: true });
         }
         return { ok: true, value: object };
