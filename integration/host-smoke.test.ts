@@ -1,8 +1,9 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
-import { inspectOutcome, isInconclusive } from "../scripts/host/host-smoke.js";
+import { inspectOutcome, isInconclusive, watchForViolation } from "../scripts/host/host-smoke.js";
 import { defaultRerailDatabasePath } from "../src/engine/index.js";
 import { SqliteSessionStore } from "../src/runtime/index.js";
 
@@ -37,7 +38,7 @@ it("accepts a completed violation retry without accepting unrelated or mismatche
     };
     const accepted = async (): Promise<boolean> => {
       const assertions: Parameters<typeof inspectOutcome>[2] = [];
-      await inspectOutcome(project, nonce, assertions, { exitCode: 0, stdout: "", stderr: "" }, "transport");
+      await inspectOutcome(project, nonce, assertions, { exitCode: 0, stdout: "", stderr: "" }, true, "transport");
       return assertions.every((assertion) => assertion.passed);
     };
     const input = { command: "printf 'cursor.execute(1)' > api/route.py" };
@@ -65,7 +66,7 @@ it("counts extension errors from this package's extension or engine and ignores 
   new SqliteSessionStore(defaultRerailDatabasePath()).close();
   const silent = async (stderr: string): Promise<boolean | undefined> => {
     const assertions: Parameters<typeof inspectOutcome>[2] = [];
-    await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr }, "transport");
+    await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr }, true, "transport");
     return assertions.find((assertion) => assertion.name === "extension stayed silent")?.passed;
   };
   expect(await silent("Extension error (/checkout/package/dist/hosts/omp/default-extension.js): handler timed out after 5000ms")).toBe(false);
@@ -74,40 +75,24 @@ it("counts extension errors from this package's extension or engine and ignores 
   expect(await silent("Extension error (/elsewhere/other-extension.js): unrelated failure")).toBe(true);
 });
 
-it("counts a Codex shell violation as written only once the set-call helper logged writing it", async () => {
-  const project = await mkdtemp(join(tmpdir(), "rerail-smoke-helper-"));
+it("sees a forbidden call that was on disk only briefly, and reports read failures instead of absence", async () => {
+  const project = await mkdtemp(join(tmpdir(), "rerail-smoke-watch-"));
   temporaryDirectories.push(project);
-  vi.stubEnv("RERAIL_HOME", join(project, "home"));
-  await mkdir(join(project, ".rerail", "sessions"), { recursive: true });
-  await mkdir(join(project, "tools"), { recursive: true });
-  await writeFile(join(project, "tools", "set_call.py"), "");
-  const sessionId = "helper-session";
-  const store = new SqliteSessionStore(defaultRerailDatabasePath());
-  try {
-    const session: Parameters<SqliteSessionStore["openSession"]>[0] = { host: "codex", sessionId, cwd: project };
-    store.openSession(session, 100);
-    const input = { command: "bash -lc \"python3 tools/set_call.py cursor.execute\"" };
-    for (const [sequence, kind, payload] of [
-      [1, "call", { toolCallId: "violation", toolName: "Bash", input }],
-      [2, "result", { toolCallId: "violation", toolName: "Bash", output: "bash: syntax error" }],
-    ] as const) {
-      const event = { ...payload, sessionId, eventId: `event-${sequence}`, kind };
-      store.append({ ...event, observedAt: 100 + sequence, payload: event });
-    }
-  } finally {
-    store.close();
-  }
-  const outcome = async (): Promise<Record<string, boolean>> => {
-    const assertions: Parameters<typeof inspectOutcome>[2] = [];
-    await inspectOutcome(project, "nonce", assertions, { exitCode: 0, stdout: "", stderr: "" }, "transport");
-    return Object.fromEntries(assertions.map((assertion) => [assertion.name, assertion.passed]));
-  };
-  // Rerail recorded a completed call either way; only the helper's log says whether the file changed.
-  expect(await outcome()).toMatchObject({ "real violation evidence": true, "violation reached the file": false });
-  await writeFile(join(project, "tools", "set_call.log"), "transaction.fetch_value\n");
-  expect(await outcome()).toMatchObject({ "violation reached the file": false });
-  await writeFile(join(project, "tools", "set_call.log"), "cursor.execute\ntransaction.fetch_value\n");
-  expect(await outcome()).toMatchObject({ "violation reached the file": true });
+  const route = join(project, "route.py");
+  // The file does not exist yet, then never holds the call.
+  const quiet = watchForViolation(route);
+  await sleep(150);
+  await writeFile(route, "return transaction.fetch_value('SELECT 1')\n");
+  await sleep(300);
+  expect(await quiet()).toBe(false);
+  // A violation restored before the run ends, as an edit-tool host's model does after the diagnostic.
+  const watching = watchForViolation(route);
+  await writeFile(route, "return cursor.execute('SELECT 1')\n");
+  await sleep(300);
+  await writeFile(route, "return transaction.fetch_value('SELECT 1')\n");
+  expect(await watching()).toBe(true);
+  // A path that can't be read (here a directory) is an error, never "the violation was absent".
+  await expect(watchForViolation(project)()).rejects.toThrow();
 });
 
 it("retries only attempts where the provider, not Rerail, kept the violation from being judged", () => {
