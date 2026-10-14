@@ -15,7 +15,7 @@ export const LANGUAGE_NOT_SUPPORTED = "language-not-supported";
 
 export interface CodeRuleLanguageNotSupported {
   code: typeof LANGUAGE_NOT_SUPPORTED;
-  /** Where and why, as the engine words it: `/clauses/0/forbid/ast/language: \`vue\` is not supported yet`. */
+  /** Where and why, as the engine words it: `/clauses/0/forbid/ast/language: \`<language>\` is not supported yet`. */
   reason: string;
 }
 

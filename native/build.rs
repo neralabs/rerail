@@ -60,6 +60,22 @@ struct VendoredGrammar {
 }
 
 const GRAMMARS: &[VendoredGrammar] = &[
+    // tree-sitter-grammars/tree-sitter-vue, commit ce8011a414fdf8091f4e4071752efc376f4afb08 (no release;
+    // package.json 0.1.0).
+    VendoredGrammar {
+        name: "vue",
+        source: "grammars/tree-sitter-vue/src",
+        headers: "grammars/tree-sitter-vue/src",
+        version: (0, 1, 0),
+        inputs: &[
+            "grammars/tree-sitter-vue/src/grammar.json",
+            "grammars/tree-sitter-vue/src/scanner.c",
+            "grammars/tree-sitter-vue/src/tag.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/array.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/parser.h",
+        ],
+    },
     // tree-sitter-python 0.25.0 with the patches in grammars/tree-sitter-python/PATCHES.md.
     VendoredGrammar {
         name: "python",

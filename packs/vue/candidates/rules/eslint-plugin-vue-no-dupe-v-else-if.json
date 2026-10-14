@@ -1,0 +1,1139 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-dupe-v-else-if",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-dupe-v-else-if` with default options. Reads the view program's `if (...) { } else if (...) { }` chain (v-if / v-else-if elements, nested chains stay separate): for each else-if test it applies eslint-plugin-vue's or/and set-cover (the test and, when it is a `&&`, each flattened `&&` operand are the conditions; a condition is dead when every `||` operand of it is a superset, as a set of `&&` operands compared by tokens with `||`/`&&` operands in either order, of an `||` operand of some earlier test in the chain) and reports the first condition to become dead walking the chain from the nearest earlier branch, operands in source order and the whole test last, at that condition (parentheses excluded, as ESTree).",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "all": [
+              {
+                "pattern": "$W"
+              },
+              {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              {
+                "not": {
+                  "kind": "comment"
+                }
+              },
+              {
+                "matches": "cand"
+              },
+              {
+                "inside": {
+                  "field": "condition",
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^&&$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "if_statement",
+                  "all": [
+                    {
+                      "pattern": "$S"
+                    },
+                    {
+                      "matches": {
+                        "find_pj": {
+                          "W": "$W",
+                          "S": "$S"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "utils": {
+            "andbin": {
+              "kind": "binary_expression",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^&&$"
+              }
+            },
+            "orbin": {
+              "kind": "binary_expression",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^\\|\\|$"
+              }
+            },
+            "andleaf": {
+              "all": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "comment"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "binary_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^&&$"
+                    }
+                  }
+                }
+              ]
+            },
+            "orleaf": {
+              "all": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "comment"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "binary_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\|\\|$"
+                    }
+                  }
+                }
+              ]
+            },
+            "matched_x": {
+              "params": [
+                "X",
+                "O"
+              ],
+              "rule": {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "if_statement",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "else_clause"
+                    }
+                  },
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "else_clause"
+                          },
+                          {
+                            "kind": "if_statement"
+                          },
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "binary_expression",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^&&$"
+                            }
+                          },
+                          {
+                            "kind": "binary_expression",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^\\|\\|$"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "pattern": "$O",
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "matches": "andleaf"
+                          },
+                          {
+                            "compare": {
+                              "left": "X",
+                              "op": "eq",
+                              "right": "O",
+                              "text": "tokens",
+                              "commute": [
+                                "||",
+                                "&&"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "matches": "andbin"
+                          },
+                          {
+                            "has": {
+                              "stopBy": {
+                                "matches": "andleaf"
+                              },
+                              "all": [
+                                {
+                                  "matches": "andleaf"
+                                },
+                                {
+                                  "pattern": "$Y"
+                                },
+                                {
+                                  "compare": {
+                                    "left": "X",
+                                    "op": "eq",
+                                    "right": "Y",
+                                    "text": "tokens",
+                                    "commute": [
+                                      "||",
+                                      "&&"
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "subset": {
+              "params": [
+                "O"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "matches": "andleaf"
+                      },
+                      {
+                        "pattern": "$X"
+                      },
+                      {
+                        "matches": {
+                          "matched_x": {
+                            "X": "$X",
+                            "O": "$O"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "andbin"
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": {
+                              "matches": "andleaf"
+                            },
+                            "all": [
+                              {
+                                "matches": "andleaf"
+                              },
+                              {
+                                "pattern": "$X"
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "matched_x": {
+                                      "X": "$X",
+                                      "O": "$O"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "p_removes": {
+              "params": [
+                "O"
+              ],
+              "rule": {
+                "has": {
+                  "field": "condition",
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": {
+                      "matches": "orleaf"
+                    },
+                    "all": [
+                      {
+                        "matches": "orleaf"
+                      },
+                      {
+                        "pattern": "$Q"
+                      },
+                      {
+                        "matches": {
+                          "subset": {
+                            "O": "$O"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "chain_upto": {
+              "params": [
+                "O",
+                "PJ"
+              ],
+              "rule": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "else_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "all": [
+                      {
+                        "pattern": "$M"
+                      },
+                      {
+                        "any": [
+                          {
+                            "matches": {
+                              "p_removes": {
+                                "O": "$O"
+                              }
+                            }
+                          },
+                          {
+                            "all": [
+                              {
+                                "compare": {
+                                  "left": "M",
+                                  "op": "ne",
+                                  "right": "PJ",
+                                  "text": "node"
+                                }
+                              },
+                              {
+                                "matches": {
+                                  "chain_upto": {
+                                    "O": "$O",
+                                    "PJ": "$PJ"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "chain_before": {
+              "params": [
+                "O",
+                "PJ"
+              ],
+              "rule": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "else_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "all": [
+                      {
+                        "pattern": "$M"
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "compare": {
+                                  "left": "M",
+                                  "op": "ne",
+                                  "right": "PJ",
+                                  "text": "node"
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "matches": {
+                                      "p_removes": {
+                                        "O": "$O"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "matches": {
+                                      "chain_before": {
+                                        "O": "$O",
+                                        "PJ": "$PJ"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "removed_upto": {
+              "params": [
+                "O",
+                "PJ"
+              ],
+              "rule": {
+                "inside": {
+                  "field": "condition",
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^&&$"
+                          }
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\|\\|$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "if_statement",
+                  "all": [
+                    {
+                      "matches": {
+                        "chain_upto": {
+                          "O": "$O",
+                          "PJ": "$PJ"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "removed_before": {
+              "params": [
+                "O",
+                "PJ"
+              ],
+              "rule": {
+                "inside": {
+                  "field": "condition",
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^&&$"
+                          }
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^\\|\\|$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "if_statement",
+                  "all": [
+                    {
+                      "matches": {
+                        "chain_before": {
+                          "O": "$O",
+                          "PJ": "$PJ"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "covered_upto": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "not": {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "orleaf"
+                        },
+                        {
+                          "pattern": "$O1"
+                        },
+                        {
+                          "not": {
+                            "matches": {
+                              "removed_upto": {
+                                "O": "$O1",
+                                "PJ": "$PJ"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "orbin"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "orleaf"
+                            },
+                            "all": [
+                              {
+                                "matches": "orleaf"
+                              },
+                              {
+                                "pattern": "$O2"
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "removed_upto": {
+                                      "O": "$O2",
+                                      "PJ": "$PJ"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "covered_before": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "not": {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "orleaf"
+                        },
+                        {
+                          "pattern": "$O1"
+                        },
+                        {
+                          "not": {
+                            "matches": {
+                              "removed_before": {
+                                "O": "$O1",
+                                "PJ": "$PJ"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "orbin"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "orleaf"
+                            },
+                            "all": [
+                              {
+                                "matches": "orleaf"
+                              },
+                              {
+                                "pattern": "$O2"
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "removed_before": {
+                                      "O": "$O2",
+                                      "PJ": "$PJ"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "cand": {
+              "all": [
+                {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                {
+                  "not": {
+                    "kind": "comment"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "field": "condition",
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "if_statement",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "else_clause"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "andleaf"
+                        },
+                        {
+                          "inside": {
+                            "field": "condition",
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "parenthesized_expression"
+                                  },
+                                  {
+                                    "kind": "binary_expression",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^&&$"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            "kind": "if_statement",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "else_clause"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "leaf_cov_upto": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "matches": "andleaf"
+                      },
+                      {
+                        "pattern": "$L1"
+                      },
+                      {
+                        "matches": {
+                          "covered_upto": {
+                            "PJ": "$PJ"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "not": {
+                          "matches": "andleaf"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": {
+                            "matches": "andleaf"
+                          },
+                          "all": [
+                            {
+                              "matches": "andleaf"
+                            },
+                            {
+                              "pattern": "$L2"
+                            },
+                            {
+                              "matches": {
+                                "covered_upto": {
+                                  "PJ": "$PJ"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "earlier_cov_upto": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": {
+                        "leaf_cov_upto": {
+                          "PJ": "$PJ"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "binary_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^&&$"
+                          }
+                        }
+                      ],
+                      "matches": {
+                        "earlier_cov_upto": {
+                          "PJ": "$PJ"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "w_ok": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "matches": {
+                      "covered_upto": {
+                        "PJ": "$PJ"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "inside": {
+                              "field": "condition",
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "kind": "if_statement",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "else_clause"
+                              }
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "not": {
+                                  "kind": "binary_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^&&$"
+                                  }
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "binary_expression",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^&&$"
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "has": {
+                                        "stopBy": {
+                                          "matches": "andleaf"
+                                        },
+                                        "matches": {
+                                          "leaf_cov_upto": {
+                                            "PJ": "$PJ"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "matches": "andleaf"
+                          },
+                          {
+                            "inside": {
+                              "field": "condition",
+                              "stopBy": {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "parenthesized_expression"
+                                    },
+                                    {
+                                      "kind": "binary_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^&&$"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "kind": "if_statement",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "else_clause"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "matches": {
+                                "earlier_cov_upto": {
+                                  "PJ": "$PJ"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "cand_before": {
+              "params": [
+                "PJ"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "matches": "cand"
+                  },
+                  {
+                    "matches": {
+                      "covered_before": {
+                        "PJ": "$PJ"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "at_pj": {
+              "params": [
+                "W",
+                "S",
+                "PJ"
+              ],
+              "rule": {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "else_clause"
+                            },
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "kind": "parenthesized_expression"
+                            },
+                            {
+                              "kind": "binary_expression",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^&&$"
+                              }
+                            },
+                            {
+                              "kind": "binary_expression",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^\\|\\|$"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "pattern": "$W2"
+                        },
+                        {
+                          "compare": {
+                            "left": "W2",
+                            "op": "eq",
+                            "right": "W",
+                            "text": "node"
+                          }
+                        },
+                        {
+                          "matches": {
+                            "w_ok": {
+                              "PJ": "$PJ"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "else_clause"
+                              },
+                              {
+                                "kind": "if_statement"
+                              }
+                            ]
+                          }
+                        },
+                        "all": [
+                          {
+                            "kind": "if_statement"
+                          },
+                          {
+                            "pattern": "$S2"
+                          },
+                          {
+                            "compare": {
+                              "left": "S2",
+                              "op": "eq",
+                              "right": "S",
+                              "text": "node"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "condition",
+                              "stopBy": "end",
+                              "all": [
+                                {
+                                  "pattern": "$Z"
+                                },
+                                {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                },
+                                {
+                                  "matches": {
+                                    "cand_before": {
+                                      "PJ": "$PJ"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "find_pj": {
+              "params": [
+                "W",
+                "S"
+              ],
+              "rule": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "else_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "all": [
+                      {
+                        "pattern": "$PJ"
+                      },
+                      {
+                        "any": [
+                          {
+                            "matches": {
+                              "at_pj": {
+                                "W": "$W",
+                                "S": "$S",
+                                "PJ": "$PJ"
+                              }
+                            }
+                          },
+                          {
+                            "matches": {
+                              "find_pj": {
+                                "W": "$W",
+                                "S": "$S"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-dupe-v-else-if",
+        "message": "This branch can never execute. Its condition is a duplicate or covered by previous conditions in the `v-if` / `v-else-if` chain.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-dupe-v-else-if"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
