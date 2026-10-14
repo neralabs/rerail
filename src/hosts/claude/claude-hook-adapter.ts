@@ -70,15 +70,21 @@ export interface ClaudeOutputOptions {
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
  * shows it under the tool call). At `Stop`, which cannot reach the model without showing it the whole block as an
- * error, only the person's lines are shown; the block waits for the next message (design N4c).
+ * error, only the person's lines are shown; the block waits for the next message (design N4c). A steer counts once,
+ * when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
  */
 export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
-  if (hook === "Stop") return steerLines(deliveries, links, mark);
+  if (hook === "Stop") {
+    const lines = steerLines(deliveries, links, mark);
+    const lined = deliveries.filter(delivery => steerHeadlines(delivery.content).length > 0);
+    return "systemMessage" in lines ? prepareGuidanceOutput(lines, deliveryRuleIds(lined)) : lines;
+  }
   const content = deliveryText(deliveries);
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
   const output = { ...steerLines(deliveries, links, mark), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
-  return content === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(deliveries));
+  const unseen = deliveries.filter(delivery => delivery.shown !== true);
+  return deliveryText(unseen) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
 }
 
 export async function handleClaudeEvent(
@@ -102,7 +108,8 @@ export async function handleClaudeEvent(
   const mark = rerailMark(colourDepth(env));
   if (hook === "Stop") {
     const held = deliveries.filter(delivery => steers(delivery.requested));
-    await persistPending(path, held.map(delivery => ({ ...delivery, shown: true as const })));
+    // Only a steer whose line the person sees here is shown, and counted, now; any other keeps its line for later.
+    await persistPending(path, held.map(delivery => (steerHeadlines(delivery.content).length > 0 ? { ...delivery, shown: true as const } : delivery)));
     return claudeHookOutput(hook, await linkDeliveries(held, cwd), { links, mark });
   }
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;

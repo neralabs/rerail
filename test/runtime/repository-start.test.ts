@@ -445,14 +445,14 @@ describe("repository start state", () => {
       store.recordSteer(session, "r2", ["ts:no-any"]);
       expect(stopped({ session })).toBe([
         HEAD, "  Start it again with /rerail-start.", "",
-        "  The one violation in this session came from ts:no-any.",
+        "  Rerail steered this session on one rule, ts:no-any.",
         "  To turn off only that rule, say “turn that rule off”.",
       ].join("\n"));
 
       store.recordSteer(session, "r3", ["acme:no-print", "ts:no-any", "ts:no-unused"]);
       expect(stopped({ session })).toBe([
         HEAD, "  Start it again with /rerail-start.", "",
-        "  The violations in this session came from ts:no-any, acme:no-print and ts:no-unused.",
+        "  Rerail steered this session on ts:no-any, acme:no-print and ts:no-unused.",
         "  To turn off only one rule instead, say “turn that rule off”.",
       ].join("\n"));
 

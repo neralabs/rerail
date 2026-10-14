@@ -2,10 +2,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
+import { type AdapterDelivery, type RerailEventLoop, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
-import type { HookOptions } from "../../../src/harness/index.js";
+import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -169,6 +169,24 @@ describe("Claude Code one-shot hook", () => {
       systemMessage: "◆ R E R A I L · c  steered",
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringMatching(/Fix a\.[\s\S]*Fix b\.[\s\S]*Fix c\./u) },
     });
+  });
+
+  it("counts a late steer once, when the person sees its line at Stop, not again when its block reaches the agent", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const receipts: Array<readonly string[]> = [];
+    const serve = (input: HookInput, loop: RerailEventLoop) => serveText(
+      parsed => handleClaudeEvent(parsed, loop, storageRoot, { NO_COLOR: "1" }).then(output => bindSteerReceipt(output, (_receipt, ruleIds) => { receipts.push(ruleIds); })),
+      JSON.stringify(input),
+    );
+    const late = [delivery("steer", steerBlock("a", "Fix a.", { mode: "steer" }), ["a"]), delivery("steer", steerBlock("b", "Fix b.", { mode: "steer" }), ["b"])];
+
+    await serve({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": late }));
+    expect(receipts).toEqual([["a", "b"]]);
+
+    await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({ "user-prompt": [delivery("steer", steerBlock("c", "Fix c.", { mode: "steer" }), ["c"])] }));
+    expect(receipts).toEqual([["a", "b"], ["c"]]);
   });
 
   it("prints the why link after the word when the terminal cannot draw links", () => {

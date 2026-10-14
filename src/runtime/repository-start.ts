@@ -285,14 +285,15 @@ const listed = (items: readonly string[]): string =>
 
 /**
  * Design N9's second group, for the coding agent to relay: the rules that steered this session, then how to turn off
- * one rule instead of all of them. With exactly one such rule, "that rule" is the one just named.
+ * one rule instead of all of them. It names rules, not violations: one rule may have steered many times. With exactly
+ * one such rule, "that rule" is the one just named.
  */
 function turnOffOneRuleLines(steered: readonly string[]): string[] {
   if (steered.length === 0) return ["  To turn off only one rule instead, say “turn that rule off”."];
   if (steered.length === 1) {
-    return [`  The one violation in this session came from ${steered[0]!}.`, "  To turn off only that rule, say “turn that rule off”."];
+    return [`  Rerail steered this session on one rule, ${steered[0]!}.`, "  To turn off only that rule, say “turn that rule off”."];
   }
-  return [`  The violations in this session came from ${listed(steered)}.`, "  To turn off only one rule instead, say “turn that rule off”."];
+  return [`  Rerail steered this session on ${listed(steered)}.`, "  To turn off only one rule instead, say “turn that rule off”."];
 }
 
 /**

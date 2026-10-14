@@ -8,19 +8,23 @@ export const HOOK_BUDGET_MS = 25_000;
 
 /**
  * Runs Rerail's side of a native host hook so that it can never fail or stall the host: a fault costs a steer, never a
- * tool call or the end of a turn. A fault is not the person's to act on, so it leaves one stderr line and no notice.
- * Work still running when the budget runs out carries on in the background.
+ * tool call or the end of a turn. A fault is not the person's to act on, so it leaves one stderr line and no notice,
+ * whenever it happens. Work still running when the budget runs out carries on in the background, and the release is
+ * logged too.
  */
 export async function contained(hook: string, work: Promise<void>): Promise<void> {
   let budget: NodeJS.Timeout | undefined;
-  const overdue = new Promise<void>(resolve => {
-    budget = setTimeout(resolve, HOOK_BUDGET_MS);
+  const overdue = new Promise<"overdue">(resolve => {
+    budget = setTimeout(() => resolve("overdue"), HOOK_BUDGET_MS);
     budget.unref();
   });
-  try {
-    await Promise.race([work, overdue]);
-  } catch (error) {
+  const logged = work.catch((error: unknown) => {
     process.stderr.write(`Rerail ${hook} hook failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+  try {
+    if (await Promise.race([logged, overdue]) === "overdue") {
+      process.stderr.write(`Rerail ${hook} hook released after ${HOOK_BUDGET_MS / 1000}s; Rerail is still working on it\n`);
+    }
   } finally {
     clearTimeout(budget);
   }

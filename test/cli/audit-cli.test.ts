@@ -123,7 +123,7 @@ describe("rerail scan and settings CLI", () => {
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
       "",
-      "  The one violation in this session came from test:no-print.",
+      "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",
     ].join("\n"));
 

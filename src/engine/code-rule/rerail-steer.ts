@@ -36,6 +36,12 @@ export interface SteerBlockOptions {
   readonly origin?: string | undefined;
 }
 
+/**
+ * A guidance line that reads as a steer header or a `Why?` line, indented so it stays guidance: rule messages carry
+ * captured source text, and such a line must not become a headline or the link the person's `why?` opens.
+ */
+const MARKUP = /^(?:[○◆■] Rerail · |Why\? → )/u;
+
 /** One steer block: the header, where the rule comes from and its mode, the guidance, then the relative `Why?` link. */
 export function steerBlock(ruleId: string, guidance: string, { mode, origin }: SteerBlockOptions): string {
   // Blocking is not built yet, so a Block-mode rule steers.
@@ -43,7 +49,7 @@ export function steerBlock(ruleId: string, guidance: string, { mode, origin }: S
   return [
     `${STEER_GLYPHS[state]} Rerail · ${ruleId}  ${state}`,
     [origin, MODE_SENTENCE[mode]].filter(part => part !== undefined).join(" "),
-    guidance.trim(),
+    guidance.trim().split("\n").map(line => (MARKUP.test(line) ? `  ${line}` : line)).join("\n"),
     `Why? → #rule/${encodeURIComponent(ruleId)}`,
   ].join("\n");
 }
@@ -60,23 +66,27 @@ export interface SteerHeadline {
   readonly url: string | undefined;
 }
 
-/** The headline of every steer block in `content`, one per rule, in the order the blocks appear. */
+/**
+ * The headline of every steer block in `content`, one per rule, in the order the blocks appear. A block's link is
+ * the `Why?` line that points at its own rule (`#rule/<id>`), and only once it is absolute.
+ */
 export function steerHeadlines(content: string): SteerHeadline[] {
   const headlines: SteerHeadline[] = [];
-  let header: string | undefined;
+  let open: { header: string; ruleLink: string } | undefined;
   for (const line of content.split("\n")) {
-    if (STEER_HEADER.test(line)) {
-      if (header !== undefined) headlines.push({ header, url: undefined });
-      header = line;
+    const header = STEER_HEADER.exec(line);
+    if (header !== null) {
+      if (open !== undefined) headlines.push({ header: open.header, url: undefined });
+      open = { header: line, ruleLink: `#rule/${encodeURIComponent(header[2]!)}` };
       continue;
     }
     const why = WHY_LINE.exec(line);
-    if (why !== null && header !== undefined) {
-      headlines.push({ header, url: ABSOLUTE_URL.test(why[1]!) ? why[1] : undefined });
-      header = undefined;
+    if (why !== null && open !== undefined && why[1]!.endsWith(open.ruleLink)) {
+      headlines.push({ header: open.header, url: ABSOLUTE_URL.test(why[1]!) ? why[1] : undefined });
+      open = undefined;
     }
   }
-  if (header !== undefined) headlines.push({ header, url: undefined });
+  if (open !== undefined) headlines.push({ header: open.header, url: undefined });
   return headlines;
 }
 
