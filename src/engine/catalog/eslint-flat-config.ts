@@ -55,8 +55,11 @@ const DEFINE_CONFIG_MODULES = new Set(["eslint/config", "@eslint/config-helpers"
 const TYPESCRIPT_ESLINT_MODULES = new Set(["typescript-eslint"]);
 /** How deep a value may nest or a binding chain may go before it is not read. */
 const MAX_DEPTH = 64;
-/** Globals through which code reaches the file's own bindings or its exported config without being handed them. */
-const CODE_NAMES = new Set(["eval", "module", "exports"]);
+/**
+ * Globals through which code reaches the file's own bindings or its exported config without being handed them (in
+ * CommonJS, `arguments[2]` is the module).
+ */
+const CODE_NAMES = new Set(["eval", "module", "exports", "arguments"]);
 
 /** `<folder>/**` or `<folder>/**\/*`: every file under one folder. A `./` start is allowed. */
 export function folderOfGlob(pattern: string): string | undefined {
@@ -240,9 +243,11 @@ class FlatConfigReader {
       case "CallExpression":
       case "OptionalCallExpression":
       case "NewExpression": {
-        // A local const is data, never a function to call.
-        if (node.callee.type === "Identifier" && this.#locals.has(node.callee.name)) return node;
         const helper = node.type === "CallExpression" && this.#isConfigHelper(node.callee);
+        // Only calls into the modules the file imports (which Rerail takes to behave as documented), `import.meta`,
+        // `require` of a module, `new URL(…)` and `process.cwd()`: a global such as `Object`, `Reflect`, `Function` or
+        // `globalThis.eval` can reach anything.
+        if (!helper && !this.#trustedCall(node)) return node;
         return this.#nonData(node.callee, true) ?? all(node.arguments, given || !helper);
       }
       case "UnaryExpression":
@@ -341,6 +346,24 @@ class FlatConfigReader {
   #unreadable(text: string, own: ReadonlyMap<string, Entry> = new Map()): void {
     this.#unread.push(text);
     for (const entry of [...this.#entries, ...own.values()]) entry.shadowedBy ??= text;
+  }
+
+  /**
+   * Whether `call` calls into a module the file imports or requires, or `import.meta`, through any member path; or is
+   * `require("<module>")`, `new URL(…)` or `process.cwd()` (globals nothing in the file has replaced).
+   */
+  #trustedCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    const global = (name: string): boolean => !this.#locals.has(name) && !this.#imports.has(name);
+    const callee = call.callee;
+    if (call.type === "CallExpression" && isRequire(call) && global("require")) return true;
+    if (call.type === "NewExpression" && callee.type === "Identifier" && callee.name === "URL" && global("URL")) return true;
+    if (call.type === "CallExpression" && callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier"
+      && callee.object.name === "process" && global("process") && callee.property.type === "Identifier" && callee.property.name === "cwd") {
+      return call.arguments.length === 0;
+    }
+    let root: t.Node = callee;
+    while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
+    return (root.type === "Identifier" && this.#imports.has(root.name)) || (root.type === "MetaProperty" && root.meta.name === "import");
   }
 
   /** `defineConfig` imported from ESLint, or typescript-eslint's `config`: both concatenate their arguments. */

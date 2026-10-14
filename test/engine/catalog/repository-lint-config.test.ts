@@ -356,7 +356,7 @@ describe("proposeLintConfigSettings", () => {
   });
 
   it("turns off every shipped Ruff port [tool.ruff.lint] ignore = [\"E7\"] selects, and no candidate", async () => {
-    const root = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E7\"]\n", "eslint.config.ts": "export default makeConfig();\n" });
+    const root = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E7\"]\n", "eslint.config.ts": "import makeConfig from \"shared-config\";\nexport default makeConfig();\n" });
     expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({
       // The python pack's rules/ ports of E7xx; its candidates (E712, E713, E714, E731, E741) do not ship.
       settings: ["ruff-e711-none-comparison", "ruff-e721-type-comparison", "ruff-e722-bare-except", "ruff-e742-ambiguous-class-name", "ruff-e743-ambiguous-function-name"]
@@ -711,6 +711,29 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     expect((await flat(text, ["javascript"])).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
     // Handing a call one of its own consts is code: the call could change it.
     expect((await flat("import merge from \"merge\";\nconst rules = { \"no-console\": \"off\" };\nexport default [{ rules: merge(rules) }];", ["javascript"])).settings).toEqual([]);
+  });
+
+  // Self-review round 6: each of these changes the exported config at load time through a global (ESLint 9.39.1 turns
+  // no-console on for every one); a flat config may call only into its imports, import.meta, require, URL and
+  // process.cwd.
+  it("reads nothing from a flat config that calls a global, or reaches its module through arguments", async () => {
+    const payload = "'process.getBuiltinModule(\"module\")'";
+    const cases: [string, string][] = [
+      ["eslint.config.cjs", "module.exports = [{ rules: { \"no-console\": \"off\" } }];\nconst x = Object.assign(arguments[2].exports[0].rules, { \"no-console\": \"error\" });"],
+      ["eslint.config.mjs", `const x = globalThis.eval(${payload});\nexport default [{ rules: { "no-console": "off" } }];`],
+      ["eslint.config.mjs", `const x = new Function(${payload}).call(null);\nexport default [{ rules: { "no-console": "off" } }];`],
+      ["eslint.config.mjs", `const x = Reflect.apply(globalThis.eval, null, [${payload}]);\nexport default [{ rules: { "no-console": "off" } }];`],
+      ["eslint.config.mjs", `export default [{ [globalThis.eval(${payload})]: 1, rules: { "no-console": "off" } }];`],
+      ["eslint.config.mjs", "import tseslint from \"typescript-eslint\";\nconst changed = Object.defineProperty(tseslint, \"config\", { value: () => [] });\nexport default tseslint.config({ rules: { \"no-console\": \"off\" } });"],
+    ];
+    for (const [name, text] of cases) {
+      const proposed = await flat(text, ["javascript"], name);
+      expect(proposed.settings, text).toEqual([]);
+      expect(proposed.notes, text).toEqual([expect.stringMatching(/^eslint\.config\.[cm]js is not read: it runs code Rerail does not read as data \(line \d+: .+\)\. Rerail never runs your config\.$/u)]);
+    }
+    // process.cwd() and import.meta's own functions are still read.
+    const allowed = "const root = process.cwd();\nconst here = import.meta.resolve(\"./x.js\");\nexport default [{ settings: { root, here }, rules: { \"no-console\": \"off\" } }];";
+    expect((await flat(allowed, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
   });
 
   it("lets an entry for the same files that sets the rule in full replace an unread one", async () => {
