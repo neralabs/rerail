@@ -624,7 +624,6 @@ impl Leaves for SnapshotLeaves<'_, '_> {
     }
 }
 
-
 pub(crate) fn file_language(file: &FileInput) -> Option<GrammarDialect> {
     crate::code_rule_dsl::language::dialect_by_label(&file.language)
 }
