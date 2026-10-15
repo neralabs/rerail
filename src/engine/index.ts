@@ -71,6 +71,7 @@ export {
   CODE_RULE_DIALECTS,
   CODE_RULE_LANGUAGE_FAMILIES,
   codeRuleLanguageFamily,
+  LANGUAGE_REGISTRY,
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleSourceLanguage, type CodeRuleViolation, type RuleSteerDelivery } from "./code-rule/code-rule.js";

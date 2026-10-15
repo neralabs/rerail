@@ -20,6 +20,7 @@ import {
   RULE_PACK_RULE_ID,
   type RulePackFile,
   compareDeterministicStrings,
+  LANGUAGE_REGISTRY,
 } from "../src/engine/index.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
@@ -230,8 +231,17 @@ function suppressionOf(tool: string): Suppression | undefined {
 }
 
 const suppressingDocumentSchema = z.object({
-  clauses: z.array(z.looseObject({ id: z.string(), violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional() })),
+  clauses: z.array(
+    z.looseObject({
+      id: z.string(),
+      forbid: z.looseObject({ ast: z.looseObject({ language: z.string() }).optional() }).optional(),
+      violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional(),
+    }),
+  ),
 });
+
+/** The languages whose registry entry honours Biome's `biome-ignore` comments (`suppressions`). */
+const BIOME_LANGUAGES: ReadonlySet<string> = new Set(LANGUAGE_REGISTRY.filter(entry => (entry.suppressions as readonly string[]).includes("biome")).map(entry => entry.id));
 
 /** The string items of a suppression's list (`suppress.eslint.rules`), or none. */
 function listed(suppression: Record<string, unknown> | undefined, list: string): string[] {
@@ -245,7 +255,8 @@ function listed(suppression: Record<string, unknown> | undefined, list: string):
  * and `suppress.oxlint` (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a rule Oxlint
  * implements honours both on the same violations; of those whose `suppress.eslint` names a rule Biome has a rule the
  * same as, without that Biome rule under `suppress.biome` (`biomeMissing`, with the missing rules), and of those that
- * carry `suppress.biome` without `suppress.eslint` (`biomeAlone`). `undefined` when the document cannot be read (check
+ * carry `suppress.biome` without `suppress.eslint` (`biomeAlone`). A query of a language whose registry entry does not
+ * honour Biome's comments (Vue's) needs no `suppress.biome`. `undefined` when the document cannot be read (check
  * 1 reports that). A PHP_CodeSniffer port names its sniff's message codes, `<sniff>.<code>`, as `phpcs:ignore` does.
  */
 function suppressionGaps(
@@ -262,7 +273,9 @@ function suppressionGaps(
   }
   const parsed = suppressingDocumentSchema.safeParse(document);
   if (!parsed.success) return undefined;
-  const violations = parsed.data.clauses.flatMap(clause => (clause.violation === undefined ? [] : [{ id: clause.id, suppress: clause.violation.suppress ?? {} }]));
+  const violations = parsed.data.clauses.flatMap(clause =>
+    clause.violation === undefined ? [] : [{ id: clause.id, language: clause.forbid?.ast?.language, suppress: clause.violation.suppress ?? {} }],
+  );
   const unsuppressed = violations
     .filter(({ suppress }) => {
       const names = suppress[suppression.key]?.[suppression.list];
@@ -273,7 +286,8 @@ function suppressionGaps(
   const oxlint = eslintFamily && violations.some(({ suppress }) => suppress.oxlint !== undefined);
   const oxlintApart = oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [];
   const biomeMissing = { clauses: [] as string[], rules: [] as string[] };
-  for (const { id, suppress } of eslintFamily ? violations : []) {
+  // Only a query of a language that honours Biome's comments may carry suppress.biome (Vue's does not).
+  for (const { id, language, suppress } of eslintFamily ? violations.filter(({ language }) => language === undefined || BIOME_LANGUAGES.has(language)) : []) {
     const carried = new Set(listed(suppress.biome, "rules"));
     const missing = listed(suppress.eslint, "rules").flatMap(name => BIOME_SAME_SOURCES[name] ?? []).filter(name => !carried.has(name));
     if (missing.length === 0) continue;
