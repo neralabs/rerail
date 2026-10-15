@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-debugger",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "ESLint 10.11.0 no-debugger, default options. Port of ESLint's `no-debugger` rule (https://eslint.org/docs/latest/rules/no-debugger). Reports every `debugger` statement.",
   "scope": {
@@ -36,6 +36,16 @@
           "eslint": {
             "rules": [
               "no-debugger"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-debugger"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDebugger"
             ]
           }
         }

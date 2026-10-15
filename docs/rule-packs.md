@@ -22,7 +22,7 @@ Every rule is listed in the mode its own document has (all `steer` today). A por
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it; a rule or pack setting in the repository or a checkout overrides them.
 
-A rule honours its linter's suppression comments only where its document says so (`suppress`); none of the shipped rules does today.
+A rule honours its linter's suppression comments only where its document says so (`suppress`), and only while the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)); the pack's `honourSuppressionComments` is the value its rules start with. None of the shipped rules reads a linter's comments today.
 
 ## Format
 
@@ -57,7 +57,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one, and `{a,b}` gives alternatives.
   - `{ "npmDependencies": [...] }`: any `package.json` in the repository that lists one of the packages under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
 - `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
-- `honourSuppressionComments` (optional, default `true`): whether the pack's rules honour their linters' suppression comments. Validated, but not yet read by evaluation.
+- `honourSuppressionComments` (optional, default `true`): whether the pack's rules start out honouring their linters' suppression comments, the pack's start for the `suppressions` rule setting. With `false`, no linter's comment silences them until a repository or checkout sets `suppressions: "honour"`; Rerail's own `rerail-ignore` always does.
 - `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended; neither is a pack whose rules all start off.
   - `id` is lowercase letters, digits and dashes, the upstream tool's name then its rule (`eslint-eqeqeq`, `ruff-b011-assert-false`); every pack uses this one style. It names the rule's document and its port in `conformance.json`, and people turn the rule on and off by it, so it does not change once the pack is published.
   - `title` and `group` are what the dashboard shows.

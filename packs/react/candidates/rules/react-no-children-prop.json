@@ -41,6 +41,16 @@
             "rules": [
               "react/no-children-prop"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noChildrenProp"
+            ]
           }
         }
       }
@@ -215,6 +225,16 @@
           "eslint": {
             "rules": [
               "react/no-children-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noChildrenProp"
             ]
           }
         }

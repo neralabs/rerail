@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-typos",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-typos: an exported function or variable whose name is one edit away from getStaticProps, getStaticPaths or getServerSideProps, in a file whose segment after the first `pages` is non-empty and not under /api.",
   "scope": {
@@ -88,6 +88,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-typos"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-typos"
             ]
           }
         }

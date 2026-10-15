@@ -6,7 +6,8 @@ serves it with client-side routes falling back to `index.html`. It reads only th
 (`api.js`).
 
 - `app.js` and `state.js` hold the app and its state, `poll.js` refreshes it, `attachments.js` writes its rule pack
-  changes in click order, and `render/` holds the views.
+  changes in click order, `settings-writes.js` writes rule settings (a rule on or off, and whether a rule or a pack
+  honours linter suppression comments), and `render/` holds the views.
 - `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
   `npm run check:ui-tokens` checks them.
 

@@ -13,7 +13,13 @@ import {
   type AuditRuleProvenance,
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
-import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../catalog/repository-model.js";
+import {
+  RULE_SETTING_OWNER_KINDS,
+  RULE_SETTING_TARGET_KINDS,
+  RULE_SOURCE_KINDS,
+  RULE_SUPPRESSIONS,
+  type RuleConfig,
+} from "../catalog/repository-model.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
@@ -24,20 +30,10 @@ import type { RuleDocument } from "../catalog/rule-store.js";
  * resolved for a repository before evaluation.
  *
  * These Drizzle tables are the schema. `schema-sql.ts` is generated from them
- * (`npm run generate:schema`) and applied verbatim when a database is opened.
- * `database.ts` stamps `PRAGMA user_version` with `RERAIL_SCHEMA_VERSION`.
+ * (`npm run generate:schema`) and applied verbatim when a database is opened. A change to the shape of an
+ * existing table also needs a step in `migrations.ts`, which brings existing files to it and owns the
+ * schema version `database.ts` stamps in `PRAGMA user_version`.
  */
-/**
- * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
- * newer version. Until the first release the version stays 1 and the tables are edited in place;
- * the DDL only creates what is missing, so a database created by an earlier development build
- * keeps its old tables and has to be moved aside. From the first release on, new tables and
- * indexes need no bump: the DDL is idempotent and older builds ignore what they do not know. A
- * change an older build would misread, or one SQLite cannot apply idempotently, raises it.
- * Some development builds stamped their files 2 before the version went back to 1, so the first
- * raise goes to 3: such a file then stays refused instead of being read as current.
- */
-export const RERAIL_SCHEMA_VERSION = 1 as const;
 
 export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -225,8 +221,9 @@ export const ruleAttachments = sqliteTable(
 );
 
 /**
- * `on` / `mode` for a rule or a whole pack, owned by a repository (`owner_id` = repository key) or a checkout
- * (`owner_id` = checkout path), optionally for one folder. A null field defers to the next owner.
+ * `on` / `mode` / `suppressions` / `config_json` for a rule or a whole pack, owned by a repository (`owner_id` =
+ * repository key) or a checkout (`owner_id` = checkout path), optionally for one folder. A null field defers to the
+ * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets.
  */
 export const ruleSettings = sqliteTable(
   "rule_settings",
@@ -238,6 +235,8 @@ export const ruleSettings = sqliteTable(
     targetId: text("target_id").notNull(),
     on: integer("on", { mode: "boolean" }),
     mode: text("mode", { enum: RULE_MODES }),
+    suppressions: text("suppressions", { enum: RULE_SUPPRESSIONS }),
+    config: text("config_json", { mode: "json" }).$type<RuleConfig>(),
     updatedAt: integer("updated_at").notNull(),
   },
   table => [
@@ -245,7 +244,14 @@ export const ruleSettings = sqliteTable(
     check("rule_settings_owner_kind", sql`${table.ownerKind} IN (${sql.raw(inList(RULE_SETTING_OWNER_KINDS))})`),
     check("rule_settings_target_kind", sql`${table.targetKind} IN (${sql.raw(inList(RULE_SETTING_TARGET_KINDS))})`),
     check("rule_settings_mode", sql`${table.mode} IS NULL OR ${table.mode} IN (${sql.raw(inList(RULE_MODES))})`),
-    check("rule_settings_value", sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL`),
+    check(
+      "rule_settings_suppressions",
+      sql`${table.suppressions} IS NULL OR ${table.suppressions} IN (${sql.raw(inList(RULE_SUPPRESSIONS))})`,
+    ),
+    check(
+      "rule_settings_value",
+      sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL OR ${table.suppressions} IS NOT NULL OR ${table.config} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -441,6 +447,12 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   processId: integer("process_id").notNull(),
   token: text("token").notNull(),
   updatedAt: integer("updated_at").notNull(),
+});
+
+/** The `migrations.ts` steps a file has run, by id. */
+export const schemaMigrations = sqliteTable("schema_migrations", {
+  id: text("id").primaryKey(),
+  appliedAt: integer("applied_at").notNull(),
 });
 
 /**

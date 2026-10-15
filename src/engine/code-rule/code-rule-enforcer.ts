@@ -1328,7 +1328,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const scope = sourceScope.map(path => this.#presentPath(path)).sort(compareDeterministicStrings);
     const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
     if (steerable.length === 0) return;
-    const steer = buildSteer(steerable);
+    const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
+    const steer = buildSteer(steerable, ruleId => {
+      const recorded = provenance.find(entry => entry.ruleId === ruleId);
+      return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
+    });
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

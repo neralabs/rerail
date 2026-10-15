@@ -81,6 +81,11 @@
             "rules": [
               "react/self-closing-comp"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "self-closing-comp"
+            ]
           }
         }
       }

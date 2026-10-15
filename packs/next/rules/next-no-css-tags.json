@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-css-tags",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-css-tags: a <link> with rel=\"stylesheet\" and a string href that does not start with http(s).",
   "scope": {
@@ -98,6 +98,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-css-tags"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-css-tags"
             ]
           }
         }

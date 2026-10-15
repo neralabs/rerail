@@ -12,7 +12,8 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    EslintDirectives, NoqaIndex, NosecIndex, PhpcsIndex, PhpstanIndex, PsalmIndex,
+    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
+    PhpstanIndex, PsalmIndex, RerailIgnores,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -500,9 +501,12 @@ impl Resolves {
                 "statement_block" | "switch_statement" => blocks,
                 "for_statement" => {
                     blocks
-                        && ancestor
-                            .field("initializer")
-                            .is_some_and(|initializer| initializer.kind() == "lexical_declaration")
+                        && ancestor.field("initializer").is_some_and(|initializer| {
+                            matches!(
+                                initializer.kind().as_ref(),
+                                "lexical_declaration" | "using_declaration"
+                            )
+                        })
                 }
                 "for_in_statement" => {
                     blocks
@@ -877,6 +881,10 @@ struct FileScopes {
     lines: [Option<Rc<LineTable>>; 2],
     /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
     eslint_directives: Option<Rc<EslintDirectives>>,
+    /// The file's oxlint directive comments (`suppress.oxlint`), read on first use.
+    oxlint_directives: Option<Rc<OxlintDirectives>>,
+    /// The file's Biome suppression comments (`suppress.biome`), read on first use.
+    biome_suppressions: Option<Rc<BiomeSuppressions>>,
     /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
     noqa: Option<Rc<NoqaIndex>>,
     /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
@@ -887,6 +895,8 @@ struct FileScopes {
     psalm: Option<Rc<PsalmIndex>>,
     /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
     phpcs: Option<Rc<PhpcsIndex>>,
+    /// The file's `rerail-ignore` directives, read on first use.
+    rerail_ignores: Option<Rc<RerailIgnores>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
@@ -927,11 +937,14 @@ impl FileScopeSlot {
             value_parses: HashMap::new(),
             lines: [None, None],
             eslint_directives: None,
+            oxlint_directives: None,
+            biome_suppressions: None,
             noqa: None,
             nosec: None,
             phpstan: None,
             psalm: None,
             phpcs: None,
+            rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
             php_names_charged: Vec::new(),
@@ -1040,6 +1053,67 @@ pub(crate) fn file_eslint_directives(
         }
     });
     directives
+}
+
+/// The oxlint directives of the file being matched: read once per file while a file is being
+/// matched, and fresh outside one.
+pub(crate) fn file_oxlint_directives(
+    read: impl FnOnce() -> OxlintDirectives,
+) -> Rc<OxlintDirectives> {
+    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.oxlint_directives.clone())
+    }) {
+        return directives;
+    }
+    let directives = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.oxlint_directives = Some(Rc::clone(&directives));
+        }
+    });
+    directives
+}
+
+/// The Biome suppressions of the file being matched: read once per file while a file is being
+/// matched, and fresh outside one.
+pub(crate) fn file_biome_suppressions(
+    read: impl FnOnce() -> BiomeSuppressions,
+) -> Rc<BiomeSuppressions> {
+    if let Some(suppressions) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.biome_suppressions.clone())
+    }) {
+        return suppressions;
+    }
+    let suppressions = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.biome_suppressions = Some(Rc::clone(&suppressions));
+        }
+    });
+    suppressions
+}
+
+/// The `rerail-ignore` directives of the file being matched: read once per file while a file is
+/// being matched, and fresh outside one.
+pub(crate) fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<RerailIgnores> {
+    if let Some(ignores) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.rerail_ignores.clone())
+    }) {
+        return ignores;
+    }
+    let ignores = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.rerail_ignores = Some(Rc::clone(&ignores));
+        }
+    });
+    ignores
 }
 
 /// The `noqa` index of the file being matched: read once per file while a file is being matched,

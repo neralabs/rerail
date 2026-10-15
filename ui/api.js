@@ -20,11 +20,13 @@ export async function get(path, { etag } = {}) {
   return { status: response.status, etag: nextEtag, body: await response.json() };
 }
 
-export async function send(method, path, body) {
+/** `signal`, when given, aborts the request: `send` then rejects with the signal's reason. */
+export async function send(method, path, body, { signal } = {}) {
   const response = await fetch(apiUrl(path), {
     method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   const etag = response.headers.get("etag") ?? undefined;
   const text = await response.text();

@@ -7,9 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
 vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
-  const actual = await importOriginal<{ corePackDirectories(): string[] }>();
+  const actual = await importOriginal<{ corePackDirectories(): string[]; loadBundledRules(packs: readonly string[]): unknown[] }>();
   const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
-  return { ...actual, corePackDirectories: () => [...actual.corePackDirectories(), typescriptPack] };
+  const packs = (): string[] => [...actual.corePackDirectories(), typescriptPack];
+  // The shipped documents too, so the TypeScript pack's rules have theirs (set-up reads their upstream names).
+  let shipped: unknown[] | undefined;
+  return { ...actual, corePackDirectories: packs, shippedBundledRules: () => (shipped ??= actual.loadBundledRules(packs())) };
 });
 // Passed through, and watched: a run that must read no code never calls the recommender.
 const recommendRulePacks = vi.hoisted(() => vi.fn<(root: string) => unknown>());
@@ -20,7 +23,7 @@ vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
-import { lookupCheckout, recordCheckout } from "../../src/engine/index.js";
+import { listRepositoryRules, loadBundledCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
 import { parseCodingAgents, runSetup, startRerail, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { onRuleCount, stopRerail, workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { setUpRepository } from "../../src/engine/index.js";
@@ -464,6 +467,108 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   });
 });
 
+/** Each rule of `ruleIds` as the repository's settings leave it: on, and its option values. */
+function rulesOf(fixture: Fixture, ruleIds: readonly string[]): Record<string, { on: boolean; config: unknown }> {
+  const database = openRerailDatabase(fixture.databasePath, { readonly: true });
+  try {
+    const checkout = lookupCheckout(database, fixture.repo)!;
+    const rules = listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules;
+    return Object.fromEntries(ruleIds.map(id => {
+      const rule = rules.find(candidate => candidate.document.rule.id === id)!;
+      return [id, { on: rule.on, config: rule.config }];
+    }));
+  } finally {
+    database.$client.close();
+  }
+}
+
+const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
+const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
+
+describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT_MS }, () => {
+  it("names the settings it takes from .eslintrc.json on the confirm screen, and writes them on start", async () => {
+    const setup = await fixture();
+    writeFileSync(join(setup.repo, ".eslintrc.json"), JSON.stringify({
+      rules: { "@typescript-eslint/consistent-type-definitions": ["error", "type"], "@typescript-eslint/ban-tslint-comment": "off" },
+    }));
+    const environment = fakeSetupEnvironment();
+    const asked = agentIo();
+    await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain("From your lint config (read as data, never run):");
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
+    expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off  .eslintrc.json: "@typescript-eslint/ban-tslint-comment": "off"`);
+
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({
+      // The pack keeps consistent-type-definitions off; the repository's option is there for when it is turned on.
+      [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } },
+      [TSLINT_COMMENT]: { on: false, config: null },
+    });
+  });
+
+  it("starts the ESLint ports off for an eslint.config.ts it cannot read statically, and takes an .oxlintrc.json off on the review's path too", async () => {
+    const setup = await fixture();
+    writeFileSync(join(setup.repo, "eslint.config.ts"), "throw new Error(\"run\");\n");
+    writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-tslint-comment\": \"off\", },\n}\n");
+    const environment = fakeSetupEnvironment({
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript"]) : undefined),
+    });
+    const review = agentIo();
+    await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo }));
+    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
+    expect(review.text()).toContain(`${TYPE_DEFINITIONS} starts off  eslint.config.ts is not statically readable`);
+    expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
+
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    expect(selected(setup)).toEqual(["typescript"]);
+    expect(rulesOf(setup, [TSLINT_COMMENT])).toEqual({ [TSLINT_COMMENT]: { on: false, config: null } });
+  });
+
+  // NER-1789: dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
+  // **/src/**/*.ts files, after shared configs; set-up used to leave the option for the person to set by hand.
+  it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
+    const setup = await fixture();
+    writeFileSync(join(setup.repo, "eslint.config.ts"), [
+      "import type { Linter } from \"eslint\";",
+      "import tsEslint from \"typescript-eslint\";",
+      "const config: Linter.Config[] = [",
+      "  ...tsEslint.configs.stylistic,",
+      "  { files: [\"**/src/**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
+      "  { files: [\"scripts/**\"], rules: { \"@typescript-eslint/ban-tslint-comment\": \"off\" } },",
+      "];",
+      "export default config;",
+    ].join("\n"));
+    const environment = fakeSetupEnvironment();
+    const asked = agentIo();
+    await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"] for ["**/src/**/*.ts"]`);
+    expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off in scripts/  eslint.config.ts: "@typescript-eslint/ban-tslint-comment": "off" for ["scripts/**"]`);
+
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    expect(rulesOf(setup, [TYPE_DEFINITIONS])).toEqual({ [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } } });
+    const database = openRerailDatabase(setup.databasePath, { readonly: true });
+    try {
+      expect(database.select().from(ruleSettings).all().map(({ folder, targetId, on, config }) => ({ folder, targetId, on, config }))).toEqual([
+        { folder: "", targetId: TYPE_DEFINITIONS, on: null, config: { option: "type" } },
+        { folder: "scripts", targetId: TSLINT_COMMENT, on: false, config: null },
+      ]);
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("takes nothing from the lint config when the person picks packs themselves", async () => {
+    const setup = await fixture();
+    writeFileSync(join(setup.repo, ".eslintrc.json"), JSON.stringify({ rules: { "@typescript-eslint/ban-tslint-comment": "off" } }));
+    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo }));
+    const database = openRerailDatabase(setup.databasePath, { readonly: true });
+    try {
+      expect(database.$client.prepare("SELECT COUNT(*) AS count FROM rule_settings").get()).toEqual({ count: 0 });
+    } finally {
+      database.$client.close();
+    }
+  });
+});
 describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("says yes, starts with the recommended packs, and waits for Enter before the summary", async () => {
     const setup = await fixture();

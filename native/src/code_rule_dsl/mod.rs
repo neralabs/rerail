@@ -11,6 +11,8 @@ mod literal;
 mod matcher;
 mod model;
 mod module_path;
+mod php_literal;
+mod php_view;
 mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;

@@ -39,7 +39,8 @@
       },
       "policy": "rules/typescript-eslint-ban-tslint-comment.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -51,7 +52,8 @@
       },
       "policy": "rules/typescript-eslint-consistent-type-definitions.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -63,7 +65,8 @@
       },
       "policy": "rules/typescript-eslint-default-param-last.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -75,7 +78,8 @@
       },
       "policy": "rules/typescript-eslint-no-array-constructor.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -87,7 +91,8 @@
       },
       "policy": "rules/typescript-eslint-no-confusing-non-null-assertion.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -101,7 +106,8 @@
       "capabilities": [
         "syntax",
         "value",
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -129,7 +135,8 @@
       "policy": "rules/typescript-eslint-no-empty-function.json",
       "capabilities": [
         "syntax",
-        "value"
+        "value",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -141,7 +148,8 @@
       },
       "policy": "rules/typescript-eslint-no-extra-non-null-assertion.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -153,7 +161,8 @@
       },
       "policy": "rules/typescript-eslint-no-import-type-side-effects.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -178,7 +187,8 @@
       },
       "policy": "rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -203,7 +213,8 @@
       },
       "policy": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -228,7 +239,8 @@
       },
       "policy": "rules/typescript-eslint-no-unused-expressions.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -240,7 +252,8 @@
       },
       "policy": "rules/typescript-eslint-no-useless-empty-export.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -280,7 +293,8 @@
       },
       "policy": "rules/typescript-eslint-prefer-enum-initializers.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -292,7 +306,8 @@
       },
       "policy": "rules/typescript-eslint-prefer-literal-enum-member.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -304,7 +319,8 @@
       },
       "policy": "rules/typescript-eslint-prefer-namespace-keyword.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -317,7 +333,8 @@
       "policy": "candidates/rules/typescript-eslint-adjacent-overload-signatures.json",
       "capabilities": [
         "syntax",
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -329,7 +346,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-ban-ts-comment.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -343,7 +361,8 @@
       "capabilities": [
         "syntax",
         "value",
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -356,7 +375,8 @@
       "policy": "candidates/rules/typescript-eslint-class-methods-use-this.json",
       "capabilities": [
         "syntax",
-        "value"
+        "value",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -368,7 +388,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-consistent-generic-constructors.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -393,7 +414,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-explicit-function-return-type.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -406,7 +428,8 @@
       "policy": "candidates/rules/typescript-eslint-explicit-member-accessibility.json",
       "capabilities": [
         "syntax",
-        "value"
+        "value",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -419,7 +442,8 @@
       "policy": "candidates/rules/typescript-eslint-max-params.json",
       "capabilities": [
         "syntax",
-        "value"
+        "value",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -431,7 +455,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-member-ordering.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -443,7 +468,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-method-signature-style.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -455,7 +481,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-no-dynamic-delete.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -467,7 +494,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-no-extraneous-class.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -479,7 +507,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-no-inferrable-types.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -492,7 +521,8 @@
       "policy": "candidates/rules/typescript-eslint-no-invalid-this.json",
       "capabilities": [
         "syntax",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -506,7 +536,8 @@
       "capabilities": [
         "syntax",
         "value",
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -518,7 +549,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-no-misused-new.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -530,7 +562,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-no-redeclare.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -543,7 +576,8 @@
       "policy": "candidates/rules/typescript-eslint-no-require-imports.json",
       "capabilities": [
         "syntax",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -571,7 +605,8 @@
         "syntax",
         "value",
         "compare",
-        "scope"
+        "scope",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -585,7 +620,8 @@
       "capabilities": [
         "syntax",
         "compare",
-        "arguments"
+        "arguments",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -597,7 +633,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-parameter-properties.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -609,7 +646,8 @@
       },
       "policy": "candidates/rules/typescript-eslint-prefer-function-type.json",
       "capabilities": [
-        "syntax"
+        "syntax",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -623,7 +661,8 @@
       "capabilities": [
         "syntax",
         "value",
-        "compare"
+        "compare",
+        "suppression"
       ],
       "match": "line+column"
     },
@@ -636,6 +675,8 @@
       "policy": "candidates/rules/vitest-expect-expect.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -649,6 +690,8 @@
       "policy": "candidates/rules/vitest-no-disabled-tests.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -662,6 +705,8 @@
       "policy": "candidates/rules/vitest-no-focused-tests.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"

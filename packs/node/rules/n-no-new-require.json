@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-new-require",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/no-new-require: `new` whose callee is the identifier `require` (upstream reads the name only, no scope).",
   "scope": {
@@ -41,6 +41,11 @@
           "eslint": {
             "rules": [
               "n/no-new-require"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-new-require"
             ]
           }
         }

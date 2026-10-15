@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-useless-empty-export",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-useless-empty-export` rule (https://typescript-eslint.io/rules/no-useless-empty-export). Flags `export {}` when a sibling statement of the same module body is already an import or export; declaration files are excluded by scope.",
   "scope": { "include": ["**/*"], "exclude": ["**/*.d.ts", "**/*.d.mts", "**/*.d.cts"] },
@@ -32,7 +32,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/no-useless-empty-export", "message": "Empty export does nothing and can be removed.", "fix": "" }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/no-useless-empty-export", "message": "Empty export does nothing and can be removed.", "fix": "", "suppress": { "eslint": { "rules": ["@typescript-eslint/no-useless-empty-export"] }, "oxlint": { "rules": ["no-useless-empty-export"] }, "biome": { "rules": ["lint/complexity/noUselessEmptyExport"] } } }
     }
   ]
 }

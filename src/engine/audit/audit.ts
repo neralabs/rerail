@@ -1,5 +1,5 @@
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
-import { folderContains, type Decider, type RepositoryKey, type RuleSourceKind } from "../catalog/repository-model.js";
+import { folderContains, type Decider, type RepositoryKey, type RuleSourceKind, type RuleSuppressions } from "../catalog/repository-model.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 export const AUDIT_SCOPES = ["repository", "touched-files", "ai-output"] as const;
@@ -19,13 +19,18 @@ export interface LegacyAuditRuleProvenance {
   origin: "user" | "rerail";
 }
 
-/** How a rule ran in one folder of its checkout, and which owner decided `on` and `mode` there. */
+/**
+ * How a rule ran in one folder of its checkout, and which owner decided `on`, `mode` and `suppressions` there.
+ * `suppressions` is absent from audits recorded before it existed (they honoured suppression comments).
+ */
 export interface RulePlacementDecision {
   folder: string;
   on: boolean;
   mode: RuleMode;
   onFrom: Decider;
   modeFrom: Decider;
+  suppressions?: RuleSuppressions;
+  suppressionsFrom?: Decider;
 }
 
 /** A rule a repository's configuration made present in the checkout the audit evaluated. */
@@ -68,6 +73,18 @@ export interface AuditFailure {
   message: string;
   path?: string | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native failures carry `path: undefined`
   stage?: "read" | "parse" | "evaluate" | "scan" | "scope" | "persistence" | undefined; // NOSONAR - as `path`
+}
+
+/**
+ * The head of the message every AST clause fails with (`source-incomplete`) on a file the parser did not read: its
+ * syntax-error regions cover half of its bytes or more. The full message follows it with `: error regions cover N% of
+ * it, first at line L, column C` (`native/src/code_rule_dsl/soundness.rs` `UNREAD`).
+ */
+export const UNREAD_FAILURE_HEAD = "file did not parse";
+
+/** Whether `failure` reports a file the parser did not read (`UNREAD_FAILURE_HEAD`), on any evaluation path. */
+export function isUnreadFailure(failure: { code: string; message: string }): boolean {
+  return failure.code === "source-incomplete" && failure.message.startsWith(`${UNREAD_FAILURE_HEAD}: `);
 }
 
 export const AUDIT_COVERAGE_STATUSES = ["complete", "partial", "failed"] as const;

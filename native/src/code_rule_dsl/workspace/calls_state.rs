@@ -154,6 +154,7 @@ impl CallsState {
                 producer.violation.each = None;
                 producer.violation.node_regexes.clear();
                 producer.violation.suppress = None;
+                producer.violation.ignored_by = None;
                 producer.violation.group_transform = None;
                 producer.violation.message_template = None;
                 producer.violation.fix = None;
