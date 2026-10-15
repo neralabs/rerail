@@ -178,4 +178,9 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   assert.match(rendered, /\| `B302` \| removed \| — \| — \| — \|/u);
   // A first recording has nothing to compare with, and says that rather than listing every rule as a change.
   assert.match(renderRecordingChanges([diffRecordings("demo", "bandit", null, after)]), /first recording/u);
+  // A lock whose recording could not be read is neither: the summary warns that what moved is unknown.
+  const uncompared = renderRecordingChanges([diffRecordings("demo", "bandit", { unavailable: "demo-bandit-gates.json.gz is not in the cache" }, after)]);
+  assert.match(uncompared, /^## Gate recordings: ⚠️ 1 tool-pack not compared$/mu);
+  assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(demo-bandit-gates\.json\.gz is not in the cache\)/u);
+  assert.doesNotMatch(uncompared, /: first recording|✅/u);
 });

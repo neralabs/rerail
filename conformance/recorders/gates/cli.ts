@@ -123,6 +123,8 @@ async function main(): Promise<number> {
   }
   process.stdout.write(written.changes.first
     ? `  first recording: nothing to compare upstream's answers with\n`
+    : written.changes.unavailable !== null
+    ? `  not compared: the recording ${RECORDING_LOCK} named could not be read (${written.changes.unavailable}), so what moved is unknown\n`
     : `  ${written.changes.rules.length} upstream rule(s) answer differently${written.changes.pinsChanged.length === 0 ? "" : `, pins moved (${written.changes.pinsChanged.join("; ")})`}\n`);
   return 0;
 }

@@ -31,6 +31,11 @@ export interface RecordingChanges {
   pinsChanged: string[];
   /** True when the tool-pack had no recording at all: every rule is `added` and nothing is a change to review. */
   first: boolean;
+  /**
+   * Why the recording the committed lock named could not be read, when it could not. The tool-pack was recorded
+   * before, so this is not a first recording: what moved is unknown, which is not the same as nothing moving.
+   */
+  unavailable: string | null;
   /** Every rule whose answers moved, sorted by name. */
   rules: RuleChange[];
   /** Totals, so a reader sees the shape of the recording even when no rule moved. */
@@ -84,8 +89,14 @@ function corpusFindings(corpus: GatesCorpusRecording | null, rule: string): Map<
 
 export type RecordedPair = { recording: GatesRecording; corpus: GatesCorpusRecording | null };
 
-/** The per-rule summary of a re-record. `before` is null when the tool-pack had no recording. */
-export function diffRecordings(pack: string, tool: string, before: RecordedPair | null, after: RecordedPair): RecordingChanges {
+/** A recording the committed lock names that could not be read, and why. */
+export type UnreadRecording = { unavailable: string };
+
+/**
+ * The per-rule summary of a re-record. `before` is null when the tool-pack had no recording, and says why when the
+ * lock named one that could not be read: nothing is compared then, and the summary says so.
+ */
+export function diffRecordings(pack: string, tool: string, before: RecordedPair | UnreadRecording | null, after: RecordedPair): RecordingChanges {
   const totals = {
     rules: Object.keys(after.recording.rules).length,
     cases: Object.values(after.recording.rules).reduce((count, rule) => count + rule.cases.length, 0),
@@ -97,10 +108,12 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
       tool,
       pinsChanged: [],
       first: true,
+      unavailable: null,
       rules: Object.keys(after.recording.rules).sort(byText).map((rule) => ({ rule, status: "added", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: [] })),
       totals,
     };
   }
+  if ("unavailable" in before) return { pack, tool, pinsChanged: [], first: false, unavailable: before.unavailable, rules: [], totals };
   const pinsChanged = (["repository", "commit", "version", "runtime"] as const)
     .filter((field) => before.recording.pins[field] !== after.recording.pins[field])
     .map((field) => `${field} ${before.recording.pins[field]} → ${after.recording.pins[field]}`);
@@ -130,7 +143,7 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
     if (expected.added + expected.removed + corpusFilesChanged + factsChanged.length === 0) continue;
     rules.push({ rule, status: "changed", expectedAdded: expected.added, expectedRemoved: expected.removed, corpusFilesChanged, factsChanged });
   }
-  return { pack, tool, pinsChanged, first: false, rules, totals };
+  return { pack, tool, pinsChanged, first: false, unavailable: null, rules, totals };
 }
 
 /** Starts the recorder's comment, so CI finds the earlier ones to minimize, as the gate comment does. */
@@ -146,9 +159,13 @@ const ROW_LIMIT = 60;
  */
 export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const moved = changes.filter((entry) => entry.rules.length > 0 || entry.pinsChanged.length > 0);
+  // A tool-pack that was not compared is never counted as answering the same: its changes are unknown.
+  const uncompared = changes.filter((entry) => entry.unavailable !== null);
+  const packs = (count: number) => `${count} tool-pack${count === 1 ? "" : "s"}`;
+  const headline = [...(uncompared.length > 0 ? [`⚠️ ${packs(uncompared.length)} not compared`] : []), ...(moved.length > 0 ? [`${packs(moved.length)} moved`] : [])];
   const lines = [
     RECORDING_COMMENT_MARKER,
-    `## Gate recordings: ${moved.length === 0 ? "✅ re-recorded, and upstream answers the same" : `${moved.length} tool-pack${moved.length === 1 ? "" : "s"} moved`}`,
+    `## Gate recordings: ${headline.length === 0 ? "✅ re-recorded, and upstream answers the same" : headline.join(", ")}`,
     "",
     "Upstream's recorded answers are not in the diff (`recording.lock` names them; docs/rule-gates.md). This is what changed in them.",
     "",
@@ -156,6 +173,15 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
   for (const entry of changes) {
     const label = `\`${entry.pack}/${entry.tool}\``;
     const shape = `${entry.totals.rules} rules, ${entry.totals.cases} upstream cases, ${entry.totals.corpusFiles} corpus files`;
+    if (entry.unavailable !== null) {
+      lines.push(
+        `### ${label}: ⚠️ not compared`,
+        "",
+        `${shape}. The recording the committed \`recording.lock\` named could not be read (${entry.unavailable}), so what moved is unknown. This is not a first recording, and not a recording that answers the same.`,
+        "",
+      );
+      continue;
+    }
     if (entry.first) {
       lines.push(`### ${label}: first recording`, "", `${shape}. Nothing to compare it with.`, "");
       continue;

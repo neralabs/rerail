@@ -15,7 +15,7 @@ import {
   GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../gates/recording/schema.js";
-import { diffRecordings, type RecordedPair, type RecordingChanges } from "../../gates/recording/diff.js";
+import { diffRecordings, type RecordedPair, type RecordingChanges, type UnreadRecording } from "../../gates/recording/diff.js";
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../gates/recording/store.js";
@@ -534,7 +534,7 @@ export interface WrittenRecording extends RecordingDiff {
   lock: RecordingLock;
   /** The gzipped recordings, by their asset name, ready for the release; written beside the cache. */
   assets: { name: string; path: string; bytes: number }[];
-  /** The per-rule summary against the recording the lock named before, or a first recording. */
+  /** The per-rule summary against the recording the lock named before, a first recording, or why it was not compared. */
   changes: RecordingChanges;
 }
 
@@ -550,8 +550,8 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   const diff = diffRecording(root, pack, tool, recorded);
   if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: committed case sources differ from upstream's: ${diff.conflicting.slice(0, 5).join(", ")}`);
 
-  // The summary compares against the recording the committed lock named, where it is still in the cache; without it
-  // there is nothing honest to say about what moved, so the report says it is a first recording.
+  // The summary compares against the recording the committed lock named, where it is still in the cache. Without a
+  // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
   const texts = { [GATES_RECORDING]: recordingText(recorded.recording), [GATES_CORPUS]: recordingText(recorded.corpus) };
   const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
@@ -585,20 +585,23 @@ export async function writeRecording(root: string, pack: string, tool: string, r
 }
 
 /**
- * The recording the committed lock names, read from the cache, or null when there is no lock or its bytes are not
- * cached. It is what a re-record is summarized against; nothing fetches it, because a summary is not worth a
- * download and a maintainer re-recording has usually just run the gates.
+ * The recording the committed lock names, read from the cache: null when there is no lock, and why not when the lock
+ * is there but its recording cannot be read (not fetched, or a fetch that failed), which is not a first recording. It
+ * is what a re-record is summarized against; nothing fetches it, because a summary is not worth a download and a
+ * maintainer re-recording has usually just run the gates.
  */
-export function readLockedPair(root: string, cacheRoot: string, pack: string, tool: string): RecordedPair | null {
+export function readLockedPair(root: string, cacheRoot: string, pack: string, tool: string): RecordedPair | UnreadRecording | null {
   const lockPath = join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
   if (!existsSync(lockPath)) return null;
   const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
-  if (!lock.success) return null;
-  const texts = [GATES_RECORDING, GATES_CORPUS].map((file) => readCachedRecording(cacheRoot, lock.data.files[file as typeof GATES_RECORDING].sha256));
-  if (texts.some((text) => text === undefined)) return null;
+  if (!lock.success) return { unavailable: `${RECORDING_LOCK} does not match its schema` };
+  const locked = [GATES_RECORDING, GATES_CORPUS].map((file) => lock.data.files[file as typeof GATES_RECORDING]);
+  const texts = locked.map((file) => readCachedRecording(cacheRoot, file.sha256));
+  const missing = locked.filter((_, index) => texts[index] === undefined).map((file) => file.asset);
+  if (missing.length > 0) return { unavailable: `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not in the cache` };
   const recording = gatesRecordingSchema.safeParse(JSON.parse(texts[0]!));
   const corpus = gatesCorpusSchema.safeParse(JSON.parse(texts[1]!));
-  if (!recording.success || !corpus.success) return null;
+  if (!recording.success || !corpus.success) return { unavailable: "the cached recording does not parse" };
   return { recording: recording.data, corpus: corpus.data };
 }
 

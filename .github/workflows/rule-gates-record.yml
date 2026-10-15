@@ -204,7 +204,8 @@ jobs:
             rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-
 
       # The recording the committed manifest names, so the per-rule summary has something to compare against. It is
-      # not an error for it to be missing: a first recording says so instead.
+      # not an error for it to be missing: without a lock the summary calls it a first recording, and with a lock whose
+      # recording could not be fetched it warns that it was not compared.
       - name: Fetch the recording the manifest names
         if: steps.selected.outputs.run == 'true'
         continue-on-error: true

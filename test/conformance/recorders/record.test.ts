@@ -77,6 +77,7 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
     };
     const recorded = await recordToolPack(options);
     const written = await writeRecording(root, "demo", "bandit", recorded, { cacheRoot: join(root, "cache") });
+    assert.equal(written.changes.first, true);
 
     // Only the lock is committed; the recording itself went into the cache, by its own digest.
     const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
@@ -107,6 +108,14 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
     // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
     writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], sha256: "e".repeat(64) } } }));
     assert.deepEqual(diffRecording(root, "demo", "bandit", again).changed, ["gates.json"]);
+    // A lock whose recording is not in the cache was recorded before: the summary says it could not compare, never
+    // that this is a first recording.
+    const uncompared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
+    assert.equal(uncompared.changes.first, false);
+    assert.equal(uncompared.changes.unavailable, `${lock.files["gates.json"].asset} is not in the cache`);
+    const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
+    assert.equal(compared.changes.unavailable, null);
+    assert.deepEqual(compared.changes.rules, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -184,6 +184,8 @@ committed recording no longer matches the pinned upstream and uploads nothing, t
 Because the recordings are no longer in the diff, `gates:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
 (`--changes <file>`, `conformance/gates/recording/diff.ts`) — and the recording job posts it on the pull request.
+When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
+fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 
 Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
 and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored). Only those direct
