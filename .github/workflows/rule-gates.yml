@@ -125,6 +125,24 @@ jobs:
         with:
           built: "true"
 
+      # Each recording is cached by its own sha256, which is what its tool-pack's recording.lock names, so a commit
+      # that did not re-record hits the cache and downloads nothing.
+      - name: Restore the recordings this commit names
+        uses: actions/cache@v6
+        with:
+          path: .rerail/gates/recordings
+          key: rule-gates-recordings-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) }}
+
+      # The recordings are not in the tree (docs/rule-gates.md): this downloads the two a shard's own tool-pack needs
+      # from the release, and nothing else, and fails when the sha256 is not the one the lock names — which is how a
+      # pull request that hand-edits a lock to point at its own recording fails here.
+      - name: Fetch this tool-pack's recording
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run gates -- fetch --pack "$PACK" --tool "$TOOL"
+
       # The real-code corpus and upstream's pinned test files are keyed by their pins; a partial match is reused, since
       # every checkout in them is keyed by commit.
       - name: Restore the real-code corpus and upstream's test files

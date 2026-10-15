@@ -41,7 +41,7 @@ native engine; it reads no upstream runtime. It fetches only the pinned corpora 
 Per-rule results are cached under `.rerail/gates/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
 The key covers the gate code and its dependencies (`package.json`, `package-lock.json`), the engine (tracked engine
-sources and the native binary), the tool-pack's `gates.yaml`, `gates.json` and `gates-corpus.json`, the corpus pins, and
+sources and the native binary), the tool-pack's `gates.yaml` and the two recording digests its `recording.lock` names, the corpus pins, and
 the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
 evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
 or names another document is a miss. In CI, pull request runs only read the cache; pushes to main and the nightly save
@@ -51,16 +51,23 @@ it, so nothing a pull request's code computes is replayed later.
 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
-packs/<pack>/upstream/<tool>/gates.json         upstream's recorded answers (recording.ts, rerail.gates-recording/v1)
-packs/<pack>/upstream/<tool>/gates-corpus.json  upstream's findings on the corpus (rerail.gates-corpus/v1)
+packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording-store.ts)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id
+
+.rerail/gates/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
+  gates.json                                    upstream's recorded answers (recording.ts, rerail.gates-recording/v2)
+  gates-corpus.json                             upstream's findings on the corpus (rerail.gates-corpus/v2)
 ```
+
+The recordings are not in the tree: the lock names them and a GitHub release holds them, so `npm run gates -- fetch
+--pack <id> --tool <tool>` must have run (or `gates:record`, which writes them straight into the cache). A download
+whose sha256 is not the one the lock names fails the run.
 
 `npm run gates:record -- --pack <id> --tool <tool>` (conformance/recorders/gates/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
-recording is stale when pins disagree between `gates.yaml`, `gates.json` and `conformance.json`, a runtime's pins
-(`package.json`, `pyproject.toml`, `.python-version`) differ from the recorded ones, the kept LICENSE is not the
-recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `gates-corpus.json` answers for was not fetched with its
+recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `gates.json` and `conformance.json`, a
+runtime's pins (`package.json`, `pyproject.toml`, `.python-version`) differ from the ones the lock records, the kept
+LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `gates-corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.

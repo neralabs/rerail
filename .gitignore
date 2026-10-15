@@ -15,3 +15,10 @@ coverage/
 # installs resolve in .rerail/gates/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
 conformance/recorders/gates/runtimes/*/package-lock.json
 conformance/recorders/gates/runtimes/*/uv.lock
+
+# The rule gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
+# are judged against, and the bytes live in a GitHub release (conformance/gates/recording-store.ts). The recorder and
+# `npm run gates -- fetch` put them in .rerail/gates/recordings/; committing one again would put 71 MB of generated
+# JSON back in the history, where it stays forever.
+packs/*/upstream/*/gates.json
+packs/*/upstream/*/gates-corpus.json

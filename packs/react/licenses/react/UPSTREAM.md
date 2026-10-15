@@ -460,4 +460,10 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/d7a21fda2b0a.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/eaa7d8873215.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/fa4449ccccf7.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
-| `upstream/eslint-plugin-react-hooks/gates.json` | `packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js`: the `code` of each RuleTester case | excerpts |
+
+> `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
+> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/rule-gates.md). It
+> carries excerpts of this upstream's tests (`packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js`: the
+> `code` of each RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; the
+> LICENSE beside this file is this upstream's own, at the pinned commit.
+

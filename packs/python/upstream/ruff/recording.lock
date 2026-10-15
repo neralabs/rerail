@@ -1,0 +1,36 @@
+{
+  "format": "rerail.gates-recording-lock/v1",
+  "tool": "ruff",
+  "release": "gate-recordings",
+  "recorder": "0.1.0-next.1",
+  "pins": {
+    "repository": "https://github.com/astral-sh/ruff",
+    "commit": "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1",
+    "version": "0.16.9",
+    "runtime": "ruff-0.16.9"
+  },
+  "runtimes": {
+    "python": {
+      ".python-version": "5abd4dc1efa09469b88916c8e4e027a8c266a9b6d06f43ac9da3e30cd00b4ab5",
+      "pyproject.toml": "d1ccc38ce69e8173f9d9d7aff7a3f648e92492a3501c7457601a74affd8e2bf8"
+    },
+    "ruff-0.16.9": {
+      ".python-version": "40411dc2c2726b4c7024d38318dd8df45c528b49491efb45939dd4a829847d94",
+      "pyproject.toml": "97a4d166b0481773bdd373f620d6ce67cf301b04000a1898e1f581974754773b"
+    }
+  },
+  "files": {
+    "gates.json": {
+      "sha256": "8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746",
+      "size": 1402054,
+      "format": "rerail.gates-recording/v2",
+      "asset": "python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz"
+    },
+    "gates-corpus.json": {
+      "sha256": "c4cfcbb4345494ca185899b903d8b8ee282bac98698bcd92bb04d6adbe29bcab",
+      "size": 680817,
+      "format": "rerail.gates-corpus/v2",
+      "asset": "python-ruff-gates-corpus-c4cfcbb4345494ca185899b903d8b8ee282bac98698bcd92bb04d6adbe29bcab.json.gz"
+    }
+  }
+}

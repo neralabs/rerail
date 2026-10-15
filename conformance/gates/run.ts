@@ -17,7 +17,7 @@ import { byText, promote, readGoldens, serializeGoldens, type Golden, type Golde
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
-import { GATES_CORPUS, GATES_RECORDING } from "./recording.js";
+import { GATES_CORPUS, GATES_RECORDING } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type UpstreamCase, type UpstreamFile } from "./types.js";
 
@@ -462,7 +462,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const listedWithoutDocument = entries.filter((entry) => entry.upstream.tool === tool && !present.has(entry.path)).length;
   const names = [...new Set(mine.map((document) => document.entry.upstream.rule))].sort(byText);
 
-  const inputs = readRecordedInputs(root, pack, tool, names);
+  const inputs = readRecordedInputs(root, cacheRoot, pack, tool, names);
   const adapter = createRecordedAdapter(inputs, { cacheRoot, runner: options.runner });
   const manifest = inputs.manifest;
   const on = packOn(root, pack);
@@ -496,8 +496,9 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     gateCode: trackedDigest(root, GATE_CODE),
     dependencies: trackedDigest(root, GATE_DEPENDENCIES),
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
-    gatesJson: sha256(readOr(GATES_RECORDING)),
-    gatesCorpus: sha256(readOr(GATES_CORPUS)),
+    // The recordings are not in the tree: the lock's digests are what they are, and the lock is what the commit pins.
+    gatesJson: inputs.lock?.files[GATES_RECORDING].sha256 ?? "",
+    gatesCorpus: inputs.lock?.files[GATES_CORPUS].sha256 ?? "",
     corpusTasks: sha256(corpusTasksText),
     corpora: JSON.stringify(corpora),
   };

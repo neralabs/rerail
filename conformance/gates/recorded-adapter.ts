@@ -5,13 +5,17 @@ import { extname, join, posix, resolve } from "node:path";
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import { GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording.js";
+import { cleanVerdicts, GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
+import { readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
 import { ruffSpan } from "./span-units/ruff.js";
 import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
+
+/** Two values compared as data, for a check that reports a disagreement rather than relying on reference equality. */
+const canonical = (value: unknown): string => JSON.stringify(value, (_key, inner: unknown) => (inner !== null && typeof inner === "object" && !Array.isArray(inner) ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))) : inner));
 
 /** Where the recorder's runtimes and their pins are committed, relative to the repository root. */
 export const RUNTIMES_DIRECTORY = "conformance/recorders/gates/runtimes";
@@ -27,9 +31,9 @@ const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: 
   eslint: eslintSpan,
 };
 
-function parse<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }, path: string): T {
-  const parsed = schema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-  if (!parsed.success) throw new Error(`${path}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
+function parseText<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }, label: string, text: string): T {
+  const parsed = schema.safeParse(JSON.parse(text));
+  if (!parsed.success) throw new Error(`${label}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
   return parsed.data;
 }
 
@@ -107,6 +111,8 @@ export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: s
 export interface RecordedInputs {
   root: string;
   manifest: PackManifest;
+  /** The tool-pack's committed manifest, or null for a test that builds the recordings itself. */
+  lock: RecordingLock | null;
   recording: GatesRecording;
   corpus: GatesCorpusRecording | null;
   /** conformance.json `tools[]` of the pack. */
@@ -115,50 +121,79 @@ export interface RecordedInputs {
   names: string[];
 }
 
-/** Read a gated tool-pack's manifest and recordings from the working tree at `root`. */
-export function readRecordedInputs(root: string, pack: string, tool: string, names: string[]): RecordedInputs {
-  const directory = toolPackDirectory(root, pack, tool);
-  const manifest = readGatesManifest(root, pack, tool);
-  const recordingPath = join(directory, GATES_RECORDING);
-  if (!existsSync(recordingPath)) throw new Error(`packs/${pack}/upstream/${tool}/${GATES_RECORDING} is missing: ${staleMessage(pack, tool)}`);
-  const recording = parse(gatesRecordingSchema, recordingPath);
-  const corpusPath = join(directory, GATES_CORPUS);
-  const corpus = existsSync(corpusPath) ? parse(gatesCorpusSchema, corpusPath) : null;
-  const conformance = JSON.parse(readFileSync(join(root, "packs", pack, "conformance.json"), "utf8")) as { tools?: { name: string; version: string }[] };
-  return { root, manifest, recording, corpus, tools: conformance.tools ?? [], names };
+/** What to do when a recording the lock names is not in the cache; it is a fetch away, not a re-recording. */
+function missingMessage(pack: string, tool: string, file: string): string {
+  return `the recording packs/${pack}/upstream/${tool}/${RECORDING_LOCK} names for ${file} is not in the cache:`
+    + ` run npm run gates -- fetch --pack ${pack} --tool ${tool}, or record it with npm run gates:record -- --pack ${pack} --tool ${tool}`;
 }
 
 /**
- * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, gates.json, conformance.json), the
- * runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the kept LICENSE is the recorded one, and the recording covers every
- * upstream rule the pack names. Any failure means the recording is stale.
+ * Read a gated tool-pack's `gates.yaml` and `recording.lock` from the working tree at `root`, and the two recordings
+ * the lock names from the cache. The recordings are not in the tree: `gates fetch` puts them in the cache from the
+ * release, `gates:record` puts them there directly, and either way they are checked against the lock's digests, so a
+ * rule is never judged against bytes this commit did not name.
+ */
+export function readRecordedInputs(root: string, cacheRoot: string, pack: string, tool: string, names: string[]): RecordedInputs {
+  const manifest = readGatesManifest(root, pack, tool);
+  const lock = readRecordingLock(root, pack, tool);
+  const read = <T>(schema: Parameters<typeof parseText<T>>[0], file: typeof GATES_RECORDING | typeof GATES_CORPUS): T => {
+    const text = readCachedRecording(cacheRoot, lock.files[file].sha256);
+    if (text === undefined) throw new Error(missingMessage(pack, tool, file));
+    return parseText(schema, `packs/${pack}/upstream/${tool}/${file}`, text);
+  };
+  const conformance = JSON.parse(readFileSync(join(root, "packs", pack, "conformance.json"), "utf8")) as { tools?: { name: string; version: string }[] };
+  return {
+    root,
+    manifest,
+    lock,
+    recording: read(gatesRecordingSchema, GATES_RECORDING),
+    corpus: read(gatesCorpusSchema, GATES_CORPUS),
+    tools: conformance.tools ?? [],
+    names,
+  };
+}
+
+/**
+ * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, gates.json,
+ * conformance.json), the runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the
+ * kept LICENSE is the recorded one, and the recording covers every upstream rule the pack names. Any failure means
+ * the recording is stale.
+ *
+ * The pins and the runtime digests are read from `recording.lock`, which is committed, and the downloaded recording
+ * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
+ * lock that disagrees with the recording it names means the two were written by different runs.
  */
 export function toolPackChecks(inputs: RecordedInputs): Check[] {
-  const { root, manifest, recording, corpus, tools, names } = inputs;
+  const { root, manifest, lock, recording, corpus, tools, names } = inputs;
   const pack = manifest.rerail.pack;
   const tool = recording.tool;
   const stale = staleMessage(pack, tool);
   const checks: Check[] = [];
+  const pins = lock?.pins ?? recording.pins;
+  const runtimes = lock?.runtimes ?? recording.runtimes;
   const conformanceVersion = tools.find((entry) => entry.name === tool)?.version ?? null;
   const pinMismatches = [
-    ...(manifest.upstream.version === recording.pins.version ? [] : [`gates.yaml upstream.version ${manifest.upstream.version} but gates.json pins.version ${recording.pins.version}`]),
+    ...(manifest.upstream.version === pins.version ? [] : [`gates.yaml upstream.version ${manifest.upstream.version} but ${RECORDING_LOCK} pins.version ${pins.version}`]),
     ...(conformanceVersion === manifest.upstream.version ? [] : [`conformance.json tools[${tool}].version ${conformanceVersion ?? "missing"} but gates.yaml upstream.version ${manifest.upstream.version}`]),
-    ...(manifest.upstream.commit === recording.pins.commit ? [] : [`gates.yaml upstream.commit ${manifest.upstream.commit} but gates.json pins.commit ${recording.pins.commit}`]),
-    ...(manifest.upstream.repository === recording.pins.repository ? [] : [`gates.yaml upstream.repository ${manifest.upstream.repository} but gates.json pins.repository ${recording.pins.repository}`]),
-    ...(manifest.upstream.runtime === recording.pins.runtime ? [] : [`gates.yaml upstream.runtime ${manifest.upstream.runtime} but gates.json pins.runtime ${recording.pins.runtime}`]),
+    ...(manifest.upstream.commit === pins.commit ? [] : [`gates.yaml upstream.commit ${manifest.upstream.commit} but ${RECORDING_LOCK} pins.commit ${pins.commit}`]),
+    ...(manifest.upstream.repository === pins.repository ? [] : [`gates.yaml upstream.repository ${manifest.upstream.repository} but ${RECORDING_LOCK} pins.repository ${pins.repository}`]),
+    ...(manifest.upstream.runtime === pins.runtime ? [] : [`gates.yaml upstream.runtime ${manifest.upstream.runtime} but ${RECORDING_LOCK} pins.runtime ${pins.runtime}`]),
     ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but gates.json adapter ${recording.adapter}`]),
+    ...(lock === null || lock.tool === tool ? [] : [`${RECORDING_LOCK} tool ${lock.tool} but gates.json tool ${tool}`]),
+    ...(canonical(pins) === canonical(recording.pins) ? [] : [`${RECORDING_LOCK} and gates.json were written by different runs: pins ${canonical(pins)} and ${canonical(recording.pins)}`]),
+    ...(canonical(runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and gates.json disagree about the recorder's runtimes`]),
   ];
-  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${recording.pins.version} at ${recording.pins.commit} in gates.yaml, gates.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
+  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, gates.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
 
   const pinFileMismatches: string[] = [];
-  for (const [runtime, files] of Object.entries(recording.runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
+  for (const [runtime, files] of Object.entries(runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
     for (const [file, digest] of Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))) {
       const path = join(root, RUNTIMES_DIRECTORY, runtime, file);
       const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
       if (actual !== digest) pinFileMismatches.push(`${runtime}/${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}`}`);
     }
   }
-  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${Object.keys(recording.runtimes).length} runtime(s) match their committed pins` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${Object.keys(runtimes).length} runtime(s) match their committed pins` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const licensePath = join(root, "packs", pack, "licenses", manifest.rerail.project, "LICENSE");
   const licenseSha = existsSync(licensePath) ? sha256(readFileSync(licensePath)) : null;
@@ -209,8 +244,11 @@ export function createRecordedAdapter(
   const regex = ({ source: pattern, flags }: { source: string; flags: string }) => new RegExp(pattern, flags);
   const toSpan = SPAN_UNITS[recording.adapter];
   const extensions = new Set(recording.corpus.caseSensitive ? recording.corpus.extensions : recording.corpus.extensions.map((ext) => ext.toLowerCase()));
-  const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts]));
-  const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts]));
+  // An entry without `verdicts` is every parser silent; an entry that is not there at all is a source nobody recorded.
+  const silent = cleanVerdicts(recording.parsers);
+  const corpusSilent = corpus === null ? [] : cleanVerdicts(corpus.parsers);
+  const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts ?? silent]));
+  const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts ?? corpusSilent]));
   const corpusByPlace = new Map((corpus?.files ?? []).map((file) => [`${file.task}\0${file.path}`, file]));
 
   return {

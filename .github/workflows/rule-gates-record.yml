@@ -1,0 +1,317 @@
+name: Rule gates (record)
+
+# The only job that writes a gate recording. Pull request CI never runs an upstream linter, so it cannot tell a
+# recording that is what upstream says from one a contributor wrote to make their own rule pass; in a public
+# repository that would be a way to walk a rule past the gates. So recordings are made here, by a job a maintainer
+# starts, running the recorder and the runtimes from the base branch, and uploaded to the release the locks name.
+# A pull request that supplies its own recording fails in rule-gates.yml, where the fetch finds no such asset.
+#
+# Started three ways:
+#   * workflow_dispatch, with a pack, a tool and the pull request to record for;
+#   * the `record-gates` label on a pull request (removed again when the job starts, so a second label re-runs it);
+#   * rule-gates-nightly.yml, with check: true, which reports drift on main and uploads nothing.
+#
+# How a recording reaches the pull request: the job pushes the manifest commit to the pull request's branch when it
+# can (a branch in this repository), and otherwise — a fork — pushes `gate-recordings/pr-<n>` here and says in a
+# comment that the contributor should cherry-pick it or a maintainer should push it. The default token cannot write to
+# a fork, and giving this job a token that could would hand a fork pull request write access to its own base. That
+# trade-off is a decision for review (see the pull request body).
+
+on:
+  workflow_dispatch:
+    inputs:
+      pack:
+        description: The pack to record, or empty for every gated tool-pack.
+        type: string
+        default: ""
+      tool:
+        description: The upstream tool to record, or empty for every one of the pack's.
+        type: string
+        default: ""
+      pr:
+        description: The pull request to commit the manifest for; empty records the base branch itself.
+        type: string
+        default: ""
+  pull_request_target:
+    types: [labeled]
+  workflow_call:
+    inputs:
+      pack:
+        type: string
+        default: ""
+      tool:
+        type: string
+        default: ""
+      check:
+        description: Report drift against the committed manifests and upload nothing.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rule-gates-record-${{ github.event.pull_request.number || inputs.pr || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The label trigger runs on `pull_request_target`, which is the base branch's workflow with a write token, so it
+  # only starts for a maintainer's label and only after this gate: `record-gates` from someone who can write here.
+  authorize:
+    name: Authorize
+    if: github.event_name != 'pull_request_target' || github.event.label.name == 'record-gates'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.target.outputs.pr }}
+      base: ${{ steps.target.outputs.base }}
+    steps:
+      - id: target
+        name: Read the pull request to record for
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          LABEL_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          pr=""
+          if [ "$EVENT" = "pull_request_target" ]; then
+            permission="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)"
+            case "$permission" in
+              admin|write|maintain) ;;
+              *) echo "::error::$ACTOR cannot start a recording (permission $permission)"; exit 1 ;;
+            esac
+            pr="$LABEL_PR"
+            # Removed again so a maintainer can re-label to record once more.
+            gh api -X DELETE "repos/$REPO/issues/$pr/labels/record-gates" > /dev/null || true
+          else
+            pr="$INPUT_PR"
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          if [ -n "$pr" ]; then
+            gh api "repos/$REPO/pulls/$pr" --jq '"base=" + .base.ref' >> "$GITHUB_OUTPUT"
+          else
+            echo "base=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+  record:
+    name: Record (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: authorize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      # One leg per gated tool-pack, filtered by the pack and tool the caller asked for. It mirrors
+      # rule-gates.yml's matrix without its shards: recording a tool-pack is one run of the live adapter.
+      matrix:
+        include:
+          - pack: python
+            tool: ruff
+          - pack: python
+            tool: bandit
+          - pack: react
+            tool: eslint-plugin-react
+          - pack: react
+            tool: eslint-plugin-react-hooks
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
+          - pack: typescript
+            tool: typescript-eslint
+          - pack: typescript
+            tool: eslint-plugin-vitest
+          - pack: next
+            tool: eslint-plugin-next
+    steps:
+      - name: Skip the tool-packs this run was not asked for
+        id: selected
+        env:
+          WANT_PACK: ${{ inputs.pack }}
+          WANT_TOOL: ${{ inputs.tool }}
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          if { [ -z "$WANT_PACK" ] || [ "$WANT_PACK" = "$PACK" ]; } && { [ -z "$WANT_TOOL" ] || [ "$WANT_TOOL" = "$TOOL" ]; }; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The recorder, the runtimes and the workflow come from the base branch, never from the pull request: a fork
+      # must not be able to change what records its own rules. Only the pull request's pins, gates.yaml and rule list
+      # are read from its head, below.
+      - name: Checkout the base branch
+        if: steps.selected.outputs.run == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.authorize.outputs.base }}
+          fetch-depth: 0
+
+      - uses: ./.github/actions/lfs
+        if: steps.selected.outputs.run == 'true'
+
+      # The pull request's own packs/ and conformance/gates/corpus-tasks.json: its pins, its gates.yaml and the rules
+      # it asks upstream about. Everything that runs stays the base branch's.
+      - name: Take the pull request's pins and rule list
+        if: steps.selected.outputs.run == 'true' && needs.authorize.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.authorize.outputs.pr }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          git fetch --no-tags origin "refs/pull/$PR/head:refs/remotes/pr/head"
+          git checkout "refs/remotes/pr/head" -- packs/ conformance/gates/corpus-tasks.json
+          echo "recording for pull request #$PR at ${head}"
+
+      - uses: ./.github/actions/node-deps
+        if: steps.selected.outputs.run == 'true'
+
+      - name: Build the package
+        if: steps.selected.outputs.run == 'true'
+        run: npm run build:js
+
+      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed pins. No
+      # lockfile is committed, so a transitive release that changes upstream's answers shows up as drift here.
+      - name: Set up uv
+        if: steps.selected.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v7
+
+      - name: Restore the upstream runtimes, checkouts, corpus and recordings
+        if: steps.selected.outputs.run == 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            .rerail/gates/runtimes
+            .rerail/gates/upstream
+            .rerail/gates/corpus
+            .rerail/gates/recordings
+          key: rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/gates/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/gates/corpus-tasks.json') }}
+          restore-keys: |
+            rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-
+
+      # The recording the committed manifest names, so the per-rule summary has something to compare against. It is
+      # not an error for it to be missing: a first recording says so instead.
+      - name: Fetch the recording the manifest names
+        if: steps.selected.outputs.run == 'true'
+        continue-on-error: true
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run gates -- fetch --pack "$PACK" --tool "$TOOL"
+
+      - name: Report drift against the committed manifest
+        if: steps.selected.outputs.run == 'true' && inputs.check
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --check
+
+      - name: Record
+        if: steps.selected.outputs.run == 'true' && !inputs.check
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --changes "$RUNNER_TEMP/recording-changes.md"
+
+      # Content-addressed, so an upload is write-once: an asset whose name is already in the release holds exactly
+      # these bytes and is left alone. A release that is near GitHub's cap of 1,000 assets is rolled over by a
+      # maintainer, who records again with --release gate-recordings-<n>.
+      - name: Upload the recordings to the release
+        if: steps.selected.outputs.run == 'true' && !inputs.check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          release="$(node -p "require('./packs/$PACK/upstream/$TOOL/recording.lock').release")"
+          gh release view "$release" --repo "$REPO" > /dev/null 2>&1 ||
+            gh release create "$release" --repo "$REPO" --prerelease --title "Rule gate recordings" \
+              --notes "Upstream linters' recorded answers for the rule gates (docs/rule-gates.md). Each asset is named for the sha256 of the JSON it holds, and a commit's packs/<pack>/upstream/<tool>/recording.lock names the ones its rules are judged against. Each recording holds excerpts of its upstream's test files: see that upstream's packs/<pack>/licenses/<project>/UPSTREAM.md and the LICENSE beside it."
+          have="$(gh release view "$release" --repo "$REPO" --json assets --jq '.assets[].name')"
+          for asset in .rerail/gates/recordings/upload/*.json.gz; do
+            name="$(basename "$asset")"
+            if printf '%s\n' "$have" | grep -Fqx "$name"; then
+              echo "$name is already in $release: the same digest is the same bytes, so it is left alone"
+            else
+              gh release upload "$release" "$asset" --repo "$REPO"
+            fi
+          done
+          count="$(gh release view "$release" --repo "$REPO" --json assets --jq '.assets | length')"
+          if [ "$count" -gt 900 ]; then
+            echo "::warning::$release holds $count assets, near GitHub's cap of 1000: record with --release gate-recordings-<n> next"
+          fi
+
+      - name: Upload the change summary
+        if: steps.selected.outputs.run == 'true' && !inputs.check
+        uses: actions/upload-artifact@v7
+        with:
+          name: rule-gates-recording-${{ matrix.pack }}-${{ matrix.tool }}
+          path: |
+            ${{ runner.temp }}/recording-changes.md
+            packs/${{ matrix.pack }}/upstream/${{ matrix.tool }}/recording.lock
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The manifest is the only thing that is committed. A branch in this repository gets the commit directly; a
+      # fork's pull request cannot be pushed to with the default token, so the commit goes to a branch here and the
+      # comment says what to do with it.
+      - name: Commit the manifest
+        if: steps.selected.outputs.run == 'true' && !inputs.check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.authorize.outputs.pr }}
+          BASE: ${{ needs.authorize.outputs.base }}
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          git add "packs/$PACK/upstream/$TOOL/recording.lock" "packs/$PACK/licenses" || true
+          if git diff --cached --quiet; then
+            echo "the recording is the one the manifest already named: nothing to commit"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Rule gates: record $PACK/$TOOL" -m "Recorded by rule-gates-record.yml; the recording is in the release."
+          if [ -z "$PR" ]; then
+            git push origin "HEAD:refs/heads/$BASE"
+            exit 0
+          fi
+          fork="$(gh api "repos/$REPO/pulls/$PR" --jq .head.repo.full_name)"
+          branch="$(gh api "repos/$REPO/pulls/$PR" --jq .head.ref)"
+          if [ "$fork" = "$REPO" ]; then
+            git push origin "HEAD:refs/heads/$branch"
+            gh pr comment "$PR" --repo "$REPO" --body "Recorded \`$PACK/$TOOL\` and pushed the manifest to this branch. The recording itself is a release asset; the per-rule summary is in the run's artifacts."
+          else
+            git push --force origin "HEAD:refs/heads/gate-recordings/pr-$PR"
+            gh pr comment "$PR" --repo "$REPO" --body "Recorded \`$PACK/$TOOL\`. The manifest commit is on \`gate-recordings/pr-$PR\` in this repository: the default token cannot push to a fork, so cherry-pick it into your branch, or ask a maintainer to push it. The recording itself is a release asset; the per-rule summary is in the run's artifacts."
+          fi
+
+      - name: Post the per-rule change summary
+        if: steps.selected.outputs.run == 'true' && !inputs.check && needs.authorize.outputs.pr != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.authorize.outputs.pr }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/recording-changes.md"
+          [ -s "$body" ] || exit 0
+          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null

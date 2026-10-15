@@ -1,0 +1,34 @@
+{
+  "format": "rerail.gates-recording-lock/v1",
+  "tool": "eslint-plugin-vitest",
+  "release": "gate-recordings",
+  "recorder": "0.1.0-next.1",
+  "pins": {
+    "repository": "https://github.com/vitest-dev/eslint-plugin-vitest",
+    "commit": "aad57d121647efe764463c37414a8cd67ec9cf92",
+    "version": "1.6.27",
+    "runtime": "vitest-eslint-plugin-1.6.27"
+  },
+  "runtimes": {
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    },
+    "vitest-eslint-plugin-1.6.27": {
+      "package.json": "330781d754621f5f382cd2a309eed181523ebd58b72913dbe993695554b583dd"
+    }
+  },
+  "files": {
+    "gates.json": {
+      "sha256": "e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9",
+      "size": 400708,
+      "format": "rerail.gates-recording/v2",
+      "asset": "typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz"
+    },
+    "gates-corpus.json": {
+      "sha256": "9909aa03f587bbeaed1e34ad3ec57293b6733161c0e3778eb9265acee45f67c4",
+      "size": 15658,
+      "format": "rerail.gates-corpus/v2",
+      "asset": "typescript-eslint-plugin-vitest-gates-corpus-9909aa03f587bbeaed1e34ad3ec57293b6733161c0e3778eb9265acee45f67c4.json.gz"
+    }
+  }
+}

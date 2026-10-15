@@ -891,14 +891,14 @@ SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # eslint-plugin-unicorn 76.0.0 (packs/javascript/licenses/eslint-plugin-unicorn/UPSTREAM.md): derived or excerpted
 [[annotations]]
-path = ["packs/javascript/upstream/eslint-plugin-unicorn/fixtures/**", "packs/javascript/upstream/eslint-plugin-unicorn/gates.json"]
+path = "packs/javascript/upstream/eslint-plugin-unicorn/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # ESLint 10.11.0 (packs/javascript/licenses/eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
-path = ["packs/javascript/upstream/eslint/fixtures/**", "packs/javascript/upstream/eslint/gates.json"]
+path = "packs/javascript/upstream/eslint/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
@@ -1001,48 +1001,16 @@ precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
-# The rule gates' recordings that hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's
-# tests beside Rerail's recorded answers, listed in each upstream's UPSTREAM.md. The JavaScript pack's are annotated
-# with its fixtures above.
-
-# Ruff 0.16.9: test excerpts in the rule gates' recording (packs/python/licenses/ruff/UPSTREAM.md)
-[[annotations]]
-path = "packs/python/upstream/ruff/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# typescript-eslint 8.70.1: test excerpts in the rule gates' recording (packs/typescript/licenses/typescript-eslint/UPSTREAM.md)
-[[annotations]]
-path = "packs/typescript/upstream/typescript-eslint/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# @vitest/eslint-plugin 1.6.27: test excerpts in the rule gates' recording (packs/typescript/licenses/eslint-plugin-vitest/UPSTREAM.md)
-[[annotations]]
-path = "packs/typescript/upstream/eslint-plugin-vitest/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# eslint-plugin-react 7.37.5: test excerpts in the rule gates' recording (packs/react/licenses/eslint-plugin-react/UPSTREAM.md)
-[[annotations]]
-path = "packs/react/upstream/eslint-plugin-react/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["2014 Yannick Croissant", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# eslint-plugin-react-hooks 7.1.1: test excerpts in the rule gates' recording (packs/react/licenses/react/UPSTREAM.md)
-[[annotations]]
-path = "packs/react/upstream/eslint-plugin-react-hooks/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
-# Next.js 16.3.8 (@next/eslint-plugin-next): test excerpts in the rule gates' recording (packs/next/licenses/next.js/UPSTREAM.md)
-[[annotations]]
-path = "packs/next/upstream/eslint-plugin-next/gates.json"
-precedence = "override"
-SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
+# The rule gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
+# beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
+# and the bytes are a GitHub release asset (conformance/gates/recording-store.ts) — so REUSE cannot annotate them, and
+# there is nothing here to annotate. The attribution is where a reader of the asset can find it: each upstream's
+# packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,
+# the kept LICENSE sits beside it, and the release's own description names both. Ruff's GPL-derived fixture texts are
+# never in a recording at all (the recorder skips them as not-copied); every other upstream here is MIT.
+#
+# Upstream by upstream, as the removed annotations read: Ruff 0.16.9 (2022 Charles Marsh), typescript-eslint 8.70.1
+# (2019 typescript-eslint and other contributors), @vitest/eslint-plugin 1.6.27 (2022 - PRESENT Verite Mugabo
+# Makuza), eslint-plugin-react 7.37.5 (2014 Yannick Croissant), eslint-plugin-react-hooks 7.1.1 (Meta Platforms, Inc.
+# and affiliates.), @next/eslint-plugin-next 16.3.8 (2025 Vercel, Inc.), ESLint 10.11.0 (OpenJS Foundation and other
+# contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.
