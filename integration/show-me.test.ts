@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ingestEngineEvent, startEngineService } from "../src/runtime/index.js";
 import type { AdapterDelivery } from "../src/engine/index.js";
-import { runShowMeCommand, SHOW_ME_FILE, SHOW_ME_FIXED, SHOW_ME_MESSAGE, SHOW_ME_RULE_ID, SHOW_ME_VIOLATING } from "../src/cli/show-me.js";
+import { runShowMeCommand, SHOW_ME_FILE, SHOW_ME_FIXED, SHOW_ME_MESSAGE, SHOW_ME_RULE_ID, SHOW_ME_VIOLATING } from "../src/cli/index.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
