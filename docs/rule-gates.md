@@ -169,8 +169,10 @@ answers, the nightly `--check` fails and names the difference: pin that package 
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
-`gates.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material: the recorder lists it in
-the upstream's `UPSTREAM.md` as excerpts, and `REUSE.toml` annotates it under upstream's licence and Apache-2.0.
+`gates.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so the upstream's
+`UPSTREAM.md` records it as excerpts under upstream's licence and Apache-2.0 — in the note under the file table, not
+in the table itself, which pack check 6 reads as the files the pack carries and the recording is no longer one of
+them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were.
 
 Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python) read every
 case source and every corpus file, so a file the engine cannot parse can be told from a file that is not valid source.
