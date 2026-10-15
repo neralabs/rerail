@@ -1,0 +1,31 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "no-identifier",
+  "revision": 1,
+  "mode": "steer",
+  "description": "An identifier, which the exemplar language never has a reader for.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "identifier",
+      "forbid": {
+        "ast": {
+          "language": "exemplar",
+          "rule": {
+            "kind": "identifier"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EXEMPLAR-IDENTIFIER",
+        "message": "an identifier"
+      }
+    }
+  ]
+}

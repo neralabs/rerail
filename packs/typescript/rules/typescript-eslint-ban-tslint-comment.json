@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-ban-tslint-comment",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of typescript-eslint's `ban-tslint-comment` (https://typescript-eslint.io/rules/ban-tslint-comment). Flags comments whose value matches TSLint's enable/disable directive regex; the fix deletes the comment.",
   "scope": {
@@ -26,7 +26,19 @@
         "anchor": "witness.span",
         "code": "@typescript-eslint/ban-tslint-comment",
         "message": "tslint comment detected: \"$TEXT\"",
-        "fix": ""
+        "fix": "",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/ban-tslint-comment"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "ban-tslint-comment"
+            ]
+          }
+        }
       }
     }
   ]

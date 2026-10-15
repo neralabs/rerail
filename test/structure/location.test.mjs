@@ -20,10 +20,10 @@ describe("#1 pack.json location", () => {
         "packs/php/pack.json": "{}",
         "fixtures/packs/valid/pack.json": "{}",
         "packs/next/candidates/pack.json": "{}",
-        "test/fixtures/packs/vue/pack.json": "{}",
+        "test/fixtures/packs/exemplar/pack.json": "{}",
       }),
     );
-    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/vue/pack.json"]);
+    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/exemplar/pack.json"]);
   });
 });
 

@@ -20,6 +20,12 @@ Writes (every other policy of the pack is hand-written: packs/node/rules/n-no-pr
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
 
+Each port's violations name its rule under suppress.eslint and, for a rule oxlint 1.88.0 implements (OXLINT_NODE_RULES),
+under suppress.oxlint. suppress.biome belongs to scripts/generate/packs/biome-suppression.mjs: this script carries each
+violation's suppress.biome over from the committed document, and biome-suppression.mjs, run after it, updates it.
+A document keeps its committed revision when nothing else in it changes; a shipped one (packs/node/rules) that changes
+bumps it, as biome-suppression.mjs does. A document with no committed version starts at revision 1.
+
 The utilities emulate @eslint-community/eslint-utils' ReferenceTracker (legacy mode) and ESTree shapes over
 tree-sitter's: see each policy's description. Some helpers exist in two spellings (e.g. a string constant matched by
 its string_fragment or by its value; member property tested before or after the object) because the committed
@@ -36,6 +42,12 @@ REPOSITORY = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 # The pack's directory, relative to the repository.
 PACK = os.path.join("packs", "node")
 PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
+# The rules of oxlint 1.88.0's `node` plugin (`oxlint --rules --format json`, scope `node`; oxc tag oxlint_v1.88.0,
+# `rules::node::*` in crates/oxc_linter/src/generated/rules_enum.rs). The plugin ports eslint-plugin-node, of which
+# eslint-plugin-n is the fork, so a port of `n/<rule>` for one of these names carries suppress.oxlint `<rule>` (as
+# set-up's `oxlintRuleOfPort` maps it).
+OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
+                     "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 
@@ -85,13 +97,20 @@ console.log(JSON.stringify({ modules: conv(rawModules), globals: conv(globals) }
 
 # ---- documents ---------------------------------------------------------------------------------------------------
 
+def suppress(upstream):
+    rules = {"eslint": {"rules": [upstream]}}
+    if upstream.startswith("n/") and upstream[2:] in OXLINT_NODE_RULES:
+        rules["oxlint"] = {"rules": [upstream[2:]]}
+    return rules
+
+
 def policy(rid, upstream, description, checks):
     doc = {"format": "rerail.policy/v1", "id": rid, "revision": 1, "mode": "steer", "description": description,
            "scope": {"include": INCLUDE, "exclude": []}, "clauses": []}
     for check in checks:
         doc["clauses"].append({"id": check["id"], "forbid": {"ast": {"language": "typescript", **check["ast"]}},
                                "violation": {"anchor": "witness.span", "code": upstream, "message": check["message"],
-                                             "suppress": {"eslint": {"rules": [upstream]}}}})
+                                             "suppress": suppress(upstream)}})
     return doc
 
 
@@ -273,7 +292,9 @@ def fn_utils(rx_mod, rx_fn):
     return utils
 
 
-FS_FNS = "access copyFile open rename truncate rmdir mkdir readdir readlink symlink lstat stat link unlink chmod lchmod lchown chown utimes realpath mkdtemp writeFile appendFile readFile cp glob lutimes opendir rm statfs watch".split()
+# Upstream also reports `watch`; Rerail does not (NER-1834, declared in packs/node/divergences.json): fs.promises.watch
+# returns an async iterator of change events, not an FSWatcher, so it is not a drop-in replacement.
+FS_FNS = "access copyFile open rename truncate rmdir mkdir readdir readlink symlink lstat stat link unlink chmod lchmod lchown chown utimes realpath mkdtemp writeFile appendFile readFile cp glob lutimes opendir rm statfs".split()
 DNS_CALL = "lookup lookupService getServers resolve resolve4 resolve6 resolveAny resolveCname resolveMx resolveNaptr resolveNs resolvePtr resolveSoa resolveSrv resolveTxt reverse setServers".split()
 
 
@@ -292,6 +313,9 @@ def prefer_promises_docs():
         description = (f"eslint-plugin-n 18.4.1 n/prefer-promises/{mod}: calls of the {mod} module's callback API ({', '.join(calls)}"
                        + (f"; construction of {', '.join(constructs)}" if constructs else "")
                        + f") as ReferenceTracker (legacy mode) finds them: members of `require('{mod}')`/`require('node:{mod}')` (global require), `process.getBuiltinModule(…)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers.")
+        if mod == "fs":
+            description += (" Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change"
+                            " events rather than an FSWatcher and is not a drop-in replacement.")
         docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", description, checks))
     return docs
 
@@ -416,10 +440,10 @@ def syntax_docs():
         {"kind": "sequence_expression", "has": {"nthChild": LAST, "matches": "cannot-be-error"}},
         {"kind": "binary_expression", "all": [op("^(?:\\|\\||&&|\\?\\?)$"), {"has": {"field": "left", "matches": "cannot-be-error"}}, {"has": {"field": "right", "matches": "cannot-be-error"}}]},
         {"kind": "ternary_expression", "all": [{"has": {"field": "consequence", "matches": "cannot-be-error"}}, {"has": {"field": "alternative", "matches": "cannot-be-error"}}]}]}
-    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are.", [
+    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): a callback named `cb` or `callback` need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before passing an error or null first.", [
         {"id": "upstream", "ast": {"utils": {"cannot-be-error": cannot_be_error}, "rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb)$"}},
-            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback."}]))
+            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is."}]))
 
     stop = {"any": [{"kind": "statement_block"}, {"kind": "return_statement"}, {"kind": "arrow_function"}]}
     any_func = {"any": [{"kind": k} for k in ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "arrow_function", "method_definition"]]}
@@ -570,7 +594,7 @@ def no_deprecated_api_doc(trace):
         checks.append({"id": re.sub(r"[^a-z0-9]+", "-", root.lower()).strip("-"),
                        "forbid": {"ast": {"language": "typescript", "languageOptions": lo, "rule": {"any": alts}}},
                        "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": f"Deprecated Node.js API ({root}).",
-                                     "suppress": {"eslint": {"rules": ["n/no-deprecated-api"]}}}})
+                                     "suppress": suppress("n/no-deprecated-api")}})
     description = "eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message): every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), global variables (declared by globals.node, the ES builtins or /* global */ comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains."
     return {"format": "rerail.policy/v1", "id": "n-no-deprecated-api", "revision": 1, "mode": "steer", "description": description,
             "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
@@ -616,7 +640,26 @@ def probe_docs(builtins, globals_node):
 
 # ---- main ------------------------------------------------------------------------------------------------------------
 
-def write(root, relative, doc, compact=False):
+def settle(relative, doc, shipped):
+    """Carries suppress.biome over from the committed document and sets the revision: the committed one when nothing
+    else changed, one more for a shipped document that changed."""
+    path = os.path.join(REPOSITORY, relative, f"{doc['id']}.json")
+    if not os.path.exists(path):
+        return
+    with open(path) as handle:
+        committed = json.load(handle)
+    biome = {clause["id"]: clause["violation"]["suppress"]["biome"] for clause in committed["clauses"]
+             if "biome" in clause.get("violation", {}).get("suppress", {})}
+    for clause in doc["clauses"]:
+        if clause["id"] in biome and "suppress" in clause["violation"]:
+            clause["violation"]["suppress"]["biome"] = biome[clause["id"]]
+    doc["revision"] = committed["revision"]
+    if shipped and doc != committed:
+        doc["revision"] += 1
+
+
+def write(root, relative, doc, compact=False, shipped=False):
+    settle(relative, doc, shipped)
     path = os.path.join(root, relative, f"{doc['id']}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     text = json.dumps(doc, separators=(",", ":")) if compact else json.dumps(doc, indent=2)
@@ -631,7 +674,7 @@ def main():
     args = parser.parse_args()
     builtins, globals_node, trace = load_data(os.path.abspath(args.tools or nearest_tools()))
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins)]:
-        write(args.root, os.path.join(PACK, "rules"), doc)
+        write(args.root, os.path.join(PACK, "rules"), doc, shipped=True)
     write(args.root, os.path.join(PACK, "candidates", "rules"), no_deprecated_api_doc(trace), compact=True)
     write(args.root, os.path.join(PACK, "candidates", "rules"), hashbang_doc())
     for doc in probe_docs(builtins, globals_node):

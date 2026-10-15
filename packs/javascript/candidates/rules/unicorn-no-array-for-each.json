@@ -61,6 +61,16 @@
             "rules": [
               "unicorn/no-array-for-each"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-array-for-each"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noForEach"
+            ]
           }
         }
       }

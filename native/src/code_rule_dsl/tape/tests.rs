@@ -113,10 +113,59 @@ fn persisted_image_round_trips_without_parsing() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
+    // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
+    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
+    // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them.
     assert_eq!(
         digest,
-        "6fe4a84d7213cb437802c2ed6f023ddc6f8a3c6531db28e16115908c3a4481a7"
+        "227bea89873bd43db3dae4b3a9d1af873c096e79a0b308b83959a967fbd183ca"
     );
+}
+
+/// A persisted image keeps each embedded program's root, dialect and apartness (`EmbeddedProgram`),
+/// and rejects an entry that names no dialect the language embeds, a flag that is neither 0 nor
+/// 1, and a root that is no child of the tape's root.
+#[test]
+fn persisted_image_keeps_and_checks_its_embedded_programs() {
+    let source = "<script lang=\"tsx\">let x = <a />;</script>\n";
+    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    let image = TapeImage::parse(&grammar, source, &|| false)
+        .unwrap()
+        .unwrap();
+    let [program] = image.programs[..] else {
+        panic!("one program: {:?}", image.programs);
+    };
+    assert_eq!(program.dialect, GrammarDialect::Tsx);
+    assert!(program.apart);
+    let bytes = image.to_bytes().unwrap();
+    assert_eq!(
+        TapeImage::from_bytes(&bytes, &grammar).unwrap().programs,
+        image.programs
+    );
+    // The program entry follows the header and the tables before it.
+    let at = 160
+        + image.rec.len()
+        + image.spans.len()
+        + image.checkpoints.len()
+        + 8 * (image.par_overflow.len() + image.size_overflow.len())
+        + 4 * (image.extra.len() + image.error.len() + image.missing.len())
+        + 8 * image.syntax_errors.len();
+    assert_eq!(bytes[at..at + 4], program.root.to_le_bytes());
+    for (offset, byte) in [(4, 3), (5, 2)] {
+        let mut corrupt = bytes.clone();
+        corrupt[at + offset] = byte;
+        assert!(
+            TapeImage::from_bytes(&corrupt, &grammar).is_err(),
+            "{offset}"
+        );
+    }
+    let mut unknown = image.clone();
+    unknown.programs[0].dialect = GrammarDialect::Python;
+    assert!(unknown.to_bytes().is_err());
+    let mut nested = image.clone();
+    nested.programs[0].root += 1;
+    assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &nested, &|| false).is_err());
 }
 
 #[test]
@@ -1198,5 +1247,109 @@ fn a_lookup_from_a_nearby_node_finds_what_a_lookup_from_the_root_finds() {
         let (native, tape, _, _) = fixture(source, lang);
         agree(native, &format!("{lang:?} native"));
         agree(tape, &format!("{lang:?} tape"));
+    }
+}
+
+/// A PHP template's tape is its view's tree (`php_view`) over the template: no syntax errors, every
+/// span reads the template, and inline text holds no node.
+#[test]
+fn a_php_template_tapes_its_php_view() {
+    let cases: [(&str, &[&str], &[&str]); 9] = [
+        (
+            "<?php\nprint(1);\n?>\n<script>\nx = eval('document.getElementById (option)');\n</script>\n",
+            &["<script>\nx = eval('document.getElementById (option)');\n</script>"],
+            &[],
+        ),
+        (
+            "<?php\neval('$a = 1;');\n?>\n<p>hi</p>\n<?php eval('$b = 2;'); ?>\n",
+            &["<p>hi</p>"],
+            &["eval('$a = 1;')", "eval('$b = 2;')"],
+        ),
+        (
+            "<html><?php foo(); ?></html>\n",
+            &["<html>", "</html>"],
+            &["foo()"],
+        ),
+        (
+            "<?php if ($a): ?>\n<p>x</p>\n<?php endif; ?>\n",
+            &["<p>x</p>"],
+            &[],
+        ),
+        ("<p><?= $x ?></p>\n", &["<p>", "</p>"], &[]),
+        (
+            "<p><?php $s = '?>'; $t = <<<EOT\n?>\nEOT;\nf($t) // c ?></p>\r\n<?php if ($a) { ?>é<?php } ?>\n",
+            &["</p>", "é"],
+            &["f($t)"],
+        ),
+        (
+            "<?php $s = \"{$o->{\"?>\"}}\"; $x = function() {} ?>html<?php eval(1);\n",
+            &["html"],
+            &["eval(1)"],
+        ),
+        (
+            "<p><?php $__halt_compiler = static fn() => 0; $__halt_compiler(); eval('1'); ?></p>\n",
+            &["<p>", "</p>"],
+            &["$__halt_compiler()", "eval('1')"],
+        ),
+        (
+            "<?php $a = 1; ?>html<?$x = eval('1');?>tail<?php $b = 2; ?>\n",
+            &["html", "tail"],
+            &["eval('1')"],
+        ),
+    ];
+    for (source, inline, calls) in cases {
+        let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .unwrap()
+            .unwrap();
+        let tape =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        assert_eq!(
+            tape.syntax_error_ranges(),
+            Vec::<Range<usize>>::new(),
+            "{source:?}"
+        );
+        let inline = inline
+            .iter()
+            .map(|text| {
+                let start = source.find(text).unwrap();
+                start..start + text.len()
+            })
+            .collect::<Vec<_>>();
+        let root = AstGrep::doc(tape);
+        // The view's tree, node for node, its texts read from the template.
+        let view = AstGrep::doc(StrDoc::new(
+            &super::super::php_view::view(source),
+            GrammarDialect::Php,
+        ));
+        let native = view
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        let taped = root
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        assert_eq!(native, taped, "{source:?}");
+        let mut found = Vec::new();
+        for node in root.root().dfs() {
+            let range = node.range();
+            assert_eq!(node.text(), &source[range.clone()], "{source:?}");
+            if node.children().next().is_none() {
+                assert!(
+                    inline
+                        .iter()
+                        .all(|text| range.end <= text.start || text.end <= range.start),
+                    "{source:?}: {} at {range:?} is inline text",
+                    node.kind()
+                );
+            }
+            if node.kind() == "function_call_expression" {
+                found.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(found, calls, "{source:?}");
     }
 }

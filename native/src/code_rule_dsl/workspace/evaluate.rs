@@ -28,7 +28,7 @@ use crate::code_rule_dsl::model::{
 };
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::SyntaxErrors;
+use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -325,6 +325,7 @@ pub(super) fn evaluate_file(
                     captures: Captures::default(),
                     message: None,
                     fix: None,
+                    ignored: false,
                 });
             } else {
                 witnesses.push(violations::regex_witness(
@@ -457,17 +458,35 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
-    let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
+    let errors = SyntaxErrors::of_doc(&doc);
     if !errors.is_empty() {
-        for &id in &file.candidates.ast {
-            if !file.failures.contains_key(&id)
-                && !candidate_grammar(&code_rules[id.0], id.1, &file.input).sound_under_errors
-            {
-                file.failures
-                    .insert(id, ("source-incomplete", "file has syntax errors"));
+        match errors.reading(&lines, file.input.source.len()) {
+            // No AST clause runs on a file the parser did not read, sound or not; the failure
+            // reports `file.syntax` in place of its static message (`results::failure_message`).
+            SyntaxReading::Unread(message) => {
+                for &id in &file.candidates.ast {
+                    file.failures
+                        .entry(id)
+                        .or_insert(("source-incomplete", UNREAD));
+                }
+                file.syntax = Some(message);
+            }
+            SyntaxReading::Partial(message) => {
+                for &id in &file.candidates.ast {
+                    if !file.failures.contains_key(&id)
+                        && errors.incomplete(candidate_grammar(
+                            &code_rules[id.0],
+                            id.1,
+                            &file.input,
+                        ))
+                    {
+                        file.failures
+                            .insert(id, ("source-incomplete", "file has syntax errors"));
+                    }
+                }
+                file.syntax = Some(message);
             }
         }
-        file.syntax = Some(errors.partial_message(&lines));
     }
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();
@@ -570,7 +589,7 @@ fn evaluate_ast_file(
                 .map(|(_, tables)| tables.clone())
                 .unwrap_or_default(),
             file.input.module.clone(),
-            !errors.is_empty(),
+            errors.hide_bindings(),
         )
         .path(&file.input.path);
         let match_started = Instant::now();
@@ -654,7 +673,10 @@ pub(super) fn encode_tape(
         parser
             .set_language(&language.get_ts_language())
             .map_err(|error| invalid(error.to_string()))?;
-        let bytes = file.input.source.as_bytes();
+        // The family's parse input (a PHP file's view, `php_view`); the tape reads the source.
+        let parsed =
+            crate::code_rule_dsl::language::adapter::parse_input(language, &file.input.source);
+        let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
             if interrupted() {
@@ -765,6 +787,10 @@ fn evaluate_clauses(
             let decision = code_rule.clauses[id.1].decision;
             let each = violation.each.as_deref();
             let limits = &code_rule.capabilities.limits;
+            // The file's placement decides whether a linter's suppression comment silences it;
+            // a `rerail-ignore` naming the code rule always does.
+            let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
+            let ignorable = violations::names_rerail_ignore(violation, &target.root());
             let result = {
                 let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
                 run_clause(
@@ -775,21 +801,11 @@ fn evaluate_clauses(
                     &mut util_work[slot],
                     |node, first, work| {
                         metrics.ast_matcher_calls += 1;
-                        let matches = match each {
-                            Some(name) => {
-                                // A directive does not spend a violation's output allowance, so the
-                                // enumeration continues past suppressed bindings.
-                                let room = if violation.suppress.is_some() {
-                                    usize::MAX
-                                } else {
-                                    (limits.max_witnesses + 1)
-                                        .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len))
-                                };
-                                enumerate(&target, grammar, node, first, work, name, room)?
-                            }
-                            None => vec![first],
-                        };
-                        for env in matches {
+                        // One binding of the match: false ends the clause. A directive does not
+                        // spend a violation's output allowance, so the enumeration, and a regex
+                        // capture's groups, go on past suppressed witnesses until the reported
+                        // ones overflow it.
+                        let mut visit = |env, work: &mut usize| {
                             let mut matched =
                                 ast_grep_core::NodeMatch::new(node_at(&target, node), env);
                             if let Some(transform) = &grammar.transform {
@@ -803,19 +819,44 @@ fn evaluate_clauses(
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
                             if errors.overlaps(&matched.get_node().range()) {
-                                continue;
+                                return Ok(true);
                             }
-                            let room = (limits.max_witnesses + 1)
-                                .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len));
+                            let matched_node = matched.get_node();
+                            let keep = |witness: &mut Witness| {
+                                if honour_suppressions
+                                    && violations::suppresses(
+                                        Some(violation),
+                                        matched_node,
+                                        witness,
+                                    )
+                                {
+                                    return false;
+                                }
+                                if ignorable
+                                    && violations::rerail_ignores(
+                                        Some(violation),
+                                        matched_node,
+                                        witness,
+                                    )
+                                {
+                                    if !violation.ignore_marks {
+                                        return false;
+                                    }
+                                    witness.ignored = true;
+                                }
+                                true
+                            };
                             let found = if each.is_some() {
+                                let reported = file.witnesses.get(&id).map_or(0, Vec::len);
                                 witnesses_from_match(
                                     &file.input,
                                     &matched,
                                     grammar.language,
                                     violation,
-                                    room,
+                                    (limits.max_witnesses + 1).saturating_sub(reported),
                                     matcher_budget_exhausted,
                                     |start, end| lines.span(start, end),
+                                    keep,
                                 )
                             } else {
                                 witness_from_match(
@@ -825,7 +866,13 @@ fn evaluate_clauses(
                                     Some(violation),
                                     |start, end| lines.span(start, end),
                                 )
-                                .map(|witness| vec![witness])
+                                .map(|mut witness| {
+                                    if keep(&mut witness) {
+                                        vec![witness]
+                                    } else {
+                                        Vec::new()
+                                    }
+                                })
                             };
                             let found = match found {
                                 Ok(found) => found,
@@ -836,13 +883,6 @@ fn evaluate_clauses(
                                 }
                             };
                             for witness in found {
-                                if violations::suppresses(
-                                    Some(violation),
-                                    matched.get_node(),
-                                    &witness,
-                                ) {
-                                    continue;
-                                }
                                 let witnesses =
                                     file.witnesses.get_mut(&id).expect("eligible check");
                                 if witnesses.len() >= limits.max_witnesses {
@@ -859,8 +899,14 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             }
+                            Ok(true)
+                        };
+                        match each {
+                            Some(name) => {
+                                enumerate(&target, grammar, node, first, work, name, visit)
+                            }
+                            None => visit(first, work),
                         }
-                        Ok(true)
                     },
                 )
                 .and_then(|result| result)

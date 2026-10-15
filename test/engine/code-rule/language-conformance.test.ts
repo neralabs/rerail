@@ -46,6 +46,24 @@ describe("language conformance runner", () => {
     expect(reportFailures(undocumented)).toEqual(['forbidden-functions-resolved (fixtures): 1 unexplained FN, first {"path":"broken.php","line":3,"column":6}']);
   });
 
+  it("attributes a file the grammar did not read to T1, with no finding from it", async () => {
+    const corpora = mkdtempSync(join(tmpdir(), "language-conformance-"));
+    try {
+      cpSync(join(SAMPLE, "corpora"), corpora, { recursive: true });
+      // Prose after the first statement: error regions cover 92% of the file, so no AST clause reads it, and the
+      // `sizeof` call on line 2, which upstream does not report either, is not reported.
+      writeFileSync(join(corpora, "mini", "src", "Garbage.php"), `<?php\n$a = sizeof($b);\n${"This is not PHP: it is prose, ) and ( brackets ] everywhere.\n".repeat(6)}`);
+      const report = await runPack(loadPack(SAMPLE), { fixtures: false, corpora: ["mini"], corpusRoot: corpora, date: DATE });
+      const unread = { count: 1, files: [{ path: "src/Garbage.php", line: 3, column: 6 }] };
+      expect(report.rules.map(({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
+        { rule: "forbidden-functions", tp: 1, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+        { rule: "forbidden-functions-resolved", tp: 1, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+      ]);
+    } finally {
+      rmSync(corpora, { recursive: true, force: true });
+    }
+  });
+
   it("fails on a divergence that no longer explains anything", async () => {
     const sample = loadPack(SAMPLE);
     const stale: Divergence = { rule: "forbidden-functions", source: "fixtures", path: "forbidden.php", line: 4, kind: "upstream-wrong", evidence: "documented when Rerail missed this call" };

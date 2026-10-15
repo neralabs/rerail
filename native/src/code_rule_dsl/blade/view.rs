@@ -53,28 +53,17 @@
 //! structure.
 
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
+use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use tree_sitter::{Node as TsNode, Parser, Tree};
 
-/// One stretch of the program's text and the template bytes it stands for.
-#[derive(Clone, Debug)]
-struct Segment {
-    /// Where it starts in the program.
-    at: usize,
-    end: usize,
-    anchor: Range<usize>,
-    /// Copied from the template: each byte maps to the byte at the same offset of `anchor`.
-    copied: bool,
-    /// A placeholder the grammar needs and the view does not keep (`Emitter::placeholder`).
-    omit: bool,
-}
-
 /// The embedded PHP program and its map back to the template.
 pub(crate) struct View {
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     tree: Tree,
 }
 
@@ -296,7 +285,7 @@ impl View {
         let mut emitter = Emitter {
             template,
             out: String::new(),
-            segments: Vec::new(),
+            segments: SegmentMap::new(),
             loosened: 0,
             consumed: 0,
             loops: 0,
@@ -336,69 +325,27 @@ impl View {
         self.tree.root_node()
     }
 
-    /// The segment holding program byte `at` (the last one at the end of the program).
-    fn segment(&self, at: usize) -> &Segment {
-        let index = self
-            .segments
-            .partition_point(|segment| segment.end <= at)
-            .min(self.segments.len() - 1);
-        &self.segments[index]
-    }
-
-    /// The template position a node starting at program byte `at` starts at.
-    fn start(&self, at: usize) -> usize {
-        let segment = self.segment(at);
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.start
-        }
-    }
-
-    /// The template position a node ending at program byte `at` ends at.
-    fn end(&self, at: usize) -> usize {
-        let segment = self.segment(at.saturating_sub(1));
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.end
-        }
-    }
-
     /// The template bytes a node of the program stands for.
     pub(crate) fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        let range = node.byte_range();
-        if range.is_empty() {
-            let at = self.start(range.start);
-            return at..at;
-        }
-        let start = self.start(range.start);
-        start..self.end(range.end).max(start)
+        self.segments.span(node)
     }
 
     /// Whether a node is part of a placeholder the view does not keep.
     pub(crate) fn omitted(&self, node: TsNode<'_>) -> bool {
-        let range = node.byte_range();
-        !range.is_empty() && {
-            let segment = self.segment(range.start);
-            segment.omit && range.end <= segment.end
-        }
+        self.segments.omitted(node)
     }
 
     /// The template ranges the program copies byte for byte, in program order.
     #[cfg(test)]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.segments
-            .iter()
-            .filter(|segment| segment.copied)
-            .map(|segment| segment.anchor.clone())
+        self.segments.copied()
     }
 }
 
 struct Emitter<'t> {
     template: &'t str,
     out: String,
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     /// Where the text `loose` has read ends: text is read once.
     loosened: usize,
     /// Where the last directive's arguments, as Blade reads them, end: a node Forte placed before
@@ -671,13 +618,7 @@ impl<'t> Emitter<'t> {
     fn push(&mut self, text: &str, anchor: Range<usize>, copied: bool, omit: bool) {
         let at = self.out.len();
         self.out.push_str(text);
-        self.segments.push(Segment {
-            at,
-            end: self.out.len(),
-            anchor,
-            copied,
-            omit,
-        });
+        self.segments.push(at, self.out.len(), anchor, copied, omit);
     }
 
     /// Writes PHP Blade wraps the template's PHP in, standing for the template bytes `anchor`.
@@ -1774,10 +1715,6 @@ fn ends_statement(text: &str) -> bool {
         .is_some_and(|(_, byte)| byte == b';')
 }
 
-/// How deeply string interpolations may nest (`"{$a["{$b}"]}"`) before the scan takes the rest of
-/// the text as the innermost literal: a bound on the recursion template text drives.
-const NESTING: usize = 32;
-
 /// Each byte of PHP code in `text`, with its offset, as PHP's tokenizer reads it: outside its
 /// comments and string literals (quoted, heredoc, nowdoc), each skipped whole.
 fn code(text: &str) -> impl Iterator<Item = (usize, u8)> + '_ {
@@ -1794,158 +1731,4 @@ fn code(text: &str) -> impl Iterator<Item = (usize, u8)> + '_ {
         }
         None
     })
-}
-
-/// Where the comment or string literal at `bytes[at]` ends, `None` where none starts there. One
-/// PHP would find unterminated runs to the end of `bytes`.
-fn literal_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let end = match &bytes[at..] {
-        [quote @ (b'\'' | b'"' | b'`'), ..] => quoted_end(bytes, at + 1, *quote, nesting),
-        [b'/', b'*', ..] => bytes[at + 2..]
-            .windows(2)
-            .position(|pair| pair == b"*/")
-            .map_or(bytes.len(), |end| at + 2 + end + 2),
-        [b'/', b'/', ..] => line_end(bytes, at + 2),
-        // `#[` opens an attribute.
-        [b'#', b'[', ..] => return None,
-        [b'#', ..] => line_end(bytes, at + 1),
-        [b'<', b'<', b'<', ..] => return doc_end(bytes, at, nesting),
-        _ => return None,
-    };
-    Some(end)
-}
-
-/// Where a `//` or `#` comment whose text starts at `from` ends: at its line's end.
-fn line_end(bytes: &[u8], from: usize) -> usize {
-    bytes[from..]
-        .iter()
-        .position(|byte| matches!(byte, b'\n' | b'\r'))
-        .map_or(bytes.len(), |end| from + end)
-}
-
-/// Where a `close`-quoted string whose text starts at `from` ends: past `\` escapes and, in one
-/// that interpolates (`"`, `` ` ``), past the code of each `{$...}` and `${...}`.
-fn quoted_end(bytes: &[u8], from: usize, close: u8, nesting: usize) -> usize {
-    let mut at = from;
-    while at < bytes.len() {
-        if bytes[at] == b'\\' {
-            at += 2;
-        } else if bytes[at] == close {
-            return at + 1;
-        } else if close != b'\''
-            && let Some(end) = interpolation_end(bytes, at, nesting)
-        {
-            at = end;
-        } else {
-            at += 1;
-        }
-    }
-    bytes.len()
-}
-
-/// Where the interpolation (`{$...}`, `${...}`) at `bytes[at]` ends, `None` where none starts
-/// there: its code runs to the `}` balancing its `{`.
-fn interpolation_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let from = match bytes.get(at..at + 2)? {
-        b"{$" => at + 1,
-        b"${" => at + 2,
-        _ => return None,
-    };
-    if nesting == NESTING {
-        return Some(bytes.len());
-    }
-    let mut depth = 1usize;
-    let mut index = from;
-    while index < bytes.len() {
-        if let Some(end) = literal_end(bytes, index, nesting + 1) {
-            index = end;
-            continue;
-        }
-        match bytes[index] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index + 1);
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    Some(bytes.len())
-}
-
-/// Whether `byte` may be in a heredoc's label.
-fn label_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
-}
-
-/// Where the heredoc or nowdoc whose `<<<` is at `bytes[at]` ends, `None` where `<<<` opens none:
-/// after its label, closing the first line whose text, past spaces and tabs, is the label and no
-/// further label byte (PHP 7.3's closing marker, which code may follow). A heredoc's body
-/// interpolates; a nowdoc's (`<<<'LABEL'`) does not.
-fn doc_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let blank = |from: usize| {
-        from + bytes[from..]
-            .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t'))
-            .count()
-    };
-    let mut index = blank(at + 3);
-    let quote = match bytes.get(index) {
-        Some(&quote @ (b'\'' | b'"')) => {
-            index += 1;
-            Some(quote)
-        }
-        _ => None,
-    };
-    let start = index;
-    index += bytes[index..]
-        .iter()
-        .take_while(|byte| label_byte(**byte))
-        .count();
-    let label = &bytes[start..index];
-    if label.first().is_none_or(u8::is_ascii_digit) {
-        return None;
-    }
-    if let Some(quote) = quote {
-        if bytes.get(index) != Some(&quote) {
-            return None;
-        }
-        index += 1;
-    }
-    index += match bytes.get(index..) {
-        Some([b'\r', b'\n', ..]) => 2,
-        Some([b'\n' | b'\r', ..]) => 1,
-        _ => return None,
-    };
-    let interpolates = quote != Some(b'\'');
-    let mut line = true;
-    while index < bytes.len() {
-        if line {
-            line = false;
-            let indent = blank(index);
-            let after = indent + label.len();
-            if bytes.get(indent..after) == Some(label)
-                && !bytes.get(after).copied().is_some_and(label_byte)
-            {
-                return Some(after);
-            }
-        }
-        if bytes[index] == b'\n' {
-            line = true;
-            index += 1;
-        } else if !interpolates {
-            index += 1;
-        } else if bytes[index] == b'\\' && bytes.get(index + 1) != Some(&b'\n') {
-            // `\` escapes in a heredoc, but not the line end.
-            index += 2;
-        } else if let Some(end) = interpolation_end(bytes, index, nesting) {
-            index = end;
-        } else {
-            index += 1;
-        }
-    }
-    Some(bytes.len())
 }

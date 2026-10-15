@@ -2,7 +2,7 @@
 
 22 code rules for Node.js, ported from eslint-plugin-n 18.4.1 with its default options. Each is scored against the
 plugin's own findings on its rule tests and on two pinned corpora (fastify, prettier), through the engine's production
-workspace path, with every disagreement declared in `divergences.json` (none today).
+workspace path, with every disagreement declared in `divergences.json` (one today: `n-prefer-promises-fs` does not report `fs.watch`).
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.

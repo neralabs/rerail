@@ -4,7 +4,7 @@ import {
   generateKeyPairSync,
   sign,
   verify,
-  type JsonWebKey,
+  type webcrypto,
   type KeyObject,
 } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -192,7 +192,7 @@ describe("signed customer profiles", () => {
     expect(verify(
       null,
       Buffer.from(text as string),
-      createPublicKey({ key: request.request.devicePublicKey as JsonWebKey, format: "jwk" }),
+      createPublicKey({ key: request.request.devicePublicKey as webcrypto.JsonWebKey, format: "jwk" }),
       Buffer.from(request.signature, "base64url"),
     )).toBe(true);
   });

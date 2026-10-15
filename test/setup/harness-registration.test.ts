@@ -715,11 +715,12 @@ describe("Claude Code commands", () => {
     const overview = await read("rerail");
     expect(overview).toContain(`allowed-tools: Bash(${command} session claude-code *)\n`);
     expect(overview).toContain(`\n${command} session claude-code '\${CLAUDE_SESSION_ID}'\n`);
-    for (const action of ["stop", "update"]) {
-      const body = await read(`rerail-${action}`);
-      expect(body).toContain(`allowed-tools: Bash(${command} ${action})\n`);
-      expect(body).toContain(`\n${command} ${action}\n`);
-    }
+    const stop = await read("rerail-stop");
+    expect(stop).toContain(`allowed-tools: Bash(${command} stop claude-code *)\n`);
+    expect(stop).toContain(`\n${command} stop claude-code '\${CLAUDE_SESSION_ID}'\n`);
+    const update = await read("rerail-update");
+    expect(update).toContain(`allowed-tools: Bash(${command} update)\n`);
+    expect(update).toContain(`\n${command} update\n`);
     const start = await read("rerail-start");
     expect(start).toContain(`\n${command} start --relay\n`);
     expect(start).not.toContain("recommended rule packs");

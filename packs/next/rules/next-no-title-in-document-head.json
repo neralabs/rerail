@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-title-in-document-head",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-title-in-document-head: the first <title> element child of a <Head> element, in a file with an import from next/document that binds the local name Head.",
   "scope": {
@@ -177,6 +177,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-title-in-document-head"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-title-in-document-head"
             ]
           }
         }

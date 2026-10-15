@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DefaultResourceLoader, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SessionManager, type ExtensionContext, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { isRerailStarted } from "../src/runtime/index.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { startTestRepository } from "../test/support/started-repository.js";
@@ -125,7 +125,7 @@ describe("installed Pi extension", () => {
     const context = {
       cwd,
       sessionManager: SessionManager.inMemory(cwd),
-    } as unknown as ExtensionContext;
+    } as unknown as ExtensionToolContext;
     let started = false;
     try {
       started = true;
