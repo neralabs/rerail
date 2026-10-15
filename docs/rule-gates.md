@@ -71,8 +71,36 @@ npm run gates -- summary .rerail/reports/gates # the merged summary CI writes
 
 The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code corpus into
 `.rerail/gates/` (pinned, about 400 MB); later runs reuse it and the results of every rule whose inputs did not change.
-`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does. In CI, pull request
-runs read the cached results that pushes to main and the nightly saved, and save none of their own.
+`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
+
+### What a cached result is keyed by
+
+A rule's result key covers everything its verdict can depend on: the gate code and its dependencies, the tool-pack's
+manifest, recordings and corpus pins, the rule's own document, conformance entry, goldens and upstream case sources,
+and the engine, though only the part of the engine the rule can be judged by.
+
+That part is the engine's shared code plus the files of the rule's own **language family** (`languages/*.json`'s
+`family`: `ecma` for JavaScript and TypeScript, `python` for Python). `conformance/gates/engine.ts` lists each family's
+files explicitly: its vendored grammars and registry entries, the scope and value modules named for it, its builtin
+tables, and the suppression readers only it honours. Everything else is shared and so part of every rule's key:
+`matcher/`, `compile/`, `workspace/`, `language/adapter/`, the lockfile, the host's TypeScript engine, and any engine
+file nobody listed. That last one is the direction the list fails in: a missing entry costs one cold re-judge of
+everything, never a stale verdict. A rule whose document names no language, or one the language registry does not
+know, keys on the whole engine for the same reason.
+
+A Python-only engine change therefore judges the Python legs cold and leaves the other 17 reading main's results. The
+cost is the mirror image: a file listed as one family's that another family in fact reads would leave that family's
+verdicts stale until the nightly's uncached run. `test/conformance/gates/engine.test.ts` fails when a listed path
+matches no engine source, so the list cannot rot silently.
+
+Two things are deliberately out of the key. The native binary: it is not bit-reproducible, so hashing it made a
+build-cache miss on unchanged sources re-judge every rule, and the sources it was built from say the same thing
+reproducibly. And the engine sources only `cargo test` compiles: every file a `#[cfg(test)] mod` declaration reaches,
+which is how the engine keeps its oracle tests beside the code they check.
+
+In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
+so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
+hand itself verdicts its own code computed, which it could already do by editing the gate code that decides them.
 
 ## Read the report
 
