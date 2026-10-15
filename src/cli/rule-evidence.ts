@@ -38,28 +38,66 @@ export const CORRECTION_FAMILIES: ReadonlyArray<{ name: string; standing: boolea
 ];
 
 /**
- * Where a command starts in a shell line an agent sends: the start, a new line, after `;`, `&`, `|` or `(`, or after a
- * keyword or wrapper that runs the next word (`then rm`, `sudo rm`, `xargs rm`). Built as a pattern prefix.
+ * Words that run the word after them, or open a shell clause, so a command may follow them: `sudo rm`, `then rm`,
+ * `nohup nice -n 10 rm`. Their options (`-u root`, `-n 10`) and env assignments (`CI=1`) may sit between.
  */
-const COMMAND_START = String.raw`(?:^|[\n;&|(])\s*(?:(?:then|do|else|sudo|xargs|exec|time|nice)\s+)*`;
+const COMMAND_PREFIXES = new Set(["then", "do", "else", "if", "while", "until", "!", "{", "sudo", "xargs", "exec", "time", "nice", "nohup", "env", "command"]);
 
-/** Commands worth a conversation rule wherever they show up, with what each one does. `[^\n;&|]*` keeps a match inside one command of a chain. */
-export const RISKY_COMMANDS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: "force push", pattern: /\bgit\s+push\b[^\n;&|]*\s(?:--force(?:\s|=|$)|-[A-Za-z]*f[A-Za-z]*\b)/ },
+/**
+ * The simple commands of a shell line, as words: split at new lines, `;`, `&`, `|`, parentheses, and a `find -exec` or
+ * `-execdir`. Quoted strings are blanked first, so `grep 'npm publish'` holds no command. It reads characters, not
+ * shell: good enough to count habits, not to judge one command.
+ */
+export function simpleCommands(line: string): string[][] {
+  const unquoted = line.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "''");
+  return unquoted.split(/[\n;&|()]+/u).flatMap(part => {
+    const commands: string[][] = [[]];
+    for (const word of part.trim().split(/\s+/u).filter(word => word !== "")) {
+      if (word === "-exec" || word === "-execdir" || word === "-ok") commands.push([]);
+      else commands.at(-1)!.push(word);
+    }
+    return commands.filter(words => words.length > 0);
+  });
+}
+
+/** Whether every word before `index` only prefixes the command there: a prefix word, an option, an option's value, an env assignment. */
+function onlyPrefixes(words: readonly string[], index: number): boolean {
+  return words.slice(0, index).every((word, at) =>
+    COMMAND_PREFIXES.has(word) || word.startsWith("-") || /^\w+=/u.test(word) || (at > 0 && words[at - 1]!.startsWith("-")));
+}
+
+/** Commands worth a conversation rule wherever they show up. Each `test` reads one simple command from its command word on. */
+export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly string[]; test: RegExp }> = [
+  { label: "force push", commands: ["git"], test: /^git\s+push\b.*\s(?:--force(?:\s|=|$)|-[A-Za-z]*f[A-Za-z]*(?:\s|$))/u },
   // `-n` skips hooks only for `git commit`: for push it is --dry-run, for merge --no-stat.
-  { label: "skip git hooks", pattern: /\bgit\s+commit\b[^\n;&|]*\s-[A-Za-z]*n[A-Za-z]*\b|\bgit\s+(?:commit|push|merge|rebase)\b[^\n;&|]*\s--no-verify(?:\s|=|$)/ },
-  { label: "hard reset", pattern: /\bgit\s+reset\b[^\n;&|]*\s--hard\b/ },
-  { label: "discard changes", pattern: /\bgit\s+(?:clean\b[^\n;&|]*\s-[A-Za-z]*f|checkout\s+--?\s|restore\s+(?:--worktree\s+)?\.(?:\s|$))/ },
-  // An rm that starts a command, with both flags in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
   {
-    label: "recursive delete",
-    pattern: new RegExp(String.raw`${COMMAND_START}rm\s(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))`
-      + String.raw`(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))`),
+    label: "skip git hooks",
+    commands: ["git"],
+    test: /^git\s+commit\b.*\s-[A-Za-z]*n[A-Za-z]*(?:\s|$)|^git\s+(?:commit|push|merge|rebase)\b.*\s--no-verify(?:\s|=|$)/u,
   },
-  { label: "publish", pattern: new RegExp(String.raw`${COMMAND_START}(?:(?:npm|pnpm|yarn)\s+publish|cargo\s+publish|twine\s+upload)\b`) },
-  { label: "pipe to shell", pattern: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/ },
-  { label: "sudo", pattern: new RegExp(String.raw`(?:^|[\n;&|(])\s*(?:(?:then|do|else)\s+)*sudo\s`) },
+  { label: "hard reset", commands: ["git"], test: /^git\s+reset\b.*\s--hard(?:\s|$)/u },
+  { label: "discard changes", commands: ["git"], test: /^git\s+(?:clean\b.*\s-[A-Za-z]*f|checkout\s+--?(?:\s|$)|restore\s+(?:--worktree\s+)?\.(?:\s|$))/u },
+  // Both flags, in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
+  { label: "recursive delete", commands: ["rm"], test: /^rm(?=.*\s(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))(?=.*\s(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))/u },
+  { label: "publish", commands: ["npm", "pnpm", "yarn", "cargo", "twine"], test: /^(?:(?:npm|pnpm|yarn|cargo)\s+publish|twine\s+upload)(?:\s|$)/u },
+  { label: "sudo", commands: ["sudo"], test: /^sudo(?:\s|$)/u },
 ];
+
+/** The labels one simple command earns, each read from its command word on. */
+function commandLabels(words: readonly string[]): string[] {
+  return RISKY_COMMANDS.filter(({ commands, test }) => {
+    const index = words.findIndex(word => commands.includes(word));
+    return index !== -1 && onlyPrefixes(words, index) && test.test(words.slice(index).join(" "));
+  }).map(({ label }) => label);
+}
+
+/** The risky labels a shell line earns: per simple command, from its command word, plus a download piped into a shell. */
+export function riskyLabels(line: string): string[] {
+  const labels = new Set(simpleCommands(line).flatMap(commandLabels));
+  // A pipe joins two commands, so this one reads the line: `curl … | sh`.
+  if (/\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/u.test(line)) labels.add("pipe to shell");
+  return [...labels];
+}
 
 /** Files a repository states its own standards in; read them before suggesting a rule. */
 const STANDARDS_FILES = [
@@ -292,8 +330,7 @@ function readEvents(stored: readonly StoredEvent[], hostOf: ReadonlyMap<string, 
 }
 
 function countRisky(risky: Map<string, EvidenceCommand>, command: string): void {
-  for (const { label, pattern } of RISKY_COMMANDS) {
-    if (!pattern.test(command)) continue;
+  for (const label of riskyLabels(command)) {
     const seen = risky.get(label);
     if (seen === undefined) risky.set(label, { label, count: 1, example: clip(command, CALL_TEXT_LENGTH) });
     else seen.count += 1;
