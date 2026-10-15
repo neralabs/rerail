@@ -466,6 +466,30 @@ describe("validatePack", () => {
       ],
     });
   });
+
+  it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
+    // Vue's registry entry honours eslint alone: a Vue query refuses suppress.biome.
+    const vue = (directory: string) =>
+      editJson(join(directory, "rules", "no-debugger.json"), document => ({
+        ...document,
+        clauses: z
+          .array(z.looseObject({ forbid: z.looseObject({ ast: z.looseObject({}) }), violation: z.record(z.string(), z.unknown()) }))
+          .parse(document.clauses)
+          .map(clause => ({
+            ...clause,
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue" } },
+            violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
+          })),
+      }));
+    const validation = await validatePack(changed("eslint-port", vue), { corpora: false });
+    // The fixtures are .js files, which a Vue query does not read; nothing asks for suppress.biome.
+    expect(failing(validation)).toEqual({
+      ports: [
+        'no-debugger (fixtures): 1 unexplained FN, first {"path":"debugger.js","line":1,"column":1}',
+        "no-debugger (fixtures): 0 TP and no examples in pack.json; nothing shows it catches anything",
+      ],
+    });
+  });
 });
 
 describe("packedFileFailures", () => {
