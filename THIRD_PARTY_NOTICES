@@ -480,10 +480,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Ported code and recorded data: node-semver 7.8.5, ranges and subset
-Files: native/src/code_rule_dsl/semver.rs (a Rust port of classes/range.js,
+Files: native/src/code_rule_dsl/semver/mod.rs (a Rust port of classes/range.js,
   classes/comparator.js, classes/semver.js, internal/re.js, internal/constants.js,
   internal/identifiers.js and ranges/subset.js), and
-  native/src/code_rule_dsl/semver_subset_cases.json (node-semver's answers to
+  native/src/code_rule_dsl/semver/subset_cases.json (node-semver's answers to
   subset() and new Range(), recorded by scripts/generate/semver/semver-subset-cases.mjs)
 Revision: v7.8.5, commit 6e05b7637396ac66522cff8731f07cfe0ef49a29
 Source: https://github.com/npm/node-semver

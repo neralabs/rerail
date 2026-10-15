@@ -6,7 +6,7 @@
 //! whitespace-normalized first, so JS `\s` is a plain space in every regex after that; JS `\d` is
 //! ASCII `[0-9]`.
 //!
-//! The tests check the port against `semver_subset_cases.json`, node-semver's own answers recorded by
+//! The tests check the port against `semver/subset_cases.json`, node-semver's own answers recorded by
 //! `scripts/generate/semver/semver-subset-cases.mjs`.
 
 use regex::{Captures, Regex};
@@ -704,7 +704,7 @@ mod tests {
 
     /// `[configured, given, subset(new Range(configured), given)]` and `[text, parses]`, recorded
     /// from node-semver 7.8.5.
-    const CASES: &str = include_str!("semver_subset_cases.json");
+    const CASES: &str = include_str!("subset_cases.json");
 
     #[test]
     fn matches_node_semver() {

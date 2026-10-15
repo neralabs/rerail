@@ -1,11 +1,11 @@
-// Writes native/src/code_rule_dsl/semver_subset_cases.json: the oracle semver.rs's `matches_node_semver` test checks
+// Writes native/src/code_rule_dsl/semver/subset_cases.json: the oracle semver/mod.rs's `matches_node_semver` test checks
 // the node-semver 7.8.5 port against. `subset` holds `[configured, given, subset(new Range(configured), given)]` for
 // every pair of the `cross` ranges that both parse, then the targeted `pairs`; `valid` holds `[text, parses]`, whether
 // `new Range(text)` accepts the text, for every range above and the malformed and boundary texts listed with them.
 // Default options throughout (`loose` and `includePrerelease` off). Run offline, not in CI:
 //   npm install --prefix <dir> semver@7.8.5
 //   node scripts/generate/semver/semver-subset-cases.mjs <dir>/node_modules/semver
-// A different semver version is refused; bump PIN, move the port in semver.rs and regenerate together.
+// A different semver version is refused; bump PIN, move the port in semver/mod.rs and regenerate together.
 import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -171,6 +171,6 @@ const valid = validity.map(s => [s, parses(s)]);
 // One case per line, so a change to a case is a one-line diff.
 const lines = cases => cases.map(c => `    ${JSON.stringify(c)}`).join(",\n");
 writeFileSync(
-  join(import.meta.dirname, "../../../native/src/code_rule_dsl/semver_subset_cases.json"),
+  join(import.meta.dirname, "../../../native/src/code_rule_dsl/semver/subset_cases.json"),
   `{\n  "subset": [\n${lines(subset)}\n  ],\n  "valid": [\n${lines(valid)}\n  ]\n}\n`,
 );

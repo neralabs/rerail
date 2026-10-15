@@ -144,7 +144,7 @@ SPDX-License-Identifier = "MIT"
 # node-semver 7.8.5, ported to Rust (semver.rs); its subset() and new Range() answers recorded by
 # scripts/generate/semver/semver-subset-cases.mjs.
 [[annotations]]
-path = ["native/src/code_rule_dsl/semver.rs", "native/src/code_rule_dsl/semver_subset_cases.json"]
+path = ["native/src/code_rule_dsl/semver/mod.rs", "native/src/code_rule_dsl/semver/subset_cases.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Isaac Z. Schlueter and Contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "ISC"
