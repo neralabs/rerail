@@ -167,12 +167,21 @@ pub(super) struct ResultPageIndex {
     failures: Vec<Value>,
     /// The clauses' coverage from `failures`, sent with them on the first page.
     coverage: Vec<Value>,
+    /// The files no clause read (`blind_file`), in path order, sent on the first page.
+    blind_files: Vec<Value>,
 }
 
 impl ResultPageIndex {
     /// Resident bytes of the open index, estimated like the workspace's own results.
     pub(super) fn estimated_bytes(&self) -> usize {
         use std::mem::size_of;
+        let values = |values: &Vec<Value>| {
+            values.capacity() * size_of::<Value>()
+                + values
+                    .iter()
+                    .map(|value| value.to_string().len())
+                    .sum::<usize>()
+        };
         size_of::<Self>()
             + self.violations.capacity() * size_of::<Box<str>>()
             + self
@@ -180,18 +189,9 @@ impl ResultPageIndex {
                 .iter()
                 .map(|violation| violation.len())
                 .sum::<usize>()
-            + self.failures.capacity() * size_of::<Value>()
-            + self
-                .failures
-                .iter()
-                .map(|failure| failure.to_string().len())
-                .sum::<usize>()
-            + self.coverage.capacity() * size_of::<Value>()
-            + self
-                .coverage
-                .iter()
-                .map(|entry| entry.to_string().len())
-                .sum::<usize>()
+            + values(&self.failures)
+            + values(&self.coverage)
+            + values(&self.blind_files)
     }
 }
 
@@ -211,11 +211,12 @@ fn reported_clauses(state: &WorkspaceState) -> Vec<(Option<String>, String)> {
 }
 
 /// Evicted files with their stored results, rebuilt for reporting without making them resident:
-/// all of them, or those in `only`. An evicted file whose complete results are not in the store is
-/// an error, never an omission.
-fn evicted_file_states(
+/// all of them, or those in `only`. With `complete`, an evicted file whose complete results are
+/// not in the store is an error, never an omission; without, it holds the results the store has.
+pub(super) fn evicted_file_states(
     state: &WorkspaceState,
     only: Option<&BTreeSet<String>>,
+    complete: bool,
 ) -> Result<Vec<FileState>> {
     let evicted = state
         .evicted_inputs
@@ -242,6 +243,10 @@ fn evicted_file_states(
         .flat_map(|(_, key, stamped)| std::iter::once(*key).chain(*stamped))
         .collect::<Vec<_>>();
 
+    #[cfg(test)]
+    if super::TEST_EVICTED_READ_FAILURE.get() {
+        return Err(invalid("injected evicted-result storage failure"));
+    }
     let results = storage
         .store
         .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
@@ -284,12 +289,14 @@ fn evicted_file_states(
                 persisted.extend(results.iter().cloned());
             }
             let persisted = persisted.as_slice();
-            restore_complete_results(&mut file, &state.code_rules, persisted).ok_or_else(|| {
-                invalid(format!(
+            if restore_complete_results(&mut file, &state.code_rules, persisted).is_none()
+                && complete
+            {
+                return Err(invalid(format!(
                     "stored results for evicted {} are unavailable; apply it again",
                     input.path
-                ))
-            })?;
+                )));
+            }
             Ok(file)
         })
         .collect()
@@ -311,6 +318,54 @@ fn reporting_ast_candidates<'a>(
     })
 }
 
+/// A file no clause read: every clause with a result on it (`candidates`, or a clause a pass
+/// before a consumer pass narrowed them ran) failed for a reason of the whole file, its work
+/// (`budget-exceeded` or `file-budget-exceeded`, reason `budget`) or its syntax
+/// (`source-incomplete`, reason `syntax`, which wins where both occur), with the message of a
+/// failure of that reason. Classified by failure code alone, never message text. `folded` names
+/// each clause (`[ruleId, clauseId]`) whose failure the row stands for: only those are folded
+/// into it, so a cross-file query's failure on the file stays listed. `None` for a file any
+/// clause read, or with no clause at all.
+fn blind_file(state: &WorkspaceState, file: &FileState) -> Option<Value> {
+    let clauses = file
+        .candidates
+        .regex
+        .iter()
+        .chain(&file.candidates.ast)
+        .chain(file.witnesses.keys())
+        .filter(|id| !state.code_rules[id.0].clauses[id.1].synthetic)
+        .collect::<BTreeSet<_>>();
+    let (mut budget, mut syntax) = (None, None);
+    for id in &clauses {
+        let (code, message) = file.failures.get(id)?;
+        let first = match *code {
+            "budget-exceeded" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED => &mut budget,
+            "source-incomplete" => &mut syntax,
+            _ => return None,
+        };
+        first.get_or_insert(*message);
+    }
+    let (reason, message) = match (syntax, budget) {
+        (Some(message), _) => ("syntax", message),
+        (None, Some(message)) => ("budget", message),
+        (None, None) => return None,
+    };
+    let folded = clauses
+        .iter()
+        .map(|id| {
+            let code_rule = &state.code_rules[id.0];
+            json!([code_rule.id, code_rule.clauses[id.1].id])
+        })
+        .collect::<Vec<_>>();
+    Some(json!({
+        "path": file.input.path,
+        "reason": reason,
+        "clauses": clauses.len(),
+        "message": message,
+        "folded": folded,
+    }))
+}
+
 /// A violation's place in result order (`result_order`) and its serialization.
 type PageEntry = (String, u64, String, String, Box<str>);
 
@@ -328,10 +383,12 @@ fn page_entry(violation: &Value) -> Result<PageEntry> {
 }
 
 fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
-    let evicted = evicted_file_states(state, None)?;
+    let evicted = evicted_file_states(state, None, true)?;
     let mut witnesses = Vec::new();
     let mut failures = Vec::new();
+    let mut blind_files = Vec::new();
     for file in state.files.values().chain(&evicted) {
+        blind_files.extend(blind_file(state, file));
         for (&id, file_witnesses) in file.witnesses.iter() {
             if file.failures.contains_key(&id) || state.code_rules[id.0].clauses[id.1].synthetic {
                 continue;
@@ -405,11 +462,14 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     entries.sort_by(|left, right| {
         (&left.0, left.1, &left.2, &left.3).cmp(&(&right.0, right.1, &right.2, &right.3))
     });
+    blind_files
+        .sort_by(|left: &Value, right: &Value| left["path"].as_str().cmp(&right["path"].as_str()));
     Ok(ResultPageIndex {
         revision: state.revision,
         violations: entries.into_iter().map(|entry| entry.4).collect(),
         coverage: coverage(&reported_clauses(state), &failures),
         failures,
+        blind_files,
     })
 }
 
@@ -442,12 +502,14 @@ pub(super) fn serialize_result_page(
     // with the violations as the index serialized them.
     let mut page = Vec::with_capacity(bytes + 256);
     let empty = Vec::new();
-    let (failures, coverage) = if cursor == 0 {
-        (&index.failures, &index.coverage)
+    let (failures, coverage, blind_files) = if cursor == 0 {
+        (&index.failures, &index.coverage, &index.blind_files)
     } else {
-        (&empty, &empty)
+        (&empty, &empty, &empty)
     };
-    page.extend_from_slice(format!("{{\"bytes\":{bytes},\"coverage\":").as_bytes());
+    page.extend_from_slice(b"{\"blindFiles\":");
+    serde_json::to_writer(&mut page, blind_files).map_err(json_error)?;
+    page.extend_from_slice(format!(",\"bytes\":{bytes},\"coverage\":").as_bytes());
     serde_json::to_writer(&mut page, coverage).map_err(json_error)?;
     page.extend_from_slice(format!(",\"cursor\":{next},\"done\":{done},\"failures\":").as_bytes());
     serde_json::to_writer(&mut page, failures).map_err(json_error)?;
@@ -649,16 +711,18 @@ pub(super) fn serialize_result(
     };
     // A complete result covers evicted files too, from their stored results; a delta covers the
     // replaced ones, including consumers whose relation changed while they remained evicted.
-    let evicted = evicted_file_states(state, delta.then_some(replaced_paths))?;
+    let evicted = evicted_file_states(state, delta.then_some(replaced_paths), true)?;
     let mut renderings = Vec::new();
     // Each file's rendering is in result order: where every violation of a file is at its path and
     // files come in path order (resident ones), so is their concatenation.
     let mut ordered = true;
     let mut previous: Option<&str> = None;
+    let mut blind_files = Vec::new();
     for file in state.files.values().chain(&evicted) {
         if delta && !replaced_paths.contains(&file.input.path) {
             continue;
         }
+        blind_files.extend(blind_file(state, file));
         let rendering = Rendering::of(state, file, code_rules)?;
         if let (Some(first), Some(last)) = (
             rendering.violations().first(),
@@ -745,10 +809,13 @@ pub(super) fn serialize_result(
     evaluation
         .failures
         .sort_by(|a, b| result_order(a).cmp(&result_order(b)));
+    blind_files
+        .sort_by(|left: &Value, right: &Value| left["path"].as_str().cmp(&right["path"].as_str()));
     // The violations are spliced into the serialized evaluation, whose own list is empty.
     let text = serde_json::to_string(&json!({
         "revision": state.revision,
         "replacedPaths": delta.then(|| replaced_paths.iter().collect::<Vec<_>>()),
+        "blindFiles": blind_files,
         "evaluation": evaluation_json(evaluation, None, &[], &[])
     }))
     .map_err(json_error)?;
@@ -898,6 +965,73 @@ mod tests {
             serde_json::from_str(&result_page(&warm, 0, 64 * 1024 * 1024).unwrap()).unwrap();
         assert_eq!(page["coverage"], expected, "{page}");
         warm.close();
+        drop(store);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A file no clause read is reported once, by path and reason, cold, restored and paged: one
+    /// whose syntax errors failed every clause (`syntax`), one whose every clause ran out of work
+    /// (`budget`). A file any clause read is not.
+    #[test]
+    fn blind_files_are_reported_by_reason_cold_warm_and_paged() {
+        let _slot = WORKSPACE_TEST_SLOT.lock();
+        let directory = std::env::temp_dir().join(format!(
+            "rerail-blind-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
+        // Unsound under syntax errors: a broken file fails it `source-incomplete`.
+        let code_rule = json!({
+            "format": "rerail.policy/v1", "id": "blind", "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{ "id": "unguarded", "violation": violation(), "forbid": { "ast": {
+                "language": "typescript",
+                "rule": { "kind": "debugger_statement",
+                    "not": { "follows": { "kind": "import_statement", "stopBy": "end" } } } } } }],
+        })
+        .to_string();
+        let files = json!([
+            { "path": "broken.ts", "language": "typescript", "source": "function f( {\n  debugger;\n" },
+            { "path": "ok.ts", "language": "typescript", "source": "debugger;\n" },
+        ]);
+        // Its error regions cover most of it: the parser did not read it (`UNREAD`).
+        let syntax = json!({ "clauses": 1, "message": "file did not parse",
+            "path": "broken.ts", "reason": "syntax", "folded": [["blind", "unguarded"]] });
+
+        let cold = stored_workspace(&store, "/blind", &code_rule);
+        let result = apply(&cold, &files);
+        assert_eq!(result["blindFiles"], json!([syntax]), "{result}");
+        assert_eq!(
+            result["evaluation"]["violations"].as_array().unwrap().len(),
+            1
+        );
+        cold.close();
+
+        let warm = stored_workspace(&store, "/blind", &code_rule);
+        let result = apply(&warm, &files);
+        assert_eq!(result["blindFiles"], json!([syntax]), "{result}");
+        let page: Value =
+            serde_json::from_str(&result_page(&warm, 0, 64 * 1024 * 1024).unwrap()).unwrap();
+        assert_eq!(page["blindFiles"], json!([syntax]), "{page}");
+        warm.close();
+
+        // New content, so no stored result answers it.
+        let starved = stored_workspace(&store, "/blind-budget", &code_rule);
+        let files = json!([files[0], { "path": "ok.ts", "language": "typescript",
+            "source": "debugger;\ndebugger;\n" }]);
+        super::super::TEST_CLAUSE_WORK_BUDGET.set(Some(0));
+        let result = apply(&starved, &files);
+        super::super::TEST_CLAUSE_WORK_BUDGET.set(None);
+        assert_eq!(
+            result["blindFiles"],
+            json!([syntax, { "clauses": 1, "message": "clause work budget exceeded",
+                "path": "ok.ts", "reason": "budget", "folded": [["blind", "unguarded"]] }]),
+            "{result}"
+        );
+        starved.close();
         drop(store);
         let _ = std::fs::remove_dir_all(&directory);
     }

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-promises-dns",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/dns: calls of the dns module's callback API (lookup, lookupService, getServers, resolve, resolve4, resolve6, resolveAny, resolveCname, resolveMx, resolveNaptr, resolveNs, resolvePtr, resolveSoa, resolveSrv, resolveTxt, reverse, setServers; construction of Resolver) as ReferenceTracker (legacy mode) finds them: members of `require('dns')`/`require('node:dns')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers.",
+  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/dns: calls of the dns module's callback API (lookup, lookupService, getServers, resolve, resolve4, resolve6, resolveAny, resolveCname, resolveMx, resolveNaptr, resolveNs, resolvePtr, resolveSoa, resolveSrv, resolveTxt, reverse, setServers; construction of Resolver) as ReferenceTracker (legacy mode) finds them: members of `require('dns')`/`require('node:dns')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Unlike ReferenceTracker, it does not follow assignments to imported or `const` bindings, which throw when they run.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -30,6 +30,29 @@
             }
           },
           "utils": {
+            "file-names-module": {
+              "kind": "program",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string",
+                    "not": {
+                      "has": {
+                        "kind": "template_substitution"
+                      }
+                    }
+                  }
+                ],
+                "regex": "dns|\\\\",
+                "value": {
+                  "regex": "^(?:node:)?dns$"
+                }
+              }
+            },
             "require-callee": {
               "any": [
                 {
@@ -170,6 +193,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -324,6 +377,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -535,6 +618,10 @@
           },
           "rule": {
             "kind": "call_expression",
+            "inside": {
+              "stopBy": "end",
+              "matches": "file-names-module"
+            },
             "not": {
               "has": {
                 "field": "arguments",
@@ -573,6 +660,29 @@
             }
           },
           "utils": {
+            "file-names-module": {
+              "kind": "program",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string",
+                    "not": {
+                      "has": {
+                        "kind": "template_substitution"
+                      }
+                    }
+                  }
+                ],
+                "regex": "dns|\\\\",
+                "value": {
+                  "regex": "^(?:node:)?dns$"
+                }
+              }
+            },
             "require-callee": {
               "any": [
                 {
@@ -713,6 +823,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -867,6 +1007,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -1078,6 +1248,10 @@
           },
           "rule": {
             "kind": "new_expression",
+            "inside": {
+              "stopBy": "end",
+              "matches": "file-names-module"
+            },
             "has": {
               "field": "constructor",
               "matches": "fn-value"

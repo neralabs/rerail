@@ -27,10 +27,14 @@ import {
   type AuditorCloseOptions,
 } from "./code-rule.js";
 import {
+  AUDIT_BLIND_REASONS,
+  AUDIT_FAILURE_CODES,
   AUDIT_COVERAGE_STATUSES,
   BINARY_SOURCE_MESSAGE,
+  isCoverageGap,
+  isFileWorkStopped,
+  isOutOfWork,
   isSourceGap,
-  omittedFailuresSummary,
   type ClauseCoverage,
   type AuditFailure,
   type AuditRecorder,
@@ -107,7 +111,7 @@ const violationSchema = z.strictObject({
 const failureSchema = z.strictObject({
   ruleId: z.string().exactOptional(),
   clauseId: z.string().min(1),
-  code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
+  code: z.enum(AUDIT_FAILURE_CODES),
   message: z.string(),
   path: z.string().optional(),
   stage: z.enum(["read", "parse", "evaluate", "scan", "scope", "persistence"]).optional(),
@@ -137,6 +141,15 @@ const evaluationSchema = z
     }),
   })
   .transform(({ coverage: _coverage, ...evaluation }) => evaluation);
+/** A file no clause read (native `blind_file`): every clause on it failed for its work budget or its syntax. */
+const blindFileSchema = z.strictObject({
+  path: z.string(),
+  reason: z.enum(AUDIT_BLIND_REASONS),
+  clauses: z.number().int().positive(),
+  message: z.string(),
+  /** The clauses (`[ruleId, clauseId]`) whose failures on the file this row stands for. */
+  folded: z.array(z.tuple([z.string(), z.string()])),
+});
 const resultPageSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   cursor: z.number().int().nonnegative(),
@@ -144,11 +157,13 @@ const resultPageSchema = z.strictObject({
   violations: z.array(violationSchema),
   failures: z.array(failureSchema),
   coverage: z.array(coverageSchema),
+  blindFiles: z.array(blindFileSchema).default([]),
   bytes: z.number().int().nonnegative(),
 });
 const workspaceResultSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   replacedPaths: z.array(z.string()).nullable().optional(),
+  blindFiles: z.array(blindFileSchema).default([]),
   evaluation: evaluationSchema,
 });
 const repositoryIndexChunkSchema = z.strictObject({
@@ -276,31 +291,81 @@ function failure(
 function auditBudgetFailure(message: string): AuditFailure {
   return failure("scan", "budget-exceeded", message, undefined, "scan");
 }
-/** Failures that count towards the failure limit that stops a scan: any but a scan-level one or a `isSourceGap`. */
-function limitedFailures(failures: readonly AuditFailure[]): number {
-  let count = 0;
-  for (const item of failures) if (item.stage !== "scan" && !isSourceGap(item)) count += 1;
-  return count;
+/** What a person can change so a rule that ran out of work finishes. A global query's failure names no one file. */
+const OUT_OF_WORK_ADVICE =
+  "The rule ran out of work: simplify the rule, or exclude generated or vendored files from its scope.";
+/** What a person can change so the file's work no longer stops a rule (the file, or the rules that ran before it). */
+const FILE_WORK_ADVICE =
+  "The file's work ran out before this rule finished, spent by its size or the rules before it: exclude generated or vendored files from the rules' scope, or split the file.";
+const BLIND_BUDGET_ADVICE = "If the file is generated or vendored, exclude it from the rules' scope; otherwise split it.";
+/** `item` with what would close it, where it is a coverage gap of one rule. */
+function advised(item: AuditFailure): AuditFailure {
+  if (isOutOfWork(item)) return { ...item, message: `${item.message}. ${OUT_OF_WORK_ADVICE}` };
+  if (isCoverageGap(item)) return { ...item, message: `${item.message}. ${FILE_WORK_ADVICE}` };
+  return item;
+}
+/**
+ * `failures` with each blind file's work and syntax failures, one per clause, replaced by one failure for the file
+ * (`blind` set to why no clause read it), and each other rule's coverage gap told what would close it. Only the
+ * failures the engine folded into the row (`folded`) are replaced: a cross-file query's failure on the file stays.
+ */
+function withBlindFiles(failures: readonly AuditFailure[], blindFiles: readonly z.infer<typeof blindFileSchema>[]): AuditFailure[] {
+  const folded = new Set(blindFiles.flatMap((file) =>
+    file.folded.map(([ruleId, clauseId]) => JSON.stringify([file.path, ruleId, clauseId]))));
+  return [
+    ...failures
+      .filter((item) => !folded.has(JSON.stringify([item.path, item.ruleId, item.clauseId])))
+      .map(advised),
+    ...blindFiles.map((file) => ({
+      ...failure(
+        "file",
+        file.reason === "budget" ? "budget-exceeded" : "source-incomplete",
+        `Every rule failed on this file, so it was not checked (${file.clauses} clause${file.clauses === 1 ? "" : "s"}): ${file.message}${file.reason === "budget" ? `. ${BLIND_BUDGET_ADVICE}` : ""}`,
+        file.path,
+        "evaluate",
+      ),
+      blind: file.reason,
+    })),
+  ];
+}
+/**
+ * Whether a failure is something the audit reports and still completes: a coverage gap (`isCoverageGap`), or, in a
+ * repository audit, a file read only in part (`isSourceGap`); a touched-files scan of such a file fails.
+ */
+function tolerated(item: AuditFailure, scope: AuditScope): boolean {
+  return isCoverageGap(item) || (scope === "repository" && isSourceGap(item));
+}
+/** Whether `failures` fail an audit of `scope`: any does but those it tolerates (`tolerated`). */
+function failsAudit(failures: readonly AuditFailure[], scope: AuditScope): boolean {
+  return failures.some((item) => !tolerated(item, scope));
+}
+/**
+ * Whether a failure is always listed: a blind file's, and a scan-level one (the walk stopped at a guardrail, or the
+ * scan itself failed), which says what the rest of the list cannot. Other failures are details, listed up to a cap.
+ */
+function alwaysListed(item: AuditFailure): boolean {
+  return item.blind !== undefined || item.stage === "scan";
 }
 /**
  * A cap on one audit's failure list, over the lists it is given in turn (the failures before evaluation, then each
- * result page): every scan-level failure (what stopped the walk), at most `AUDIT_MAX_FAILURES` that fail the audit and
- * at most `AUDIT_MAX_FAILURES` source gaps, so files read only in part never crowd out what failed it. What it drops
- * is counted: `omitted()` is the one entry, for the end of the list, that says how many, or nothing when none was.
+ * result page): it keeps every failure `alwaysListed` keeps, the first failure of each rule that ran out of work and
+ * of each rule the file's work stopped (so the list names every such rule and the summary counts it), at most `limit`
+ * failures that fail the audit and at most `limit` gaps (coverage gaps and files read only in part), so gaps never
+ * crowd out what failed it. Each list is ordered with those that fail the audit first, then gaps.
  */
-function auditFailureCap(): { keep(failures: readonly AuditFailure[]): AuditFailure[]; omitted(): AuditFailure[] } {
-  let failing = 0;
-  let gaps = 0;
-  let dropped = 0;
-  return {
-    keep: (failures) => failures.filter((item) => {
-      if (item.stage === "scan") return true;
-      const kept = isSourceGap(item) ? gaps++ < AUDIT_MAX_FAILURES : failing++ < AUDIT_MAX_FAILURES;
-      if (!kept) dropped += 1;
-      return kept;
-    }),
-    omitted: () => (dropped === 0 ? [] : [omittedFailuresSummary(dropped)]),
+function auditFailureCap(limit = AUDIT_MAX_FAILURES): (failures: readonly AuditFailure[]) => AuditFailure[] {
+  let failing = limit;
+  let gaps = limit;
+  const counted = new Set<string>();
+  const gap = (item: AuditFailure) => isCoverageGap(item) || isSourceGap(item);
+  const firstOfRule = (item: AuditFailure) => {
+    const kind = isOutOfWork(item) ? "own" : isFileWorkStopped(item) ? "file" : undefined;
+    if (kind === undefined || item.ruleId === undefined || counted.has(`${kind}:${item.ruleId}`)) return false;
+    counted.add(`${kind}:${item.ruleId}`);
+    return true;
   };
+  return (failures) => [...failures.filter((item) => !gap(item)), ...failures.filter(gap)]
+    .filter((item) => alwaysListed(item) || firstOfRule(item) || (gap(item) ? gaps-- > 0 : failing-- > 0));
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -916,14 +981,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         this.#logRepositoryAudit(summary.status, startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
       return auditId;
     } catch (error) {
-      const message = errorMessage(error);
-      if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, failures.length + 1);
-      this.#finishAudit(
-        auditId,
-        "failed",
-        [],
-        [...failures, failure("scan", "adapter-error", message, undefined, "scan")],
-      );
+      const all = [...failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
+      if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, all.length);
+      const listed = auditFailureCap()(all);
+      this.#finishAudit(auditId, "failed", [], listed, all.length - listed.length);
       return auditId;
     } finally {
       if (workspace !== undefined) this.#disposeWorkspace(workspace);
@@ -950,8 +1011,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * Index the Git checkout natively, one chunk per call. A chunk reads at most one batch (32 files,
    * reading stops at 1 MiB), publishes it and releases its sources and tapes before it returns, so
    * the audit's source residency is one batch: that bound replaces the former index worker's
-   * peak-RSS limit. Interactive edits go first between chunks, and the walk's file, byte, failure
-   * and five-minute budgets stop the index as they stop the walk.
+   * peak-RSS limit. Interactive edits go first between chunks, and the walk's file, byte and
+   * five-minute budgets stop the index as they stop the walk; failures to read a file never do.
    */
   async #indexRepository(
     workspace: NativeCodeRuleDslWorkspace,
@@ -974,20 +1035,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
       const evaluation = chunk.evaluation;
       if (evaluation !== null && auditId !== undefined)
-        this.#record(() =>
-          this.#audits.progress(auditId, {
-            violations: evaluation.violations,
-            failures: [...failures, ...evaluation.failures],
-          }),
-        );
+        this.#recordProgress(auditId, evaluation.violations, [...failures, ...evaluation.failures]);
       if (chunk.overBudget) {
         failures.push(auditBudgetFailure("Repository scan exceeded its 100,000-file or 512 MiB source budget"));
         return { sourcePaths: [], stopped: true, files };
       }
-      if (limitedFailures(failures) >= AUDIT_MAX_FAILURES) {
-        failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
-        return { sourcePaths: [], stopped: true, files };
-      }
+
       if (chunk.done) {
         nested.reached.push(...chunk.nestedCheckouts);
         return { sourcePaths: [], stopped: false, files };
@@ -1053,14 +1106,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await this.#waitForEvaluationIdle();
     if (this.#closing) return;
     const result = await this.#applyRequest(workspace, { files, removed: [], deferGlobal: true });
-    if (auditId !== undefined)
-      this.#record(() =>
-        this.#audits.progress(auditId, {
-          violations: result.violations,
-          failures: [...failures, ...result.failures],
-        }),
-      );
+    if (auditId !== undefined) this.#recordProgress(auditId, result.violations, [...failures, ...result.failures]);
     await yieldToHost();
+  }
+
+  /** Records a running audit's results so far, its failures capped as its finished list is (`auditFailureCap`). */
+  #recordProgress(auditId: string, violations: CodeRuleViolation[], failures: readonly AuditFailure[]): void {
+    const listed = auditFailureCap()(failures);
+    this.#record(() =>
+      this.#audits.progress(auditId, { violations, failures: listed, unlistedFailureCount: failures.length - listed.length }),
+    );
   }
 
   async #finishScopeAudit(completion: ScopeAuditCompletion): Promise<ScopeAuditSummary | undefined> {
@@ -1083,10 +1138,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const resultPagesStartedAt = performance.now();
     const streamed = await this.#resultPages(workspace, auditId, mode === "log" && !generatedEdit, failures);
     const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
-    // Files read only in part are listed, but only a repository audit tolerates them: a touched-files scan of such a file failed.
-    const failsAudit = (item: AuditFailure): boolean => scope !== "repository" || !isSourceGap(item);
+    // Gaps are listed but do not fail the audit; files read only in part are gaps of a repository audit alone.
     const result: Evaluation = {
-      status: streamed.failures.some(failsAudit) ? "failed" : "completed",
+      status: failsAudit(streamed.failures, scope) ? "failed" : "completed",
       violations: streamed.violations,
       failures: streamed.failures,
       metrics: { files: 0, visitedNodes: 0, witnesses: streamed.violations.length },
@@ -1095,14 +1149,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       ...failures,
       ...result.failures.map((item) => ({ ...item, stage: "evaluate" as const })),
     ];
-    const cap = auditFailureCap();
-    const allFailures = [...cap.keep(unboundedFailures), ...cap.omitted()];
-    const status = unboundedFailures.some(failsAudit) ? "failed" : "completed";
+    const allFailures = auditFailureCap()(unboundedFailures);
+    // The paged list is capped by the same rule over the same failures, so it leaves out as many.
+    const unlisted = unboundedFailures.length - allFailures.length;
+    const status = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
     if (streamed.paged && auditId !== undefined) {
-      this.#record(() => this.#audits.finishResultPages?.(auditId, status));
+      this.#record(() => this.#audits.finishResultPages?.(auditId, status, unlisted));
       this.#runningAudits.delete(auditId);
     } else {
-      this.#finishAudit(auditId, status, result.violations, allFailures);
+      this.#finishAudit(auditId, status, result.violations, allFailures, unlisted);
     }
     if (this.#scope === "repository" && revision === this.#revision) {
       this.#reportableViolations = result.violations;
@@ -1135,11 +1190,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       const absolute = stack.pop()!;
       const file = await this.#auditFileAtPath(workspace, canonicalRoot, absolute, stack, seen, failures, state.nested);
-      if (limitedFailures(failures) >= AUDIT_MAX_FAILURES) {
-        failures.push(auditBudgetFailure(`Repository scan stopped after reaching ${AUDIT_MAX_FAILURES} failures`));
-        state.stopped = true;
-        return;
-      }
+
       if (this.#closing) return;
       if (file === undefined) continue;
       const bytes = Buffer.byteLength(file.source);
@@ -1272,14 +1323,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const failures: AuditFailure[] = [];
     // A paged audit keeps no violations in memory; the count is all the timing line needs.
     let violationCount = 0;
+    // One cap across the preceding failures and every page (`auditFailureCap`).
     const cap = auditFailureCap();
+    const preceding = cap(precedingFailures);
     let cursor = 0;
     let pageIndex = 0;
     if (paged && precedingFailures.length > 0) {
       this.#record(() =>
         this.#audits.appendResultPage?.(auditId!, pageIndex, {
           violations: [],
-          failures: cap.keep(precedingFailures),
+          failures: preceding,
         }),
       );
       pageIndex += 1;
@@ -1287,19 +1340,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     while (true) {
       const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
       violationCount += page.violations.length;
+      const pageFailures = withBlindFiles(page.failures, page.blindFiles).map((item) => ({ ...item, stage: "evaluate" as const }));
       if (paged) {
-        // The last page closes the list, so it is where the count of what the cap dropped is recorded.
-        const pageFailures = cap.keep(page.failures.map((item) => ({ ...item, stage: "evaluate" as const })));
+        const listed = cap(pageFailures);
         this.#record(() =>
           this.#audits.appendResultPage?.(auditId!, pageIndex, {
             violations: page.violations,
-            failures: page.done ? [...pageFailures, ...cap.omitted()] : pageFailures,
+            failures: listed,
           }),
         );
       } else {
         violations.push(...page.violations);
       }
-      failures.push(...page.failures);
+      failures.push(...pageFailures);
       pageIndex += 1;
       if (page.done) return { violations: violations, failures, paged, pageCount: pageIndex, violationCount };
       if (page.cursor <= cursor) throw new Error("Native result stream did not advance");
@@ -1349,21 +1402,24 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         const result =
           inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
         const parsed = workspaceResultSchema.parse(JSON.parse(result));
+        const failures = withBlindFiles(parsed.evaluation.failures, parsed.blindFiles);
+        // An apply is no repository audit: a file read in part fails it (`#finishScopeAudit` decides a repository audit's).
+        const applied: Evaluation = { ...parsed.evaluation, status: failsAudit(failures, "touched-files") ? "failed" : "completed", failures };
         if (request.deferGlobal || parsed.replacedPaths == null) {
-          if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, parsed.evaluation);
-          return parsed.evaluation;
+          if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, applied);
+          return applied;
         }
         const replaced = new Set(parsed.replacedPaths);
         const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
         const evaluation: Evaluation = {
-          ...parsed.evaluation,
+          ...applied,
           violations: [
             ...previous.violations.filter((violation) => violation.path === undefined || !replaced.has(violation.path)),
-            ...parsed.evaluation.violations,
+            ...applied.violations,
           ],
           failures: [
             ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
-            ...parsed.evaluation.failures,
+            ...applied.failures,
           ],
         };
         this.#workspaceEvaluations.set(workspace, evaluation);
@@ -1496,10 +1552,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     status: AuditResult["status"],
     violations: CodeRuleViolation[],
     failures: AuditFailure[],
+    unlistedFailureCount = 0,
   ): void {
     if (auditId === undefined) return;
     this.#runningAudits.delete(auditId);
-    if (!this.#closing) this.#record(() => this.#audits.finish(auditId, { status, violations: violations, failures }));
+    if (!this.#closing) {
+      const unlisted = unlistedFailureCount > 0 ? { unlistedFailureCount } : {};
+      this.#record(() => this.#audits.finish(auditId, { status, violations: violations, failures, ...unlisted }));
+    }
   }
   #recordImmediate(
     scope: AuditScope,

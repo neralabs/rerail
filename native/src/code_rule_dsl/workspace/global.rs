@@ -348,7 +348,7 @@ pub(super) fn evaluate_global(
                 Ok(witnesses) if witnesses.len() > code_rule.capabilities.limits.max_witnesses => {
                     evaluation.failures.push(failure(
                         &clause.id,
-                        "budget-exceeded",
+                        crate::code_rule_dsl::model::WITNESS_LIMIT,
                         "global witness budget exceeded",
                         None,
                     ));

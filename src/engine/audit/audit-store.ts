@@ -1,20 +1,57 @@
 import { randomUUID } from "node:crypto";
-import { and, count, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
-import type {
-  AuditRecorder,
-  AuditInput,
-  AuditRecord,
-  AuditResult,
-  AuditSummary,
-  AuditMode,
-  AuditScope,
-  AuditStatus,
+import {
+  blindFilePaths,
+  type AuditRecorder,
+  type AuditInput,
+  type AuditRecord,
+  type AuditResult,
+  type AuditSummary,
+  type AuditMode,
+  type AuditScope,
+  type AuditStatus,
 } from "./audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
-import { repositoryAudits, auditResultPages, audits, sessionsOfRepository, type AuditRow } from "../storage/schema.js";
+import {
+  repositoryAudits,
+  auditResultPages,
+  auditUnlistedFailures,
+  audits,
+  sessionsOfRepository,
+  type AuditRow,
+} from "../storage/schema.js";
+
+/**
+ * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build
+ * wrote lacks the table: its audits list every failure they kept, and none is counted beyond them.
+ */
+const HOLDS_UNLISTED_TABLE = new WeakSet<RerailDatabase>();
+function holdsUnlistedTable(database: RerailDatabase): boolean {
+  if (HOLDS_UNLISTED_TABLE.has(database)) return true;
+  const holds = database.$client
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'")
+    .get() !== undefined;
+  if (holds) HOLDS_UNLISTED_TABLE.add(database);
+  return holds;
+}
+/**
+ * How many failures an audit had beyond those it lists (`audit_unlisted_failures`), in a select from `audits`. Written
+ * with table names: Drizzle renders a single-table select's columns without them, which would leave the subquery
+ * comparing `audit_unlisted_failures.audit_id` with itself.
+ */
+function unlistedFailures(database: RerailDatabase): SQL<number> {
+  return holdsUnlistedTable(database)
+    ? sql<number>`coalesce((SELECT unlisted.count FROM audit_unlisted_failures unlisted
+      WHERE unlisted.audit_id = audits.audit_id), 0)`
+    : sql<number>`0`;
+}
+/** An `audits` row with `unlistedFailures`, which `record` reads. */
+function auditColumns(database: RerailDatabase) {
+  return { ...getTableColumns(audits), unlistedFailureCount: unlistedFailures(database) };
+}
 
 export interface AuditQuery {
   auditId?: string;
@@ -51,7 +88,9 @@ export interface RepositoryAuditSummary {
     catalogRevision: string | null;
     ruleRevisionCount: number;
     violationCount: number;
+    /** Every failure the audit had, listed or not; `unlistedFailureCount` of them its list leaves out. */
     failureCount: number;
+    unlistedFailureCount: number;
   } | null;
 }
 
@@ -160,7 +199,8 @@ function paging(query: Pick<AuditQuery, "limit" | "offset">): { limit: number; o
   };
 }
 
-function record(row: AuditRow): AuditRecord {
+function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
+  const blindFiles = blindFilePaths(row.failures);
   return {
     auditId: row.auditId,
     sessionId: row.sessionId,
@@ -177,6 +217,10 @@ function record(row: AuditRow): AuditRecord {
     status: row.status,
     violations: row.violations,
     failures: row.failures,
+    failureCount: row.failures.length + row.unlistedFailureCount,
+    unlistedFailureCount: row.unlistedFailureCount,
+    blindFiles,
+    blindFileCount: blindFiles.length,
   };
 }
 
@@ -185,7 +229,7 @@ function listAudits(database: RerailDatabase, query: AuditQuery = {}, repository
   const { limit, offset } = paging(query);
   const total = database.select({ total: count() }).from(audits).where(where).get()!.total;
   const page = database
-    .select()
+    .select(auditColumns(database))
     .from(audits)
     .where(where)
     .orderBy(desc(audits.startedAt), desc(audits.auditId))
@@ -196,6 +240,17 @@ function listAudits(database: RerailDatabase, query: AuditQuery = {}, repository
   return { audits: page, total };
 }
 
+/** `isOutOfWork` over one failure of `json_each`, in SQL. */
+const OUT_OF_WORK = sql.raw(`(json_extract(value, '$.blind') IS NULL AND json_extract(value, '$.code') = 'budget-exceeded'
+  AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
+/** `isCoverageGap` over one failure of `json_each`, in SQL. */
+const COVERAGE_GAP = sql.raw(`(json_extract(value, '$.blind') = 'budget' OR (json_extract(value, '$.blind') IS NULL
+  AND json_extract(value, '$.code') IN ('budget-exceeded', 'file-budget-exceeded') AND json_extract(value, '$.ruleId') IS NOT NULL
+  AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan')))`);
+/** A rule the file's work stopped (`file-budget-exceeded`), over one failure of `json_each`, in SQL. */
+const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND json_extract(value, '$.code') = 'file-budget-exceeded'
+  AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
+
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
   return database.select({
     workspaceRoot: audits.workspaceRoot,
@@ -203,7 +258,14 @@ function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditS
     mode: audits.mode,
     status: audits.status,
     violationCount: sql<number>`json_array_length(${audits.violations})`,
-    failureCount: sql<number>`json_array_length(${audits.failures})`,
+    failureCount: sql<number>`json_array_length(${audits.failures}) + ${unlistedFailures(database)}`,
+    unlistedFailureCount: unlistedFailures(database),
+    blindFileCount: sql<number>`(SELECT count(*) FROM json_each(${audits.failures}) WHERE json_extract(value, '$.blind') IS NOT NULL)`,
+    gapCount: sql<number>`(SELECT count(*) FROM json_each(${audits.failures}) WHERE ${COVERAGE_GAP})`,
+    outOfWorkRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${audits.failures})
+      WHERE ${OUT_OF_WORK})`,
+    fileWorkStoppedRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${audits.failures})
+      WHERE ${FILE_WORK_STOPPED})`,
   }).from(audits).where(eq(audits.sessionId, sessionId))
     .orderBy(desc(audits.startedAt), desc(audits.auditId)).limit(1).get();
 }
@@ -216,6 +278,10 @@ function listRepositoryAudits(
   const { limit, offset } = paging(query);
   const workspaceRoot = query.workspaceRoot ?? null;
   const status = query.status ?? null;
+  // The audit's failures past those it lists; a file only older builds wrote has no such table.
+  const unlisted = holdsUnlistedTable(database)
+    ? sql`(SELECT ${auditUnlistedFailures.count} FROM ${auditUnlistedFailures} WHERE ${auditUnlistedFailures.auditId} = audit.audit_id)`
+    : sql`NULL`;
   const rows = database.all<{
     workspaceRoot: string;
     repositoryAuditSessionId: string | null;
@@ -234,6 +300,7 @@ function listRepositoryAudits(
     ruleRevisionCount: number | null;
     violationCount: number | null;
     failureCount: number | null;
+    unlistedFailureCount: number | null;
     total: number;
   }>(sql`
     WITH repositories AS (
@@ -258,7 +325,8 @@ function listRepositoryAudits(
       audit.catalog_revision AS catalogRevision,
       json_array_length(audit.rule_revisions_json) AS ruleRevisionCount,
       json_array_length(audit.violations_json) AS violationCount,
-      json_array_length(audit.failures_json) AS failureCount,
+      json_array_length(audit.failures_json) + coalesce(${unlisted}, 0) AS failureCount,
+      coalesce(${unlisted}, 0) AS unlistedFailureCount,
       count(*) OVER () AS total
     FROM repositories
     LEFT JOIN ${repositoryAudits} repositoryAudit ON repositoryAudit.workspace_root = repositories.workspace_root
@@ -290,6 +358,7 @@ function listRepositoryAudits(
         ruleRevisionCount: row.ruleRevisionCount ?? 0,
         violationCount: row.violationCount ?? 0,
         failureCount: row.failureCount ?? 0,
+        unlistedFailureCount: row.unlistedFailureCount ?? 0,
       },
     })),
     total: rows[0]?.total ?? 0,
@@ -537,42 +606,57 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
       );
   }
 
-  finishResultPages(auditId: string, status: AuditStatus): void {
-    this.#database.$client
-      .prepare(
-        "UPDATE audits SET status=?, finished_at=?, " +
-          "violations_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.violations_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]'), " +
-          "failures_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.failures_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]') " +
-          "WHERE audit_id=? AND status='running'",
-      )
-      .run(status, Date.now(), auditId);
-    this.#database.delete(auditResultPages).where(eq(auditResultPages.auditId, auditId)).run();
+  finishResultPages(auditId: string, status: AuditStatus, unlistedFailureCount = 0): void {
+    this.#database.$client.transaction(() => {
+      const finished = this.#database.$client
+        .prepare(
+          "UPDATE audits SET status=?, finished_at=?, " +
+            "violations_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.violations_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]'), " +
+            "failures_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.failures_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]') " +
+            "WHERE audit_id=? AND status='running'",
+        )
+        .run(status, Date.now(), auditId).changes > 0;
+      if (finished) this.#recordUnlisted(auditId, unlistedFailureCount);
+      this.#database.delete(auditResultPages).where(eq(auditResultPages.auditId, auditId)).run();
+    })();
   }
 
-  progress(auditId: string, result: Pick<AuditResult, "violations" | "failures">): void {
-    this.#database
-      .update(audits)
-      .set({
-        ...(result.violations === undefined ? {} : { violations: result.violations }),
-        ...(result.failures === undefined ? {} : { failures: result.failures }),
-      })
-      .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
-      .run();
+  progress(auditId: string, result: Pick<AuditResult, "violations" | "failures" | "unlistedFailureCount">): void {
+    this.#database.$client.transaction(() => {
+      const running = this.#database
+        .update(audits)
+        .set({
+          ...(result.violations === undefined ? {} : { violations: result.violations }),
+          ...(result.failures === undefined ? {} : { failures: result.failures }),
+        })
+        .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
+        .run().changes > 0;
+      if (running && result.failures !== undefined) this.#recordUnlisted(auditId, result.unlistedFailureCount ?? 0);
+    })();
   }
 
   finish(auditId: string, result: AuditResult): void {
     // Interruption and database reset may win a race with an evaluator's late
     // completion. Only the first terminal transition owns the persisted result.
-    this.#database
-      .update(audits)
-      .set({
-        status: result.status,
-        violations: result.violations ?? [],
-        failures: result.failures ?? [],
-        finishedAt: Date.now(),
-      })
-      .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
-      .run();
+    this.#database.$client.transaction(() => {
+      const finished = this.#database
+        .update(audits)
+        .set({
+          status: result.status,
+          violations: result.violations ?? [],
+          failures: result.failures ?? [],
+          finishedAt: Date.now(),
+        })
+        .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
+        .run().changes > 0;
+      if (finished) this.#recordUnlisted(auditId, result.unlistedFailureCount ?? 0);
+    })();
+  }
+
+  /** Keeps how many failures an audit had beyond those it lists, replacing what it kept before; none when it lists all. */
+  #recordUnlisted(auditId: string, count: number): void {
+    this.#database.delete(auditUnlistedFailures).where(eq(auditUnlistedFailures.auditId, auditId)).run();
+    if (count > 0) this.#database.insert(auditUnlistedFailures).values({ auditId, count }).run();
   }
 
   interrupt(sessionId: string): void {
@@ -584,7 +668,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
 
   get(auditId: string): AuditRecord | undefined {
-    const row = this.#database.select().from(audits).where(eq(audits.auditId, auditId)).get();
+    const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
@@ -631,7 +715,7 @@ export class SqliteAuditReader implements AuditReader {
   get(auditId: string): AuditRecord | undefined {
     const database = this.#database.open();
     if (database === undefined) return undefined;
-    const row = database.select().from(audits).where(eq(audits.auditId, auditId)).get();
+    const row = database.select(auditColumns(database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {

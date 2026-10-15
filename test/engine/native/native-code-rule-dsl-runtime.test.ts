@@ -9,6 +9,7 @@ import {
   type CodeRuleDslEvaluationMode as EvaluationMode,
 } from "../../../src/engine/native/native.js";
 import { RULE_MODES } from "../../../src/engine/catalog/rule-mode.js";
+import { AUDIT_FAILURE_CODES } from "../../../src/engine/audit/audit.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const sourceSpanSchema = z.strictObject({
@@ -36,7 +37,7 @@ const violationSchema = z.strictObject({
 
 const codeRuleFailureSchema = z.strictObject({
   clauseId: z.string().min(1),
-  code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
+  code: z.enum(AUDIT_FAILURE_CODES),
   message: z.string(),
   path: z.string().optional(),
 });
@@ -857,7 +858,7 @@ clauses:
       );
 
       expect(result).toMatchObject({ violations: [], status: "failed" });
-      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded" })]);
+      expect(result.failures).toEqual([expect.objectContaining({ clauseId: "ast-match", code: "witness-limit" })]);
     });
 
 
@@ -999,6 +1000,13 @@ function workspace(): NativeCodeRuleDslWorkspace {
 const workspaceResultSchema = z.strictObject({
   revision: z.number(),
   replacedPaths: z.array(z.string()).nullable(),
+  blindFiles: z.array(z.strictObject({
+    path: z.string(),
+    reason: z.enum(["budget", "syntax"]),
+    clauses: z.number().int().positive(),
+    message: z.string(),
+    folded: z.array(z.tuple([z.string(), z.string()])),
+  })),
   evaluation: evaluationResultSchema.extend({
     failures: z.array(codeRuleFailureSchema.extend({ ruleId: z.string() })),
   }),
@@ -1926,7 +1934,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         if (index === 1) {
           expect(actual).toMatchObject({ status: "failed", violations: [] });
           expect(actual.failures.map(({ ruleId, clauseId, code, path }) => ({ ruleId, clauseId, code, path }))).toEqual([
-            { ruleId: "runtime-contract", clauseId: "ast-match", code: "budget-exceeded", path: "limited.py" },
+            { ruleId: "runtime-contract", clauseId: "ast-match", code: "witness-limit", path: "limited.py" },
           ]);
         } else {
           expect(full).toMatchObject({ status: "completed", violations: [], failures: [] });
@@ -2028,7 +2036,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       }]);
       expect(malformed).toMatchObject({ violations: [], status: "failed" });
       expect(malformed.failures).toEqual([
-        expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ clauseId: "ast-match", code: "input-limit", path: "edit.py" }),
       ]);
 
       const violating = await applyWorkspace(nativeWorkspace, 2, [{
@@ -2047,7 +2055,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
       }]);
       expect(oversized).toMatchObject({ violations: [], status: "failed" });
       expect(oversized.failures).toEqual([
-        expect.objectContaining({ clauseId: "ast-match", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ clauseId: "ast-match", code: "input-limit", path: "edit.py" }),
       ]);
 
       const recovered = await applyWorkspace(nativeWorkspace, 4, [{
@@ -2888,7 +2896,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         language: "python", path: "edit.py", source: "def broken(:\n",
       }]);
       expect(new Map(malformed.failures.map(item => [item.ruleId, item.code]))).toEqual(new Map([
-        ["disabled-input", "budget-exceeded"],
+        ["disabled-input", "input-limit"],
         ["eligible-input", "source-partial"],
       ]));
 
@@ -2896,7 +2904,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         language: "python", path: "edit.py", source: "print('x')\n",
       }]);
       expect(valid.failures).toEqual([
-        expect.objectContaining({ ruleId: "disabled-input", code: "budget-exceeded", path: "edit.py" }),
+        expect.objectContaining({ ruleId: "disabled-input", code: "input-limit", path: "edit.py" }),
       ]);
       expect(valid.violations).toEqual([
         expect.objectContaining({ ruleId: "eligible-input", code: "AST_MATCH", path: "edit.py" }),

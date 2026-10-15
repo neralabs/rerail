@@ -492,11 +492,46 @@ changed files when the request is made; an empty diff is a failed request rather
 than a silent full-repository scan. Automatic AI-output evaluation continues to
 use captured preimages and changed ranges.
 Full-repository work is guarded by a five-minute execution budget, a
-100,000-file or 512 MiB aggregate source ceiling, 32-file/1 MiB native batches,
-and a 20-failure reporting limit. Individual files may use the policy engine's
-32 MB source allowance and 500 ms AST work window. A scan that reaches a
-guardrail fails explicitly with one summary failure instead of continuing to
-consume host resources or flooding Diagnostics.
+100,000-file or 512 MiB aggregate source ceiling, and 32-file/1 MiB native
+batches; a scan that reaches one of these fails explicitly with one summary
+failure, always listed, instead of continuing to consume host resources.
+Failures to read a file never stop a scan, and at most 20 of them (and of other
+per-file failures) are listed; the audit record and the session summary keep
+the total (`failureCount`, of which `unlistedFailureCount` are not listed), and
+the session footer says `audit failed (N failures)`. Individual files may use
+the policy engine's 32 MB source allowance.
+No per-file limit is a fixed cut-off for a large file. Each file's shared work
+(parsing, its tape and anchor index) and each clause's own work allowance grow
+with the file's size, and a clause may visit `maxVisitedNodes` nodes or 16 per
+node of the file (`maxVisitsPerNode`), whichever is more. Each clause runs
+under its own allowance, so a costly rule fails alone and never takes the
+other rules' findings on that file with it. In one evaluation of a file, its
+clauses together may spend eight allowances; a clause that finds that ceiling
+spent fails without running. A rule running out of its own allowance in an
+evaluation of all of a file's rules depends on its content and the rules alone,
+so the result is stored and a later scan reads it back instead of paying for it
+again. A failure that depends on what else ran is not stored, and the next scan
+evaluates the file or rule again: the file's shared work running out (how much
+of it a scan does depends on what an earlier one stored), the ceiling, or
+running out in an evaluation of some of its rules.
+
+A rule that still runs out of work on a file is a **coverage gap**, not an
+execution failure: its failure says what would let it finish (simplify the
+rule, or exclude generated or vendored files from its scope), the failure list
+keeps one failure of every such rule past its cap, and the session footer
+counts the rules that ran out of work. A rule the file's work stopped (its
+shared work or the ceiling; code `file-budget-exceeded`) is a gap too, advised
+to exclude or split the file, and is not counted as a rule that ran out. A file
+every rule failed on is a **blind file**: it is listed once, as one failure
+marked `blind`, never cut from the list, and the audit record reports
+`blindFiles` and `blindFileCount`. A file blind for its work (`budget`) is a
+gap; one blind for its syntax (`syntax`) fails the audit, as a rule kept out by
+syntax errors does. A scan whose only failures are coverage gaps completes,
+`rerail scan` exits `0`, and the session footer says how many files were not
+checked, how many rules ran out of work and how many the file's work stopped
+instead of "audit failed". A rule that finds more than `maxWitnesses` on a file
+(`witness-limit`) did read it, and a file past a rule's input limits
+(`input-limit`) was never read by it: neither is a gap, and both fail the audit.
 
 The Diagnostics screen keeps one-shot requests and their results separate from
 ongoing settings and transcripts. A completed scan with no violations is a

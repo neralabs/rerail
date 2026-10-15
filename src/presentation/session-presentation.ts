@@ -221,15 +221,30 @@ async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardSco
     .catch(() => null);
 }
 
-/** What is wrong with the Engine or the latest audit of this checkout; nothing when both are fine. */
+/**
+ * What is wrong with the Engine or the latest audit of this checkout; nothing when both are fine. A failed audit says
+ * how many failures it had, those its list leaves out included. Coverage gaps of a completed audit are said apart
+ * from a failed one: files every rule failed on (blind files), and rules that ran out of work, which the person can
+ * simplify, or keep off generated or vendored files.
+ */
 async function healthItems(
   { audit: run }: z.infer<typeof sessionResponseSchema>, nativeOk: boolean, workspace: string,
 ): Promise<string[]> {
   const items = nativeOk ? [] : ["engine unavailable"];
+  const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
   try {
     if (run !== null && await realpath(run.workspaceRoot) !== workspace) throw new Error("Mismatched audit identity");
+    if (run === null) return items;
     // A completed audit may still list files it read only in part; only a failed one is trouble.
-    if (run?.status === "failed") items.push("audit failed");
+    if (run.status === "failed") {
+      items.push(run.failureCount > 0 ? `audit failed (${counted(run.failureCount, "failure", "failures")})` : "audit failed");
+    } else {
+      if (run.blindFileCount > 0) items.push(`${counted(run.blindFileCount, "file", "files")} not checked`);
+      if (run.outOfWorkRuleCount > 0) items.push(`${counted(run.outOfWorkRuleCount, "rule", "rules")} ran out of work`);
+      if (run.fileWorkStoppedRuleCount > 0) {
+        items.push(`${counted(run.fileWorkStoppedRuleCount, "rule", "rules")} stopped by file work`);
+      }
+    }
   } catch {
     items.push("audit unavailable");
   }

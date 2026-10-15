@@ -165,7 +165,7 @@ pub(super) fn evaluate_clauses(
                 if evaluation.metrics.witnesses > limits.max_witnesses {
                     evaluation.failures.push(failure(
                         &clause.id,
-                        "budget-exceeded",
+                        crate::code_rule_dsl::model::WITNESS_LIMIT,
                         "witness budget exceeded",
                         None,
                     ));
@@ -227,14 +227,14 @@ pub(super) fn evaluate_clauses(
         }
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
-        && !evaluation
-            .failures
-            .iter()
-            .any(|failure| failure.get("code").and_then(Value::as_str) == Some("budget-exceeded"))
+        && !evaluation.failures.iter().any(|failure| {
+            failure.get("code").and_then(Value::as_str)
+                == Some(crate::code_rule_dsl::model::WITNESS_LIMIT)
+        })
     {
         evaluation.failures.push(failure(
             "runtime",
-            "budget-exceeded",
+            crate::code_rule_dsl::model::WITNESS_LIMIT,
             "witness budget exceeded",
             None,
         ));

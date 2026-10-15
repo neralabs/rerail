@@ -238,6 +238,102 @@ describe("rerail scan and settings CLI", () => {
     expect(auditRequestSchema.parse(JSON.parse(output))).toMatchObject({ status: "completed" });
   });
 
+  it("completes a repository scan whose only gap is a file every rule ran out of work on, and names that file", async () => {
+    // Each integer compares itself with every one before it: quadratic, past the clause's allowance on a list of
+    // 20,000, while a short list finishes.
+    const COSTLY = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:costly", revision: 1, mode: "log",
+      scope: { include: ["api/**/*.py"], exclude: [] },
+      clauses: [{
+        id: "costly",
+        violation: { code: "LEAST", anchor: "witness.span", message: "least so far" },
+        forbid: { ast: { language: "python", rule: {
+          kind: "integer", pattern: "$A",
+          not: { follows: { stopBy: "end", kind: "integer", pattern: "$B", compare: { left: "A", op: "le", right: "B" } } },
+        } } },
+      }],
+    });
+    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([COSTLY]), options));
+    await writeFile(join(root, "api/generated.py"), `x = [${Array.from({ length: 20_000 }, (_, index) => index).join(", ")}]\n`);
+    await writeFile(join(root, "api/noisy.py"), "x = [1]\n");
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    expect(request).toMatchObject({ status: "completed", error: null });
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({
+      status: "completed",
+      blindFiles: ["api/generated.py"],
+      blindFileCount: 1,
+      failures: [expect.objectContaining({ path: "api/generated.py", code: "budget-exceeded", blind: "budget" })],
+    })]);
+    // The other files are read: the baseline's and the one added beside the generated file.
+    expect(new Set(audits[0].violations.map((violation: { path: string }) => violation.path))).toEqual(new Set(["api/clean.py", "api/noisy.py"]));
+  }, 30_000);
+
+  it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
+    const { root, home, daemon } = await fixture();
+    // More matches than the engine's 10,000-witness budget: an output cap, not running out of work.
+    await writeFile(join(root, "api/generated.py"), "print(1)\n".repeat(10_001));
+    await writeFile(join(root, "api/noisy.py"), "print('checked')\n");
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(1);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({
+      status: "failed",
+      blindFiles: [],
+      blindFileCount: 0,
+      failures: [expect.objectContaining({ path: "api/generated.py", code: "witness-limit" })],
+      violations: [expect.objectContaining({ path: "api/noisy.py", code: "PRINT" })],
+    })]);
+    expect(audits[0].failures[0]).not.toHaveProperty("blind");
+    const session = await (await fetch(new URL("/api/sessions/s1", daemon.url))).json();
+    expect(session.audit).toMatchObject({ status: "failed", gapCount: 0, outOfWorkRuleCount: 0 });
+  });
+
+  it("keeps how many failures a failed scan had past the 20 it lists, and reports them with the session", async () => {
+    // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
+    // no file is blind and every failure fails the scan: 25 of them, five past the list's 20.
+    const PRINT_CALL = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
+      scope: { include: ["api/**/*.py"], exclude: [] },
+      clauses: [{
+        id: "print-call",
+        violation: { code: "PRINT_CALL", anchor: "witness.span", message: "Use logging" },
+        forbid: { ast: { language: "python", rule: { pattern: "print($$$ARGS)" } } },
+      }],
+    });
+    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    await Promise.all(Array.from({ length: 25 }, (_, index) =>
+      writeFile(join(root, `api/broken-${String(index).padStart(2, "0")}.py`), "value = 1\ndef (\n")));
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "broken"], { cwd: root });
+    // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
+    await vi.waitFor(async () => {
+      const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
+      expect(audits[0]).toMatchObject({ scope: "touched-files", status: "failed", failureCount: 25 });
+    }, { timeout: 20_000, interval: 50 });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(1);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({ status: "failed", failureCount: 25, unlistedFailureCount: 5 })]);
+    expect(audits[0].failures).toHaveLength(20);
+    const session = await (await fetch(new URL("/api/sessions/s1", daemon.url))).json();
+    expect(session.audit).toMatchObject({ status: "failed", failureCount: 25, unlistedFailureCount: 5 });
+  });
+
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {

@@ -2389,7 +2389,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(native["failures"][0]["code"], "budget-exceeded", "{native}");
+    assert_eq!(native["failures"][0]["code"], "witness-limit", "{native}");
     assert_eq!(
         crate::code_rule_dsl::violations::node_group_enumerations(),
         2,
@@ -2408,7 +2408,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
     };
     let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
     assert_eq!(
-        result["evaluation"]["failures"][0]["code"], "budget-exceeded",
+        result["evaluation"]["failures"][0]["code"], "witness-limit",
         "{result}"
     );
     assert_eq!(
@@ -2505,6 +2505,59 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
             "{evaluation}"
         );
     }
+}
+
+#[test]
+fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
+    // The file of `roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace`, whose
+    // ~14,000 nodes are past `maxVisitedNodes`: with `maxVisitsPerNode` the workspace allows a
+    // file that many visits per node, so the clause reads it to the end instead of failing.
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 1000, "maxVisitsPerNode": 16, "maxWitnesses": 10000 }
+    });
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "node-scaled", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
+            "forbid": { "ast": { "language": "python",
+                "rule": { "pattern": "print($ARG)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let file = json!({
+        "path": "sample.py", "language": "python",
+        "source": format!("print(0)\n{}print(1)\n", "f(0)\n".repeat(2_000))
+    });
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    let evaluation = &result["evaluation"];
+    assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
+    // Both prints, the one past the old bound included.
+    assert_eq!(
+        evaluation["violations"].as_array().unwrap().len(),
+        2,
+        "{evaluation}"
+    );
 }
 
 #[test]

@@ -1353,3 +1353,44 @@ fn a_php_template_tapes_its_php_view() {
         assert_eq!(found, calls, "{source:?}");
     }
 }
+
+/// A lookup in a taped tree reads no child list one child at a time: an element of a 20,000-wide
+/// list, looked up from its first element, is found by searching the list's subtree, not by
+/// reading the elements before it (once per binding occurrence, that held one clause on jison's
+/// generated parser tables for seconds while it spent almost none of its work budget).
+#[test]
+fn a_taped_lookup_reads_no_wide_child_list_child_by_child() {
+    use crate::code_rule_dsl::value::{LINEAR_CHILDREN, NodeRef};
+
+    let source = format!(
+        "x = [{}]\n",
+        (0..20_000)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
+    let root = AstGrep::doc(tape);
+    let numbers = root
+        .root()
+        .dfs()
+        .filter(|node| node.kind() == "integer")
+        .collect::<Vec<_>>();
+    assert_eq!(numbers.len(), 20_000);
+    let (first, last) = (&numbers[0], &numbers[19_999]);
+    LINEAR_CHILDREN.set(0);
+    let found = NodeRef::of(last)
+        .find_near(root.root(), first)
+        .expect("the element");
+    assert_eq!(found.node_id(), last.node_id());
+    assert_eq!(LINEAR_CHILDREN.get(), 0, "no child was read one by one");
+    // A node of another kind at the same range is in no taped tree: the search says so, and does
+    // not read the list child by child to find out.
+    let missing = NodeRef {
+        kind: last.kind_id().wrapping_add(1),
+        ..NodeRef::of(last)
+    };
+    LINEAR_CHILDREN.set(0);
+    assert!(missing.find_near(root.root(), first).is_none());
+    assert_eq!(LINEAR_CHILDREN.get(), 0, "a miss read children one by one");
+}

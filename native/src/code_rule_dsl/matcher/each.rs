@@ -505,7 +505,7 @@ mod tests {
             "f(a, b, c);\n",
         );
         assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
     }
 
     #[test]
@@ -623,7 +623,7 @@ mod tests {
             let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
             assert_eq!(result["violations"], json!([]), "{suppress:?}: {result}");
             assert_eq!(
-                result["failures"][0]["code"], "budget-exceeded",
+                result["failures"][0]["code"], "witness-limit",
                 "{suppress:?}: {result}"
             );
             // Three rounds (the allowance and its overflow), each probing the bindings before it.

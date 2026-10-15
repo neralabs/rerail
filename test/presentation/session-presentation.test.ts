@@ -107,10 +107,47 @@ describe("installed session presentation", () => {
     response.context!.session!.hud.steeringCount = 0;
     expect((await read()).text).toBe("R E R A I L ● 3 rules");
     response.context!.daemon.native.ok = false;
-    response.context!.session!.audit = { workspaceRoot: cwd, scope: "touched-files", mode: "steer", status: "failed", violationCount: 0, failureCount: 1 };
-    expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable · audit failed");
-    response.context!.session!.audit = { workspaceRoot: cwd, scope: "repository", mode: "log", status: "completed", violationCount: 4, failureCount: 3 };
+    response.context!.session!.audit = { workspaceRoot: cwd, scope: "touched-files", mode: "steer", status: "failed", violationCount: 0, failureCount: 1, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable · audit failed (1 failure)");
+    // A completed repository audit that lists files it read only in part is no trouble.
+    response.context!.session!.audit = { workspaceRoot: cwd, scope: "repository", mode: "log", status: "completed", violationCount: 4, failureCount: 3, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
     expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable");
+  });
+
+  it("counts every failure of a failed audit, those its list leaves out included", async () => {
+    response.context!.session!.hud.steeringCount = 0;
+    response.context!.session!.audit = {
+      workspaceRoot: cwd, scope: "repository", mode: "log", status: "failed", violationCount: 0,
+      failureCount: 143, unlistedFailureCount: 123, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0,
+    };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · audit failed (143 failures)");
+    // Coverage gaps the list leaves out do not fail a completed audit.
+    response.context!.session!.audit = {
+      workspaceRoot: cwd, scope: "repository", mode: "log", status: "completed", violationCount: 0,
+      failureCount: 30, unlistedFailureCount: 9, blindFileCount: 0, gapCount: 21, outOfWorkRuleCount: 2, fileWorkStoppedRuleCount: 0,
+    };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 2 rules ran out of work");
+  });
+
+  it("names the coverage gaps of a completed audit, apart from a failed one", async () => {
+    response.context!.session!.hud.steeringCount = 0;
+    const audit = { workspaceRoot: cwd, scope: "repository", mode: "log", violationCount: 3 } as const;
+    const gaps = { blindFileCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0, unlistedFailureCount: 0 };
+    response.context!.session!.audit = { ...audit, ...gaps, status: "completed", failureCount: 1, gapCount: 1, blindFileCount: 1 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 1 file not checked");
+    response.context!.session!.audit = { ...audit, ...gaps, status: "completed", failureCount: 2, gapCount: 2, blindFileCount: 2 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 2 files not checked");
+    // A rule that ran out of work on a file is a gap the person can close: by simplifying it, or excluding the file.
+    response.context!.session!.audit = { ...audit, ...gaps, status: "completed", failureCount: 3, gapCount: 3, blindFileCount: 1, outOfWorkRuleCount: 1 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 1 file not checked · 1 rule ran out of work");
+    response.context!.session!.audit = { ...audit, ...gaps, status: "completed", failureCount: 2, gapCount: 2, outOfWorkRuleCount: 2 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 2 rules ran out of work");
+    // A rule the file's work stopped is a gap too, named apart: the file, not the rule, needs changing.
+    response.context!.session!.audit = { ...audit, ...gaps, status: "completed", failureCount: 2, gapCount: 2, fileWorkStoppedRuleCount: 2 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · 2 rules stopped by file work");
+    // A failure besides the gaps still fails the audit.
+    response.context!.session!.audit = { ...audit, ...gaps, status: "failed", failureCount: 3, gapCount: 2, blindFileCount: 2 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · audit failed (3 failures)");
   });
 
   it("honors silent without session/history reads but exposes on-demand counts", async () => {
