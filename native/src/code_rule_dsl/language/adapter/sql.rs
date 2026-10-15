@@ -35,6 +35,7 @@ use ast_grep_core::{Doc, Node};
 use serde_json::Value as Json;
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -80,9 +81,10 @@ impl Adapter for Sql {
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
+        let at = anchored.start;
         suppress.sqlfluff.as_ref().is_some_and(|references| {
             let index = file_sqlfluff(|| SqlfluffIndex::read(&root(node), source, lines));
             index.suppresses(references, lines.line(at) + 1)

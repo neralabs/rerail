@@ -40,6 +40,7 @@ pub(super) fn compile_query_plan(
             clause.violation.each = None;
             clause.violation.node_regexes.clear();
             clause.violation.suppress = None;
+            clause.violation.ignored_by = None;
             clause.violation.group_transform = None;
             clause.violation.message_template = None;
             clause.violation.fix = None;
@@ -65,9 +66,11 @@ impl Partition {
     }
 }
 
-/// The synthetic clause producing an `evidence` relation's rows in each file.
+/// The synthetic clause producing an `evidence` relation's rows in each file, answering to the
+/// comments its `side` does.
 pub(super) fn compile_relation_producer(
     relation: &FactQuery,
+    side: evidence::Side,
     template: &CompiledClause,
     index: usize,
     code_rule: &mut CompiledCodeRule,
@@ -75,7 +78,7 @@ pub(super) fn compile_relation_producer(
     let ast = relation.ast.as_ref();
     let id = (index, code_rule.clauses.len());
     let mut clause = template.clone();
-    clause.violation = evidence::producer_violation(template, relation);
+    clause.violation = evidence::producer_violation(template, relation, side);
     clause.kind = ClauseKind::Forbid(ast.query.clone());
     clause.synthetic = true;
     code_rule.clauses.push(clause);

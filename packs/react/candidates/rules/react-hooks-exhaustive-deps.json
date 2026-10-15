@@ -1411,6 +1411,16 @@
             "rules": [
               "react-hooks/exhaustive-deps"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "exhaustive-deps"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useExhaustiveDependencies"
+            ]
           }
         }
       }

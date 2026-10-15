@@ -2346,6 +2346,78 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     );
 }
 
+/// A violation with `suppress` spends no allowance on suppressed witnesses, yet both evaluators
+/// stop building a regex capture's groups once the reported ones overflow the allowance: none of
+/// these 50,000 is suppressed, so the second ends the enumeration.
+#[test]
+fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    capabilities["limits"]["maxWitnesses"] = json!(1);
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "bounded-each", "revision": 1,
+        "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "comment-characters",
+            "violation": { "anchor": "capture.X", "code": "E", "message": "$X", "each": "X",
+                "suppress": { "eslint": { "rules": ["no-warning-comments"] } } },
+            "forbid": { "ast": { "language": "typescript",
+                "rule": { "kind": "comment", "regex": "(?<X>a)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let file = json!({
+        "path": "a.ts", "language": "typescript",
+        "source": format!("//{}\n", "a".repeat(50_000))
+    });
+    let snapshot = json!({
+        "format": "rerail.repository-snapshot/v1", "revision": 1, "facts": [],
+        "files": [file.clone()]
+    });
+
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let native: Value = serde_json::from_str(
+        &compiled
+            .evaluate(snapshot.to_string(), "report".into())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(native["failures"][0]["code"], "budget-exceeded", "{native}");
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the native evaluator must stop at the overflow"
+    );
+
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    assert_eq!(
+        result["evaluation"]["failures"][0]["code"], "budget-exceeded",
+        "{result}"
+    );
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the workspace evaluator must stop at the overflow"
+    );
+    workspace.close();
+}
+
 #[test]
 fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();

@@ -2298,6 +2298,16 @@
             "rules": [
               "vitest/expect-expect"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "expect-expect"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useExpect"
+            ]
           }
         }
       }

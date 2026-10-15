@@ -70,6 +70,11 @@
             "rules": [
               "no-unused-private-class-members"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unused-private-class-members"
+            ]
           }
         }
       }

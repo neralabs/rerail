@@ -5,6 +5,8 @@ export const CODE_RULE_SEMANTIC_COMPARE_TEXTS = ["value", "key", "member", "name
 const eslintRuleName = z.string().refine(name => name.length > 0 && !name.includes(",") && name.trim() === name, "Must be a rule name (non-empty, without commas or surrounding white space).");
 const ruffCode = z.string().regex(/^[A-Z]+[0-9]+$/, "Must be a rule code (uppercase letters, then digits: F401).");
 const banditTest = z.string().regex(/^B[0-9]+$/, "Must be a Bandit test id (B, then digits: B101).");
+const oxlintRuleName = z.string().regex(/^[^,/\s]+$/, "Must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks).");
+const biomeRuleName = z.string().regex(/^lint\/[A-Za-z0-9]+\/[A-Za-z0-9]+$/, "Must be a Biome lint rule name (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel).");
 const phpstanIdentifier = z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9.]*[A-Za-z0-9])?$/, "Must be a PHPStan identifier (letters or digits, with internal dots).");
 const psalmIssue = z.string().regex(/^(?!all$)[A-Za-z0-9_-]+$/, "Must be a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll).");
 const phpcsCode = z
@@ -31,6 +33,10 @@ export const codeRuleSuppressSchema = z
     noqa: z.object({ codes: z.array(ruffCode).min(1).max(256), parent: z.literal("statement").optional() }).strict().optional(),
     /** Bandit's `# nosec` comments: a bare one, or one naming one of `codes` (or its test name). */
     nosec: z.object({ codes: z.array(banditTest).min(1).max(256) }).strict().optional(),
+    /** Oxlint's `oxlint-disable` (and `eslint-disable`) comments, as oxlint asks them: `rules` are its own rule names, without a plugin. */
+    oxlint: z.object({ rules: z.array(oxlintRuleName).min(1).max(256) }).strict().optional(),
+    /** Biome's `biome-ignore` comments, as Biome 2.5.15 reads them: `rules` are its lint rules, `lint/<group>/<rule>`. */
+    biome: z.object({ rules: z.array(biomeRuleName).min(1).max(256) }).strict().optional(),
     /** PHPStan's `@phpstan-ignore` comments. */
     phpstan: z.object({ identifiers: z.array(phpstanIdentifier).min(1).max(256) }).strict().optional(),
     /** Psalm's `@psalm-suppress` tags; `suppressAll` honours `@psalm-suppress all` (`disableSuppressAll="false"`). */

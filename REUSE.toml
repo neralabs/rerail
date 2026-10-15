@@ -54,6 +54,28 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Herrington Darkholme", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# oxc's oxlint 1.88.0 disable directives, ported.
+[[annotations]]
+path = "native/src/code_rule_dsl/suppress/oxlint.rs"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# Biome 2.5.15's suppression comments, ported from crates/biome_suppression/src/lib.rs,
+# crates/biome_analyze/src/{lib.rs,suppressions.rs,matcher.rs}, crates/biome_js_syntax/src/lib.rs and
+# crates/biome_js_parser/src/lexer/mod.rs, with the test in crates/biome_js_analyze/src/suppressions.tests.rs; its
+# diagnostic categories, JavaScript analyzer registry and ESLint same-source mapping (crates/biome_analyze/src/rule.rs),
+# as written by scripts/generate/packs/biome-suppression.mjs.
+[[annotations]]
+path = [
+  "native/src/code_rule_dsl/suppress/biome.rs",
+  "native/src/code_rule_dsl/suppress/biome_registry.generated.rs",
+  "conformance/biome-same-sources.generated.ts",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["2023-present Biome Developers and Contributors", "2020-2023 Rome Tools, Inc. and its affiliates", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # typescript-estree 8.70.1 JSX entities, as written by scripts/generate/value/ecma-entities.mjs.
 [[annotations]]
 path = "native/src/code_rule_dsl/value/ecma/entities.generated.rs"

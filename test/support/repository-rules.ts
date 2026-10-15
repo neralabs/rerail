@@ -75,7 +75,10 @@ export function testCodeRuleCatalog(
       attachmentFolder: "",
       on: true,
       mode: rule.mode,
-      decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" } },
+      suppressions: "honour",
+      config: null,
+      configError: null,
+      decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" }, suppressions: { by: "rule-default" }, config: {} },
       revision: rule.revision,
       payloadHash: ruleDocumentDigest({ kind: "code", rule }),
     }));

@@ -773,7 +773,7 @@ describe("mechanical code rule regressions", () => {
       expect(requestSteer.mock.calls[0]![2]).toBe(steerBlock("test:logger", [
         "Log user through the logger (web/App.tsx:2:15)",
         "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
-      ].join("\n")));
+      ].join("\n"), { mode: "block", origin: "From your rule library." }));
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });

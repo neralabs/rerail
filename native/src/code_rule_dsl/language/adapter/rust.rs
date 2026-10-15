@@ -39,6 +39,7 @@ use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -78,12 +79,12 @@ impl Adapter for Rust {
         node: &Node<'_, D>,
         _: &str,
         _: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
         suppress.clippy.as_ref().is_some_and(|clippy| {
             let index = file_clippy(|| ClippyIndex::read(&root(node)));
-            index.suppresses(clippy, at)
+            index.suppresses(clippy, anchored.start)
         })
     }
 }

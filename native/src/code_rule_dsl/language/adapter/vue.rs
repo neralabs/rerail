@@ -24,6 +24,7 @@ use ast_grep_core::{Doc, Language, Node};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::path::Path;
 
 /// Vue single-file components (`.vue`).
@@ -70,9 +71,10 @@ impl Adapter for Vue {
         node: &Node<'_, D>,
         source: &str,
         lines: &LineTable,
-        at: usize,
+        anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
+        let at = anchored.start;
         suppress.eslint.as_ref().is_some_and(|rules| {
             let scripts = file_eslint_directives(|| vue_script_directives(node, source, lines));
             scripts.suppresses(rules, at, lines) || {

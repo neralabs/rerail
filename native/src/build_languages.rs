@@ -1118,7 +1118,7 @@ mod tests {
             generate(
                 &root.join("../languages"),
                 test_directory,
-                &["python", "sql", "typescript", "tsx", "vue"],
+                &["python", "sql", "typescript", "tsx", "javascript", "vue"],
                 &out.0.join("out"),
             )
         };

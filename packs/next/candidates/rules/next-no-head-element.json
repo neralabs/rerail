@@ -60,6 +60,16 @@
             "rules": [
               "@next/next/no-head-element"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-head-element"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noHeadElement"
+            ]
           }
         }
       }

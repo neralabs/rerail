@@ -74,7 +74,9 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "formatArgs": "refused"
     },
     "suppressions": [
-      "eslint"
+      "eslint",
+      "oxlint",
+      "biome"
     ]
   },
   {
@@ -105,7 +107,9 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "formatArgs": "refused"
     },
     "suppressions": [
-      "eslint"
+      "eslint",
+      "oxlint",
+      "biome"
     ]
   },
   {
@@ -277,4 +281,4 @@ export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "r
 /** The capabilities every entry declares support for. */
 export const CODE_RULE_SEMANTIC_CAPABILITIES = ["scope", "value", "arguments", "calls", "formatArgs"] as const;
 /** The suppression comments the supported languages honour. */
-export const CODE_RULE_SUPPRESSIONS = ["noqa", "nosec", "eslint", "phpstan", "psalm", "phpcs", "clippy", "sqlfluff"] as const;
+export const CODE_RULE_SUPPRESSIONS = ["noqa", "nosec", "eslint", "oxlint", "biome", "phpstan", "psalm", "phpcs", "clippy", "sqlfluff"] as const;
