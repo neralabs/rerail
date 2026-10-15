@@ -236,6 +236,35 @@ describe("not gated and pending", () => {
     assert.match(result.checks.find((check) => !check.ok)!.detail, /remove it from the list/u);
   });
 
+  it("gating is decided per tool: a gated pack's rule of a tool with no gates.yaml must be frozen", async () => {
+    const root = fixture({ node: ["n1", "n2"] });
+    write(root, "packs/python/pack.json", { rules: [{ id: "p1" }, { id: "p2" }] });
+    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }, { name: "flake8" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }, { id: "p2", upstream: { tool: "flake8" } }] });
+    const blocked = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(blocked.checks), ["not-gated:python"]);
+    assert.match(blocked.checks.find((check) => !check.ok)!.detail, /p2 of flake8/u);
+    write(root, "conformance/gates/ungated-rules.json", { node: ["n1", "n2"], python: ["p2"] });
+    const frozen = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(frozen.checks), []);
+    assert.deepEqual(frozen.notGated, [{ pack: "node", rules: 2 }, { pack: "python", rules: 1 }]);
+  });
+
+  it("a pending tool covers only its own rules: another tool's rule in the same pack must be frozen", async () => {
+    const root = fixture({ node: ["n1", "n2"] });
+    write(root, "packs/javascript/pack.json", { rules: [{ id: "j1" }, { id: "j2" }] });
+    write(root, "packs/javascript/conformance.json", { tools: [{ name: "eslint" }, { name: "eslint-plugin-unicorn" }], rules: [{ id: "j1", upstream: { tool: "eslint" } }, { id: "j2", upstream: { tool: "eslint-plugin-unicorn" } }] });
+    const result = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(result.checks), ["not-gated:javascript"]);
+    assert.deepEqual(result.pending, [{ toolPack: "javascript/eslint", reason: "still validated in nera-rule-validation", rules: 1 }]);
+  });
+
+  it("a frozen rule whose tool is gated now is stale", async () => {
+    const root = fixture({ node: ["n1", "n2"], python: ["p1"] });
+    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }] });
+    const result = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(result.checks), ["frozen-list:python"]);
+  });
+
   const base = "a".repeat(40);
   const present = { "git cat-file": { exitCode: 0 } };
 

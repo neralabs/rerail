@@ -73,7 +73,10 @@ nera-rule-validation until their recordings land, are reported as pending and ar
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (blade, complexity,
 node, php). It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted
-`rules[].id` of each of those packs' `pack.json`. A shipped rule there that is not listed fails ("keep it in
-candidates/ until the pack has an adapter"); a listed rule no longer shipped fails ("remove it from the list"). With
+`rules[].id` of each of those packs' `pack.json`. Gating is decided per (pack, tool), by each shipped rule's
+`conformance.json` entry: a rule of a tool with a `gates.yaml` is judged, a rule of a pending tool is pending, and any
+other shipped rule, in a gated pack too, must be on the frozen list. A shipped rule that must be and is not listed fails
+("keep it in candidates/ until the tool has a gates.yaml"); a listed rule no longer shipped, or whose tool is gated or
+pending now, fails ("remove it from the list"). With
 `--base <sha>`, both files may only shrink against the base commit's (a base without the file skips the guard; a base
 that cannot be fetched or read fails closed).

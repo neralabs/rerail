@@ -54,7 +54,9 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   nera-rule-validation, and the gates report it as pending without blocking.
 - **Not gated:** packs with no upstream adapter (node, php, blade, complexity). Their current shipped rules are frozen in
   `conformance/gates/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
-  pack has an adapter. Both lists may only shrink: CI compares them with the pull request's base.
+  pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
+  `gates.yaml` and is not pending is frozen the same way. Both lists may only shrink: CI compares them with the pull
+  request's base.
 
 Each rule's upstream rule comes from the pack's `conformance.json`. A shipped rule missing from it fails.
 
