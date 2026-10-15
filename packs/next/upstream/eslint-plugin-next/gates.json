@@ -1005,7 +1005,7 @@
     "you",
     "your"
   ],
-  "format": "rerail.gates-recording/v1",
+  "format": "rerail.gates-recording/v2",
   "identity": {
     "commit": "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6",
     "environment": "eslint-config-next 16.3.8 (https://github.com/vercel/next.js packages/eslint-config-next at b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6): its file globs, parsers and globals, without its plugins, rules or settings; a test case's own parser and globals give way to them",
@@ -1462,178 +1462,42 @@
     {
       "path": "Users/user_name/projects/project-name/app/layout.tsx",
       "script": false,
-      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8"
     },
     {
       "path": "Users/user_name/projects/project-name/pages/layout.tsx",
       "script": false,
-      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8"
     },
     {
       "path": "Users/user_name/projects/project-name/src/app/layout.tsx",
       "script": false,
-      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8"
     },
     {
       "path": "Users/user_name/projects/project-name/src/pages/layout.tsx",
       "script": false,
-      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8"
     },
     {
       "path": "Users/username/projects/project-name/app/layout.tsx",
       "script": false,
-      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166"
     },
     {
       "path": "Users/username/projects/project-name/pages/layout.tsx",
       "script": false,
-      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d80e859d1efe1bb7497c950ee806b455755e3b91b088bc97917ca49587111de8"
     },
     {
       "path": "Users/username/projects/project-name/src/app/layout.tsx",
       "script": false,
-      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166"
     },
     {
       "path": "Users/username/projects/project-name/src/pages/layout.tsx",
       "script": false,
-      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c3e001761c8e90fa2e77285346597f29c82314078a3147f7a4a0898b9ed98166"
     },
     {
       "path": "app/layout.js",
@@ -1662,24 +1526,7 @@
     {
       "path": "app/opengraph-image.tsx",
       "script": false,
-      "sha256": "978c3d04ed0e5c4356f883c6c6a179fb48c5cef2781c5b2e20f810f97eec761f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "978c3d04ed0e5c4356f883c6c6a179fb48c5cef2781c5b2e20f810f97eec761f"
     },
     {
       "path": "components/outside-known-dirs.js",
@@ -1732,2884 +1579,657 @@
     {
       "path": "google-font-display/google-font-display.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "92e1a9733f8f667e9c297606229e72b4f9a71a5734cae9f96ca8869a23edbfbb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "92e1a9733f8f667e9c297606229e72b4f9a71a5734cae9f96ca8869a23edbfbb"
     },
     {
       "path": "google-font-display/google-font-display.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "bb0618418569d1c0ed4f3660c7591c59d2c56d3508290d4b7b24a0444f8de8a3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "bb0618418569d1c0ed4f3660c7591c59d2c56d3508290d4b7b24a0444f8de8a3"
     },
     {
       "path": "google-font-display/google-font-display.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "37c630eafe4fa0d055dd29c65b2f1e10a6d225a717d72ca191d70f5124f13447",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "37c630eafe4fa0d055dd29c65b2f1e10a6d225a717d72ca191d70f5124f13447"
     },
     {
       "path": "google-font-display/google-font-display.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "e3f7ea7d568b68cca3e81cbb125a3171564c2ee3b72d86e4a88e88b067c7da95",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3f7ea7d568b68cca3e81cbb125a3171564c2ee3b72d86e4a88e88b067c7da95"
     },
     {
       "path": "google-font-display/google-font-display.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "dc3bef6e0aeca5da6dad86a5ee07c68307254e50771bdf0fe30713c890df95b8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "dc3bef6e0aeca5da6dad86a5ee07c68307254e50771bdf0fe30713c890df95b8"
     },
     {
       "path": "google-font-display/google-font-display.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "102be5ee7cb135e8aaf4ad27230452ef4dc8c17e58a94a199d775b0b3b50f7b0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "102be5ee7cb135e8aaf4ad27230452ef4dc8c17e58a94a199d775b0b3b50f7b0"
     },
     {
       "path": "google-font-display/google-font-display.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "d18739ded5d91d2bf1e569c0684ca416ed838c8f64895a0fde505b3c99091588",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d18739ded5d91d2bf1e569c0684ca416ed838c8f64895a0fde505b3c99091588"
     },
     {
       "path": "google-font-preconnect/google-font-preconnect.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "560d845f759ac0c83877b70dbedbdbde3df05092869dfeb426660a27ab9b11a6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "560d845f759ac0c83877b70dbedbdbde3df05092869dfeb426660a27ab9b11a6"
     },
     {
       "path": "google-font-preconnect/google-font-preconnect.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "28420e840100d00a8a7dc5b61065b8050db95bf995db1fe8fe20c6e0b8edd050",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "28420e840100d00a8a7dc5b61065b8050db95bf995db1fe8fe20c6e0b8edd050"
     },
     {
       "path": "google-font-preconnect/google-font-preconnect.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "e7b85ecda380e0f41835c1075c0f381cd40e3dd21ed25060af79a970716c641a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "e7b85ecda380e0f41835c1075c0f381cd40e3dd21ed25060af79a970716c641a"
     },
     {
       "path": "inline-script-id/inline-script-id.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "fcc1e5313d082e6fdb3cfbffaa00ebfa50cd4ae98469899afbd2190582abaed7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "fcc1e5313d082e6fdb3cfbffaa00ebfa50cd4ae98469899afbd2190582abaed7"
     },
     {
       "path": "inline-script-id/inline-script-id.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "86ad57b7058eaa0a5e0d2a12f8f7324b45f7dc50f72dc9188f22207db97eb782",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "86ad57b7058eaa0a5e0d2a12f8f7324b45f7dc50f72dc9188f22207db97eb782"
     },
     {
       "path": "inline-script-id/inline-script-id.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "955c3ad2f039f2ebf855e560b4c0972ace137362134ce17f2ddec2b929241430",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "955c3ad2f039f2ebf855e560b4c0972ace137362134ce17f2ddec2b929241430"
     },
     {
       "path": "inline-script-id/inline-script-id.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "50d039f88d968f309fd7c51b7f6a1f01ba7c9ba376868828a9a678c4660dd426",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "50d039f88d968f309fd7c51b7f6a1f01ba7c9ba376868828a9a678c4660dd426"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "1f569c3dc99d3e38af1e570b5181830c68c362d40a01546ac458d4d9c1cc2781",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1f569c3dc99d3e38af1e570b5181830c68c362d40a01546ac458d4d9c1cc2781"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "7463d2ee9db103111d4883fb36913561af2313231c84c59cc706c45ecd2317ad",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "7463d2ee9db103111d4883fb36913561af2313231c84c59cc706c45ecd2317ad"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "3b0760d0655fb0e6b52bef705642b9d00d123e565ac3650b2d2ca317153d3b19",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3b0760d0655fb0e6b52bef705642b9d00d123e565ac3650b2d2ca317153d3b19"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "803392478491efc26608aaa9a398c7e4c2601258dbc074d28af0157f01b1b9f5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "803392478491efc26608aaa9a398c7e4c2601258dbc074d28af0157f01b1b9f5"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-4/input.jsx",
       "script": false,
-      "sha256": "76276a0551d2a25f07245c50ae32eaad0d77c061b9fbf54d0e1de609660563bc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "76276a0551d2a25f07245c50ae32eaad0d77c061b9fbf54d0e1de609660563bc"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-5/input.jsx",
       "script": false,
-      "sha256": "ec1fc6ab1dcf949815022ca7090a387ce785ffa528705d674f6c3326c210d7f1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ec1fc6ab1dcf949815022ca7090a387ce785ffa528705d674f6c3326c210d7f1"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-6/input.jsx",
       "script": false,
-      "sha256": "b0c998f5d0061355d6ed94ea51f9ce8273a7007a28af68ef5280465f073e890a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "b0c998f5d0061355d6ed94ea51f9ce8273a7007a28af68ef5280465f073e890a"
     },
     {
       "path": "inline-script-id/inline-script-id.0.valid-7/input.jsx",
       "script": false,
-      "sha256": "9bc794996d0a7d25d178109562dafc9220a510d6399607ddb3b6041da7a67e09",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9bc794996d0a7d25d178109562dafc9220a510d6399607ddb3b6041da7a67e09"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "8c3fc41972148c41c13b41609ab7d75ae12bee3e42958740fa72c699856e441b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "8c3fc41972148c41c13b41609ab7d75ae12bee3e42958740fa72c699856e441b"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "622ae8ad16915b297ffcd1dda590faa6574ebe7f8b9cf0fa08fe8ba6f8440cd8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "622ae8ad16915b297ffcd1dda590faa6574ebe7f8b9cf0fa08fe8ba6f8440cd8"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "3d2980db6cf0558953c7ecc70485adf2e035e6aaa7df5eda5eb3d9981d7e95f6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3d2980db6cf0558953c7ecc70485adf2e035e6aaa7df5eda5eb3d9981d7e95f6"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "ff51d74102ea6de2c16e1e2da0678ef052a63abc2347a04c83221e9f232f369f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ff51d74102ea6de2c16e1e2da0678ef052a63abc2347a04c83221e9f232f369f"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "4fa324c5871afddbd43044afbc89c48dc3cadc74b2cd6940a0563114c8993cdb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "4fa324c5871afddbd43044afbc89c48dc3cadc74b2cd6940a0563114c8993cdb"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "5cfb7ba7b8ac70c93d9497a34ad05acf197aa978947c930bc472a1828050df67",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5cfb7ba7b8ac70c93d9497a34ad05acf197aa978947c930bc472a1828050df67"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "5875973bc1326dcd9763500bb95a5ad840d71f5ef38a480b0df1f2688b35c872",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5875973bc1326dcd9763500bb95a5ad840d71f5ef38a480b0df1f2688b35c872"
     },
     {
       "path": "next-script-for-ga/next-script-for-ga.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "ecf45112230a3acfad839512e962205cb0fb5197fd8e079360acc34e93d8576d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ecf45112230a3acfad839512e962205cb0fb5197fd8e079360acc34e93d8576d"
     },
     {
       "path": "no-assign-module-variable/no-assign-module-variable.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "682c054064d5aa942970f75a28e828a3f0ec06cd41c1957127e67f6a650cc0fe",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "682c054064d5aa942970f75a28e828a3f0ec06cd41c1957127e67f6a650cc0fe"
     },
     {
       "path": "no-assign-module-variable/no-assign-module-variable.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "31667117415609500a9dec929066024e3485fd8ece1dbc0180538abc7b5ea94e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "31667117415609500a9dec929066024e3485fd8ece1dbc0180538abc7b5ea94e"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "65dd3f083bf8e7b72333c1f97a4e6022242e0e092073cad5880f91f5e3390522",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "65dd3f083bf8e7b72333c1f97a4e6022242e0e092073cad5880f91f5e3390522"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "56b0b5166cf5b85004e23e01262be07fa5447435c6c4ad6d0052c5f6428cb449",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "56b0b5166cf5b85004e23e01262be07fa5447435c6c4ad6d0052c5f6428cb449"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "293487faf98de7afd51d972c23c8a6a562fa987f90f6436fc2751544be6e4136",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "293487faf98de7afd51d972c23c8a6a562fa987f90f6436fc2751544be6e4136"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "8fa82afb0c431fffb60ee5d057cec8a4d3aa604114b7eee5cd6fb2980df2dbc8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "8fa82afb0c431fffb60ee5d057cec8a4d3aa604114b7eee5cd6fb2980df2dbc8"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.invalid-4/input.jsx",
       "script": false,
-      "sha256": "5e1e0ff72decb8e7293b1eb9410cf86101765b1acd33761738972cd73ae9d9cc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5e1e0ff72decb8e7293b1eb9410cf86101765b1acd33761738972cd73ae9d9cc"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "5c2e31cf58790b4ba32a65692302ecaea9d7eece205200c322e78c096b0e3512",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5c2e31cf58790b4ba32a65692302ecaea9d7eece205200c322e78c096b0e3512"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "98d8358cc6395f6274947f983257e4d82077fcbb13a86484cb6cf1d109d95328",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "98d8358cc6395f6274947f983257e4d82077fcbb13a86484cb6cf1d109d95328"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "016c02446fca9198a5661cc40e02c3ea663700e7f869f27da97086b15a078c8f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "016c02446fca9198a5661cc40e02c3ea663700e7f869f27da97086b15a078c8f"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "1007eee7dc74a5e3a3ef62b7b32c597db7c8bb011d383a00497211d1d61451ad",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1007eee7dc74a5e3a3ef62b7b32c597db7c8bb011d383a00497211d1d61451ad"
     },
     {
       "path": "no-async-client-component/no-async-client-component.0.valid-4/input.jsx",
       "script": false,
-      "sha256": "0bf715d20b98ca05432717e1f879b71a9230499ab33679a6d78db78a51938c8b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "0bf715d20b98ca05432717e1f879b71a9230499ab33679a6d78db78a51938c8b"
     },
     {
       "path": "no-css-tags/no-css-tags.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "a3f5bbbeca6fd7ed2fcb5b05b72ccccf4e7231acc794a72379f9e206284ec9e8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "a3f5bbbeca6fd7ed2fcb5b05b72ccccf4e7231acc794a72379f9e206284ec9e8"
     },
     {
       "path": "no-css-tags/no-css-tags.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "d95cdff91f56b4f99830f7d6566a52488bfd9b51671fe75ec847761f661f8059",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d95cdff91f56b4f99830f7d6566a52488bfd9b51671fe75ec847761f661f8059"
     },
     {
       "path": "no-css-tags/no-css-tags.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "4dd5675fd423a90b034eff6e94748526052c892bb12eb9bbf81a92a921c047df",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "4dd5675fd423a90b034eff6e94748526052c892bb12eb9bbf81a92a921c047df"
     },
     {
       "path": "no-css-tags/no-css-tags.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "7980dde42d792fdfbc3074533762db65d45638d4b28a8699ae693fbd643ad4c6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "7980dde42d792fdfbc3074533762db65d45638d4b28a8699ae693fbd643ad4c6"
     },
     {
       "path": "no-css-tags/no-css-tags.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "990d556437769060b8231d97d3c053cf7d5473994833c17fa04a0f45ecee8304",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "990d556437769060b8231d97d3c053cf7d5473994833c17fa04a0f45ecee8304"
     },
     {
       "path": "no-css-tags/no-css-tags.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "57fedfdd844ae0b05381b9aec7ba6b9e1c3b56f29ad5c96c80ac1da044dc0c17",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "57fedfdd844ae0b05381b9aec7ba6b9e1c3b56f29ad5c96c80ac1da044dc0c17"
     },
     {
       "path": "no-img-element/no-img-element.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "29cb0c602d10abe673413493665b1d611c226f3a3e75471f1ac7a00426d79fa4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "29cb0c602d10abe673413493665b1d611c226f3a3e75471f1ac7a00426d79fa4"
     },
     {
       "path": "no-img-element/no-img-element.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "9a40ffc6f19786bca25800d2bc602a7602aecaa23d194de6a98bd60896f1543b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9a40ffc6f19786bca25800d2bc602a7602aecaa23d194de6a98bd60896f1543b"
     },
     {
       "path": "no-img-element/no-img-element.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "a193768204a9cbef63cb570e5626eb586cbcfafda1a90d81f4db6ee66def3652",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "a193768204a9cbef63cb570e5626eb586cbcfafda1a90d81f4db6ee66def3652"
     },
     {
       "path": "no-img-element/no-img-element.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "038e8f8e275be4376c00aa8ee52765880824869b2dcec983be0e3d3d5a53b02c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "038e8f8e275be4376c00aa8ee52765880824869b2dcec983be0e3d3d5a53b02c"
     },
     {
       "path": "no-img-element/no-img-element.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "8c835c38e1ad4ba3aec07ba03305a7ca122a33db7e6592651c31b8be6b126a70",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "8c835c38e1ad4ba3aec07ba03305a7ca122a33db7e6592651c31b8be6b126a70"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "ad8a52f68e4f1c936592434ed224874217f3184f9f87e44d8630dfa15eb18b3b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ad8a52f68e4f1c936592434ed224874217f3184f9f87e44d8630dfa15eb18b3b"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "3d56af99be6599b14cb1698c0c2b5b5a976721ac906ca8b62ddae4f6c3802d5d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3d56af99be6599b14cb1698c0c2b5b5a976721ac906ca8b62ddae4f6c3802d5d"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-10/input.jsx",
       "script": false,
-      "sha256": "37276e74fde7005a2606d896c57e3563960aa45140d07803c7e131918d1e1063",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "37276e74fde7005a2606d896c57e3563960aa45140d07803c7e131918d1e1063"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-11/input.jsx",
       "script": false,
-      "sha256": "bd1a14392d2ae8f39a5299f904de41cb87d80e60428977c202e4875afbb0157f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "bd1a14392d2ae8f39a5299f904de41cb87d80e60428977c202e4875afbb0157f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-12/input.jsx",
       "script": false,
-      "sha256": "a397e5807c32408554e1a432d73f3964266c918d4084918d6ec686ea85601d43",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "a397e5807c32408554e1a432d73f3964266c918d4084918d6ec686ea85601d43"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-13/input.jsx",
       "script": false,
-      "sha256": "17a7d1701a29a34c3ecc9fe833072f4d1f503310d84e4f376b8a82bddae2cdaa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "17a7d1701a29a34c3ecc9fe833072f4d1f503310d84e4f376b8a82bddae2cdaa"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-14/input.jsx",
       "script": false,
-      "sha256": "569985d87b781ad7ba77df9a566149d02f9c59095c480177a09e4b9c84ce04ed",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "569985d87b781ad7ba77df9a566149d02f9c59095c480177a09e4b9c84ce04ed"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-15/input.jsx",
       "script": false,
-      "sha256": "9081dac5635e7aeb20a91f54ca01ebf2bfbab2880739bd659aee642e650b5de4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9081dac5635e7aeb20a91f54ca01ebf2bfbab2880739bd659aee642e650b5de4"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-16/input.jsx",
       "script": false,
-      "sha256": "5033ed0d94c31edbffacce626632d1e2940025676681a111c403392f94922b26",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5033ed0d94c31edbffacce626632d1e2940025676681a111c403392f94922b26"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-17/input.jsx",
       "script": false,
-      "sha256": "23692aede6507b50c73067c1822b17e21dd35c7796679042015bb638b06a51cc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "23692aede6507b50c73067c1822b17e21dd35c7796679042015bb638b06a51cc"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-18/input.jsx",
       "script": false,
-      "sha256": "60db1c19fbe9f6cf1c45b27ddf1db58dc74cffdc4396cb401f354daa3b624dd9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "60db1c19fbe9f6cf1c45b27ddf1db58dc74cffdc4396cb401f354daa3b624dd9"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-19/input.jsx",
       "script": false,
-      "sha256": "25132e93276c8d91feda9af6d8cbd43344c4603c800bd75cef4ee39a09e2f2a8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "25132e93276c8d91feda9af6d8cbd43344c4603c800bd75cef4ee39a09e2f2a8"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "6f715051360c2436058fcdf33dfbc84eb5cf66a6a60dfa546e3cbea30350e0c9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "6f715051360c2436058fcdf33dfbc84eb5cf66a6a60dfa546e3cbea30350e0c9"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-20/input.jsx",
       "script": false,
-      "sha256": "c28760e7ba4dd02dfd957df768d02ae356fc5925d6c080062b84b71058535ef8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c28760e7ba4dd02dfd957df768d02ae356fc5925d6c080062b84b71058535ef8"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-21/input.jsx",
       "script": false,
-      "sha256": "4b25461fb8fd86a5a4136f711bb9348f3dfccd1a1e51937f7613ab1b4f189c95",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "4b25461fb8fd86a5a4136f711bb9348f3dfccd1a1e51937f7613ab1b4f189c95"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-22/input.jsx",
       "script": false,
-      "sha256": "798182891ce75d8cbb6249f86bd7179184bcbf720b99a4cac4c46485ce436f45",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "798182891ce75d8cbb6249f86bd7179184bcbf720b99a4cac4c46485ce436f45"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-23/input.jsx",
       "script": false,
-      "sha256": "524859bc6bc437d82dc0fc35bb569b669b29294808eb9ccb8865290f320275bd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "524859bc6bc437d82dc0fc35bb569b669b29294808eb9ccb8865290f320275bd"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-24/input.jsx",
       "script": false,
-      "sha256": "76f95fa297c43d10fe836622aac5c47f2682592bf4e8ab2eabd304e3c964c166",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "76f95fa297c43d10fe836622aac5c47f2682592bf4e8ab2eabd304e3c964c166"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-25/input.jsx",
       "script": false,
-      "sha256": "555f331ad6801ec5f8a1c7cd65938fcaf444c7676018486565a4a8e6e5b752b6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "555f331ad6801ec5f8a1c7cd65938fcaf444c7676018486565a4a8e6e5b752b6"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-26/input.jsx",
       "script": false,
-      "sha256": "3fcb8b7cb78a986c5a67eae672ec557c1dac8d4f2b2c8d9e4f80bef2e3b02e30",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3fcb8b7cb78a986c5a67eae672ec557c1dac8d4f2b2c8d9e4f80bef2e3b02e30"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-27/input.jsx",
       "script": false,
-      "sha256": "75417049091c32dbb0636aefd062d8132eb3dcabbb7e32e53c9a3c137ba8ad59",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "75417049091c32dbb0636aefd062d8132eb3dcabbb7e32e53c9a3c137ba8ad59"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-28/input.jsx",
       "script": false,
-      "sha256": "592a323e9243a605a6ee0f663e1c7baacc93fef054c50b5066d3ab18fac0f55f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "592a323e9243a605a6ee0f663e1c7baacc93fef054c50b5066d3ab18fac0f55f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "688c19fcf59203be5a1e7ab481ad6e16efa6eb97e8eebc76dde21675eba0ea4f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "688c19fcf59203be5a1e7ab481ad6e16efa6eb97e8eebc76dde21675eba0ea4f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-4/input.jsx",
       "script": false,
-      "sha256": "9e2177032005baeb309b5f8bc2144fc7010f7adb5cebe4aa3e55b29779a56747",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9e2177032005baeb309b5f8bc2144fc7010f7adb5cebe4aa3e55b29779a56747"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-5/input.jsx",
       "script": false,
-      "sha256": "d25e46bf444303dcd40ffde898dc8fba826be3939e69e670981f9dcdad2efd23",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d25e46bf444303dcd40ffde898dc8fba826be3939e69e670981f9dcdad2efd23"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-6/input.jsx",
       "script": false,
-      "sha256": "9ab9c9f1f3c295fa3a2a09aeb15368616da4975ab191dfcf8570976e498504a2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9ab9c9f1f3c295fa3a2a09aeb15368616da4975ab191dfcf8570976e498504a2"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-7/input.jsx",
       "script": false,
-      "sha256": "d1f5e84fc0b2a523893a98bec26ea3a5ba8801a2919d3971027177787e482c57",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d1f5e84fc0b2a523893a98bec26ea3a5ba8801a2919d3971027177787e482c57"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-8/input.jsx",
       "script": false,
-      "sha256": "44da0666fe12b6aceed53be82698543b160496b8ca4dcfe1f62fac1cca1c1a95",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "44da0666fe12b6aceed53be82698543b160496b8ca4dcfe1f62fac1cca1c1a95"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.invalid-9/input.jsx",
       "script": false,
-      "sha256": "02eba101a52221e5a0248396c906e8f8a47df137981fa3d143b23d1b773e597a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "02eba101a52221e5a0248396c906e8f8a47df137981fa3d143b23d1b773e597a"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "5f61e2df3e022bc6b6c34e14c3c8a48a8745096bb7eb3ec27f7fe80e5fe1740f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5f61e2df3e022bc6b6c34e14c3c8a48a8745096bb7eb3ec27f7fe80e5fe1740f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "19af40b32a4b6415d24e56f35334f495349a1e20ca45325a742c9e2782f164b6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "19af40b32a4b6415d24e56f35334f495349a1e20ca45325a742c9e2782f164b6"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-10/input.jsx",
       "script": false,
-      "sha256": "5563fd02cfdd707edb974b04a7bfd36b7a0290fe017da32c3ce61b73af8b2b6a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "5563fd02cfdd707edb974b04a7bfd36b7a0290fe017da32c3ce61b73af8b2b6a"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-11/input.jsx",
       "script": false,
-      "sha256": "28056e8568d9763c1eee651b7f9c9ec4f165a55d6acceddada74f88a0f3cad6f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "28056e8568d9763c1eee651b7f9c9ec4f165a55d6acceddada74f88a0f3cad6f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-12/input.jsx",
       "script": false,
-      "sha256": "d93a9822f4d91e731858c587835ec263473e2dfd50c85d4cfe47bcff978837aa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d93a9822f4d91e731858c587835ec263473e2dfd50c85d4cfe47bcff978837aa"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-13/input.jsx",
       "script": false,
-      "sha256": "cf33fbef14d2c58f75a2c4a69762dabbf9781283ecf380103b2f749e406390e1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "cf33fbef14d2c58f75a2c4a69762dabbf9781283ecf380103b2f749e406390e1"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-14/input.jsx",
       "script": false,
-      "sha256": "fa4db7760e0727acbf13d15102d6ccdb676f8b44152e80843dc1c1a749d13229",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "fa4db7760e0727acbf13d15102d6ccdb676f8b44152e80843dc1c1a749d13229"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-15/input.jsx",
       "script": false,
-      "sha256": "0fba3d35da9992dc030a7029995b0a7736a669f69d54034f67d3334efb17d6dc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "0fba3d35da9992dc030a7029995b0a7736a669f69d54034f67d3334efb17d6dc"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-16/input.jsx",
       "script": false,
-      "sha256": "ad74863faa57ad72651cc8964134fb213dd508ecba75f913c22471c3c2a44d69",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ad74863faa57ad72651cc8964134fb213dd508ecba75f913c22471c3c2a44d69"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-17/input.jsx",
       "script": false,
-      "sha256": "ab7dc48989bb874b9001087a94ec3049a3fdda847e7726d404d577553b282622",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ab7dc48989bb874b9001087a94ec3049a3fdda847e7726d404d577553b282622"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-18/input.jsx",
       "script": false,
-      "sha256": "86de4bb6bbb84d61ef621dedee5a1459a373d7a0766ff312f0d6caab86f2fa35",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "86de4bb6bbb84d61ef621dedee5a1459a373d7a0766ff312f0d6caab86f2fa35"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-19/input.jsx",
       "script": false,
-      "sha256": "9835c3a82058aa7ac695209c5c00e3406d3715dfca3aea62029559f6976eeb73",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9835c3a82058aa7ac695209c5c00e3406d3715dfca3aea62029559f6976eeb73"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "0f25f9fad7ffe36779f33d8bb25c75d2832348d6cc1b8374ee9cf1b25b0e4b4e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "0f25f9fad7ffe36779f33d8bb25c75d2832348d6cc1b8374ee9cf1b25b0e4b4e"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-20/input.jsx",
       "script": false,
-      "sha256": "41f44974621c037b5ed61fc212bfa737587980d4e8a421398312af4037c0d457",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "41f44974621c037b5ed61fc212bfa737587980d4e8a421398312af4037c0d457"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-21/input.jsx",
       "script": false,
-      "sha256": "f6c7ae3def921fa4b6d067b1792c77d7801d17bdfd74431586d33a8b247fdbb2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "f6c7ae3def921fa4b6d067b1792c77d7801d17bdfd74431586d33a8b247fdbb2"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-22/input.jsx",
       "script": false,
-      "sha256": "1fcebf80a8936df790a014dec1d122336f68cf47344b8f01825fb2485030d74d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1fcebf80a8936df790a014dec1d122336f68cf47344b8f01825fb2485030d74d"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-23/input.jsx",
       "script": false,
-      "sha256": "fab7bcbdd2110fae04eeab11cabb28f03b8a8cb99250df4bfef74dd079e35d4c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "fab7bcbdd2110fae04eeab11cabb28f03b8a8cb99250df4bfef74dd079e35d4c"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-24/input.jsx",
       "script": false,
-      "sha256": "a4a10dfc66667e3e4f6cb5798dbf69978f8a2e3175dc5f4d4bd0e3a7278c0f0e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "a4a10dfc66667e3e4f6cb5798dbf69978f8a2e3175dc5f4d4bd0e3a7278c0f0e"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-25/input.jsx",
       "script": false,
-      "sha256": "753fb5b73a2e131ba9589ae8d858f1af8271ca51739fedc12b3400d6ff909d41",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "753fb5b73a2e131ba9589ae8d858f1af8271ca51739fedc12b3400d6ff909d41"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-26/input.jsx",
       "script": false,
-      "sha256": "7eef206049b006d33b05b5632a2b435dde3629dd8c19f0eaa9f72e854ac3c3a7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "7eef206049b006d33b05b5632a2b435dde3629dd8c19f0eaa9f72e854ac3c3a7"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "c76a2e83df661a4f664a2ef6057c522bdb44047b69f5e3c48118ff7673bff51a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c76a2e83df661a4f664a2ef6057c522bdb44047b69f5e3c48118ff7673bff51a"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-4/input.jsx",
       "script": false,
-      "sha256": "cc0577f5894c4f8561ea67a1791d14fd2f2f917622654bf6f03e2629953c5c1f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "cc0577f5894c4f8561ea67a1791d14fd2f2f917622654bf6f03e2629953c5c1f"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-5/input.jsx",
       "script": false,
-      "sha256": "1bc75a06911c6b01103d3411d935e25e948bd50b74598caad77d9eb1ec532ad5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1bc75a06911c6b01103d3411d935e25e948bd50b74598caad77d9eb1ec532ad5"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-6/input.jsx",
       "script": false,
-      "sha256": "458669e4c161cfebe6f5b62af244ab9424dbdb8adf56f17093a28c5e5b075938",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "458669e4c161cfebe6f5b62af244ab9424dbdb8adf56f17093a28c5e5b075938"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-7/input.jsx",
       "script": false,
-      "sha256": "49a053e2aea47c38189ecd25e3ec87bc105182b359c0cdf815b4652dffd62651",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "49a053e2aea47c38189ecd25e3ec87bc105182b359c0cdf815b4652dffd62651"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-8/input.jsx",
       "script": false,
-      "sha256": "adeb5d0da2a83f23b57532bc070fbd87165365c6617d4391f29e8fdd7b37e48c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "adeb5d0da2a83f23b57532bc070fbd87165365c6617d4391f29e8fdd7b37e48c"
     },
     {
       "path": "no-location-assign-relative-destination/no-location-assign-relative-destination.0.valid-9/input.jsx",
       "script": false,
-      "sha256": "bdefe9ed8ec1a05c03fefbbde39be5a39428cabe0e85d83961b8216136c2954b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "bdefe9ed8ec1a05c03fefbbde39be5a39428cabe0e85d83961b8216136c2954b"
     },
     {
       "path": "no-script-component-in-head/no-script-component-in-head.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "b8cbe040cc173333e0892a3047ab875b2de9b1fc50bcb43ca5ecb9faea06ab82",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "b8cbe040cc173333e0892a3047ab875b2de9b1fc50bcb43ca5ecb9faea06ab82"
     },
     {
       "path": "no-sync-scripts/no-sync-scripts.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "658b3b58e58749c9f4c26b3a15ca1c7deb26a6eadb03ebf4d943d995cab705c7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "658b3b58e58749c9f4c26b3a15ca1c7deb26a6eadb03ebf4d943d995cab705c7"
     },
     {
       "path": "no-sync-scripts/no-sync-scripts.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "ca3ddab2af4ec6b1425efa4428b75ba15738891e7684aab64f5b41e92314e10e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ca3ddab2af4ec6b1425efa4428b75ba15738891e7684aab64f5b41e92314e10e"
     },
     {
       "path": "no-sync-scripts/no-sync-scripts.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "97bb1f21f4324db99f5e27ad54feb4cd1773e947eb6aeb4d14c2210f56cd3382",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "97bb1f21f4324db99f5e27ad54feb4cd1773e947eb6aeb4d14c2210f56cd3382"
     },
     {
       "path": "no-sync-scripts/no-sync-scripts.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "14989fad0b54bec1c76afdcc0db268398746c777ae62780ee1a4d5b13b9e30b4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "14989fad0b54bec1c76afdcc0db268398746c777ae62780ee1a4d5b13b9e30b4"
     },
     {
       "path": "no-title-in-document-head/no-title-in-document-head.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "92b191e1527de388d81326c14b8831e05e42d9b7cd8099be35f144b0be1dfec8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "92b191e1527de388d81326c14b8831e05e42d9b7cd8099be35f144b0be1dfec8"
     },
     {
       "path": "no-title-in-document-head/no-title-in-document-head.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "84af38772289e191da4e2bfcebc6c7197530b60734cb6d75f8019e650bcfbdc7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "84af38772289e191da4e2bfcebc6c7197530b60734cb6d75f8019e650bcfbdc7"
     },
     {
       "path": "no-title-in-document-head/no-title-in-document-head.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "72398a187f7c385404502bb5edf501216d9382bdfa3290d9835c29a88c735a1d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "72398a187f7c385404502bb5edf501216d9382bdfa3290d9835c29a88c735a1d"
     },
     {
       "path": "no-typos/no-typos.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "ba75959b2f88cca491fafbdfc5df3875024671cbfdf1120c965418af45a095d9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ba75959b2f88cca491fafbdfc5df3875024671cbfdf1120c965418af45a095d9"
     },
     {
       "path": "no-typos/no-typos.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "c017cea8a3de1f26bc2e7ceb03c9e97fe760e3fcfa570d29b1c62002ced1355f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "c017cea8a3de1f26bc2e7ceb03c9e97fe760e3fcfa570d29b1c62002ced1355f"
     },
     {
       "path": "no-typos/no-typos.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "cdedcee88d7916e15504b9569999550a48dce996b8e429ae281bcac9d814aadf",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "cdedcee88d7916e15504b9569999550a48dce996b8e429ae281bcac9d814aadf"
     },
     {
       "path": "no-typos/no-typos.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "3eba52a1340436c075c0a5500a3cc1d43e8819a06f406b87aaa2984aa0c2a282",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3eba52a1340436c075c0a5500a3cc1d43e8819a06f406b87aaa2984aa0c2a282"
     },
     {
       "path": "no-typos/no-typos.0.valid-4/input.jsx",
       "script": false,
-      "sha256": "410a2218ddf932ad4c4456be1c228cf67319a5554baa80e9bccb20231c270ed7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "410a2218ddf932ad4c4456be1c228cf67319a5554baa80e9bccb20231c270ed7"
     },
     {
       "path": "no-typos/no-typos.0.valid-5/input.jsx",
       "script": false,
-      "sha256": "4af6dbe04564a4d4c90030f90fef5508ab8d304a98ddb3520e751204a698822e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "4af6dbe04564a4d4c90030f90fef5508ab8d304a98ddb3520e751204a698822e"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.invalid-0/input.jsx",
       "script": false,
-      "sha256": "ec5856bbe23181b80626d965abad4bb1b7c0a1534d8d0c047f7acb27cbcc6ce2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ec5856bbe23181b80626d965abad4bb1b7c0a1534d8d0c047f7acb27cbcc6ce2"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.invalid-1/input.jsx",
       "script": false,
-      "sha256": "f3a0d6f850a77356e05a5203c33020177e3ea179f8f2bf2165cfd5bd1d3c6cef",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "f3a0d6f850a77356e05a5203c33020177e3ea179f8f2bf2165cfd5bd1d3c6cef"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.invalid-2/input.jsx",
       "script": false,
-      "sha256": "099cde9af3453b28f2b6b15be45080f1eb0669c016f324c24fb8e326ebf1f2b5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "099cde9af3453b28f2b6b15be45080f1eb0669c016f324c24fb8e326ebf1f2b5"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.invalid-3/input.jsx",
       "script": false,
-      "sha256": "515d995884ba26c890d4ba37857b77afafd3afe0065b902e3d3a18b9c872739c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "515d995884ba26c890d4ba37857b77afafd3afe0065b902e3d3a18b9c872739c"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.valid-0/input.jsx",
       "script": false,
-      "sha256": "ef6b573c618e44af925b95fbeb0cbdd4913233e016dc4715c6de7f6bb75f1bdd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ef6b573c618e44af925b95fbeb0cbdd4913233e016dc4715c6de7f6bb75f1bdd"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.valid-1/input.jsx",
       "script": false,
-      "sha256": "ce50dd811f0f77d0623ff0f8715d711572a19ceb79f692e34e5585093e1fb4ce",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "ce50dd811f0f77d0623ff0f8715d711572a19ceb79f692e34e5585093e1fb4ce"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.valid-2/input.jsx",
       "script": false,
-      "sha256": "dbb9aee6f5df16a38d2479867a99303090aa8cf14b334ecb054ece46b7df73f0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "dbb9aee6f5df16a38d2479867a99303090aa8cf14b334ecb054ece46b7df73f0"
     },
     {
       "path": "no-unwanted-polyfillio/no-unwanted-polyfillio.0.valid-3/input.jsx",
       "script": false,
-      "sha256": "3fa18af9351e00a5504bf2fcad31b16e78ff39a08d022e72287487cc5d3c6974",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3fa18af9351e00a5504bf2fcad31b16e78ff39a08d022e72287487cc5d3c6974"
     },
     {
       "path": "pages/_document.js",
@@ -4974,156 +2594,37 @@
     {
       "path": "pages/_document.page.tsx",
       "script": false,
-      "sha256": "57606b7ef44122e3368270c2c5aae0c1d001d70bf90de1c339abaae5d73cf27a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "57606b7ef44122e3368270c2c5aae0c1d001d70bf90de1c339abaae5d73cf27a"
     },
     {
       "path": "pages/_document.page.tsx",
       "script": false,
-      "sha256": "9676218177dd5fab5f212f649a00c2d21e6f7de90a8331d390aafcce1ce03b0a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "9676218177dd5fab5f212f649a00c2d21e6f7de90a8331d390aafcce1ce03b0a"
     },
     {
       "path": "pages/_document.page.tsx",
       "script": false,
-      "sha256": "fa1ba26f82ae65be013080e1a86b36e74760acf8a8f24ec023a264b8928762e4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "fa1ba26f82ae65be013080e1a86b36e74760acf8a8f24ec023a264b8928762e4"
     },
     {
       "path": "pages/_document.tsx",
       "script": false,
-      "sha256": "1059e19c6b74f27f492a9f93127f60fb2befec913936b45812e3f16a7b97f88b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1059e19c6b74f27f492a9f93127f60fb2befec913936b45812e3f16a7b97f88b"
     },
     {
       "path": "pages/_document.tsx",
       "script": false,
-      "sha256": "1a0ab31d4996225dcdb40d502fbe5d9a945cf3ceda8aca5794553668b475dccd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "1a0ab31d4996225dcdb40d502fbe5d9a945cf3ceda8aca5794553668b475dccd"
     },
     {
       "path": "pages/_document.tsx",
       "script": false,
-      "sha256": "6aa1c4079e3569e42479e85fa5e2c723e3132d3293f9bab072f0107df0ee77e2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "6aa1c4079e3569e42479e85fa5e2c723e3132d3293f9bab072f0107df0ee77e2"
     },
     {
       "path": "pages/_document.tsx",
       "script": false,
-      "sha256": "7877d9353cc3c52f008fe7741181a8c92b9198fac939962d45ec9534f0869762",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "7877d9353cc3c52f008fe7741181a8c92b9198fac939962d45ec9534f0869762"
     },
     {
       "path": "pages/_document/index.js",
@@ -5176,46 +2677,12 @@
     {
       "path": "pages/_document/index.tsx",
       "script": false,
-      "sha256": "d53bab30e67a20a4a4c78f63644f7ddca7695d1cc0d0b4a757d518b15758b078",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "d53bab30e67a20a4a4c78f63644f7ddca7695d1cc0d0b4a757d518b15758b078"
     },
     {
       "path": "pages/_document/index.tsx",
       "script": false,
-      "sha256": "fa1ba26f82ae65be013080e1a86b36e74760acf8a8f24ec023a264b8928762e4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "fa1ba26f82ae65be013080e1a86b36e74760acf8a8f24ec023a264b8928762e4"
     },
     {
       "path": "pages/index.js",
@@ -5478,68 +2945,17 @@
     {
       "path": "pages/index.tsx",
       "script": false,
-      "sha256": "3f4ee0c91ca1fb9e4331b6e54111015e62f45cbfc231108a52097985fe28a3a7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "3f4ee0c91ca1fb9e4331b6e54111015e62f45cbfc231108a52097985fe28a3a7"
     },
     {
       "path": "pages/index.tsx",
       "script": false,
-      "sha256": "460d092ffa38b7f8de4532465fcec128ba4e1971c4681e840e36bd6bc1418404",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "460d092ffa38b7f8de4532465fcec128ba4e1971c4681e840e36bd6bc1418404"
     },
     {
       "path": "pages/index.tsx",
       "script": false,
-      "sha256": "47ddde2e4ae39d36fa264a705ca6c4e5bdb160df8b9874353c843d3563fb8dec",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "47ddde2e4ae39d36fa264a705ca6c4e5bdb160df8b9874353c843d3563fb8dec"
     },
     {
       "path": "pages/test.js",
@@ -5592,24 +3008,7 @@
     {
       "path": "some/non-metadata-route-image.tsx",
       "script": false,
-      "sha256": "99a5116a9e2f82f5892c6980838635bc027ca12846366e5ae46204c9a6f27a1d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 6.0.2",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "99a5116a9e2f82f5892c6980838635bc027ca12846366e5ae46204c9a6f27a1d"
     },
     {
       "path": "src/app/icon.js",
@@ -5634,6 +3033,20 @@
           ]
         }
       ]
+    }
+  ],
+  "parsers": [
+    {
+      "grammar": true,
+      "parser": "typescript 6.0.2"
+    },
+    {
+      "grammar": true,
+      "parser": "typescript 5.9.3"
+    },
+    {
+      "grammar": true,
+      "parser": "@babel/parser 7.28.5"
     }
   ],
   "pins": {

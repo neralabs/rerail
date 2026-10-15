@@ -30733,7 +30733,7 @@
     "﻿",
     "﻿import"
   ],
-  "format": "rerail.gates-recording/v1",
+  "format": "rerail.gates-recording/v2",
   "identity": {
     "commit": "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1",
     "invocation": "ruff check --isolated --no-cache --exit-zero --output-format json --select <codes> <files>, every RUFF_* variable unset",
@@ -36745,512 +36745,152 @@
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/add_missing_cell_id.ipynb",
       "script": false,
-      "sha256": "3908ed26ac36a47c1449b3d56b6095b69e6bcbd5f5243598fa15610c1cff5ef3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3908ed26ac36a47c1449b3d56b6095b69e6bcbd5f5243598fa15610c1cff5ef3"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/before_fix.ipynb",
       "script": false,
-      "sha256": "15357d8bd6f282b063528440233dac649fa4de3a27775bc7e21b5befc1989c64",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "15357d8bd6f282b063528440233dac649fa4de3a27775bc7e21b5befc1989c64"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/ipy_escape_command.ipynb",
       "script": false,
-      "sha256": "37b29e6321064d28be70bc08e4054e3ba1df397b08fbb399bb6d6bf34401001e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "37b29e6321064d28be70bc08e4054e3ba1df397b08fbb399bb6d6bf34401001e"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/no_cell_id.ipynb",
       "script": false,
-      "sha256": "02086a77c7272e11712d7f06ebc4e9fd0dc52ffce2ef4a3e29993ddcc8360d58",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "02086a77c7272e11712d7f06ebc4e9fd0dc52ffce2ef4a3e29993ddcc8360d58"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/undefined_name.ipynb",
       "script": false,
-      "sha256": "e08419b177f36eb2ac14202f62eefc4799f4b6f868252021b790936e50884420",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e08419b177f36eb2ac14202f62eefc4799f4b6f868252021b790936e50884420"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/unused_variable.ipynb",
       "script": false,
-      "sha256": "28e15327a5c771800facf703de87e1a55e6bb9cae046870fde4e4f62c99f581f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "28e15327a5c771800facf703de87e1a55e6bb9cae046870fde4e4f62c99f581f"
     },
     {
       "path": "crates/ruff_notebook/resources/test/fixtures/jupyter/vscode_language_id.ipynb",
       "script": false,
-      "sha256": "a2d253a68a82ba21cce2a801ceaa4da79508b75e564c05c290e742e6b729ec82",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a2d253a68a82ba21cce2a801ceaa4da79508b75e564c05c290e742e6b729ec82"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC100.py",
       "script": false,
-      "sha256": "a130976863f4b16e64e1521b3ed3b6c6b0008aeecef1530195f6a741d0917f32",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a130976863f4b16e64e1521b3ed3b6c6b0008aeecef1530195f6a741d0917f32"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC105.py",
       "script": false,
-      "sha256": "f88072b34bd3a191983e8d4b2f9c1d27418e7f90ab85c7817be4a4c7a33acdf8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f88072b34bd3a191983e8d4b2f9c1d27418e7f90ab85c7817be4a4c7a33acdf8"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC109_0.py",
       "script": false,
-      "sha256": "0a276889ffb9cd2712cb7efb7a18181420eaf3eeec9767e1ee250ebace3eebdf",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0a276889ffb9cd2712cb7efb7a18181420eaf3eeec9767e1ee250ebace3eebdf"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC109_1.py",
       "script": false,
-      "sha256": "10ab43c3cd8d82e0ca04dbdbd80b9fceac4cd10064a55959cf960803796c3714",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "10ab43c3cd8d82e0ca04dbdbd80b9fceac4cd10064a55959cf960803796c3714"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC110.py",
       "script": false,
-      "sha256": "68f8993134efac2f0062532d7dca6eded3f4b6a15aa0c60dfd73d9f8af73bd7f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "68f8993134efac2f0062532d7dca6eded3f4b6a15aa0c60dfd73d9f8af73bd7f"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC115.py",
       "script": false,
-      "sha256": "65b71da1762d3a505150e807534eb0e028fff7abc3acdb5911e3791a0a420ad4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "65b71da1762d3a505150e807534eb0e028fff7abc3acdb5911e3791a0a420ad4"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC116.py",
       "script": false,
-      "sha256": "ec2d1c3afcd276cead5d66870feb48b4c631027d859c6d7ccf7302d84ba7dc3c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ec2d1c3afcd276cead5d66870feb48b4c631027d859c6d7ccf7302d84ba7dc3c"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC210.py",
       "script": false,
-      "sha256": "9b49f88c79caf7a173df6cf220262f66475ef079a898bc35ad3e1b93efd45af0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9b49f88c79caf7a173df6cf220262f66475ef079a898bc35ad3e1b93efd45af0"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC212.py",
       "script": false,
-      "sha256": "93cc6be3b2cb27c11e0e4e84bb397c1ac0da7aac63b4c7a7cd3f4786ec3b4a8a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "93cc6be3b2cb27c11e0e4e84bb397c1ac0da7aac63b4c7a7cd3f4786ec3b4a8a"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC22x.py",
       "script": false,
-      "sha256": "3300504129ed00fb1ca4f761db83a8bf1c61a98c9f84aa9493c742cf1e7f315a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3300504129ed00fb1ca4f761db83a8bf1c61a98c9f84aa9493c742cf1e7f315a"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC230.py",
       "script": false,
-      "sha256": "7a6385e89cebbfb4b01f6e6784b5fd8608f9af6d19274b64ff7e6ea48a82d326",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7a6385e89cebbfb4b01f6e6784b5fd8608f9af6d19274b64ff7e6ea48a82d326"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC240.py",
       "script": false,
-      "sha256": "6fc11c48f47f8fcb0f0b331f397702cfc7f0652e70d3750cea7e194e4d3ac005",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6fc11c48f47f8fcb0f0b331f397702cfc7f0652e70d3750cea7e194e4d3ac005"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC250.py",
       "script": false,
-      "sha256": "2c830fe68c6f74bb1b8acb0b136033658d498ba824ee2001cec3fd90e68db46e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2c830fe68c6f74bb1b8acb0b136033658d498ba824ee2001cec3fd90e68db46e"
     },
     {
       "path": "resources/test/fixtures/flake8_async/ASYNC251.py",
       "script": false,
-      "sha256": "55b0768eca184829c845cfcde72921ee428b415be90f993db4989ba8e3ffdf82",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "55b0768eca184829c845cfcde72921ee428b415be90f993db4989ba8e3ffdf82"
     },
     {
       "path": "resources/test/fixtures/flake8_blind_except/BLE.py",
       "script": false,
-      "sha256": "6fdf98763dca9a207a366b521146276d73f55a6d0560a438ba7ad57b34ce2073",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6fdf98763dca9a207a366b521146276d73f55a6d0560a438ba7ad57b34ce2073"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B002.py",
       "script": false,
-      "sha256": "f0df155a3fbbcaf865ac58cfc533975c5bea4f8db919feb12b21ccaa4affd48f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f0df155a3fbbcaf865ac58cfc533975c5bea4f8db919feb12b21ccaa4affd48f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B003.py",
       "script": false,
-      "sha256": "95343a15862624997074e5ec757b3d297a330db2ec190acf9db698d08cabeb51",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "95343a15862624997074e5ec757b3d297a330db2ec190acf9db698d08cabeb51"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B004.py",
       "script": false,
-      "sha256": "d149bdd49420eba39e5a9902dfc81f405fde95fceb7397e276ce40854bd8813d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d149bdd49420eba39e5a9902dfc81f405fde95fceb7397e276ce40854bd8813d"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B005.py",
       "script": false,
-      "sha256": "65f7d6d1a9cef665162206c324cd6a4893bace8f4266d17390e6ede815ea7450",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "65f7d6d1a9cef665162206c324cd6a4893bace8f4266d17390e6ede815ea7450"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_1.py",
       "script": false,
-      "sha256": "3cb9309b4047fc6d19df6280d1d9ceb3888f7096ae6566dd0d28639e6a31cb79",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3cb9309b4047fc6d19df6280d1d9ceb3888f7096ae6566dd0d28639e6a31cb79"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_1.pyi",
       "script": false,
-      "sha256": "cd138df3649765b87476e72200da28f817fb2445516029b4507809c92446cc27",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cd138df3649765b87476e72200da28f817fb2445516029b4507809c92446cc27"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_2.py",
       "script": false,
-      "sha256": "1ff85f935fcccc17ae27c5ad88f310ee305496d22420d8c4398c88b301e1269b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1ff85f935fcccc17ae27c5ad88f310ee305496d22420d8c4398c88b301e1269b"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_3.py",
       "script": false,
-      "sha256": "cf866c49ed49fc1ddaceb82535776c19fa4f4ae557d9699bb589e25e92d9edd8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cf866c49ed49fc1ddaceb82535776c19fa4f4ae557d9699bb589e25e92d9edd8"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_4.py",
@@ -37274,665 +36914,197 @@
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_5.py",
       "script": false,
-      "sha256": "8cb968499b46a12de311bdea6e6196e7202c4622613b5c83db4c210b9e630f1b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8cb968499b46a12de311bdea6e6196e7202c4622613b5c83db4c210b9e630f1b"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_6.py",
       "script": false,
-      "sha256": "65705d8195df4b614087e0215ec55cbce389641dead896452100036d572b78ff",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "65705d8195df4b614087e0215ec55cbce389641dead896452100036d572b78ff"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_7.py",
       "script": false,
-      "sha256": "fc5247103e87daf1b23d73880a4c13b43b4c84f116de6209966104c3b9fa63b6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "fc5247103e87daf1b23d73880a4c13b43b4c84f116de6209966104c3b9fa63b6"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_8.py",
       "script": false,
-      "sha256": "dd6b1c946ac4736c0002279f614f922c6058e1dd127e92857ef5de2e068cc4a1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "dd6b1c946ac4736c0002279f614f922c6058e1dd127e92857ef5de2e068cc4a1"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_9.py",
       "script": false,
-      "sha256": "2ce941674ab98b057aa52dacbe8fdd454bff21a144798d55536ac21d637b0572",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2ce941674ab98b057aa52dacbe8fdd454bff21a144798d55536ac21d637b0572"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_B008.py",
       "script": false,
-      "sha256": "78845a2b4144ce64090cbfcc078e428b99a7b6229275b284dcf1d1ea3b24e1ce",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "78845a2b4144ce64090cbfcc078e428b99a7b6229275b284dcf1d1ea3b24e1ce"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B006_extended.py",
       "script": false,
-      "sha256": "cc38187a9d38559e79fac29d572b1c58b86a30e0ad004c79f2276676ed82fbd9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cc38187a9d38559e79fac29d572b1c58b86a30e0ad004c79f2276676ed82fbd9"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B007.py",
       "script": false,
-      "sha256": "8886d022a0c45a654596228a8c046bda07e09182d2d972dd6a85e083d190a3d5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8886d022a0c45a654596228a8c046bda07e09182d2d972dd6a85e083d190a3d5"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B008_extended.py",
       "script": false,
-      "sha256": "777e8dbebfa62bf11d72cf327dc6df67767076d46fc660d12077e62097a0963f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "777e8dbebfa62bf11d72cf327dc6df67767076d46fc660d12077e62097a0963f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B009_B010.py",
       "script": false,
-      "sha256": "3acbe18ac3861a7adf23dc24267b48d311c7c9f187468c562ca5362be044e6f2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3acbe18ac3861a7adf23dc24267b48d311c7c9f187468c562ca5362be044e6f2"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B011.py",
       "script": false,
-      "sha256": "3ff66513869ac2080f4e9ed817c4c1d2682fd3bba4077c80de615a60cbfe8c04",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3ff66513869ac2080f4e9ed817c4c1d2682fd3bba4077c80de615a60cbfe8c04"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B012.py",
       "script": false,
-      "sha256": "417a96241ff85574a2d99d8d5c5cc524de0441daea9bfafeffe928fe2965d4fb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "417a96241ff85574a2d99d8d5c5cc524de0441daea9bfafeffe928fe2965d4fb"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B013.py",
       "script": false,
-      "sha256": "830aea33f783d6ef0943076b68f3e0f81ca05107eafc0cc8626c3cceacf85d30",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "830aea33f783d6ef0943076b68f3e0f81ca05107eafc0cc8626c3cceacf85d30"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B014.py",
       "script": false,
-      "sha256": "2e93fbbd3ec0f7c4c8cba7ff582522dea2645af260d9e2b9a954a1466cf960f6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2e93fbbd3ec0f7c4c8cba7ff582522dea2645af260d9e2b9a954a1466cf960f6"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B015.ipynb",
       "script": false,
-      "sha256": "aba2449ea80036b9f661a510f5b7bc25f761106f0b25ddb6523345d6e6168a9f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "aba2449ea80036b9f661a510f5b7bc25f761106f0b25ddb6523345d6e6168a9f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B015.py",
       "script": false,
-      "sha256": "df3b3159cdedd3c903507afc3d33f0ba6dca281523c299509cbf161e98fde0a0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "df3b3159cdedd3c903507afc3d33f0ba6dca281523c299509cbf161e98fde0a0"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B016.py",
       "script": false,
-      "sha256": "26d9420d17f578b92f588f31460f886d9dba64612774e107dd5d783bf1585bd6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "26d9420d17f578b92f588f31460f886d9dba64612774e107dd5d783bf1585bd6"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B017_0.py",
       "script": false,
-      "sha256": "91b3c0070ab8838b403d71ee8af7ec844ce3705e6509a21e95781be8bdfc355c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "91b3c0070ab8838b403d71ee8af7ec844ce3705e6509a21e95781be8bdfc355c"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B017_1.py",
       "script": false,
-      "sha256": "7d13d8e71a2227d3bd62f827700a24d4824df9f93c66537eda59fc03ad16b284",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7d13d8e71a2227d3bd62f827700a24d4824df9f93c66537eda59fc03ad16b284"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B018.ipynb",
       "script": false,
-      "sha256": "5ec9759685c28d84cd5213860f79909917da17cea79d7666f191a058c942aed8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5ec9759685c28d84cd5213860f79909917da17cea79d7666f191a058c942aed8"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B018.py",
       "script": false,
-      "sha256": "c0f195306d6c7a233d1bbb81d3e4b280d729e2da1892763f540a29f50c1d91f6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c0f195306d6c7a233d1bbb81d3e4b280d729e2da1892763f540a29f50c1d91f6"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B019.py",
       "script": false,
-      "sha256": "da78b503ae469aa800fda142a1074bd940f1441712d4cee04aa86f3b2c717838",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "da78b503ae469aa800fda142a1074bd940f1441712d4cee04aa86f3b2c717838"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B020.py",
       "script": false,
-      "sha256": "ccc206f86d09266c70eb04db998c899f33c91ed46f759cd3c53ea2f522d0ed56",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ccc206f86d09266c70eb04db998c899f33c91ed46f759cd3c53ea2f522d0ed56"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B021.py",
       "script": false,
-      "sha256": "f5e25e803d4950f5f1ef478e79678e93e3de7057c86c4f67e2dc25424cf0ec9c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f5e25e803d4950f5f1ef478e79678e93e3de7057c86c4f67e2dc25424cf0ec9c"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B022.py",
       "script": false,
-      "sha256": "b8ef29e67667ea218173909580cf8c6324c520f08193c3fb7d687a3835c96fff",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b8ef29e67667ea218173909580cf8c6324c520f08193c3fb7d687a3835c96fff"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B023.py",
       "script": false,
-      "sha256": "e7d529c713fab6b8cc2f3c1335ad632c2e6921db9e1cb70a236df201896d9579",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e7d529c713fab6b8cc2f3c1335ad632c2e6921db9e1cb70a236df201896d9579"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B024.py",
       "script": false,
-      "sha256": "13c02e9d48fa38c25a4e8ae8fcbf9262b7fb2917ea7480e255101ab3e95b9801",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "13c02e9d48fa38c25a4e8ae8fcbf9262b7fb2917ea7480e255101ab3e95b9801"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B025.py",
       "script": false,
-      "sha256": "d30424bca5e9fb188535664a0b6fa4e0d80cce583a5b11ac16e097521354e01a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d30424bca5e9fb188535664a0b6fa4e0d80cce583a5b11ac16e097521354e01a"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B026.py",
       "script": false,
-      "sha256": "d93669c6ee6719afe8404b56c2d91daf247d1ce2354191d14926933337c3e2e5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d93669c6ee6719afe8404b56c2d91daf247d1ce2354191d14926933337c3e2e5"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B027.py",
       "script": false,
-      "sha256": "2ef600d7c38ded409624180b7f05b683ff5d68cb06e6995397b8dae22e0c2328",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2ef600d7c38ded409624180b7f05b683ff5d68cb06e6995397b8dae22e0c2328"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B027.pyi",
       "script": false,
-      "sha256": "c02ab583254343de792bd1af2eabd7e0b81f4b80998062bd38051aa79a17189f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c02ab583254343de792bd1af2eabd7e0b81f4b80998062bd38051aa79a17189f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B028.py",
       "script": false,
-      "sha256": "959c0aa534134d287859c59734eeeb8ea0b4a6e529a7179187a5bdc9c7753c8f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "959c0aa534134d287859c59734eeeb8ea0b4a6e529a7179187a5bdc9c7753c8f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B029.py",
       "script": false,
-      "sha256": "840237d4ed21f60878aa3838c9131928e07090ea074047eb5c47b32d20236958",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "840237d4ed21f60878aa3838c9131928e07090ea074047eb5c47b32d20236958"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B030.py",
       "script": false,
-      "sha256": "2939ddd990f682b72973579997080526c516dea47db0b6c2658921d1ab20a3a4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2939ddd990f682b72973579997080526c516dea47db0b6c2658921d1ab20a3a4"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B031.py",
       "script": false,
-      "sha256": "801d71d9d21065661ce61d114ae0b2fff3582823ef470e4c14fd8232570c541f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "801d71d9d21065661ce61d114ae0b2fff3582823ef470e4c14fd8232570c541f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B032.py",
       "script": false,
-      "sha256": "1a82114dda4a01c1ed1903e90a361ac4903a55e372a05ab30cfb651e0e91ec10",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1a82114dda4a01c1ed1903e90a361ac4903a55e372a05ab30cfb651e0e91ec10"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B033.py",
       "script": false,
-      "sha256": "0ab2d4e903e0b4f7dc347cf03f541f9f7642a3a5124e833a611e47cb6821a6f1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0ab2d4e903e0b4f7dc347cf03f541f9f7642a3a5124e833a611e47cb6821a6f1"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B034.py",
       "script": false,
-      "sha256": "51f055747e20304d1235a5cf38766b2704d7dd05e6572a90de499fe4155a7d22",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "51f055747e20304d1235a5cf38766b2704d7dd05e6572a90de499fe4155a7d22"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B035.py",
       "script": false,
-      "sha256": "5e8db2dbb855d435f1202ba2945d7a2cca091c2a45ca44be9ee240d438c6b74c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5e8db2dbb855d435f1202ba2945d7a2cca091c2a45ca44be9ee240d438c6b74c"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B035_py315.py",
@@ -37956,121 +37128,37 @@
     {
       "path": "resources/test/fixtures/flake8_bugbear/B039.py",
       "script": false,
-      "sha256": "952c84c7ed8c523b685ebbb4928c5d38cadf64fe627b74ee42e671e266c01219",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "952c84c7ed8c523b685ebbb4928c5d38cadf64fe627b74ee42e671e266c01219"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B039_extended.py",
       "script": false,
-      "sha256": "a6a257dec3c60a1276df8cb0b51407334215d915a121a9b44a02255423e04f5e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a6a257dec3c60a1276df8cb0b51407334215d915a121a9b44a02255423e04f5e"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B904.py",
       "script": false,
-      "sha256": "a1d934fc42734312835f596280b2262a30cc95867879aa1f8687c886c6d8d33f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a1d934fc42734312835f596280b2262a30cc95867879aa1f8687c886c6d8d33f"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B905.py",
       "script": false,
-      "sha256": "d71659fa665e6d30b6a4397bd918eb0c173c6ab089917ce18a30c858ee813509",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d71659fa665e6d30b6a4397bd918eb0c173c6ab089917ce18a30c858ee813509"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B911.py",
       "script": false,
-      "sha256": "0a9e929d11231204b393273fafb9301ffb87ca87b049edf14d8acba11e033d41",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0a9e929d11231204b393273fafb9301ffb87ca87b049edf14d8acba11e033d41"
     },
     {
       "path": "resources/test/fixtures/flake8_bugbear/B912.py",
       "script": false,
-      "sha256": "ee7e9d0116f54851ae2a10cf8efa2c1026cf4a86dbb7915ee58e354f5456cac9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ee7e9d0116f54851ae2a10cf8efa2c1026cf4a86dbb7915ee58e354f5456cac9"
     },
     {
       "path": "resources/test/fixtures/flake8_debugger/T100.py",
       "script": false,
-      "sha256": "f87a340315c4c8228eb3b2ab5c12a61040cf82cd5b54e943f3c42af4a7807941",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f87a340315c4c8228eb3b2ab5c12a61040cf82cd5b54e943f3c42af4a7807941"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE790.py",
@@ -38094,223 +37182,67 @@
     {
       "path": "resources/test/fixtures/flake8_pie/PIE794.py",
       "script": false,
-      "sha256": "72dd7050a6024127c3080a27298d46beb479105438de9c818dc8cf0bef12a7a9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "72dd7050a6024127c3080a27298d46beb479105438de9c818dc8cf0bef12a7a9"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE796.py",
       "script": false,
-      "sha256": "cdeab66ee74e49057de505c7f3fcb2d97668dc1c1332eb018129d6cf286044e9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cdeab66ee74e49057de505c7f3fcb2d97668dc1c1332eb018129d6cf286044e9"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE796.pyi",
       "script": false,
-      "sha256": "3eb0a7ddd25bef16c95b5bd9b978273031303a6669a80eb1b59084263d3851e7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3eb0a7ddd25bef16c95b5bd9b978273031303a6669a80eb1b59084263d3851e7"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE800.py",
       "script": false,
-      "sha256": "623be7961020d832798c4a1683a2541f24190a7a6070552fa831a72a029efefa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "623be7961020d832798c4a1683a2541f24190a7a6070552fa831a72a029efefa"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE804.py",
       "script": false,
-      "sha256": "3c607b5f1399b3e406decfa916c1bc591e81ab6722a74eb48f961dfdf926adef",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3c607b5f1399b3e406decfa916c1bc591e81ab6722a74eb48f961dfdf926adef"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE807.py",
       "script": false,
-      "sha256": "a98be182b8ec735099d71ef1909d5ec328f2d4f30822785055c4d982d9dade62",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a98be182b8ec735099d71ef1909d5ec328f2d4f30822785055c4d982d9dade62"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE808.py",
       "script": false,
-      "sha256": "a13269e28474a6cda21d4120da004d1b86e064d5e3b7ba6557ba3b0d2923c733",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a13269e28474a6cda21d4120da004d1b86e064d5e3b7ba6557ba3b0d2923c733"
     },
     {
       "path": "resources/test/fixtures/flake8_pie/PIE810.py",
       "script": false,
-      "sha256": "d84488dd1dff74174ba961b1f76ac98c1361b31dcc258234b5c6375d54f43271",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d84488dd1dff74174ba961b1f76ac98c1361b31dcc258234b5c6375d54f43271"
     },
     {
       "path": "resources/test/fixtures/flake8_pyi/PYI021_1.pyi",
       "script": false,
-      "sha256": "3da8b939971659309decdc1da91468983ed2d6e02584a9a2324974df2ae61196",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3da8b939971659309decdc1da91468983ed2d6e02584a9a2324974df2ae61196"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET501.py",
       "script": false,
-      "sha256": "437474eb2979891a4d583c8d57c78a0f04cb9f16b8fbfccdd3346e4a27d95ae2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "437474eb2979891a4d583c8d57c78a0f04cb9f16b8fbfccdd3346e4a27d95ae2"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET502.py",
       "script": false,
-      "sha256": "5b753473edf6538028976c2baedb07b091b50899c5f58257fb9d5c08fa641001",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5b753473edf6538028976c2baedb07b091b50899c5f58257fb9d5c08fa641001"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET503.py",
       "script": false,
-      "sha256": "bb6c0b7088129d095c089c438fa71f025c109645fe8d7bb255a5a6cfad7ea2f2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "bb6c0b7088129d095c089c438fa71f025c109645fe8d7bb255a5a6cfad7ea2f2"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET504.py",
       "script": false,
-      "sha256": "e4a04e294d8aa94a259668632ad530ce4b85ee9fc6aaa007e63a238fea7e3445",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e4a04e294d8aa94a259668632ad530ce4b85ee9fc6aaa007e63a238fea7e3445"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET505.py",
@@ -38334,172 +37266,52 @@
     {
       "path": "resources/test/fixtures/flake8_return/RET506.py",
       "script": false,
-      "sha256": "60313c86f1e11cb503b18d62fd06ced983d1e3ceed866856682dcb897a089d65",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "60313c86f1e11cb503b18d62fd06ced983d1e3ceed866856682dcb897a089d65"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET507.py",
       "script": false,
-      "sha256": "828df99109800c87f6d8bf52211939656b9f23a0c7c281f879edd7bf0fd5afe7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "828df99109800c87f6d8bf52211939656b9f23a0c7c281f879edd7bf0fd5afe7"
     },
     {
       "path": "resources/test/fixtures/flake8_return/RET508.py",
       "script": false,
-      "sha256": "eb025aac093ace54bf77c71a69dd8056288b424aecda5ffa06b0f3d893748fb9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "eb025aac093ace54bf77c71a69dd8056288b424aecda5ffa06b0f3d893748fb9"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM101.py",
       "script": false,
-      "sha256": "b38e02e910622e7667524f46a57565f936d0d8ac5c6193e869234293b7e08143",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b38e02e910622e7667524f46a57565f936d0d8ac5c6193e869234293b7e08143"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM102.py",
       "script": false,
-      "sha256": "22631ef0f9b7fbd1d5494b63bf9ee8424789f80c187f24f1574a11810c6d93bb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "22631ef0f9b7fbd1d5494b63bf9ee8424789f80c187f24f1574a11810c6d93bb"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM103.py",
       "script": false,
-      "sha256": "7e81cea7eac55384da6351d65e4a7abfb5816d540ec09f5ebbf050509fc19082",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7e81cea7eac55384da6351d65e4a7abfb5816d540ec09f5ebbf050509fc19082"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_0.py",
       "script": false,
-      "sha256": "de5816cd80b320635fb68fc3a3d70d46a5e2d372a51d164f263c1c59e8e8624a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "de5816cd80b320635fb68fc3a3d70d46a5e2d372a51d164f263c1c59e8e8624a"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_1.py",
       "script": false,
-      "sha256": "57cf8060043635fad71d4c0d7f7e827dfe08df0266eb22b10d2eb9c29a949cae",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "57cf8060043635fad71d4c0d7f7e827dfe08df0266eb22b10d2eb9c29a949cae"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_2.py",
       "script": false,
-      "sha256": "75ad0e60e96267bf05bb21362632a30f7e56d8bdba20a0557b3b2441dbace4c9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "75ad0e60e96267bf05bb21362632a30f7e56d8bdba20a0557b3b2441dbace4c9"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_3.py",
       "script": false,
-      "sha256": "21c6596a8ea87ddee57de91b318b61372005dad4150b288d4524910699557aec",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "21c6596a8ea87ddee57de91b318b61372005dad4150b288d4524910699557aec"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_4.py",
@@ -38523,189 +37335,57 @@
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM105_5.py",
       "script": false,
-      "sha256": "668602b2941c81e9b4af1029be7b65c65fd94c8596a21de46b648f947a43b7d7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "668602b2941c81e9b4af1029be7b65c65fd94c8596a21de46b648f947a43b7d7"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM107.py",
       "script": false,
-      "sha256": "b003f969aaa336beaff3d5b7dd65b1704b9d23c02271bcb2dec570438562f1f3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b003f969aaa336beaff3d5b7dd65b1704b9d23c02271bcb2dec570438562f1f3"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM108.py",
       "script": false,
-      "sha256": "dcd88ff31184566e15810b58d970c2bd66c4053764c9eb845963844e2e4d28bb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "dcd88ff31184566e15810b58d970c2bd66c4053764c9eb845963844e2e4d28bb"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM109.py",
       "script": false,
-      "sha256": "53ed62227e4ea4abf569ce0615940107a4ce4b3887bf9fda576e5d91b1ebcf7f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "53ed62227e4ea4abf569ce0615940107a4ce4b3887bf9fda576e5d91b1ebcf7f"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM110.py",
       "script": false,
-      "sha256": "cb7a393d35c9e4ee95aaad726e28f49636a0f8cad75840faf634cea05e6caef1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cb7a393d35c9e4ee95aaad726e28f49636a0f8cad75840faf634cea05e6caef1"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM111.py",
       "script": false,
-      "sha256": "d5675bcb8497aafcd0f61cf7651fdf8f6bdac7c79f4dbe05faeec4a42e48148c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d5675bcb8497aafcd0f61cf7651fdf8f6bdac7c79f4dbe05faeec4a42e48148c"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM112.py",
       "script": false,
-      "sha256": "ea3b451409c55a9544d9bda35409d3ccf65230c8f61904c2791cf7d4705504d8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ea3b451409c55a9544d9bda35409d3ccf65230c8f61904c2791cf7d4705504d8"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM113.py",
       "script": false,
-      "sha256": "3c0241db9b92d7da7f49289e16f3c4b170acc23845ca2c06cf77584032b2e727",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3c0241db9b92d7da7f49289e16f3c4b170acc23845ca2c06cf77584032b2e727"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM114.py",
       "script": false,
-      "sha256": "8718f02f4f947b2a97c4d50ecb1f4d21ed81bb2ff935a84a4a6c59fc50690c03",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8718f02f4f947b2a97c4d50ecb1f4d21ed81bb2ff935a84a4a6c59fc50690c03"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM115.py",
       "script": false,
-      "sha256": "6afda66c47541716f5a9b42464e96dbb958ce791c87522a2229a9ea9d1d01c00",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6afda66c47541716f5a9b42464e96dbb958ce791c87522a2229a9ea9d1d01c00"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM116.py",
       "script": false,
-      "sha256": "9c05ac42a9808413813a17ad9954e99be6be1e9b22723421aa62f1d1c4f6b34a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9c05ac42a9808413813a17ad9954e99be6be1e9b22723421aa62f1d1c4f6b34a"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM117.py",
@@ -38729,784 +37409,232 @@
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM118.py",
       "script": false,
-      "sha256": "04b6fb4bd4677264ce4ce712316efabb92150acbd0e073fae0f7225afb238b0e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "04b6fb4bd4677264ce4ce712316efabb92150acbd0e073fae0f7225afb238b0e"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM201.py",
       "script": false,
-      "sha256": "026ba5f39872f7b19902cba9b8b557386a477fc2b40145b791864340a9de1ad1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "026ba5f39872f7b19902cba9b8b557386a477fc2b40145b791864340a9de1ad1"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM202.py",
       "script": false,
-      "sha256": "608c0ad40f2d8e70027dca984cda45cf35066c6d08f861f693ce91e941c070e6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "608c0ad40f2d8e70027dca984cda45cf35066c6d08f861f693ce91e941c070e6"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM208.py",
       "script": false,
-      "sha256": "84f612ce573f2263a77afa9bfbe3bd04f3269e4bce308b0b76e81aeeca5e301e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "84f612ce573f2263a77afa9bfbe3bd04f3269e4bce308b0b76e81aeeca5e301e"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM210.py",
       "script": false,
-      "sha256": "d7b7177022291bbeb445aca2336aa120ada96919ab851575ab11ecbc0257205c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d7b7177022291bbeb445aca2336aa120ada96919ab851575ab11ecbc0257205c"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM211.py",
       "script": false,
-      "sha256": "6f46af7d73dc323b0236b7f64d1963c21c1acdf09212b558bc1d21ee1c259e8f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6f46af7d73dc323b0236b7f64d1963c21c1acdf09212b558bc1d21ee1c259e8f"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM212.py",
       "script": false,
-      "sha256": "44afafeba510c29e92f26ed5ebe576285ef356b94143621a8b266fa421eead4c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "44afafeba510c29e92f26ed5ebe576285ef356b94143621a8b266fa421eead4c"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM220.py",
       "script": false,
-      "sha256": "bedf65247d2db9c842812a4bf5c1da8b368c663a1129a9767035915e53829163",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "bedf65247d2db9c842812a4bf5c1da8b368c663a1129a9767035915e53829163"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM221.py",
       "script": false,
-      "sha256": "80480347e429f85512b68e67adb0af18556d88493bf7344c578d3c4d81263d39",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "80480347e429f85512b68e67adb0af18556d88493bf7344c578d3c4d81263d39"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM222.py",
       "script": false,
-      "sha256": "44148a51819e5dacadf63eabf8b51abb27278b91c698f5e909e9d245fcf7d2af",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "44148a51819e5dacadf63eabf8b51abb27278b91c698f5e909e9d245fcf7d2af"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM223.py",
       "script": false,
-      "sha256": "7207c6ddd5be21c2ad8826d4e9cc02b702620a135bf63ef2f827882217be6c17",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7207c6ddd5be21c2ad8826d4e9cc02b702620a135bf63ef2f827882217be6c17"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM300.py",
       "script": false,
-      "sha256": "595a904965ea8c626539699a6f40eb71ba13cc967bea662cf9809ff18ca83265",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "595a904965ea8c626539699a6f40eb71ba13cc967bea662cf9809ff18ca83265"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM401.py",
       "script": false,
-      "sha256": "0c0820db47a4cff9f1a106ba220c47798cf10d207813eed90260292cd2c4bd6e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0c0820db47a4cff9f1a106ba220c47798cf10d207813eed90260292cd2c4bd6e"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM905.py",
       "script": false,
-      "sha256": "cee4ffc7a1fc2d75d09175b8288639db5ac4059617a5cb7993bf3f671f32cd1b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cee4ffc7a1fc2d75d09175b8288639db5ac4059617a5cb7993bf3f671f32cd1b"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM910.py",
       "script": false,
-      "sha256": "f28b394d7697b0dab932f061fefc021c1ce66182a7531153525b68f56595fa48",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f28b394d7697b0dab932f061fefc021c1ce66182a7531153525b68f56595fa48"
     },
     {
       "path": "resources/test/fixtures/flake8_simplify/SIM911.py",
       "script": false,
-      "sha256": "61e7318ec02b492ed5b438740c5d2bd0a81fc28b1694367749c475b84eeb6bd3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "61e7318ec02b492ed5b438740c5d2bd0a81fc28b1694367749c475b84eeb6bd3"
     },
     {
       "path": "resources/test/fixtures/isort/required_imports/unused.py",
       "script": false,
-      "sha256": "48729a5b7d633f3bddb935efb6ee2ed4d8426933446beb823bf95efa47a0e4e5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "48729a5b7d633f3bddb935efb6ee2ed4d8426933446beb823bf95efa47a0e4e5"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/MODULE/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/MODULE/file.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/flake9/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/invalid_name/0001_initial.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/invalid_name/import.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/mod with spaces/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/mod with spaces/file.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/mod-with-dashes/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/no_module/test.txt",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/valid_name/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/valid_name/__main__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/valid_name/__setup__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pep8_naming/ignore_names/N999/badAllowed/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E40.py",
       "script": false,
-      "sha256": "604c48b84d164f26a76d46346f55c9f0baab667aa87266628249e470298ddd03",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "604c48b84d164f26a76d46346f55c9f0baab667aa87266628249e470298ddd03"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402.ipynb",
       "script": false,
-      "sha256": "a73fc540dc0f0682f4e511f59541632fb5019b971bcef6f365cc21a842df494d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a73fc540dc0f0682f4e511f59541632fb5019b971bcef6f365cc21a842df494d"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_0.py",
       "script": false,
-      "sha256": "4404893cca8735ce2005c7469ea83a65cf431cefef7622054f2a525d51de3da1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4404893cca8735ce2005c7469ea83a65cf431cefef7622054f2a525d51de3da1"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_1.py",
       "script": false,
-      "sha256": "1380a3b0701c5775cf18b6f48b7f0ac8c815ab40c11a285a998a4eac9ed529ac",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1380a3b0701c5775cf18b6f48b7f0ac8c815ab40c11a285a998a4eac9ed529ac"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_2.py",
       "script": false,
-      "sha256": "f29a22ba45b04b3837c1cbeb6f01e12bf062be44303a0f9324910e9ccfd2b351",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f29a22ba45b04b3837c1cbeb6f01e12bf062be44303a0f9324910e9ccfd2b351"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_3.py",
       "script": false,
-      "sha256": "dfe8f1f836aa3b155b8999edd4a286ad5925fc73876b9e5e745013730667bf0f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "dfe8f1f836aa3b155b8999edd4a286ad5925fc73876b9e5e745013730667bf0f"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_4.py",
       "script": false,
-      "sha256": "f1dc92ac8f119b9afe3b2b596c2320cd98152e7d8912b457ff1f86885c971ce5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f1dc92ac8f119b9afe3b2b596c2320cd98152e7d8912b457ff1f86885c971ce5"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_5.py",
       "script": false,
-      "sha256": "f8a3cc574e8d9ed79e4d19ce6c60c5da1724a22c0136699e63cdc7881a93d449",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f8a3cc574e8d9ed79e4d19ce6c60c5da1724a22c0136699e63cdc7881a93d449"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_comments.py",
       "script": false,
-      "sha256": "5c0941f0c9aeacc056055dcbc7623059812002581e4493e653822ee1061cae9b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5c0941f0c9aeacc056055dcbc7623059812002581e4493e653822ee1061cae9b"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_docstring.py",
       "script": false,
-      "sha256": "0263e55a8c705af0d0352473d2737f2a95889ed49ca9899475c4ca2ccba8dae2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0263e55a8c705af0d0352473d2737f2a95889ed49ca9899475c4ca2ccba8dae2"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_future.py",
       "script": false,
-      "sha256": "4ecc95bed61d8ba69c4af49c4443d2aab5d88e6f7190cc75046d61d2874d6dbe",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4ecc95bed61d8ba69c4af49c4443d2aab5d88e6f7190cc75046d61d2874d6dbe"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_shebang.py",
       "script": false,
-      "sha256": "082ccd4baa17845f1556251c78641499fc1df7453aca90dbedf44a2ee4155375",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "082ccd4baa17845f1556251c78641499fc1df7453aca90dbedf44a2ee4155375"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E402_shebang_docstring_and_future.py",
       "script": false,
-      "sha256": "1cc7b736fbc66b36bd76405ac2c8560f4d0b36c90c059618af9ee63f5ca825f9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1cc7b736fbc66b36bd76405ac2c8560f4d0b36c90c059618af9ee63f5ca825f9"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E711.py",
       "script": false,
-      "sha256": "4fd9cb46bfcdb5217f47bdb5d8a2fee9016cb38db71a3716fb39c8e97df228b1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4fd9cb46bfcdb5217f47bdb5d8a2fee9016cb38db71a3716fb39c8e97df228b1"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E712.py",
@@ -39530,223 +37658,67 @@
     {
       "path": "resources/test/fixtures/pycodestyle/E713.py",
       "script": false,
-      "sha256": "d57e788a772d1b7ccb339ecd37f80609c0ea625a1dfe829da403092b04e77e58",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d57e788a772d1b7ccb339ecd37f80609c0ea625a1dfe829da403092b04e77e58"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E714.py",
       "script": false,
-      "sha256": "e160fb30e80c3f8475ec850092594051a07e97dded13aa7f13f98dabbdb2602c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e160fb30e80c3f8475ec850092594051a07e97dded13aa7f13f98dabbdb2602c"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E721.py",
       "script": false,
-      "sha256": "8c3a1b3ec8a000c15dab21e906cea46a2e0b7b4ebf4058547257de72cc6c26fc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8c3a1b3ec8a000c15dab21e906cea46a2e0b7b4ebf4058547257de72cc6c26fc"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E722.py",
       "script": false,
-      "sha256": "20398752b14bd5ea7f954b6889a8eaaf3a3e7472f5278224aaa40b13d2774025",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "20398752b14bd5ea7f954b6889a8eaaf3a3e7472f5278224aaa40b13d2774025"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E731.py",
       "script": false,
-      "sha256": "f2480cf1b65f96474b8a7ba0204a7489d3d3a89ac071793fb940f8cac76c66d4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f2480cf1b65f96474b8a7ba0204a7489d3d3a89ac071793fb940f8cac76c66d4"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E741.py",
       "script": false,
-      "sha256": "6c96ad8d457d920fa13da90cd672423bfcab2fe8ec42896cce5811e14e4faeaa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6c96ad8d457d920fa13da90cd672423bfcab2fe8ec42896cce5811e14e4faeaa"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E741.pyi",
       "script": false,
-      "sha256": "6c96ad8d457d920fa13da90cd672423bfcab2fe8ec42896cce5811e14e4faeaa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6c96ad8d457d920fa13da90cd672423bfcab2fe8ec42896cce5811e14e4faeaa"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E742.py",
       "script": false,
-      "sha256": "c62e6a2332398aa26e1447499657e50db5ec63d27623c45db021ab33a5750c3a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c62e6a2332398aa26e1447499657e50db5ec63d27623c45db021ab33a5750c3a"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/E743.py",
       "script": false,
-      "sha256": "a131108f44a306429f5f537eef5a82a6295a2fdc3ef7357392ea99d76bb0ba8a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a131108f44a306429f5f537eef5a82a6295a2fdc3ef7357392ea99d76bb0ba8a"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/W391_after_empty_cell_fix.ipynb",
       "script": false,
-      "sha256": "5ffbcbe58f5699f8cdae2d01fb4aa59dcf43ea22f2c668179d13aa94f4e65d12",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5ffbcbe58f5699f8cdae2d01fb4aa59dcf43ea22f2c668179d13aa94f4e65d12"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/W605_0.py",
       "script": false,
-      "sha256": "effe595e1f334f5008eb073d353f419a8633d5415a7f6e21f24a4131c6d83ced",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "effe595e1f334f5008eb073d353f419a8633d5415a7f6e21f24a4131c6d83ced"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/W605_1.py",
       "script": false,
-      "sha256": "5a75c5ca8156f843da59b520d36a254663592cf92549b4556f796ca6d48dc552",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5a75c5ca8156f843da59b520d36a254663592cf92549b4556f796ca6d48dc552"
     },
     {
       "path": "resources/test/fixtures/pycodestyle/constant_literals.py",
       "script": false,
-      "sha256": "063c8c0c9c719f24bb2d5b034c914421caa669bd67c8de54a927e2174adfca11",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "063c8c0c9c719f24bb2d5b034c914421caa669bd67c8de54a927e2174adfca11"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_0.py",
@@ -39770,648 +37742,192 @@
     {
       "path": "resources/test/fixtures/pyflakes/F401_1.py",
       "script": false,
-      "sha256": "80c3255b77dbf0668eceb7f84f70bd34b970b25ec89672383a762f4ab19517c2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "80c3255b77dbf0668eceb7f84f70bd34b970b25ec89672383a762f4ab19517c2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_10.py",
       "script": false,
-      "sha256": "a75ac3e1fcfc37d61c8cfccbe6da2696a2ab38b98d9a738960284e73493c919d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a75ac3e1fcfc37d61c8cfccbe6da2696a2ab38b98d9a738960284e73493c919d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_11.py",
       "script": false,
-      "sha256": "23392bec90a4398ad87d8fe1cff09e25d2e6f26f5e9eccb0444e2c41c34b3874",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "23392bec90a4398ad87d8fe1cff09e25d2e6f26f5e9eccb0444e2c41c34b3874"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_12.py",
       "script": false,
-      "sha256": "d3f7332fc9bf7ae799292f5307477ee46746a47a7401e9d03ad0f3a0fc8cc60f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d3f7332fc9bf7ae799292f5307477ee46746a47a7401e9d03ad0f3a0fc8cc60f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_13.py",
       "script": false,
-      "sha256": "670508c3ea5f3b85c3be9fe46f12df765f6a67cbfb3e434da9cc0b377332ca2c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "670508c3ea5f3b85c3be9fe46f12df765f6a67cbfb3e434da9cc0b377332ca2c"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_14.py",
       "script": false,
-      "sha256": "f290e5f9dbd03cb418c18209553ab17f27d0f3abd7d3ac712bdc1a93d1f952eb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f290e5f9dbd03cb418c18209553ab17f27d0f3abd7d3ac712bdc1a93d1f952eb"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_15.py",
       "script": false,
-      "sha256": "98d7466db0d24a443ceb7462c6b76c9bdfdb62e4c0b46bbdbd86bf358d10a5ba",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "98d7466db0d24a443ceb7462c6b76c9bdfdb62e4c0b46bbdbd86bf358d10a5ba"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_16.py",
       "script": false,
-      "sha256": "72fbfa956069f8695d46f3bfd499b3e6b17a680b22623142b8f1a9d67bb66f65",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "72fbfa956069f8695d46f3bfd499b3e6b17a680b22623142b8f1a9d67bb66f65"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_17.py",
       "script": false,
-      "sha256": "7c6401e2d88c6607a95453453beae719868e96b30ca9245fbc0514122792c836",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7c6401e2d88c6607a95453453beae719868e96b30ca9245fbc0514122792c836"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_18.py",
       "script": false,
-      "sha256": "9abad9f471666e42e09b985724de2177f3529ae52782845e5d49057be09fbc33",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9abad9f471666e42e09b985724de2177f3529ae52782845e5d49057be09fbc33"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_19.py",
       "script": false,
-      "sha256": "2729a213a31f27e4a3d8f1162e49584857a4495b98120f5ac9a555cba45b7f23",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2729a213a31f27e4a3d8f1162e49584857a4495b98120f5ac9a555cba45b7f23"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_2.py",
       "script": false,
-      "sha256": "24d7bc8269a0b67b9950076dec994faa7e047de2bba245e63d4a5a78f0ab7a46",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "24d7bc8269a0b67b9950076dec994faa7e047de2bba245e63d4a5a78f0ab7a46"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_20.py",
       "script": false,
-      "sha256": "75b9e2d3002779dc0f804d98247ee33a75cda00d771856c37ef1b59e7ab05a2d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "75b9e2d3002779dc0f804d98247ee33a75cda00d771856c37ef1b59e7ab05a2d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_21.py",
       "script": false,
-      "sha256": "770d7d52c3354aef8f33b1b11900f66dd469ec27d29a8a480fda7ab8bad19ba2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "770d7d52c3354aef8f33b1b11900f66dd469ec27d29a8a480fda7ab8bad19ba2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_22.py",
       "script": false,
-      "sha256": "a2fb57d7485282ff74274401cf95c03afe679763912e5310f0e7bd9819983c88",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a2fb57d7485282ff74274401cf95c03afe679763912e5310f0e7bd9819983c88"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_23.py",
       "script": false,
-      "sha256": "b6772801ead66bc1be6b673d86479aa202071cba3e352145338bb892ac5eebee",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b6772801ead66bc1be6b673d86479aa202071cba3e352145338bb892ac5eebee"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_24/__init__.py",
       "script": false,
-      "sha256": "7d8384c023522f44c3e624beb5db2f024a0b2bf7a7443a8115841d286def9949",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7d8384c023522f44c3e624beb5db2f024a0b2bf7a7443a8115841d286def9949"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_25__all_nonempty/__init__.py",
       "script": false,
-      "sha256": "e2aa8b927d59d5c0e4ea951377502aaabdf12a5b42e404eedac5d62086f2c645",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e2aa8b927d59d5c0e4ea951377502aaabdf12a5b42e404eedac5d62086f2c645"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_26__all_empty/__init__.py",
       "script": false,
-      "sha256": "5a5cc6049ff80f4ace15e57ddb48b068d0c2a0a1db5d5ebdc5ed8adcaec2696f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5a5cc6049ff80f4ace15e57ddb48b068d0c2a0a1db5d5ebdc5ed8adcaec2696f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_27__all_mistyped/__init__.py",
       "script": false,
-      "sha256": "b57580eeb58b7aa15f7c21b627ef3c3b60246f9c6c07877bf4290c28b06983bd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b57580eeb58b7aa15f7c21b627ef3c3b60246f9c6c07877bf4290c28b06983bd"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_28__all_multiple/__init__.py",
       "script": false,
-      "sha256": "0f7610c4bed79b11872f1ed8f9852a0a97354d8d6c81a4fdf2f6a761a93f8533",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0f7610c4bed79b11872f1ed8f9852a0a97354d8d6c81a4fdf2f6a761a93f8533"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_29__all_conditional/__init__.py",
       "script": false,
-      "sha256": "c219228ae793be7adfaac2989d70c6c5bb4453d2b7830b5e7803e946062369a7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c219228ae793be7adfaac2989d70c6c5bb4453d2b7830b5e7803e946062369a7"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_3.py",
       "script": false,
-      "sha256": "4bf06a3d0a3cf6627dd4e94f365350d85d6a8eed2c4ac8e36e7dc6886aee535f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4bf06a3d0a3cf6627dd4e94f365350d85d6a8eed2c4ac8e36e7dc6886aee535f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_30.py",
       "script": false,
-      "sha256": "9b16c2a352e2496ca30b6f90b3cccc91bd54e0dae31349c385f6dd6ff24ecdc7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9b16c2a352e2496ca30b6f90b3cccc91bd54e0dae31349c385f6dd6ff24ecdc7"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_31.py",
       "script": false,
-      "sha256": "7caabeac1a7d1e308bd3bb888bd0bd8c02ee986271450489c355bf7fffbc6466",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7caabeac1a7d1e308bd3bb888bd0bd8c02ee986271450489c355bf7fffbc6466"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_32.py",
       "script": false,
-      "sha256": "9e46667f65ab3ce5aac9bbef1322ef1862fded63cb92aeab006659021a26be8d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9e46667f65ab3ce5aac9bbef1322ef1862fded63cb92aeab006659021a26be8d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_33/__init__.py",
       "script": false,
-      "sha256": "f6ade1c812c50242f6a49307a4d8ed4a05625e0e7c92f55f9f08ab4d7b1dd5ea",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f6ade1c812c50242f6a49307a4d8ed4a05625e0e7c92f55f9f08ab4d7b1dd5ea"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_34.py",
       "script": false,
-      "sha256": "97c7c7630135b539f2587a031ef2ef650e800cb19a45a42740b7351c7843f50b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "97c7c7630135b539f2587a031ef2ef650e800cb19a45a42740b7351c7843f50b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_35.py",
       "script": false,
-      "sha256": "aeb73a9f6dc07900ba87188067e64e07128ee43c48e642f8d56a518ad98edb53",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "aeb73a9f6dc07900ba87188067e64e07128ee43c48e642f8d56a518ad98edb53"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_4.py",
       "script": false,
-      "sha256": "ee1a1fda8971211aa78a6edc2c22e1b725dfaf6c3f4b167820803067c8ffa98b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ee1a1fda8971211aa78a6edc2c22e1b725dfaf6c3f4b167820803067c8ffa98b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_5.py",
       "script": false,
-      "sha256": "42d3df3be07fe204e222c5a02326a3f8551454046b785049aa9d00ac8c346998",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "42d3df3be07fe204e222c5a02326a3f8551454046b785049aa9d00ac8c346998"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_6.py",
       "script": false,
-      "sha256": "7e9a7fda84b8ca0c9067ef53ae34b63e60c2e570bc48abb2daca4cd648ef62ce",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7e9a7fda84b8ca0c9067ef53ae34b63e60c2e570bc48abb2daca4cd648ef62ce"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_7.py",
       "script": false,
-      "sha256": "42d474e6eb543f8e14c300434bbfdefd3908a11ffb73e9f8531fef6d15b0b245",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "42d474e6eb543f8e14c300434bbfdefd3908a11ffb73e9f8531fef6d15b0b245"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_8.py",
       "script": false,
-      "sha256": "95b0152e36aa6700e6ca27d2831c4628bf9eef33b872dd9bc24f6f16f46f93ee",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "95b0152e36aa6700e6ca27d2831c4628bf9eef33b872dd9bc24f6f16f46f93ee"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F401_9.py",
       "script": false,
-      "sha256": "607a547e10c4834b9b092a16fafd0d2ade4b7fa9566bfe9dfc59635c8398ba7e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "607a547e10c4834b9b092a16fafd0d2ade4b7fa9566bfe9dfc59635c8398ba7e"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F402.ipynb",
       "script": false,
-      "sha256": "a406830df06e92e4b20300ae05a4b8e7a096f253ccfa3e40565921cef8e75109",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a406830df06e92e4b20300ae05a4b8e7a096f253ccfa3e40565921cef8e75109"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F402.py",
       "script": false,
-      "sha256": "16d0f96a233a109c40dad6f3845c073b50ab9ba6c7eea465bc6a02ebac328d71",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "16d0f96a233a109c40dad6f3845c073b50ab9ba6c7eea465bc6a02ebac328d71"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F403.py",
       "script": false,
-      "sha256": "c995b50877f0ca22e33d4c7bfd0f0915214e732e1591ec071edb9fe229b8b3d1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c995b50877f0ca22e33d4c7bfd0f0915214e732e1591ec071edb9fe229b8b3d1"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F404_0.py",
@@ -40454,19 +37970,7 @@
     {
       "path": "resources/test/fixtures/pyflakes/F405.py",
       "script": false,
-      "sha256": "7e5fba5571a0d2dbaa48abf4c1d71f1fb48d74982da928cd7bc5df4b7998ef58",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7e5fba5571a0d2dbaa48abf4c1d71f1fb48d74982da928cd7bc5df4b7998ef58"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F406.py",
@@ -40509,206 +38013,62 @@
     {
       "path": "resources/test/fixtures/pyflakes/F502.py",
       "script": false,
-      "sha256": "96df9b3cce81bd40c6144c2d6de86a45e0a6cc38343002760991e64cc480d58e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "96df9b3cce81bd40c6144c2d6de86a45e0a6cc38343002760991e64cc480d58e"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F503.py",
       "script": false,
-      "sha256": "334f717c4197a3e15783ecee70f6789349148011bd2deef7350699463ad54db7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "334f717c4197a3e15783ecee70f6789349148011bd2deef7350699463ad54db7"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F504.py",
       "script": false,
-      "sha256": "ae41e925d16b8973e7eebf8ea4137767bd7b60285597e5617147502d23bdace3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ae41e925d16b8973e7eebf8ea4137767bd7b60285597e5617147502d23bdace3"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F50x.py",
       "script": false,
-      "sha256": "7574222a442322dd2d3ad0ef909d44fca41f6c2378a1b64aa9e349dfce72ede4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7574222a442322dd2d3ad0ef909d44fca41f6c2378a1b64aa9e349dfce72ede4"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F521.py",
       "script": false,
-      "sha256": "551d4107acbd5cca8f00d5dca797a9998d06b372dd8fdff9698891dd3bd618e1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "551d4107acbd5cca8f00d5dca797a9998d06b372dd8fdff9698891dd3bd618e1"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F522.py",
       "script": false,
-      "sha256": "72e714aab577c266a3c8baf233a567103179e7e83b7d7fc70def89b292677a90",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "72e714aab577c266a3c8baf233a567103179e7e83b7d7fc70def89b292677a90"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F523.py",
       "script": false,
-      "sha256": "cf47e2927a57d02edb1338ff50ea7d1bdb377f4cff3d066ed890bf66710f20a9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cf47e2927a57d02edb1338ff50ea7d1bdb377f4cff3d066ed890bf66710f20a9"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F524.py",
       "script": false,
-      "sha256": "1e7de12909d8b10deb78a8ed9d6bf971afc1b0db716d78cbba3a19f9524675ae",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1e7de12909d8b10deb78a8ed9d6bf971afc1b0db716d78cbba3a19f9524675ae"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F525.py",
       "script": false,
-      "sha256": "19827bf234adeb6d9935747fc4f6991e5973641ebd2d7ac365e561cf7ac3b117",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "19827bf234adeb6d9935747fc4f6991e5973641ebd2d7ac365e561cf7ac3b117"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F541.py",
       "script": false,
-      "sha256": "f4ed96e5de89c26a6bfeaa75674b8de5e91a21143b61d4a300254179e0b94414",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f4ed96e5de89c26a6bfeaa75674b8de5e91a21143b61d4a300254179e0b94414"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F601.py",
       "script": false,
-      "sha256": "46239d12ce153d1a3841b3ce64ea6bbd40e4e2450d03946d37fbb1f1eb16caa2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "46239d12ce153d1a3841b3ce64ea6bbd40e4e2450d03946d37fbb1f1eb16caa2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F602.py",
       "script": false,
-      "sha256": "b869ce8618a6294593f499a4156aed5b315e8b3056b9e464a7b4da2a93d3b4d4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b869ce8618a6294593f499a4156aed5b315e8b3056b9e464a7b4da2a93d3b4d4"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F622.py",
@@ -40732,70 +38092,22 @@
     {
       "path": "resources/test/fixtures/pyflakes/F631.py",
       "script": false,
-      "sha256": "a9f2c6c34d2804dad7defc2e5afe5665f29648acfb4db6f24d80dba58d09dbfe",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a9f2c6c34d2804dad7defc2e5afe5665f29648acfb4db6f24d80dba58d09dbfe"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F632.py",
       "script": false,
-      "sha256": "f3213d5d9c772b5bd125103413d27bdff6c1db12bb995a0752fc2ac4646065b8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f3213d5d9c772b5bd125103413d27bdff6c1db12bb995a0752fc2ac4646065b8"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F633.py",
       "script": false,
-      "sha256": "f8850e11fe289d1be57e9b8c238833cedb5e9a6c1d9c01bc22d7353fd2f9344d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f8850e11fe289d1be57e9b8c238833cedb5e9a6c1d9c01bc22d7353fd2f9344d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F634.py",
       "script": false,
-      "sha256": "1a77a6e24fa0e0274c9890acd6ff37b340426fb09bda523ff7715bc4d135c340",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1a77a6e24fa0e0274c9890acd6ff37b340426fb09bda523ff7715bc4d135c340"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F701.py",
@@ -40897,869 +38209,257 @@
     {
       "path": "resources/test/fixtures/pyflakes/F722.py",
       "script": false,
-      "sha256": "4b91c6d735c93f70c43f3b1de8bd79ba2e7b8c294d245eb3b5926d98fcb7adb5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4b91c6d735c93f70c43f3b1de8bd79ba2e7b8c294d245eb3b5926d98fcb7adb5"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F722_1.py",
       "script": false,
-      "sha256": "959eebfb7ab6073009edd85db235067b0d5dfb7e574fa79d3e4eb0ccb6de7f0d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "959eebfb7ab6073009edd85db235067b0d5dfb7e574fa79d3e4eb0ccb6de7f0d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_0.py",
       "script": false,
-      "sha256": "ad24531ffc3e8c760b05567d530039cfb1c1a3da6d8440b4642f8d68040bd1d8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ad24531ffc3e8c760b05567d530039cfb1c1a3da6d8440b4642f8d68040bd1d8"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_1.py",
       "script": false,
-      "sha256": "9b4050110948c54c69b455435eca2d64b81ee0626c8415dfec65368898000eeb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9b4050110948c54c69b455435eca2d64b81ee0626c8415dfec65368898000eeb"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_10.py",
       "script": false,
-      "sha256": "818ce9668df2e67d9f2c3f4c8902c93140bab38c672ff9b4d7ddbd486945ad78",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "818ce9668df2e67d9f2c3f4c8902c93140bab38c672ff9b4d7ddbd486945ad78"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_11.py",
       "script": false,
-      "sha256": "5ec4aef4abcc1a28c2d6910d339208f0f04c5d7db383662e73df0d0e11d6aa94",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5ec4aef4abcc1a28c2d6910d339208f0f04c5d7db383662e73df0d0e11d6aa94"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_12.py",
       "script": false,
-      "sha256": "a1b021c74ef435ee29907316c995bde75295fa8af62ebdc0ae8af9230290d351",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a1b021c74ef435ee29907316c995bde75295fa8af62ebdc0ae8af9230290d351"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_13.py",
       "script": false,
-      "sha256": "a8dac08cb34f59adfe2e3618d1fe1d366a7ca0de43ed0a7fdc99a44b1ead75b6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a8dac08cb34f59adfe2e3618d1fe1d366a7ca0de43ed0a7fdc99a44b1ead75b6"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_14.py",
       "script": false,
-      "sha256": "647ada4c8e5f9afecc84eb064d8fa04881e832ecded1bd84177f57866a45bd45",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "647ada4c8e5f9afecc84eb064d8fa04881e832ecded1bd84177f57866a45bd45"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_15.py",
       "script": false,
-      "sha256": "c29bc4d233e47749e80cc725376d8f62e955d95fb0eaf2f24e3f4af7064a546f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c29bc4d233e47749e80cc725376d8f62e955d95fb0eaf2f24e3f4af7064a546f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_16.py",
       "script": false,
-      "sha256": "7de2758864d4c8e03629f1ea49eeae5584cd68c0dedcc5bd79ec7a019d8b6d8f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7de2758864d4c8e03629f1ea49eeae5584cd68c0dedcc5bd79ec7a019d8b6d8f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_17.py",
       "script": false,
-      "sha256": "8ecb3250c81756f832d22d9111f7d6237e153f89aae1f9a607f2068f82b5e06f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8ecb3250c81756f832d22d9111f7d6237e153f89aae1f9a607f2068f82b5e06f"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_18.py",
       "script": false,
-      "sha256": "3ab1838ddccf766745a41e1ebb5e7966d4cc1ad1477546c40682f2a4792313a2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3ab1838ddccf766745a41e1ebb5e7966d4cc1ad1477546c40682f2a4792313a2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_19.py",
       "script": false,
-      "sha256": "4765fbad9f2db13e2768a3f901f70953360e285cb8c5fdee21a2e7e315d0876a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4765fbad9f2db13e2768a3f901f70953360e285cb8c5fdee21a2e7e315d0876a"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_2.py",
       "script": false,
-      "sha256": "d288dd485bf970b6ccee99fc54c5443e1eaabeb6b1d4f413f7b5e72720ecdd21",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d288dd485bf970b6ccee99fc54c5443e1eaabeb6b1d4f413f7b5e72720ecdd21"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_20.py",
       "script": false,
-      "sha256": "801834f7061a2ab44259fac15c475dacfb7b672ec5a2940d76b4c2f54e0ee46d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "801834f7061a2ab44259fac15c475dacfb7b672ec5a2940d76b4c2f54e0ee46d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_21.py",
       "script": false,
-      "sha256": "2e44e6af9d668a2f5e8e28d04f205017693ffb8b721b31b9f7b9186d03a0aedd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2e44e6af9d668a2f5e8e28d04f205017693ffb8b721b31b9f7b9186d03a0aedd"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_22.py",
       "script": false,
-      "sha256": "596f37e90d491bc795abfe8f6bb92cb5a08c475562659ed840c5c936d3c89934",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "596f37e90d491bc795abfe8f6bb92cb5a08c475562659ed840c5c936d3c89934"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_23.py",
       "script": false,
-      "sha256": "7e6d7e5252c064d173f9e473fda4367ea7961721797481ed70e64ce103eb8493",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7e6d7e5252c064d173f9e473fda4367ea7961721797481ed70e64ce103eb8493"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_24.py",
       "script": false,
-      "sha256": "2439c75363f36a21fb14f7ea40955beca7b36fedc91cc7a3d5b122a9d8f2adaf",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2439c75363f36a21fb14f7ea40955beca7b36fedc91cc7a3d5b122a9d8f2adaf"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_25.py",
       "script": false,
-      "sha256": "f392f23f8b11a12dc2b0392ed55e9dc9570e8bed14b18b567fa3a927c7b709c8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f392f23f8b11a12dc2b0392ed55e9dc9570e8bed14b18b567fa3a927c7b709c8"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_26.py",
       "script": false,
-      "sha256": "0d6dc633a23f6b890309def7bf4b3c952138ab2980f4f633ac08abfaf25337d8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0d6dc633a23f6b890309def7bf4b3c952138ab2980f4f633ac08abfaf25337d8"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_27.py",
       "script": false,
-      "sha256": "66ac9862886da1c7f0a947fd4b81418a91beebb671d0f829db69c7e405df7b61",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "66ac9862886da1c7f0a947fd4b81418a91beebb671d0f829db69c7e405df7b61"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_28.py",
       "script": false,
-      "sha256": "550c03d3d794df1de1cd6e7806549e9dc2dc110dcf5c567448498ba3e3197bac",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "550c03d3d794df1de1cd6e7806549e9dc2dc110dcf5c567448498ba3e3197bac"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_29.pyi",
       "script": false,
-      "sha256": "3835a217a65cd7332902efabb2d83de027bf0e685375e2318397dbc3252edb4e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3835a217a65cd7332902efabb2d83de027bf0e685375e2318397dbc3252edb4e"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_3.py",
       "script": false,
-      "sha256": "12023e3a2db51ad290fbf0231046003414db215cbb73c075e6e665e446c9d62d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "12023e3a2db51ad290fbf0231046003414db215cbb73c075e6e665e446c9d62d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_30.py",
       "script": false,
-      "sha256": "20c0e5dae1e321d53f1f0c50c08e0f1f4a2db5bc0c6e72588bf7f5367b1c8712",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "20c0e5dae1e321d53f1f0c50c08e0f1f4a2db5bc0c6e72588bf7f5367b1c8712"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_31.py",
       "script": false,
-      "sha256": "1d080de796daec996a23c9568829373d17e1a09795a4f23130126a06b8254427",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1d080de796daec996a23c9568829373d17e1a09795a4f23130126a06b8254427"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_32.py",
       "script": false,
-      "sha256": "3b2cc9ff101480d8a51805b962875778f02b494dec818187893a4634e8a6fdd5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3b2cc9ff101480d8a51805b962875778f02b494dec818187893a4634e8a6fdd5"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_33.py",
       "script": false,
-      "sha256": "84d6f02302e6ac122bc2a9390ed2a6874bb75e7751adff35d69e2e55a28b7f5a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "84d6f02302e6ac122bc2a9390ed2a6874bb75e7751adff35d69e2e55a28b7f5a"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_33.pyi",
       "script": false,
-      "sha256": "c966268316b71c5b79df15c63537c5f7cdc54c503f3fac56d0661d5d16745043",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c966268316b71c5b79df15c63537c5f7cdc54c503f3fac56d0661d5d16745043"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_34.py",
       "script": false,
-      "sha256": "8f9cb5baed96a7cdfdc62a6b5592a7ef6324bf46d3f3a5cd985469ca2e05b7f2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8f9cb5baed96a7cdfdc62a6b5592a7ef6324bf46d3f3a5cd985469ca2e05b7f2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_35.py",
       "script": false,
-      "sha256": "156092383bc2b284e2180923d0c449fee8d412d2b4ea96d60f0f45980c4b960a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "156092383bc2b284e2180923d0c449fee8d412d2b4ea96d60f0f45980c4b960a"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_36.py",
       "script": false,
-      "sha256": "1d9e9e64b4954a4f2e37bea9363f5fdb6dfd37b2bc24d37fbc338ed4b478ef6c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1d9e9e64b4954a4f2e37bea9363f5fdb6dfd37b2bc24d37fbc338ed4b478ef6c"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_4.py",
       "script": false,
-      "sha256": "e28ed1f278fd5095c7d56bfc9319d287172a600e42416af86ebe72410752e420",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e28ed1f278fd5095c7d56bfc9319d287172a600e42416af86ebe72410752e420"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_5.py",
       "script": false,
-      "sha256": "9a84ad3121e731dd2efd1b34ba3544fbf0f8f00988ea1e98b7518b1dffe8bcbe",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9a84ad3121e731dd2efd1b34ba3544fbf0f8f00988ea1e98b7518b1dffe8bcbe"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_6.py",
       "script": false,
-      "sha256": "cd39f74f52f955f662630332704856f258113b4bec87cd22d9362be0148d362b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "cd39f74f52f955f662630332704856f258113b4bec87cd22d9362be0148d362b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_7.py",
       "script": false,
-      "sha256": "58dd5cac832c4fba3cceba686f95ff3451e0524ec0c6c2b19ca081ead9058541",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "58dd5cac832c4fba3cceba686f95ff3451e0524ec0c6c2b19ca081ead9058541"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_8.py",
       "script": false,
-      "sha256": "8fd674abd803e8622f01374c460464c0caadcafb390a27b3d6ac6dc6b6687202",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8fd674abd803e8622f01374c460464c0caadcafb390a27b3d6ac6dc6b6687202"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F811_9.py",
       "script": false,
-      "sha256": "ef014821870c966ced875f70c2a01c51f95d8380183db3ad72fdd63e154c8d94",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ef014821870c966ced875f70c2a01c51f95d8380183db3ad72fdd63e154c8d94"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_0.py",
       "script": false,
-      "sha256": "3ad1c2e5b273ae9fa3a1d334532191081e588f20bc4dddc6d5d649ba2c4a75ab",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3ad1c2e5b273ae9fa3a1d334532191081e588f20bc4dddc6d5d649ba2c4a75ab"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_1.py",
       "script": false,
-      "sha256": "3f1ea46d8a9cef81983126fd9632393d0eca2c11d47d4dbe1bd42baf64e738eb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3f1ea46d8a9cef81983126fd9632393d0eca2c11d47d4dbe1bd42baf64e738eb"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_10.py",
       "script": false,
-      "sha256": "216bc57bac516862415b0515d6888cfb7b223a7cf5140f9f0e24a59d312d4aad",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "216bc57bac516862415b0515d6888cfb7b223a7cf5140f9f0e24a59d312d4aad"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_11.py",
       "script": false,
-      "sha256": "910634098f5dabf119bb6e5a24d0482b88475599d8834cfddf3c487acebb68e0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "910634098f5dabf119bb6e5a24d0482b88475599d8834cfddf3c487acebb68e0"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_11.pyi",
       "script": false,
-      "sha256": "3e73d042236ae20c6947ef24e152e138ca364e73aedfced17cba13d86019c811",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3e73d042236ae20c6947ef24e152e138ca364e73aedfced17cba13d86019c811"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_12.py",
       "script": false,
-      "sha256": "97fe9794d66c3207474e94578326e88c1c4e41e1cffde0b78961a3ed63cb004a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "97fe9794d66c3207474e94578326e88c1c4e41e1cffde0b78961a3ed63cb004a"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_13.py",
       "script": false,
-      "sha256": "2df26746c41d7cdd64f8508d6f6560913b58c42770b86b430576cfc0602cba9b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2df26746c41d7cdd64f8508d6f6560913b58c42770b86b430576cfc0602cba9b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_14.py",
       "script": false,
-      "sha256": "5aa102c554cc20af6b5a30bc45f9cd5f8e867b4096d2b2bc4a981e8d78cbdd00",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5aa102c554cc20af6b5a30bc45f9cd5f8e867b4096d2b2bc4a981e8d78cbdd00"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_15.py",
       "script": false,
-      "sha256": "df9ad8ce6069e85fb418c843f2a8c46af7c313ac922b9ffa2f459de1ac48004d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "df9ad8ce6069e85fb418c843f2a8c46af7c313ac922b9ffa2f459de1ac48004d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_16.py",
       "script": false,
-      "sha256": "b7e52a0f1859b2644f57516a34c37ca61e6c176ed51c37e97c523a9ff53f70f5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b7e52a0f1859b2644f57516a34c37ca61e6c176ed51c37e97c523a9ff53f70f5"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_17.py",
       "script": false,
-      "sha256": "261160de5d0e46710dc938b95a26717897a4a4e0a7a0d33588bf7442d617f099",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "261160de5d0e46710dc938b95a26717897a4a4e0a7a0d33588bf7442d617f099"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_18.py",
@@ -41802,614 +38502,182 @@
     {
       "path": "resources/test/fixtures/pyflakes/F821_2.py",
       "script": false,
-      "sha256": "bef943ff0bfda83a8ebf2070208868197c0174f16865acc1c597442b9921c2ab",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "bef943ff0bfda83a8ebf2070208868197c0174f16865acc1c597442b9921c2ab"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_20.py",
       "script": false,
-      "sha256": "3aebd81812da2ae12110d3715cf8482719c561fe1e0d5f75adfd8157fc7cec5b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "3aebd81812da2ae12110d3715cf8482719c561fe1e0d5f75adfd8157fc7cec5b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_21.py",
       "script": false,
-      "sha256": "272956c7037808ff0e303d6ec813cd45cc4cb1f58f0f2bf1d0f27b412ea48f82",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "272956c7037808ff0e303d6ec813cd45cc4cb1f58f0f2bf1d0f27b412ea48f82"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_22.ipynb",
       "script": false,
-      "sha256": "0e47e0b9e1795f6d3ebc35b71740b6cfe48018d58fea4738dad7885094e9d51e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0e47e0b9e1795f6d3ebc35b71740b6cfe48018d58fea4738dad7885094e9d51e"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_23.py",
       "script": false,
-      "sha256": "2ff3a9f865edc578d097404ee78e0e98b29573f844c0bb6411c2484e9bc4be7d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2ff3a9f865edc578d097404ee78e0e98b29573f844c0bb6411c2484e9bc4be7d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_24.py",
       "script": false,
-      "sha256": "81b674fbe2d5503fe5bfcc3c70038b2ccee5bebfa2ad8b9ef71f849b009daaee",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "81b674fbe2d5503fe5bfcc3c70038b2ccee5bebfa2ad8b9ef71f849b009daaee"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_25.py",
       "script": false,
-      "sha256": "4aaddd27fc99eef15421bc62f7566ed4c3c39af2c9e82aebf5ddf7f637bcadb7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4aaddd27fc99eef15421bc62f7566ed4c3c39af2c9e82aebf5ddf7f637bcadb7"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_26.py",
       "script": false,
-      "sha256": "ab66319347a7de542eaf7469fab19ccdd816a558ff83afddbc49dd17f73d9101",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ab66319347a7de542eaf7469fab19ccdd816a558ff83afddbc49dd17f73d9101"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_26.pyi",
       "script": false,
-      "sha256": "0e3b59134a9d34fea0c9c76863239fb1a4a315003aa2b6e91a41d65b810bf6ff",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0e3b59134a9d34fea0c9c76863239fb1a4a315003aa2b6e91a41d65b810bf6ff"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_27.py",
       "script": false,
-      "sha256": "239e367226bfa0a7e7614008e7b6d710c146fb626a2b14b979381a6c7b7a8d2d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "239e367226bfa0a7e7614008e7b6d710c146fb626a2b14b979381a6c7b7a8d2d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_28.py",
       "script": false,
-      "sha256": "94324d66c8ba38993fe6006188984185b0ee1d9ac7466c79c81b602c2547b23d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "94324d66c8ba38993fe6006188984185b0ee1d9ac7466c79c81b602c2547b23d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_29.py",
       "script": false,
-      "sha256": "e059b0e6aa74099ac966613bfe443d279324a601589a53e10789a51a190b9a71",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e059b0e6aa74099ac966613bfe443d279324a601589a53e10789a51a190b9a71"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_3.py",
       "script": false,
-      "sha256": "21a646901aec0dafe9ab404e511ae701cd134db39f4ce47e1721e0d968f293f9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "21a646901aec0dafe9ab404e511ae701cd134db39f4ce47e1721e0d968f293f9"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_30.py",
       "script": false,
-      "sha256": "75709cccb0ef0df4be014b392e2f61ae0dcce22ee800f68af295d70ae75b3c07",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "75709cccb0ef0df4be014b392e2f61ae0dcce22ee800f68af295d70ae75b3c07"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_31.py",
       "script": false,
-      "sha256": "0822417a91f15f5e9ee2fcbf9304f7fe084c49b2fede8b6873e39ed34b72b189",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0822417a91f15f5e9ee2fcbf9304f7fe084c49b2fede8b6873e39ed34b72b189"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_32.pyi",
       "script": false,
-      "sha256": "b2a5d0c9d816cd5499af610bf6aaebb548510c88b308f69597661b09a58e55f2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b2a5d0c9d816cd5499af610bf6aaebb548510c88b308f69597661b09a58e55f2"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_33.py",
       "script": false,
-      "sha256": "f8351e875d69c48d6a50c5896349e6bdbac7541191789117cb3c93eb51c77089",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f8351e875d69c48d6a50c5896349e6bdbac7541191789117cb3c93eb51c77089"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_34.py",
       "script": false,
-      "sha256": "8856df93bffd3a3f038e62f4f4bdd3d813c34f0cb1abe67b1095722cce08adff",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8856df93bffd3a3f038e62f4f4bdd3d813c34f0cb1abe67b1095722cce08adff"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_34.pyi",
       "script": false,
-      "sha256": "48881c342938d269ffc4149ed6b5e357d833e77d39fd73f461de52dcd48ab5b1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "48881c342938d269ffc4149ed6b5e357d833e77d39fd73f461de52dcd48ab5b1"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_4.py",
       "script": false,
-      "sha256": "24fa859b794598ef8dd8ddd22992a9d8dc2354378c9a28594abd961c2bbac3ee",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "24fa859b794598ef8dd8ddd22992a9d8dc2354378c9a28594abd961c2bbac3ee"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_5.py",
       "script": false,
-      "sha256": "c8c22a3a421fccd5d39818aa0766c1093eef53a4dabb92ace0c9d37e60d5c820",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c8c22a3a421fccd5d39818aa0766c1093eef53a4dabb92ace0c9d37e60d5c820"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_5.pyi",
       "script": false,
-      "sha256": "8d47fcd0672e59ed70b09534ae60350c3c787e2e818b8679288a86300573ccc5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8d47fcd0672e59ed70b09534ae60350c3c787e2e818b8679288a86300573ccc5"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_6.py",
       "script": false,
-      "sha256": "f122fb23c0b2c138b817511dd79e56aa12c567d98e7b7eaabadb05adf705e842",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f122fb23c0b2c138b817511dd79e56aa12c567d98e7b7eaabadb05adf705e842"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_7.py",
       "script": false,
-      "sha256": "0b755aca97400bdd564f0669958d03ca85a6b4d9fc70f24d700494eb18722738",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0b755aca97400bdd564f0669958d03ca85a6b4d9fc70f24d700494eb18722738"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_8.pyi",
       "script": false,
-      "sha256": "0558d31821442febd4087c06f9884d6a034a29b0d555865613b5b2e34479302d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0558d31821442febd4087c06f9884d6a034a29b0d555865613b5b2e34479302d"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F821_9.py",
       "script": false,
-      "sha256": "8230470d27aec4cfcf4976685ea6c7b6cb68edd7e35f86cfe0196ecdc9b853ed",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8230470d27aec4cfcf4976685ea6c7b6cb68edd7e35f86cfe0196ecdc9b853ed"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_0.py",
       "script": false,
-      "sha256": "fbef3150ed89cf783dd239969a86297b7262dc038a34e899a4af9e6dccb9a7e9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "fbef3150ed89cf783dd239969a86297b7262dc038a34e899a4af9e6dccb9a7e9"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_0.pyi",
       "script": false,
-      "sha256": "19020d445bdb06fac6ecec32ab43a35f6342817769b32198b559f71e4b9a51b0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "19020d445bdb06fac6ecec32ab43a35f6342817769b32198b559f71e4b9a51b0"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_1.py",
       "script": false,
-      "sha256": "5fcbe430f7a66d88159527ceb5dd8e9b7768169df58e4a86311e270039fd0f84",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5fcbe430f7a66d88159527ceb5dd8e9b7768169df58e4a86311e270039fd0f84"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_1b.py",
       "script": false,
-      "sha256": "d8116a454573800116f556604f07d22ae8c15ee8492eb3bdd0118c5effc18be5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d8116a454573800116f556604f07d22ae8c15ee8492eb3bdd0118c5effc18be5"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_2.py",
       "script": false,
-      "sha256": "17d7b40013377688fd2db07d606dfc1a03427324ebf50be80b73d24005e26603",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "17d7b40013377688fd2db07d606dfc1a03427324ebf50be80b73d24005e26603"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F822_3.py",
       "script": false,
-      "sha256": "6c331ec2b3db7c97c22d2308fa2f8ae685f336f14311f44fe4c82bbb273d413e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6c331ec2b3db7c97c22d2308fa2f8ae685f336f14311f44fe4c82bbb273d413e"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F823.py",
       "script": false,
-      "sha256": "a67da255b78afdffebf32e24242d5ae025a3004e619b2a220d47edd20357990b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a67da255b78afdffebf32e24242d5ae025a3004e619b2a220d47edd20357990b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F841_0.py",
       "script": false,
-      "sha256": "5a1c89ff48280ff93ec4c0143923567adfd3b1a2f3bc37eda1e0a05a9542542c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5a1c89ff48280ff93ec4c0143923567adfd3b1a2f3bc37eda1e0a05a9542542c"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F841_1.py",
       "script": false,
-      "sha256": "179716c27db31aabadf1884effb78642ea8f3c7a325a0a5bc601e16ef06517f3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "179716c27db31aabadf1884effb78642ea8f3c7a325a0a5bc601e16ef06517f3"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F841_2.py",
       "script": false,
-      "sha256": "887d255345394a5b769d4e48ba70fe6610f747dc6bd9173b5accf1d238a8ffd6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "887d255345394a5b769d4e48ba70fe6610f747dc6bd9173b5accf1d238a8ffd6"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F841_3.py",
@@ -42433,444 +38701,132 @@
     {
       "path": "resources/test/fixtures/pyflakes/F842.py",
       "script": false,
-      "sha256": "68ef46d7d2f44c7982faab5857833e5adce7f7a12774dcacaa6297e422f9c2d6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "68ef46d7d2f44c7982faab5857833e5adce7f7a12774dcacaa6297e422f9c2d6"
     },
     {
       "path": "resources/test/fixtures/pyflakes/F901.py",
       "script": false,
-      "sha256": "4e42b2ff269bf399638d24e7cfb7a2379be1ed0d66bac608d7a4cb33b15f4561",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4e42b2ff269bf399638d24e7cfb7a2379be1ed0d66bac608d7a4cb33b15f4561"
     },
     {
       "path": "resources/test/fixtures/pyflakes/__init__.py",
       "script": false,
-      "sha256": "a3d886c24c93b7cafff8c21c0a9def908702ad5e05291f0862fb9cfa0a038d4b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a3d886c24c93b7cafff8c21c0a9def908702ad5e05291f0862fb9cfa0a038d4b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/builtins.py",
       "script": false,
-      "sha256": "c1074ba072d833665d55f5f295b211a25923f8aa4286bc092ae7336e3b61a785",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c1074ba072d833665d55f5f295b211a25923f8aa4286bc092ae7336e3b61a785"
     },
     {
       "path": "resources/test/fixtures/pyflakes/future_annotations.py",
       "script": false,
-      "sha256": "d6b7121853f91c09dee022543c99cc2199505adb8aaf7f6c5bab4f7a1d13e65b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d6b7121853f91c09dee022543c99cc2199505adb8aaf7f6c5bab4f7a1d13e65b"
     },
     {
       "path": "resources/test/fixtures/pyflakes/multi_statement_lines.py",
       "script": false,
-      "sha256": "e592e9358e8e1d01d0e67dafa2d0da62aa0b3fc05a82041eed7cdad71ab105d7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e592e9358e8e1d01d0e67dafa2d0da62aa0b3fc05a82041eed7cdad71ab105d7"
     },
     {
       "path": "resources/test/fixtures/pyflakes/project/foo/bar.py",
       "script": false,
-      "sha256": "feaca8252043d8199399bd5e281ed9f1745f09f0c9105b09e94545ba074032da",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "feaca8252043d8199399bd5e281ed9f1745f09f0c9105b09e94545ba074032da"
     },
     {
       "path": "resources/test/fixtures/pyflakes/project/foo/bop/baz.py",
       "script": false,
-      "sha256": "44fd8b71291f91f6534ce2564dd2cc2ffde565d78655dcc4df36a1fa72a23865",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "44fd8b71291f91f6534ce2564dd2cc2ffde565d78655dcc4df36a1fa72a23865"
     },
     {
       "path": "resources/test/fixtures/pyflakes/typing_modules.py",
       "script": false,
-      "sha256": "f06b07b5e77ee2eabd9b732593a1b2f858f32650f055434fe73e185d356db851",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f06b07b5e77ee2eabd9b732593a1b2f858f32650f055434fe73e185d356db851"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF050_F401.py",
       "script": false,
-      "sha256": "38854634012fb191f0927d5f5a38a94b2654b235de95760a09b45b857407c002",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "38854634012fb191f0927d5f5a38a94b2654b235de95760a09b45b857407c002"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF072_RUF047_SIM105.py",
       "script": false,
-      "sha256": "1d7d3fa52323e9ff6dc7f49b2710211f8fef7d971b678477a573373b5d677541",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1d7d3fa52323e9ff6dc7f49b2710211f8fef7d971b678477a573373b5d677541"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF072_SIM105.py",
       "script": false,
-      "sha256": "aaa618ef45ddc97e736a3839671c7ff53b0576381527478f95e09ed2c36731d8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "aaa618ef45ddc97e736a3839671c7ff53b0576381527478f95e09ed2c36731d8"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_0.py",
       "script": false,
-      "sha256": "4472383923ee9de387dbab3d0a7374b639ee2a28e5a64341d6b16b482668de97",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4472383923ee9de387dbab3d0a7374b639ee2a28e5a64341d6b16b482668de97"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_1.py",
       "script": false,
-      "sha256": "4bf2c3957282fa493ff968ecc56a162a58f5f9f5a37e3832a1ba0742bf4397d7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4bf2c3957282fa493ff968ecc56a162a58f5f9f5a37e3832a1ba0742bf4397d7"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_2.py",
       "script": false,
-      "sha256": "ce11cb3a39a75dde5020f83fe128026eb06dba4d6f4041b5b8e5c5883ab69a2f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ce11cb3a39a75dde5020f83fe128026eb06dba4d6f4041b5b8e5c5883ab69a2f"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_3.py",
       "script": false,
-      "sha256": "d090429660145e9788f1554b6f9b2e80b8ad15ee95b2108e9f7ddfdef6237d14",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d090429660145e9788f1554b6f9b2e80b8ad15ee95b2108e9f7ddfdef6237d14"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_4.py",
       "script": false,
-      "sha256": "67e2cb58c24abf7d655fd64969dd26db89fefdfc9600fac82ac85c5d26870be6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "67e2cb58c24abf7d655fd64969dd26db89fefdfc9600fac82ac85c5d26870be6"
     },
     {
       "path": "resources/test/fixtures/ruff/RUF100_7.py",
       "script": false,
-      "sha256": "5262f7c95dd0c2995c02ae8bcfc1a938b10dd85306cb420bbefd55b5a02ddb55",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5262f7c95dd0c2995c02ae8bcfc1a938b10dd85306cb420bbefd55b5a02ddb55"
     },
     {
       "path": "resources/test/fixtures/ruff/flake8_noqa.py",
       "script": false,
-      "sha256": "26a628c518a8c0e28ec0061e69601b6c78eb70a46c6a1baf5f9c9e2766033df2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "26a628c518a8c0e28ec0061e69601b6c78eb70a46c6a1baf5f9c9e2766033df2"
     },
     {
       "path": "resources/test/fixtures/ruff/noqa.py",
       "script": false,
-      "sha256": "f9567f880ac210b29e66c1f14877710f2bf7be3fed9c8348a1cd0f0debfa86dd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f9567f880ac210b29e66c1f14877710f2bf7be3fed9c8348a1cd0f0debfa86dd"
     },
     {
       "path": "resources/test/fixtures/ruff/ruff_noqa_all.py",
       "script": false,
-      "sha256": "a5a521d9d31f387bb0a2f3f3670d1bc3aee3e73c1e987139e6fb7741891987e5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a5a521d9d31f387bb0a2f3f3670d1bc3aee3e73c1e987139e6fb7741891987e5"
     },
     {
       "path": "resources/test/fixtures/ruff/ruff_noqa_codes.py",
       "script": false,
-      "sha256": "482c393ad94761933e75a7ca5a83027aea101037128d71446bab55b4f670ca3d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "482c393ad94761933e75a7ca5a83027aea101037128d71446bab55b4f670ca3d"
     },
     {
       "path": "resources/test/fixtures/ruff/ruff_noqa_invalid.py",
       "script": false,
-      "sha256": "75584f2a9713222a59c00cb9b97f2c56d85b1e20e561d034ec6c926955b79e0e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "75584f2a9713222a59c00cb9b97f2c56d85b1e20e561d034ec6c926955b79e0e"
     },
     {
       "path": "resources/test/fixtures/ruff/ruff_per_file_ignores.py",
       "script": false,
-      "sha256": "fabef532ea3b662477fe9c5d5949b04e087a4c3789dbec8379f8ae6e45bf61e5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "fabef532ea3b662477fe9c5d5949b04e087a4c3789dbec8379f8ae6e45bf61e5"
     },
     {
       "path": "resources/test/fixtures/ruff/suppressions.py",
       "script": false,
-      "sha256": "b34f885f0b59f460f4d4059ae672edfce0373b18978fed86df1c20f8e01f52aa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b34f885f0b59f460f4d4059ae672edfce0373b18978fed86df1c20f8e01f52aa"
     },
     {
       "path": "resources/test/fixtures/syntax_errors/await_scope.ipynb",
       "script": false,
-      "sha256": "a0634ddf3f521ef3563dc20f7e1fd66b8ddc7a6603239a482ba70ccd56a24bee",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a0634ddf3f521ef3563dc20f7e1fd66b8ddc7a6603239a482ba70ccd56a24bee"
     },
     {
       "path": "resources/test/fixtures/syntax_errors/late_future_import.py",
@@ -42928,6 +38884,16 @@
           "syntax": []
         }
       ]
+    }
+  ],
+  "parsers": [
+    {
+      "grammar": true,
+      "parser": "cpython 3.14.8"
+    },
+    {
+      "grammar": false,
+      "parser": "libcst 1.9.0"
     }
   ],
   "pins": {

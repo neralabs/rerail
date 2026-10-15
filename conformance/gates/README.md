@@ -51,8 +51,8 @@ it, so nothing a pull request's code computes is replayed later.
 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
-packs/<pack>/upstream/<tool>/gates.json         upstream's recorded answers (recording.ts, rerail.gates-recording/v1)
-packs/<pack>/upstream/<tool>/gates-corpus.json  upstream's findings on the corpus (rerail.gates-corpus/v1)
+packs/<pack>/upstream/<tool>/gates.json         upstream's recorded answers (recording.ts, rerail.gates-recording/v2)
+packs/<pack>/upstream/<tool>/gates-corpus.json  upstream's findings on the corpus (rerail.gates-corpus/v2)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id
 ```
 

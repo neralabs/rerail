@@ -5,7 +5,7 @@ import { extname, join, posix, resolve } from "node:path";
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import { GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording.js";
+import { cleanVerdicts, GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
 import { ruffSpan } from "./span-units/ruff.js";
@@ -209,8 +209,11 @@ export function createRecordedAdapter(
   const regex = ({ source: pattern, flags }: { source: string; flags: string }) => new RegExp(pattern, flags);
   const toSpan = SPAN_UNITS[recording.adapter];
   const extensions = new Set(recording.corpus.caseSensitive ? recording.corpus.extensions : recording.corpus.extensions.map((ext) => ext.toLowerCase()));
-  const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts]));
-  const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts]));
+  // An entry without `verdicts` is every parser silent; an entry that is not there at all is a source nobody recorded.
+  const silent = cleanVerdicts(recording.parsers);
+  const corpusSilent = corpus === null ? [] : cleanVerdicts(corpus.parsers);
+  const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts ?? silent]));
+  const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts ?? corpusSilent]));
   const corpusByPlace = new Map((corpus?.files ?? []).map((file) => [`${file.task}\0${file.path}`, file]));
 
   return {

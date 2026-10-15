@@ -12,7 +12,7 @@ import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failed
 import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../gates/manifest.js";
 import type { CommandRunner } from "../../gates/process.js";
 import {
-  GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, recordingText, spanTuple,
+  GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../gates/recording.js";
 import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../gates/recorded-adapter.js";
@@ -371,7 +371,14 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     nameSets,
     rules,
     absent: sortedUnique(absent),
-    parserVerdicts: verdictFiles.map(({ path, script, sha256: digest }, index) => ({ path, script, sha256: digest, verdicts: verdicts[index]! })),
+    parsers: recordedParsers(verdicts),
+    // A list every parser was silent on is left off: the entry keeps its identity, and an absent list means silence.
+    parserVerdicts: verdictFiles.map(({ path, script, sha256: digest }, index) => ({
+      path,
+      script,
+      sha256: digest,
+      ...(verdicts[index]!.every(isCleanVerdict) ? {} : { verdicts: verdicts[index]! }),
+    })),
   });
 
   // Upstream's answers on the corpus: the pinned tasks' solutions and the corpora the pack pins.
@@ -393,6 +400,9 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
       corpora: corpora.map(({ name, repository, commit, paths, exclude }) => ({ name, repository, commit, paths, exclude })),
     },
     rules: recorded,
+    // The same parsers gates.json names: one recorder run asked one set of parsers about cases and corpus files alike,
+    // and a tool upstream cannot lint real code for (javascript/eslint) has no corpus file to read them off.
+    parsers: recording.parsers,
     files: corpusFiles.map((file, index) => {
       const answer = answerOf.get(`${file.task}\0${file.path}`);
       if (answer === undefined) throw new Error(`${packId}/${tool}: upstream gave no answer for corpus file ${file.task}/${file.path}`);
@@ -400,7 +410,14 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
         .filter(([, found]) => found.length > 0)
         .sort(([a], [b]) => byText(a, b))
         .map(([rule, found]) => [rule, spans(found)]));
-      return { task: file.task, path: file.path, sha256: file.sha256, excluded: answer.excluded, findings, verdicts: corpusVerdicts[index]! };
+      return {
+        task: file.task,
+        path: file.path,
+        sha256: file.sha256,
+        excluded: answer.excluded,
+        findings,
+        ...(corpusVerdicts[index]!.every(isCleanVerdict) ? {} : { verdicts: corpusVerdicts[index]! }),
+      };
     }),
   });
 

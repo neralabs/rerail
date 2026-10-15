@@ -1554,7 +1554,7 @@
     "you",
     "ystr"
   ],
-  "format": "rerail.gates-recording/v1",
+  "format": "rerail.gates-recording/v2",
   "identity": {
     "parsers": "CPython 3.14.8 and libcst",
     "positions": "line, column and end column exactly as Bandit reports them, including a Call check that reports a keyword argument's line with the call's columns",
@@ -1830,716 +1830,212 @@
     {
       "path": "examples/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "examples/assert.py",
       "script": false,
-      "sha256": "03481a56daf9beb1a49e467a3e3ccd654ea68771567825a9745662410dc8a94c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "03481a56daf9beb1a49e467a3e3ccd654ea68771567825a9745662410dc8a94c"
     },
     {
       "path": "examples/binding.py",
       "script": false,
-      "sha256": "7dca137ab95aef55ccde3e5661bbda77d6eceb3b11c8a99314dec75429d3ca9d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7dca137ab95aef55ccde3e5661bbda77d6eceb3b11c8a99314dec75429d3ca9d"
     },
     {
       "path": "examples/cipher-modes.py",
       "script": false,
-      "sha256": "0094d9754cb5ca01ca027ce0faa159a9984085a1df037aa0f56856b7f1b286d4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0094d9754cb5ca01ca027ce0faa159a9984085a1df037aa0f56856b7f1b286d4"
     },
     {
       "path": "examples/ciphers.py",
       "script": false,
-      "sha256": "2db051fff5ccf23d686faf8036a2404a21757aff4763e586fe6175e84a0f649d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2db051fff5ccf23d686faf8036a2404a21757aff4763e586fe6175e84a0f649d"
     },
     {
       "path": "examples/crypto-md5.py",
       "script": false,
-      "sha256": "d1b61d45e95350f8b5b67f89276cf5167a9f39702e3148aa404e4a340dd720e6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d1b61d45e95350f8b5b67f89276cf5167a9f39702e3148aa404e4a340dd720e6"
     },
     {
       "path": "examples/dill.py",
       "script": false,
-      "sha256": "0aedf8b74bb1989dfe4f4e5af858e69eccc4dbd8e0161f71db428c0f4414b037",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0aedf8b74bb1989dfe4f4e5af858e69eccc4dbd8e0161f71db428c0f4414b037"
     },
     {
       "path": "examples/django_sql_injection_extra.py",
       "script": false,
-      "sha256": "0bfeab19a3428f7ec0b6338e67af740054fa76fdeab3fbead39ea86ac728d40b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0bfeab19a3428f7ec0b6338e67af740054fa76fdeab3fbead39ea86ac728d40b"
     },
     {
       "path": "examples/django_sql_injection_raw.py",
       "script": false,
-      "sha256": "4d04b972eaf70c7076ffee0c556d6af93bf2ab8427da78d2f64efb35a2afae61",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4d04b972eaf70c7076ffee0c556d6af93bf2ab8427da78d2f64efb35a2afae61"
     },
     {
       "path": "examples/eval.py",
       "script": false,
-      "sha256": "b5bfe9eaae75f2679540a62c67e2b514cdd19621d25505b0568c6b910a2176f5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b5bfe9eaae75f2679540a62c67e2b514cdd19621d25505b0568c6b910a2176f5"
     },
     {
       "path": "examples/exec.py",
       "script": false,
-      "sha256": "8d14d882cd1b5112992f6ec0341a2fc658167672332206d661493fa57f43c59c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8d14d882cd1b5112992f6ec0341a2fc658167672332206d661493fa57f43c59c"
     },
     {
       "path": "examples/flask_debug.py",
       "script": false,
-      "sha256": "9473351dbf0da50f8b1c3582edb6024803a93ba09e12dd4769e13900508312ed",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9473351dbf0da50f8b1c3582edb6024803a93ba09e12dd4769e13900508312ed"
     },
     {
       "path": "examples/ftplib.py",
       "script": false,
-      "sha256": "5830832fb941420dffa910caf5374060b8c5aff978625328df85ff9b6a541fad",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5830832fb941420dffa910caf5374060b8c5aff978625328df85ff9b6a541fad"
     },
     {
       "path": "examples/hardcoded-passwords.py",
       "script": false,
-      "sha256": "04e82a94dddff947cf17f6498baa82c602b6dc90b4c8fe40dc3f5df43ba88ef3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "04e82a94dddff947cf17f6498baa82c602b6dc90b4c8fe40dc3f5df43ba88ef3"
     },
     {
       "path": "examples/hardcoded-tmp.py",
       "script": false,
-      "sha256": "311ef528b6ca3c92f5947920c83386006ea728eade66e34184bf0160c2446e46",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "311ef528b6ca3c92f5947920c83386006ea728eade66e34184bf0160c2446e46"
     },
     {
       "path": "examples/hashlib_new_insecure_functions.py",
       "script": false,
-      "sha256": "ec67a26a9640133c72fb3ce5d1be62a5683ed3e4d9fd5ff3cc4f88299e02449c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ec67a26a9640133c72fb3ce5d1be62a5683ed3e4d9fd5ff3cc4f88299e02449c"
     },
     {
       "path": "examples/httpoxy_cgihandler.py",
       "script": false,
-      "sha256": "037c51dd783ceeffa38286159c549e552035f732d5f18ceee7f044cec361b93e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "037c51dd783ceeffa38286159c549e552035f732d5f18ceee7f044cec361b93e"
     },
     {
       "path": "examples/httpoxy_twisted_directory.py",
       "script": false,
-      "sha256": "28c5534967273756af9225c94d4da4ce7d540687c6e328072fff43578c8ce6ce",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "28c5534967273756af9225c94d4da4ce7d540687c6e328072fff43578c8ce6ce"
     },
     {
       "path": "examples/httpoxy_twisted_script.py",
       "script": false,
-      "sha256": "fd1865295bf6a885ae91bec94ac756381a1ac68caf2a8eda4810e5684a15a2c4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "fd1865295bf6a885ae91bec94ac756381a1ac68caf2a8eda4810e5684a15a2c4"
     },
     {
       "path": "examples/huggingface_unsafe_download.py",
       "script": false,
-      "sha256": "848ecf186ff062cf4a63b437521be4e15b99e710823c0dc107b97d826e47e617",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "848ecf186ff062cf4a63b437521be4e15b99e710823c0dc107b97d826e47e617"
     },
     {
       "path": "examples/imports-aliases.py",
       "script": false,
-      "sha256": "c572f2fcc79605cebbc83112f76938a87eaa7453da8240d44645f8dc1dfac1df",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c572f2fcc79605cebbc83112f76938a87eaa7453da8240d44645f8dc1dfac1df"
     },
     {
       "path": "examples/imports-from.py",
       "script": false,
-      "sha256": "421760d6d8f5711425caf90b5bf28c6d26c84c84f659e2330198f076d2ae2157",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "421760d6d8f5711425caf90b5bf28c6d26c84c84f659e2330198f076d2ae2157"
     },
     {
       "path": "examples/imports-function.py",
       "script": false,
-      "sha256": "a13439beccbc60b5c1ffec9f4c0df063935c2f61e879a966c8e9d6e7cf29433d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a13439beccbc60b5c1ffec9f4c0df063935c2f61e879a966c8e9d6e7cf29433d"
     },
     {
       "path": "examples/imports-with-importlib.py",
       "script": false,
-      "sha256": "6ce288f545bc8332d958f6ff3fc1295f92d479ee0340dcf4c96dd59cfe20aad1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6ce288f545bc8332d958f6ff3fc1295f92d479ee0340dcf4c96dd59cfe20aad1"
     },
     {
       "path": "examples/imports.py",
       "script": false,
-      "sha256": "06fc9b92e5ddbbb942a9e96c89fd4838389c095e0c5470ecf8093a7bab1ed0a3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "06fc9b92e5ddbbb942a9e96c89fd4838389c095e0c5470ecf8093a7bab1ed0a3"
     },
     {
       "path": "examples/init-py-test/__init__.py",
       "script": false,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "examples/init-py-test/subdirectory-okay.py",
       "script": false,
-      "sha256": "b563cfe52db70b8dd6ccb5596ee539646466e2e628cb1ef8fc599e1d548a0599",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b563cfe52db70b8dd6ccb5596ee539646466e2e628cb1ef8fc599e1d548a0599"
     },
     {
       "path": "examples/jinja2_templating.py",
       "script": false,
-      "sha256": "20fe225d834ffc2dba35ac24e3e268a53101bdfcdfb5436762e3ec8282cf9223",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "20fe225d834ffc2dba35ac24e3e268a53101bdfcdfb5436762e3ec8282cf9223"
     },
     {
       "path": "examples/jsonpickle.py",
       "script": false,
-      "sha256": "39ce7e73e199f1161c13cfa62d6570eecf41a16ea796d178913faeaef8b9198e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "39ce7e73e199f1161c13cfa62d6570eecf41a16ea796d178913faeaef8b9198e"
     },
     {
       "path": "examples/logging_config_insecure_listen.py",
       "script": false,
-      "sha256": "f6a917c0d92e7bffdd9ab5c2c7d84d0ca62f677dd4241b0cf3300e652dc55ea5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f6a917c0d92e7bffdd9ab5c2c7d84d0ca62f677dd4241b0cf3300e652dc55ea5"
     },
     {
       "path": "examples/long_set.py",
       "script": false,
-      "sha256": "7a58e0ba9d6cfc629cd3e21982cf48ae975a6b18e0d657a3324fe11602e49e3e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7a58e0ba9d6cfc629cd3e21982cf48ae975a6b18e0d657a3324fe11602e49e3e"
     },
     {
       "path": "examples/mako_templating.py",
       "script": false,
-      "sha256": "26d12c14fa18272035217d308e58fe7d9e00799c497220ce2271c43fb84fb6b3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "26d12c14fa18272035217d308e58fe7d9e00799c497220ce2271c43fb84fb6b3"
     },
     {
       "path": "examples/mark_safe.py",
       "script": false,
-      "sha256": "81ffce9c0b71b8fbd9fb615ffbe3b07111f15e547815a8da9045a2c21b0f3fcf",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "81ffce9c0b71b8fbd9fb615ffbe3b07111f15e547815a8da9045a2c21b0f3fcf"
     },
     {
       "path": "examples/mark_safe_insecure.py",
       "script": false,
-      "sha256": "e64b9f09a7f965b8fdbe8f9272a9f9e8f0cfe5347be8d4af90fe5e01c94dbc87",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e64b9f09a7f965b8fdbe8f9272a9f9e8f0cfe5347be8d4af90fe5e01c94dbc87"
     },
     {
       "path": "examples/mark_safe_secure.py",
       "script": false,
-      "sha256": "66001df4af7fce69aa46341e968f8f81fe087deb9ef631bde9d2a57cc1a0072e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "66001df4af7fce69aa46341e968f8f81fe087deb9ef631bde9d2a57cc1a0072e"
     },
     {
       "path": "examples/markupsafe_markup_xss.py",
       "script": false,
-      "sha256": "1328bc4d41e14d01e59e4ac45a42f5afd4177af9d5255b1431c4eb3f6731bf44",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1328bc4d41e14d01e59e4ac45a42f5afd4177af9d5255b1431c4eb3f6731bf44"
     },
     {
       "path": "examples/markupsafe_markup_xss_allowed_calls.py",
       "script": false,
-      "sha256": "d180f2ae255dfc15d445dc0415698d6884b42aa2400b14511095adbbfb1b8abd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "d180f2ae255dfc15d445dc0415698d6884b42aa2400b14511095adbbfb1b8abd"
     },
     {
       "path": "examples/markupsafe_markup_xss_extend_markup_names.py",
       "script": false,
-      "sha256": "7266fe0b4fb0ebda940311b32d66366d25f7feca0de9b88845f2ee3197f4ad39",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7266fe0b4fb0ebda940311b32d66366d25f7feca0de9b88845f2ee3197f4ad39"
     },
     {
       "path": "examples/marshal_deserialize.py",
       "script": false,
-      "sha256": "8434fff8f7b425c1aa84277dec4bf74c355e51741c68a785221772bf2a864026",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8434fff8f7b425c1aa84277dec4bf74c355e51741c68a785221772bf2a864026"
     },
     {
       "path": "examples/mktemp.py",
       "script": false,
-      "sha256": "c4b1007d0e8851bf171b0a0e650241bb17a5344311ea603bc75b5ad72b0481a2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c4b1007d0e8851bf171b0a0e650241bb17a5344311ea603bc75b5ad72b0481a2"
     },
     {
       "path": "examples/multiline_statement.py",
       "script": false,
-      "sha256": "c784ad3928fff6c7e0d54f28a345d3305aa25ddb160eb755d1a59ce79a00b3b0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c784ad3928fff6c7e0d54f28a345d3305aa25ddb160eb755d1a59ce79a00b3b0"
     },
     {
       "path": "examples/new_candidates-all.py",
       "script": false,
-      "sha256": "328586623c56575c150ca3684971b029a2fde904d89e88d27913cab66ffadc1c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "328586623c56575c150ca3684971b029a2fde904d89e88d27913cab66ffadc1c"
     },
     {
       "path": "examples/new_candidates-none.py",
@@ -2565,53 +2061,17 @@
     {
       "path": "examples/new_candidates-nosec.py",
       "script": false,
-      "sha256": "28b6a9ef2cdc84396c05e5d3e656304f1fc4bcc7bc9b7e154d7735d59a237083",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "28b6a9ef2cdc84396c05e5d3e656304f1fc4bcc7bc9b7e154d7735d59a237083"
     },
     {
       "path": "examples/new_candidates-some.py",
       "script": false,
-      "sha256": "afbcec2976b1d39511b819aabf97c91ce95e03a87ef633595f499c93d8950dbd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "afbcec2976b1d39511b819aabf97c91ce95e03a87ef633595f499c93d8950dbd"
     },
     {
       "path": "examples/no_host_key_verification.py",
       "script": false,
-      "sha256": "ba49b8b3fa3b893ef40613bb0ef37c6735cdf913e083f97b37648d29a3e1c590",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ba49b8b3fa3b893ef40613bb0ef37c6735cdf913e083f97b37648d29a3e1c590"
     },
     {
       "path": "examples/nonsense.py",
@@ -2658,308 +2118,92 @@
     {
       "path": "examples/nosec.py",
       "script": false,
-      "sha256": "b4ce1e23c1d5cfba4f58097c112ede912c147cb71caa4c56c799b4d8ca064c6c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "b4ce1e23c1d5cfba4f58097c112ede912c147cb71caa4c56c799b4d8ca064c6c"
     },
     {
       "path": "examples/okay.py",
       "script": false,
-      "sha256": "328a68b25129b5700ec87e9ba0ebf91645dea2222643bc77e2ccb1853592f1c5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "328a68b25129b5700ec87e9ba0ebf91645dea2222643bc77e2ccb1853592f1c5"
     },
     {
       "path": "examples/os-chmod.py",
       "script": false,
-      "sha256": "72329e6c72b7caac5f79f8f9d46a23a022f872bd2578e492ccc9b5a8c989a7c4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "72329e6c72b7caac5f79f8f9d46a23a022f872bd2578e492ccc9b5a8c989a7c4"
     },
     {
       "path": "examples/os-exec.py",
       "script": false,
-      "sha256": "0d1e5e4bc205ee991c4616c2cf360c67845034fd05e13e391e366a884ea08d36",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0d1e5e4bc205ee991c4616c2cf360c67845034fd05e13e391e366a884ea08d36"
     },
     {
       "path": "examples/os-popen.py",
       "script": false,
-      "sha256": "0c5131a33bc7f30fed87ef1515319d4bba0b46d84db87cb81c404839bde1932b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0c5131a33bc7f30fed87ef1515319d4bba0b46d84db87cb81c404839bde1932b"
     },
     {
       "path": "examples/os-spawn.py",
       "script": false,
-      "sha256": "251cbdc699b37f0c18fc7f2d3236825d8ab01fc012468554455e104cfc2d0d46",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "251cbdc699b37f0c18fc7f2d3236825d8ab01fc012468554455e104cfc2d0d46"
     },
     {
       "path": "examples/os-startfile.py",
       "script": false,
-      "sha256": "6c5bcc3b5d6f06610ea74385e697b71dff97f3e9e33009e964ecfcbf646f0532",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6c5bcc3b5d6f06610ea74385e697b71dff97f3e9e33009e964ecfcbf646f0532"
     },
     {
       "path": "examples/os_system.py",
       "script": false,
-      "sha256": "2e8335bd8d78c39448b627cb4f7cecda19bc74ba59f4c9e502172ef2c1c0d2fa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2e8335bd8d78c39448b627cb4f7cecda19bc74ba59f4c9e502172ef2c1c0d2fa"
     },
     {
       "path": "examples/pandas_read_pickle.py",
       "script": false,
-      "sha256": "0839429e4be0cd3025c96aa846f57e9a71cd3eef43a0ba58637f2d5a3e01f2d5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0839429e4be0cd3025c96aa846f57e9a71cd3eef43a0ba58637f2d5a3e01f2d5"
     },
     {
       "path": "examples/paramiko_injection.py",
       "script": false,
-      "sha256": "a39c483b0c1b75807229f21e56d2764d0636b0227ca0cd2a9ec88bbd2fcdfaf5",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a39c483b0c1b75807229f21e56d2764d0636b0227ca0cd2a9ec88bbd2fcdfaf5"
     },
     {
       "path": "examples/partial_path_process.py",
       "script": false,
-      "sha256": "499604cfd557587a40b29142ba3bc7632171aaa2675b683077c4e565a6375a0f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "499604cfd557587a40b29142ba3bc7632171aaa2675b683077c4e565a6375a0f"
     },
     {
       "path": "examples/pickle_deserialize.py",
       "script": false,
-      "sha256": "5be9a3296802251d95854dd7d2059e0b9ca5b7fadbb1989ff2113918c2c7b106",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "5be9a3296802251d95854dd7d2059e0b9ca5b7fadbb1989ff2113918c2c7b106"
     },
     {
       "path": "examples/popen_wrappers.py",
       "script": false,
-      "sha256": "fb3526a4481ff96e657969de308e4fcba1ce70049dbc9b96f14f6908795f0394",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "fb3526a4481ff96e657969de308e4fcba1ce70049dbc9b96f14f6908795f0394"
     },
     {
       "path": "examples/pycrypto.py",
       "script": false,
-      "sha256": "c0911d9def4eec3b4c0c1a3207eb96cd5fd46734b3c0389959e7e0d5d5d67785",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c0911d9def4eec3b4c0c1a3207eb96cd5fd46734b3c0389959e7e0d5d5d67785"
     },
     {
       "path": "examples/pycryptodome.py",
       "script": false,
-      "sha256": "ce95e81832ec3cdbaa9ee2df9e8334aff819771ed80db99d2d4cbfb88ab50e5e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ce95e81832ec3cdbaa9ee2df9e8334aff819771ed80db99d2d4cbfb88ab50e5e"
     },
     {
       "path": "examples/pyghmi.py",
       "script": false,
-      "sha256": "6d66ba38185885a9cd73f230018e2c83a62c37f116fe9e1efdaf80e60c95086c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6d66ba38185885a9cd73f230018e2c83a62c37f116fe9e1efdaf80e60c95086c"
     },
     {
       "path": "examples/pytorch_load.py",
       "script": false,
-      "sha256": "820dd9deb631be3c844f15a9b6234c136fcd11ae5fdf72ff18e5f6bbc3eeb8d6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "820dd9deb631be3c844f15a9b6234c136fcd11ae5fdf72ff18e5f6bbc3eeb8d6"
     },
     {
       "path": "examples/random_module.py",
       "script": false,
-      "sha256": "8ecd01c224e1d1d5e0ba3e65cb77d9251249ced2621131479561cfe96ca4c281",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "8ecd01c224e1d1d5e0ba3e65cb77d9251249ced2621131479561cfe96ca4c281"
     },
     {
       "path": "examples/requests-missing-timeout.py",
@@ -2983,461 +2227,147 @@
     {
       "path": "examples/requests-ssl-verify-disabled.py",
       "script": false,
-      "sha256": "7da634f602141c1331242a7d681ebf2ac128dd9d23973d4b7268845a63848e21",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "7da634f602141c1331242a7d681ebf2ac128dd9d23973d4b7268845a63848e21"
     },
     {
       "path": "examples/shelve_open.py",
       "script": false,
-      "sha256": "0396fbf06130467f84760b032460cd702b1d4ee2c38851c24d988447d44533da",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0396fbf06130467f84760b032460cd702b1d4ee2c38851c24d988447d44533da"
     },
     {
       "path": "examples/skip.py",
       "script": false,
-      "sha256": "f2f1bfe97ff0573f8d61ed7e7f4983ef6507bf46b1d596d5e45ec2cd6b55220d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "f2f1bfe97ff0573f8d61ed7e7f4983ef6507bf46b1d596d5e45ec2cd6b55220d"
     },
     {
       "path": "examples/snmp.py",
       "script": false,
-      "sha256": "56be8ed0804f1bae25c7aa525b9ef87ef79445b92ce146c2a43215ea5827d770",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "56be8ed0804f1bae25c7aa525b9ef87ef79445b92ce146c2a43215ea5827d770"
     },
     {
       "path": "examples/sql_multiline_statements.py",
       "script": false,
-      "sha256": "acaca248c08e6938b399766c3be22de715d071179592aae0d69aa1e0922c0c37",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "acaca248c08e6938b399766c3be22de715d071179592aae0d69aa1e0922c0c37"
     },
     {
       "path": "examples/sql_statements.py",
       "script": false,
-      "sha256": "4f0f942b6d774451745e7cfdf978ffa9420e4c075f587f6d6381b1b346ce79f7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4f0f942b6d774451745e7cfdf978ffa9420e4c075f587f6d6381b1b346ce79f7"
     },
     {
       "path": "examples/ssl-insecure-version.py",
       "script": false,
-      "sha256": "a411ed788f204e346d8a86d117cab7b824965cb52f130ee4d63f48adcc25d795",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a411ed788f204e346d8a86d117cab7b824965cb52f130ee4d63f48adcc25d795"
     },
     {
       "path": "examples/subprocess_shell.py",
       "script": false,
-      "sha256": "e57fa980c54aff45b49883db2ebc4b6ddbe6fa85cee9d860cf826b0feaa2ad2c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "e57fa980c54aff45b49883db2ebc4b6ddbe6fa85cee9d860cf826b0feaa2ad2c"
     },
     {
       "path": "examples/tarfile_extractall.py",
       "script": false,
-      "sha256": "1ce0ae9eeac8c3cc4981f022369058155e8a121eb04f9f863eb8c1278e97277c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1ce0ae9eeac8c3cc4981f022369058155e8a121eb04f9f863eb8c1278e97277c"
     },
     {
       "path": "examples/telnetlib.py",
       "script": false,
-      "sha256": "161acf61d791886e4aba1a01831419c805c9823b8866d8043b270acf45365502",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "161acf61d791886e4aba1a01831419c805c9823b8866d8043b270acf45365502"
     },
     {
       "path": "examples/trojansource.py",
       "script": false,
-      "sha256": "1abb885312fe41a3892feae543d41d069cad943905fc35e90e37d81a9a411009",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1abb885312fe41a3892feae543d41d069cad943905fc35e90e37d81a9a411009"
     },
     {
       "path": "examples/trojansource_latin1.py",
       "script": false,
-      "sha256": "9d2fd965bb35f974fae22af762c521b1d0d515253e5508cb6b8e91c36d1ce63c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "9d2fd965bb35f974fae22af762c521b1d0d515253e5508cb6b8e91c36d1ce63c"
     },
     {
       "path": "examples/try_except_continue.py",
       "script": false,
-      "sha256": "1fa1f896a720662f8b2bd47909bcefd104aa202d86e2d91869a3923a8e2fa0de",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1fa1f896a720662f8b2bd47909bcefd104aa202d86e2d91869a3923a8e2fa0de"
     },
     {
       "path": "examples/try_except_pass.py",
       "script": false,
-      "sha256": "2393538e58c1e2d5e69d8fc52196f7c8688c1609f248e2a86b1fe8a850a52ff0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "2393538e58c1e2d5e69d8fc52196f7c8688c1609f248e2a86b1fe8a850a52ff0"
     },
     {
       "path": "examples/unverified_context.py",
       "script": false,
-      "sha256": "1872930a5f6a071f66db3e42eb685f5243f7a1504b6ede511edadf27a73612cb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "1872930a5f6a071f66db3e42eb685f5243f7a1504b6ede511edadf27a73612cb"
     },
     {
       "path": "examples/urlopen.py",
       "script": false,
-      "sha256": "c8ec43c0aa1e44187e11d6e061df20ce097eefc8354fa3e65ac8eddf527bedbc",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c8ec43c0aa1e44187e11d6e061df20ce097eefc8354fa3e65ac8eddf527bedbc"
     },
     {
       "path": "examples/weak_cryptographic_key_sizes.py",
       "script": false,
-      "sha256": "0e66be5e6b5beb81cfb7203874e7c2f94e0eeb96b28a6bc5f223f5ffd73b1a73",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "0e66be5e6b5beb81cfb7203874e7c2f94e0eeb96b28a6bc5f223f5ffd73b1a73"
     },
     {
       "path": "examples/wildcard-injection.py",
       "script": false,
-      "sha256": "4b726b98c87b2a0c28fae037e39c85f62c29ab40f1da3d9a0775d560b8770915",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4b726b98c87b2a0c28fae037e39c85f62c29ab40f1da3d9a0775d560b8770915"
     },
     {
       "path": "examples/xml_etree_celementtree.py",
       "script": false,
-      "sha256": "a11bb76e5ab693e70cb168823bcc502d2f1388002b51c95fd068b2416eb69258",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "a11bb76e5ab693e70cb168823bcc502d2f1388002b51c95fd068b2416eb69258"
     },
     {
       "path": "examples/xml_etree_elementtree.py",
       "script": false,
-      "sha256": "4d2e75873bb992004d0b95020bf1e0430c7e5e9a335949691f8a87ce750da25d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4d2e75873bb992004d0b95020bf1e0430c7e5e9a335949691f8a87ce750da25d"
     },
     {
       "path": "examples/xml_expatbuilder.py",
       "script": false,
-      "sha256": "757c0e85b4037518283aa9eb605a16484683be3e67e3afa29ede9a35355427d8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "757c0e85b4037518283aa9eb605a16484683be3e67e3afa29ede9a35355427d8"
     },
     {
       "path": "examples/xml_expatreader.py",
       "script": false,
-      "sha256": "6ed47bed5592e3d54541606e8821b91aa0ae7ac20c0189c1bedd53120fd82646",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "6ed47bed5592e3d54541606e8821b91aa0ae7ac20c0189c1bedd53120fd82646"
     },
     {
       "path": "examples/xml_minidom.py",
       "script": false,
-      "sha256": "ef1864c0990c9ed3a3b24df3c227e427b307136ec75f1464ce06599cb285a37a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "ef1864c0990c9ed3a3b24df3c227e427b307136ec75f1464ce06599cb285a37a"
     },
     {
       "path": "examples/xml_pulldom.py",
       "script": false,
-      "sha256": "407e79a7de73ddb2f5aa9e332afad792f32c7396acc4d9279a4174ab46ed70ea",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "407e79a7de73ddb2f5aa9e332afad792f32c7396acc4d9279a4174ab46ed70ea"
     },
     {
       "path": "examples/xml_sax.py",
       "script": false,
-      "sha256": "4b1b2e7c03b984eb5470699714db6416120d4791f75860242d4afb5bbed676fd",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "4b1b2e7c03b984eb5470699714db6416120d4791f75860242d4afb5bbed676fd"
     },
     {
       "path": "examples/xml_xmlrpc.py",
       "script": false,
-      "sha256": "db98a261d929f7929e6c56177f457f6306f98f103e3247b48bc7a01ff46d5886",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "db98a261d929f7929e6c56177f457f6306f98f103e3247b48bc7a01ff46d5886"
     },
     {
       "path": "examples/yaml_load.py",
       "script": false,
-      "sha256": "c2a880d76e7a15199674d494ee191b15386ac3c33151a0afdc99f206e7aec435",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "cpython 3.14.8",
-          "syntax": []
-        },
-        {
-          "grammar": null,
-          "parser": "libcst 1.9.0",
-          "syntax": []
-        }
-      ]
+      "sha256": "c2a880d76e7a15199674d494ee191b15386ac3c33151a0afdc99f206e7aec435"
+    }
+  ],
+  "parsers": [
+    {
+      "grammar": true,
+      "parser": "cpython 3.14.8"
+    },
+    {
+      "grammar": false,
+      "parser": "libcst 1.9.0"
     }
   ],
   "pins": {

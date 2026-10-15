@@ -4,10 +4,10 @@
  * directory `packs/<pack>/upstream/<tool>/` so the gates can read it back through a recorded adapter without running
  * upstream.
  *
- * - `gates.json` (`rerail.gates-recording/v1`) holds every PackAdapter answer the gates read except upstream's answers
+ * - `gates.json` (`rerail.gates-recording/v2`) holds every PackAdapter answer the gates read except upstream's answers
  *   on the corpus: identity, tool-pack checks, the license digest, the words and names `not-overfit` reads, every
  *   upstream rule's facts, name sources, span parts and cases, and independent parsers' verdicts on every case source.
- * - `gates-corpus.json` (`rerail.gates-corpus/v1`) holds `lintCorpus`'s answers: upstream's findings on every corpus
+ * - `gates-corpus.json` (`rerail.gates-corpus/v2`) holds `lintCorpus`'s answers: upstream's findings on every corpus
  *   file, and independent parsers' verdicts on each.
  *
  * Each PackAdapter member and where its recorded answer is:
@@ -22,16 +22,22 @@
  *   `corpus`; lintCorpus → gates-corpus.json `files`; parserVerdicts → `parserVerdicts` here and gates-corpus.json
  *   `files[].verdicts`, looked up by path, script and the source's sha256.
  *
+ * Both files name their independent parsers once, in `parsers`, and leave `verdicts` off an entry no parser objected
+ * to: nine of ten corpus files are such an entry, and writing the same silent list on each of them was most of both
+ * files. An entry still keeps its identity — its path and its sha256 — because an entry that is there without
+ * `verdicts` and an entry that is not there at all say different things: the first is every parser silent, the second
+ * is a source that was never recorded, for which the gates have no verdict and draw no conclusion.
+ *
  * Both files are deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written
  * with sorted keys (`recordingText`), and nothing in them names a machine path, a date or a cache directory.
  */
 import { z } from "zod";
 
 import { ADAPTERS } from "./manifest.js";
-import type { Span } from "./types.js";
+import type { ParserVerdict, Span } from "./types.js";
 
-export const GATES_RECORDING_FORMAT = "rerail.gates-recording/v1";
-export const GATES_CORPUS_FORMAT = "rerail.gates-corpus/v1";
+export const GATES_RECORDING_FORMAT = "rerail.gates-recording/v2";
+export const GATES_CORPUS_FORMAT = "rerail.gates-corpus/v2";
 
 /** The recording's file names in a tool-pack's directory. */
 export const GATES_RECORDING = "gates.json";
@@ -118,6 +124,56 @@ const parserVerdictSchema = z.strictObject({
   grammar: z.array(z.string()).nullable(),
 });
 
+/**
+ * One independent parser the recorder ran, in the live adapter's order. A recording's parser list is fixed: every
+ * verdict list in it names these parsers, in this order, so an entry that drops its list still says which parsers
+ * were silent on it.
+ */
+const parserSchema = z.strictObject({
+  /** The parser and its version, as a verdict's `parser`; two of a recording's parsers may share it (vitest reads one TypeScript version twice). */
+  parser: nonEmpty,
+  /** Whether it makes grammar checks: its silent verdict has `grammar: []`, and `null` where it makes none (libcst). */
+  grammar: z.boolean(),
+});
+
+export type RecordedParser = z.infer<typeof parserSchema>;
+
+/** What a verdict looks like to these helpers, which both the gates' ParserVerdict and a recorded one satisfy. */
+interface VerdictLike {
+  parser: string;
+  syntax: readonly string[];
+  grammar: readonly string[] | null;
+}
+
+/**
+ * A parser that objected to nothing: no syntax error, and no grammar error where it checks the grammar at all.
+ * `grammar: null` is a parser that makes no grammar checks, not one that found a grammar error, so it is clean —
+ * `classifyParsers` reads it the same way, and getting this predicate wrong would turn invalid source into
+ * `valid-source` and blame the engine's parser for it.
+ */
+export function isCleanVerdict(verdict: VerdictLike): boolean {
+  return verdict.syntax.length === 0 && (verdict.grammar === null || verdict.grammar.length === 0);
+}
+
+/** The verdict list an entry without `verdicts` stands for: every one of the recording's parsers, silent. */
+export function cleanVerdicts(parsers: readonly RecordedParser[]): ParserVerdict[] {
+  return parsers.map(({ parser, grammar }) => ({ parser, syntax: [], grammar: grammar ? [] : null }));
+}
+
+/**
+ * The parser list `lists` share, for the recorder to write as `parsers`. Every list must name the same parsers in the
+ * same order, with the same grammar checks: the recorder runs one set of parsers over every source, so a list that
+ * disagrees means a parser was skipped and a dropped clean entry would be rebuilt with a verdict nobody made.
+ */
+export function recordedParsers(lists: readonly (readonly VerdictLike[])[]): RecordedParser[] {
+  const shape = (list: readonly VerdictLike[]) => list.map((verdict) => `${verdict.parser} (${verdict.grammar === null ? "no grammar checks" : "grammar checks"})`).join(", ");
+  const nonEmptyLists = lists.filter((list) => list.length > 0);
+  const first = nonEmptyLists[0];
+  if (first === undefined) throw new Error("no independent parser ran: a recording cannot say which parsers a silent entry stands for");
+  for (const list of nonEmptyLists) if (shape(list) !== shape(first)) throw new Error(`independent parsers differ between sources: [${shape(first)}] and [${shape(list)}]`);
+  return first.map((verdict) => ({ parser: verdict.parser, grammar: verdict.grammar !== null }));
+}
+
 /** Independent parsers' verdicts on one source text as the gates would ask for them. */
 const verdictEntrySchema = z.strictObject({
   /** The path the source is read as: a case's path with its `parsedAs` file type, or a known gap's `probe<ext>`. */
@@ -126,8 +182,11 @@ const verdictEntrySchema = z.strictObject({
   script: z.boolean(),
   /** sha256 of the source text, UTF-8. */
   sha256,
-  /** Every independent parser's verdict, in the live adapter's order. */
-  verdicts: z.array(parserVerdictSchema).min(1),
+  /**
+   * Every independent parser's verdict, in `parsers`' order; absent when they were all silent, which is what an absent
+   * list means. The entry itself is kept either way, because no entry at all means the source was never recorded.
+   */
+  verdicts: z.array(parserVerdictSchema).min(1).optional(),
 });
 
 const caseSchema = z.strictObject({
@@ -187,6 +246,26 @@ const ruleSchema = z.strictObject({
 
 export type RecordedRule = z.infer<typeof ruleSchema>;
 export type RecordedCase = z.infer<typeof caseSchema>;
+
+/**
+ * Every verdict list a recording writes out is in canonical form: it names the recording's `parsers` in their order,
+ * and a list every parser was silent on is not written at all (an absent list means exactly that). Canonical form is
+ * what makes `gates:record --check` byte-comparable: there is one way to record a given answer.
+ */
+function checkVerdicts(
+  parsers: readonly RecordedParser[],
+  entries: readonly { verdicts?: readonly VerdictLike[] | undefined }[],
+  path: (index: number) => (string | number)[],
+  issue: (path: (string | number)[], message: string) => void,
+): void {
+  const expected = parsers.map(({ parser, grammar }) => `${parser}\0${grammar}`).join("\n");
+  entries.forEach((entry, index) => {
+    if (entry.verdicts === undefined) return;
+    if (entry.verdicts.every(isCleanVerdict)) issue(path(index), "every parser is silent: leave verdicts off, which says the same in fewer bytes");
+    const listed = entry.verdicts.map((verdict) => `${verdict.parser}\0${verdict.grammar !== null}`).join("\n");
+    if (listed !== expected) issue(path(index), "names other parsers than the recording's parsers, or in another order");
+  });
+}
 
 export const gatesRecordingSchema = z.strictObject({
   format: z.literal(GATES_RECORDING_FORMAT),
@@ -258,13 +337,16 @@ export const gatesRecordingSchema = z.strictObject({
    * `rules` nor `absent` was never recorded: the recording is stale.
    */
   absent: sortedStrings(nonEmpty),
+  /** The independent parsers every verdict list in the file names, in the live adapter's order. */
+  parsers: z.array(parserSchema).min(1),
   /**
    * Independent parsers' verdicts on every committed case source as its cases read it, and on every known gap's probe,
-   * sorted by path, script and sha256; each combination once.
+   * sorted by path, script and sha256; each combination once. An entry whose parsers were all silent has no `verdicts`.
    */
   parserVerdicts: z.array(verdictEntrySchema),
 }).superRefine((recording, context) => {
   const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
+  checkVerdicts(recording.parsers, recording.parserVerdicts, (index) => ["parserVerdicts", index, "verdicts"], issue);
   for (const [name, rule] of Object.entries(recording.rules)) {
     for (const part of ["implementation", "shared"] as const) {
       for (const id of rule.names[part].sets) if (!(id in recording.nameSets)) issue(["rules", name, "names", part, "sets"], `names the set ${id}, which nameSets lacks`);
@@ -291,8 +373,12 @@ const corpusFileSchema = z.strictObject({
    * absent here has none. Empty for an excluded file.
    */
   findings: z.record(nonEmpty, z.array(recordedSpanSchema).min(1)),
-  /** Independent parsers' verdicts on the file, read at its path as a module. */
-  verdicts: z.array(parserVerdictSchema).min(1),
+  /**
+   * Independent parsers' verdicts on the file, read at its path as a module, in `parsers`' order; absent when they
+   * were all silent, as most of a real-code corpus is. The file's entry is kept either way, because a corpus file
+   * with no entry has no ground truth at all (lintCorpus excludes it).
+   */
+  verdicts: z.array(parserVerdictSchema).min(1).optional(),
 });
 
 export type RecordedCorpusFile = z.infer<typeof corpusFileSchema>;
@@ -316,10 +402,13 @@ export const gatesCorpusSchema = z.strictObject({
   }),
   /** The rules upstream was asked about on every file (lintCorpus's names), sorted. */
   rules: sortedStrings(nonEmpty),
+  /** The independent parsers every verdict list in the file names, in the live adapter's order, as in gates.json. */
+  parsers: z.array(parserSchema).min(1),
   /** Every corpus file of a type upstream lints, sorted by task then path. */
   files: z.array(corpusFileSchema),
 }).superRefine((recording, context) => {
   const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
+  checkVerdicts(recording.parsers, recording.files, (index) => ["files", index, "verdicts"], issue);
   const places = recording.files.map((file) => `${file.task}\0${file.path}`);
   if (!places.every((place, index) => index === 0 || byText(places[index - 1]!, place) < 0)) issue(["files"], "sorted by task then path, each file once");
   const rules = new Set(recording.rules);

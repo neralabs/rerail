@@ -8090,7 +8090,7 @@
     "yet",
     "yx"
   ],
-  "format": "rerail.gates-recording/v1",
+  "format": "rerail.gates-recording/v2",
   "identity": {
     "commit": "aad57d121647efe764463c37414a8cd67ec9cf92",
     "repository": "https://github.com/vitest-dev/eslint-plugin-vitest",
@@ -8576,1916 +8576,451 @@
     {
       "path": "file.ts",
       "script": false,
-      "sha256": "056ee133a2afed709f50ec062a20efe76501f5dd7a9d7ae67f411ecdb4f03cae",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "064fad97b6fc70f5e34c8eb7be9a440d0db32f1c0867a3927100705d7f2812fb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "077061ce644d6fa27c4b09213e0a23deae6cbd154682f13b2476dd8c520962c0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "0b7b5acfcf2fc51e45a972fcefc3a1640cb29a249e2536bbb7018923c8c31d54",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "0d43aaa1f6e711c19cf5a930fc57778ae6d7b73a417bc6aa575046b5bc05fdec",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1132e1af9f3c5700bfc1cdd762092217cabd09669aaaa61e5e69f301fc0a0e57",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1283bd24bca9341be58b02f67d1e436d31098c9fe69b64214ff4f9be52d784a4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "14953cfce4dab48158d08172b83d7de61f0afa7b7b31ab6bd1a6b76180fa9e15",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "159776c9357f05a800b9ffb19402648564b579ea7e9689ad3d8c223de114da86",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "16073c0ac382b65e54b7f8bda731e560f60c69da3d0138cd91382b70f8811dd9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1b93eb7e5c0ab282e3290991487653df4e3a026e359833a5d1739a28b4d3229f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1cd06ec3cc5dcc1fa938b5cc2be83195ba4631b27fa6a3f2b9c24df5f25ee502",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1cd6b950783e77bbb6faba0bc902963bd3a1baf59c863632f1afe2e9851c79ce",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1dc3a114640cdb4a82806e34e4c1e2469ccc9b133997923e285d5cf23ba38681",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "1f628325e91c028385f0adce5e1d2861a1d44a00535d6cf4618ff9ba31531911",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "236439b860f9c66738637949b42ab8a2ba78999f997158edfe3be0cca0dba15b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "255db3ff0ec36b2fe5815e76186cc235f0b7d528db6c864e545bbaa2c51d372e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "27bab727687fc9f68aed0762c7e2c0af58ed03e8264c3923fd4dae29fd26b4ec",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "2da020b7cfa89bbea95c3c53639403fc3aeeaef670507c779e2287b95e455a23",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "2efe5e35f4ff8698685936ed5ef7fd9b95b5f547eb91c2ae3e66f71a7617ce7d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "32c64d7f0d4e6be65c6f490ac84e2840f6245a195b860cbd9e3e9b3205720b1b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "367e08b170c2d23e82120f887b0ce4bb76560893128ba9c5bb7741fef794696b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "380acde0b2b6f7012fdd95f037c5216daf811bf4c655b0b63d9aed2c73c9df73",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "39e21a0b2f11e7d43f6d53f907823ea04355ddff847b9ea84a8454185b286d61",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "40d6f34da375fe3c757c7b1e2240ccd27e551f43a22b073535dfa4008956df06",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "419246658b18b3d727d8f6ae7dd0266de97d40ca38bfe9cb9a1c7e4725b0b890",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "43bb97ae376b38f7cbd37d700a0b6a6375ded9e961662ef7ec32669e200a9341",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "4f88b15135b028d791db16f8fc8220fa7f3549ca5ca6b4bd7cf3d4702a280507",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "5943e7672db4a63caef7b50f9e2d08be96cb7a990a272169c8a12a0ef0c1d8a4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "5a3bb1d52a11afea89b7d8afb4cb7e058bf041d828e5c8a0a16dc13119fafec1",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "5d3b8e9cb06a15804d25537343dfdbeddeb0248c7c62cd4e8819281e1018253e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "5efb79dde557e7d632253e220f21c0489f06b16243e4853a89055cea6d3d3e06",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "5f85ec3827cd0fc6af1b534a65093e90aaad8ec388b7d1ee2b4400d8c3d2f5af",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "649021d905d92135a4e0c692bf6ee46f5ab7bab315b11ad1c68956bb74d4044a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "65d0ce67fd56f3b0bb96620b6fd0700951bdbf1f8247969322bceacc25bd1ce0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "6841ae37813b758a5ea67f831b8b3a6daf21b1308efcc8afc21d5902e49ba5f4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "6890a80dfa2f17a082796c64fe5367d77ec8c3ca035ab57f3d9dae4d6cae9ece",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "6e673ade82e089c2f7279407c9c5b8e7f2bac9de637a927f8431af5facea628c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "739c29655c36a0757e0a0f5ae50489d5a7f8ed9b8d5627047e6a177e032faf17",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "77bc884ffac6cf87bfca7757db799296f9a6bc5cc5780a1ac2bc08e1ad2e4c63",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "787c3789e719b90f8805a2301272faea9fdbf51b7bd4a880da102e13ae5ea763",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "79f87c269fe3b74de2156455ac1b7ea141863387aba7e8a73804d1be36f5fc6b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "7d8a0bacefad47089958e272a4bb5f506e5680c760f227fca31e29efe3a848c6",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "7f9abde72302541500da23fcafbf2b45f637e13df1229aa78b5df2dcf03dfec0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "8507f73daf80d4dca210a425e13aeacfb532f582605cb03c2062625bc6f631b2",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "8836ceda5df7e5c46e9ca4906535539e715b655b0109fcb60ffdb45ebbb406ec",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "8c2160048ea8596cb0842c960860f49b3f30985a4cb0820c4ff16ee85581b51c",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "91b98f9a7d948c6f0b9a90da89a51a4809e143b17af91202ff8f0fe7ba3a2b79",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "91d6b46a95d6c2df5612593af2a4ba7d96dcea2a54604cde70c8124305b0811d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "92741f9b3cba025aa71133fe793e40badc6345ad3861f9920f63051a6f059a16",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "9e8cf43cb00e94ea7667635247845be98c6ada4c0630bba582f21d04e87a3135",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "a781f03053f31dcb9049d7983ace93bc1690a477b601d2b0e399daf4309bcd1f",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "a79d07d258e88a5d8de173cc7678773261e8259a7ecb8c8f2654b75889d24550",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "a942e4510ea7597eb8778ef6fd12b1a2b43dd6dade933fcc1a171e6c589d81b3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "aaf5d064f9d8ba1ff5203cb318457f5247397426ce438184dfca9aaddff03a75",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "b0c26fe95f1f2b74aa3864b5c0cffaff9da0069bbbfc82cb1e8441a120206298",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "b3b62f8737a672eba83718b7ce888df8b0f23e3c6f745471e9219ada0d4b9dda",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "b8485725757d41fd6b9b03829e285118085c01cc92e445a6ed2259bfb56cb534",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "b95d28d66c624d09b3cae7d1784d604cba35472e002a6494e42b12a826146285",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "bb196e0ea0e030913026eaaec257bbd17587a99180dfaad1828c570bbfc6f748",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "bdc2031f4746e60f9bfec2577d622a498040bdce122606c4f94a352ba7a502ba",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "bdf256e77a2cebe733b7fea2cca8f5865c5d889a2581b9d9c69cc7123ba403a9",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "c30bea51a9322d2c6233699137f9a64584e1478fdbfaa56e083697a4a8fd14aa",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "c4ae85563a2488e4d1ff409df5f20fa19216b3661389ab003e792e3fceaf303d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "cd6e4ae53382cbb6989f6619a3fac051986de0eddb6b7d90aef39cf01edc7b06",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "ce6693ac0988189129344040eeaa3f1ee988dcf8a268a3fff31bda19c012d4c8",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d166d838020d1a08be48c19923b7ed373814751245c3cdf64b95499b811cfbc0",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d2a06fd39620b3375d08cbe015e722a516d8db82181f07a0f9a1427ee99f2ab7",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d39258e139cff2c9f130a000ed9f6e4b2adfec261e39fc604acc03456c7ee1c3",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d4e0eb600cc245085b1b66b456f89051313bacb8081ab89fccb15fdc49de8616",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d836f93f1baa610d0b977d83d7ceeeba0aa38aad30d21e2a6ca44c0226c8bc41",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "d8afc814b4569e57162c21dfc5ea6d7e792f8c1a444d0d274d7cf6273578cf53",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "da65902874f17eb3d1167cd9533684a25230258efe56fc082760252fc5026aa4",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "dbe2b6c9f3a78cccbe432f96947046b8e2a234a6c6ff50c6940e7435026a3d6d",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "dfa30acf9964946daf055117e814fd8d663e49838b2304d65c9f9d2a3f8b63bb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "e24de616732ad0ec3dd1655df3ad2ea212421c487d9a7ea1fc5932452a89fb88",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "e3e48df5df635b64ca55fc5530336f0c6457fc8a71bbb6e0597443fa6a50d80e",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "e72dcedba4c8991f9fa0b7c246b08750645f4a8deb8bb8817de7cc00bf4a8ebb",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "f4fb5c419b3f70aaced0cb7288b6b00a4dbf4a7de3d1c41a312c2943302bec47",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "f800840878f3c047eabfe53dea547b1d81c2da211c2ec602a14f5e4635f6719b",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "f9a12745c5a609dad7eccdaf8eb82a58a0e38e6c465d1d3d8c3c53cb991d9179",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "fb4b5b5c97263d0c30ea22fa6a03bef20fa03246da59f07e99dda50703b7bd75",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "fba85896ead33afc16d36d4e538fd8ebb99569c103e22e4716d425535dd77421",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "fd4247dd89e8b9e61ec97cf12fb5cf945ed2658d5e4e01d0528e9407b65dd005",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "fea39a25f936fa69ac4fb8aa2cb02a34013943c478036ca5a6a137defb17ae49",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "ffa76a0def281e6d0ad0ff3a445d6f62c45049898373a232f88fe539e03c5106",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
-    },
-    {
-      "path": "file.ts",
-      "script": false,
-      "sha256": "ffbaf8f541bbfd36a32be83b69a30ad3971397bdd3448b74653b7a578f4f977a",
-      "verdicts": [
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "typescript 5.9.3",
-          "syntax": []
-        },
-        {
-          "grammar": [],
-          "parser": "@babel/parser 7.28.5",
-          "syntax": []
-        }
-      ]
+      "sha256": "056ee133a2afed709f50ec062a20efe76501f5dd7a9d7ae67f411ecdb4f03cae"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "064fad97b6fc70f5e34c8eb7be9a440d0db32f1c0867a3927100705d7f2812fb"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "077061ce644d6fa27c4b09213e0a23deae6cbd154682f13b2476dd8c520962c0"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "0b7b5acfcf2fc51e45a972fcefc3a1640cb29a249e2536bbb7018923c8c31d54"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "0d43aaa1f6e711c19cf5a930fc57778ae6d7b73a417bc6aa575046b5bc05fdec"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1132e1af9f3c5700bfc1cdd762092217cabd09669aaaa61e5e69f301fc0a0e57"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1283bd24bca9341be58b02f67d1e436d31098c9fe69b64214ff4f9be52d784a4"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "14953cfce4dab48158d08172b83d7de61f0afa7b7b31ab6bd1a6b76180fa9e15"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "159776c9357f05a800b9ffb19402648564b579ea7e9689ad3d8c223de114da86"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "16073c0ac382b65e54b7f8bda731e560f60c69da3d0138cd91382b70f8811dd9"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1b93eb7e5c0ab282e3290991487653df4e3a026e359833a5d1739a28b4d3229f"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1cd06ec3cc5dcc1fa938b5cc2be83195ba4631b27fa6a3f2b9c24df5f25ee502"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1cd6b950783e77bbb6faba0bc902963bd3a1baf59c863632f1afe2e9851c79ce"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1dc3a114640cdb4a82806e34e4c1e2469ccc9b133997923e285d5cf23ba38681"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "1f628325e91c028385f0adce5e1d2861a1d44a00535d6cf4618ff9ba31531911"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "236439b860f9c66738637949b42ab8a2ba78999f997158edfe3be0cca0dba15b"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "255db3ff0ec36b2fe5815e76186cc235f0b7d528db6c864e545bbaa2c51d372e"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "27bab727687fc9f68aed0762c7e2c0af58ed03e8264c3923fd4dae29fd26b4ec"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "2da020b7cfa89bbea95c3c53639403fc3aeeaef670507c779e2287b95e455a23"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "2efe5e35f4ff8698685936ed5ef7fd9b95b5f547eb91c2ae3e66f71a7617ce7d"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "32c64d7f0d4e6be65c6f490ac84e2840f6245a195b860cbd9e3e9b3205720b1b"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "367e08b170c2d23e82120f887b0ce4bb76560893128ba9c5bb7741fef794696b"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "380acde0b2b6f7012fdd95f037c5216daf811bf4c655b0b63d9aed2c73c9df73"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "39e21a0b2f11e7d43f6d53f907823ea04355ddff847b9ea84a8454185b286d61"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "40d6f34da375fe3c757c7b1e2240ccd27e551f43a22b073535dfa4008956df06"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "419246658b18b3d727d8f6ae7dd0266de97d40ca38bfe9cb9a1c7e4725b0b890"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "43bb97ae376b38f7cbd37d700a0b6a6375ded9e961662ef7ec32669e200a9341"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "4f88b15135b028d791db16f8fc8220fa7f3549ca5ca6b4bd7cf3d4702a280507"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "5943e7672db4a63caef7b50f9e2d08be96cb7a990a272169c8a12a0ef0c1d8a4"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "5a3bb1d52a11afea89b7d8afb4cb7e058bf041d828e5c8a0a16dc13119fafec1"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "5d3b8e9cb06a15804d25537343dfdbeddeb0248c7c62cd4e8819281e1018253e"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "5efb79dde557e7d632253e220f21c0489f06b16243e4853a89055cea6d3d3e06"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "5f85ec3827cd0fc6af1b534a65093e90aaad8ec388b7d1ee2b4400d8c3d2f5af"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "649021d905d92135a4e0c692bf6ee46f5ab7bab315b11ad1c68956bb74d4044a"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "65d0ce67fd56f3b0bb96620b6fd0700951bdbf1f8247969322bceacc25bd1ce0"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "6841ae37813b758a5ea67f831b8b3a6daf21b1308efcc8afc21d5902e49ba5f4"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "6890a80dfa2f17a082796c64fe5367d77ec8c3ca035ab57f3d9dae4d6cae9ece"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "6e673ade82e089c2f7279407c9c5b8e7f2bac9de637a927f8431af5facea628c"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "739c29655c36a0757e0a0f5ae50489d5a7f8ed9b8d5627047e6a177e032faf17"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "77bc884ffac6cf87bfca7757db799296f9a6bc5cc5780a1ac2bc08e1ad2e4c63"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "787c3789e719b90f8805a2301272faea9fdbf51b7bd4a880da102e13ae5ea763"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "79f87c269fe3b74de2156455ac1b7ea141863387aba7e8a73804d1be36f5fc6b"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "7d8a0bacefad47089958e272a4bb5f506e5680c760f227fca31e29efe3a848c6"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "7f9abde72302541500da23fcafbf2b45f637e13df1229aa78b5df2dcf03dfec0"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "8507f73daf80d4dca210a425e13aeacfb532f582605cb03c2062625bc6f631b2"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "8836ceda5df7e5c46e9ca4906535539e715b655b0109fcb60ffdb45ebbb406ec"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "8c2160048ea8596cb0842c960860f49b3f30985a4cb0820c4ff16ee85581b51c"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "91b98f9a7d948c6f0b9a90da89a51a4809e143b17af91202ff8f0fe7ba3a2b79"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "91d6b46a95d6c2df5612593af2a4ba7d96dcea2a54604cde70c8124305b0811d"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "92741f9b3cba025aa71133fe793e40badc6345ad3861f9920f63051a6f059a16"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "9e8cf43cb00e94ea7667635247845be98c6ada4c0630bba582f21d04e87a3135"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "a781f03053f31dcb9049d7983ace93bc1690a477b601d2b0e399daf4309bcd1f"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "a79d07d258e88a5d8de173cc7678773261e8259a7ecb8c8f2654b75889d24550"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "a942e4510ea7597eb8778ef6fd12b1a2b43dd6dade933fcc1a171e6c589d81b3"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "aaf5d064f9d8ba1ff5203cb318457f5247397426ce438184dfca9aaddff03a75"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "b0c26fe95f1f2b74aa3864b5c0cffaff9da0069bbbfc82cb1e8441a120206298"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "b3b62f8737a672eba83718b7ce888df8b0f23e3c6f745471e9219ada0d4b9dda"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "b8485725757d41fd6b9b03829e285118085c01cc92e445a6ed2259bfb56cb534"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "b95d28d66c624d09b3cae7d1784d604cba35472e002a6494e42b12a826146285"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "bb196e0ea0e030913026eaaec257bbd17587a99180dfaad1828c570bbfc6f748"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "bdc2031f4746e60f9bfec2577d622a498040bdce122606c4f94a352ba7a502ba"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "bdf256e77a2cebe733b7fea2cca8f5865c5d889a2581b9d9c69cc7123ba403a9"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "c30bea51a9322d2c6233699137f9a64584e1478fdbfaa56e083697a4a8fd14aa"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "c4ae85563a2488e4d1ff409df5f20fa19216b3661389ab003e792e3fceaf303d"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "cd6e4ae53382cbb6989f6619a3fac051986de0eddb6b7d90aef39cf01edc7b06"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "ce6693ac0988189129344040eeaa3f1ee988dcf8a268a3fff31bda19c012d4c8"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d166d838020d1a08be48c19923b7ed373814751245c3cdf64b95499b811cfbc0"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d2a06fd39620b3375d08cbe015e722a516d8db82181f07a0f9a1427ee99f2ab7"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d39258e139cff2c9f130a000ed9f6e4b2adfec261e39fc604acc03456c7ee1c3"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d4e0eb600cc245085b1b66b456f89051313bacb8081ab89fccb15fdc49de8616"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d836f93f1baa610d0b977d83d7ceeeba0aa38aad30d21e2a6ca44c0226c8bc41"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "d8afc814b4569e57162c21dfc5ea6d7e792f8c1a444d0d274d7cf6273578cf53"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "da65902874f17eb3d1167cd9533684a25230258efe56fc082760252fc5026aa4"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "dbe2b6c9f3a78cccbe432f96947046b8e2a234a6c6ff50c6940e7435026a3d6d"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "dfa30acf9964946daf055117e814fd8d663e49838b2304d65c9f9d2a3f8b63bb"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "e24de616732ad0ec3dd1655df3ad2ea212421c487d9a7ea1fc5932452a89fb88"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "e3e48df5df635b64ca55fc5530336f0c6457fc8a71bbb6e0597443fa6a50d80e"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "e72dcedba4c8991f9fa0b7c246b08750645f4a8deb8bb8817de7cc00bf4a8ebb"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "f4fb5c419b3f70aaced0cb7288b6b00a4dbf4a7de3d1c41a312c2943302bec47"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "f800840878f3c047eabfe53dea547b1d81c2da211c2ec602a14f5e4635f6719b"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "f9a12745c5a609dad7eccdaf8eb82a58a0e38e6c465d1d3d8c3c53cb991d9179"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "fb4b5b5c97263d0c30ea22fa6a03bef20fa03246da59f07e99dda50703b7bd75"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "fba85896ead33afc16d36d4e538fd8ebb99569c103e22e4716d425535dd77421"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "fd4247dd89e8b9e61ec97cf12fb5cf945ed2658d5e4e01d0528e9407b65dd005"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "fea39a25f936fa69ac4fb8aa2cb02a34013943c478036ca5a6a137defb17ae49"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "ffa76a0def281e6d0ad0ff3a445d6f62c45049898373a232f88fe539e03c5106"
+    },
+    {
+      "path": "file.ts",
+      "script": false,
+      "sha256": "ffbaf8f541bbfd36a32be83b69a30ad3971397bdd3448b74653b7a578f4f977a"
+    }
+  ],
+  "parsers": [
+    {
+      "grammar": true,
+      "parser": "typescript 5.9.3"
+    },
+    {
+      "grammar": true,
+      "parser": "typescript 5.9.3"
+    },
+    {
+      "grammar": true,
+      "parser": "@babel/parser 7.28.5"
     }
   ],
   "pins": {

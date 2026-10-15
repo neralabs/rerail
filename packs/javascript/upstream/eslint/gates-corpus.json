@@ -1,6 +1,20 @@
 {
   "files": [],
-  "format": "rerail.gates-corpus/v1",
+  "format": "rerail.gates-corpus/v2",
+  "parsers": [
+    {
+      "grammar": true,
+      "parser": "typescript 6.0.3"
+    },
+    {
+      "grammar": true,
+      "parser": "typescript 5.9.3"
+    },
+    {
+      "grammar": true,
+      "parser": "@babel/parser 7.28.5"
+    }
+  ],
   "pins": {
     "corpora": [],
     "tasks": "bf4fb214fa72af777707d6e3c457cb836a7db1f33cffcaaeca7533d978e5c55e"

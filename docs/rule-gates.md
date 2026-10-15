@@ -133,6 +133,14 @@ is not a file of its own (Ruff's test-module strings, the `code` of each ESLint 
 `gates.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material: the recorder lists it in
 the upstream's `UPSTREAM.md` as excerpts, and `REUSE.toml` annotates it under upstream's licence and Apache-2.0.
 
+Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python) read every
+case source and every corpus file, so a file the engine cannot parse can be told from a file that is not valid source.
+Nine of ten corpus files are source every parser accepts, and writing the same silent verdict list on each of them was
+most of both recordings, so a recording names its parsers once in `parsers` and leaves `verdicts` off an entry no
+parser objected to. The entry itself stays, with its path and its sha256: an entry with no `verdicts` means every
+parser was silent, and no entry at all means the source was never recorded — a golden whose text changed, say — on
+which the gates have no verdict and draw no conclusion.
+
 ## CI
 
 `ci.yml` calls `rule-gates.yml` after its build job when a pull request touches `packs/`, `conformance/`, the engine
