@@ -214,8 +214,8 @@ policy("no-head-element", "a <head> opening element, unless the file's path cont
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
     message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-head-element`,
   },
-// A candidate although it passes its fixtures here: the V1 rule validation gates evaluate each upstream case at its own
-// file name, and the plugin's invalid[1] is JSX at pages/index.ts, which the engine reads as TypeScript and reports nothing on.
+// A candidate, though it now passes every rule gate: they no longer score the plugin's invalid[1], JSX at pages/index.ts
+// that upstream's own parser rejects. Promoting it is for review.
 ], { candidate: true });
 
 policy("no-sync-scripts", "a <script> opening element with a src attribute and neither async nor defer.", [
@@ -624,8 +624,8 @@ policy(
       message: LOCATION_MESSAGE,
     },
   ],
-  // A candidate although it passes its fixtures here: the V1 rule validation gates drop the browser globals the plugin's
-  // RuleTester declares, so upstream reports none of the 29 findings this port reproduces.
+  // A candidate, though it now passes every rule gate: they lint in eslint-config-next's environment, whose browser
+  // globals let upstream report the 29 findings this port reproduces. Promoting it is for review.
   { candidate: true },
 );
 

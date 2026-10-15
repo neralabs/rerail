@@ -107,6 +107,8 @@ jobs:
             shards: 8
           - pack: typescript
             tool: eslint-plugin-vitest
+          - pack: next
+            tool: eslint-plugin-next
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
