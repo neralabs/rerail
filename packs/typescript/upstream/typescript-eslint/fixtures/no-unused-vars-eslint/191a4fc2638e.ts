@@ -1,0 +1,9 @@
+
+(function () {
+  function foox() {
+    if (true) {
+      return foox();
+    }
+  }
+})();
+      

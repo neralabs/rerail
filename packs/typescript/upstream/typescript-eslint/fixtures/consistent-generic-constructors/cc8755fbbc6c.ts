@@ -1,0 +1,1 @@
+const a = new (class C<T> {})<string>();

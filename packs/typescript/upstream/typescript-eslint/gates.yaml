@@ -1,0 +1,96 @@
+adapter: eslint
+# typescript-eslint's documents in rerail's typescript pack (NER-1737). The pack's eslint-* documents are ESLint core
+# ports that move to the javascript pack, where javascript-eslint lists them.
+rerail:
+  pack: typescript
+  project: typescript-eslint
+upstream:
+  name: typescript-eslint/typescript-eslint plugin rules
+  repository: https://github.com/typescript-eslint/typescript-eslint
+  # The release rerail's typescript pack records (packs/typescript/licenses/typescript-eslint/UPSTREAM.md:
+  # typescript-eslint 8.70.1 at this commit); tag v8.70.1.
+  commit: 23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7
+  version: 8.70.1
+  license: MIT
+  runtime: typescript-eslint-8.70.1
+  # typescript-eslint's recommended configurations, as `tseslint.configs.recommended` and `.recommendedTypeChecked`
+  # (the plugin's flat/ entries). Team decision: docs/users/Shared_Configurations.mdx at the pinned commit says most
+  # projects should extend from one of recommended, recommended-type-checked, strict or strict-type-checked (the strict
+  # two "not considered stable under semver"), and separately from stylistic or stylistic-type-checked; its getting
+  # started suggests recommended plus stylistic. Only the recommended pair is approved here, as tslint:recommended and
+  # tslint:latest were for TSLint; strict and stylistic are one line each to add.
+  recommended_configs:
+    - flat/recommended
+    - flat/recommended-type-checked
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - "npm: 169,864,457 downloads of @typescript-eslint/eslint-plugin in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
+    - "npm: 112,639,766 downloads of typescript-eslint in the same week"
+    - "GitHub: typescript-eslint/typescript-eslint has 16,410 stars and is not archived"
+known_gaps: []
+# Decisions for the team to confirm (the eslint adapter's literal readings):
+# - Gate 5 runs every case of packages/eslint-plugin/tests/rules/**/*.test.ts through upstream's own RuleTester, as
+#   the approved configuration configures a project: with the rule at the options of its first approved
+#   configuration in place of the case's own (the TSLint precedent), and without the globals the case or its
+#   RuleTester declares (languageOptions.globals), which the recommended configurations do not declare and a port
+#   cannot see. The settings the case or its RuleTester declares (`settings`) are left out the same way; no
+#   typescript-eslint rule reads them. The case's parser, parserOptions and file name stay, since they define the
+#   language its code is in. Type-checked rules lint with the tsconfig fixtures upstream's tests use
+#   (packages/eslint-plugin/tests/fixtures). A case that declares globals or settings is not compared with its
+#   written expectation. Keeping the case's globals instead changes no verdict here; no-redeclare expects 31
+#   findings instead of 30 and fails either way.
+# - A rule's end positions are compared only when every finding upstream reports on its own tests carries one.
+# - Gate 3's upstream code for a rule is its file; the modules it imports by relative path, followed transitively (other
+#   rules aside); the module that defines each name it imports from one of the `helpers` packages below, and of what
+#   that module imports from another `helpers` package only JSON data (is-builtin-module's builtin-modules list), not
+#   that package's code (@typescript-eslint/utils re-exports token predicates from @eslint-community/eslint-utils, a
+#   single-file bundle holding the whole library's strings) nor its own package's internals; the ESLint rule a
+#   typescript-eslint rule extends, read the same way; and the
+#   helper modules the approved configurations' parser calls, since every rule reads the scopes that parser builds.
+#   Every word of their strings counts except in `meta`'s documentation (docs, schema): `meta.messages` and
+#   `meta.defaultOptions` count, and so do object literal keys (lookup tables such as conf/globals.js and
+#   ReferenceTracker trace maps).
+# - Gate 3's comment vocabulary, which explains words only in regexes that read comment text, is TypeScript's JSDoc tags
+#   and pragmas, ESLint's directive names, and the values ESLint's directives take, read from the pinned eslint: a
+#   global's setting (normalizeConfigGlobal's off, readonly, readable, writable, writeable, true, false) and a rule's
+#   severity (shared/severity.js's off, warn, error).
+# - Gate 3's test words are, for every RuleTester case of every upstream test file: its code and the code it expects
+#   after fixes (output and each suggestion's output), read with the scanner; its options, settings and the names of the
+#   globals it declares; and what it expects reported (each error's message and data values, each suggestion's
+#   description and data values). So are the files under packages/eslint-plugin/tests/fixtures, which type-checked cases
+#   compile against. The test modules' RuleTester scaffolding (valid, invalid, errors, messageId) is not read: it is the
+#   test framework's vocabulary, not upstream's test code.
+# - File types: of the approved configurations' entries only typescript-eslint/eslint-recommended sets `files` (**/*.ts,
+#   **/*.tsx, **/*.mts, **/*.cts); base and recommended set none, so the plugin's rules also run on ESLint's defaults
+#   .js, .mjs and .cjs. All seven are Gate 2's in-scope samples. Gate 6 takes the corpus's 39 .ts and 57 .tsx files, not
+#   its 11 .jsx, which no approved configuration lints.
+# - Type-checked rules report nothing on the corpus (a set of patched files is not a buildable project), as ADR 0006
+#   says.
+# - Upstream's tests run in validation/upstream/typescript-eslint-8.70.1 on the eslint (10.8.1), typescript (6.0.3) and
+#   tsx versions typescript-eslint's own v8.70.1 pnpm-lock.yaml resolves, not on ESLint 10.11.0.
+eslint:
+  plugin:
+    package: "@typescript-eslint/eslint-plugin"
+    namespace: "@typescript-eslint"
+  # The plugin publishes dist/, built from src/; its tests import ../../src/rules/<rule>, which run as the installed build.
+  release:
+    tag: v8.70.1
+    path: packages/eslint-plugin/src
+    installed: "@typescript-eslint/eslint-plugin/dist"
+    verbatim: false
+  implementation: packages/eslint-plugin/src/rules/{rule}.ts
+  tests: ["packages/eslint-plugin/tests/rules/**/*.test.ts"]
+  # The files type-checked cases compile against (file.ts, react.tsx, deprecated.ts, the tsconfig variants).
+  test_fixtures: ["packages/eslint-plugin/tests/fixtures/**"]
+  # Helper libraries typescript-eslint's rules are written with, from its own monorepo, and ESLint's for the ESLint
+  # rules some of them extend. Parsers (@typescript-eslint/typescript-estree, @eslint-community/regexpp) and the
+  # TypeScript compiler with its API utilities (typescript, ts-api-utils) are not rule helpers and are not read, as
+  # TSLint's typescript and tsutils are not. The approved configurations' parser calls @typescript-eslint/scope-manager's
+  # analyze, whose default jsxPragma is React; every rule reads the scopes it builds.
+  helpers:
+    - "@eslint-community/eslint-utils"
+    - "@typescript-eslint/scope-manager"
+    - "@typescript-eslint/type-utils"
+    - "@typescript-eslint/utils"
+  checkout: ["/packages/eslint-plugin/", "/LICENSE", "/NOTICE", "/package.json"]

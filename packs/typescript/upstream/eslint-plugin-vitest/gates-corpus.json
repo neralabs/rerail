@@ -1,0 +1,1049 @@
+{
+  "files": [
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/base/browser/dompurify/dompurify.js",
+      "sha256": "0f5bcc52bbee29587b5589098b2b210541cf30de6a2a056b278cc1a783ea6fd3",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/base/common/marked/marked.js",
+      "sha256": "75746ae6ff08f4e9b94090ed018e5ac1bf7dbb7e8fcdb4ec48784bd6569d9fda",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/base/common/semver/semver.js",
+      "sha256": "6aa72d93b301d66fb176a1abe25a30d64b388bfacb5fbb8749b3b60394fffe05",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/base/test/common/filters.perf.data.js",
+      "sha256": "7bc6918c00b9d4a8de80b5b17769367599468ad6276bb79a17e2e9f6515e5b81",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/editor/test/node/diffing/fixtures/difficult-move/1.js",
+      "sha256": "6317784aed3f8a079391179cc9ee7486f2de0c7bd051ff2f95cfe565210c41f3",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/editor/test/node/diffing/fixtures/difficult-move/2.js",
+      "sha256": "aaee34115d73a9a52a4bd2d2f4393ddba6b5adff7ab4b59ae51faac8e7d1637a",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/editor/test/node/diffing/fixtures/just-whitespace/1.js",
+      "sha256": "85fe7ebd58913139025a154d6d1ce1a5f68e8f493a8c0440195b5743f5a1036b",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/editor/test/node/diffing/fixtures/just-whitespace/2.js",
+      "sha256": "d6438bac3293dd30621cb727c621ac73b1c5fe5c9524a2e1a190d29f453009fa",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/examples/company.js",
+      "sha256": "8ad56113646f2cd0399fbe6b547ec5048c16356d28be9309439acd6821c31d57",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: Argument name clash",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/examples/conway.js",
+      "sha256": "aa7d4030031eb558e2d124d1feb1580c7e373de737f6ad6109df5543ef164afe",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [
+            "Argument name clash. (9:33)",
+            "Argument name clash. (9:43)",
+            "Argument name clash. (9:51)"
+          ],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: The keyword 'implements' is reserved",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/examples/employee.js",
+      "sha256": "7c22cb73e21fa56e25fd178d5ecbf62ac853aa95c37e8fa4916cbe8f224a204c",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": [
+            "Unexpected token (23:5)"
+          ]
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/examples/small.js",
+      "sha256": "4041bd2c4bb3ceb64fcfa15e82466f7b694c411fecce73ef7e5cb23809535300",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/other/deep/company.js",
+      "sha256": "8ad56113646f2cd0399fbe6b547ec5048c16356d28be9309439acd6821c31d57",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: Argument name clash",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/other/deep/conway.js",
+      "sha256": "aa7d4030031eb558e2d124d1feb1580c7e373de737f6ad6109df5543ef164afe",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [
+            "Argument name clash. (9:33)",
+            "Argument name clash. (9:43)",
+            "Argument name clash. (9:51)"
+          ],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: The keyword 'implements' is reserved",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/other/deep/employee.js",
+      "sha256": "7c22cb73e21fa56e25fd178d5ecbf62ac853aa95c37e8fa4916cbe8f224a204c",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": [
+            "Unexpected token (23:5)"
+          ]
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/resolver/other/deep/small.js",
+      "sha256": "4041bd2c4bb3ceb64fcfa15e82466f7b694c411fecce73ef7e5cb23809535300",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/service/deep/company.js",
+      "sha256": "8ad56113646f2cd0399fbe6b547ec5048c16356d28be9309439acd6821c31d57",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: Argument name clash",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/service/deep/conway.js",
+      "sha256": "aa7d4030031eb558e2d124d1feb1580c7e373de737f6ad6109df5543ef164afe",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [
+            "Argument name clash. (9:33)",
+            "Argument name clash. (9:43)",
+            "Argument name clash. (9:51)"
+          ],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: The keyword 'implements' is reserved",
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/service/deep/employee.js",
+      "sha256": "7c22cb73e21fa56e25fd178d5ecbf62ac853aa95c37e8fa4916cbe8f224a204c",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": [
+            "Unexpected token (23:5)"
+          ]
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/platform/files/test/node/fixtures/service/deep/small.js",
+      "sha256": "4041bd2c4bb3ceb64fcfa15e82466f7b694c411fecce73ef7e5cb23809535300",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/sessions/test/e2e/common.cjs",
+      "sha256": "7fb3e06c76b1917bea89e3f9d25fcdea4b90a685e4c33f9a1440c7d7cfdbb07c",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/sessions/test/e2e/extensions/sessions-e2e-mock/extension.js",
+      "sha256": "bb817ed57e80c164e2bfbed776a7aa8d026f292188a7485159197fb9a34a43f4",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/sessions/test/e2e/generate.cjs",
+      "sha256": "3023aaa9f35cb560864ff2bdb52ba86c5e27d45394c7d791aa9cc70da5badda8",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/sessions/test/e2e/test.cjs",
+      "sha256": "e9a1dc70e7e2f22a2bdafbf7d5aaa077a434c70a4909b5b60333a545eabb1807",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/contrib/webview/browser/pre/service-worker.js",
+      "sha256": "83c76adde3ba663433523660289f99111bf00f395ef541d567c060a6f7cc7d8e",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/linux_de_ch.js",
+      "sha256": "938eb3a831f21aeaad1a8d9fc5618bdc3b125599338fc7fe71f1931a7127f9d4",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/linux_en_uk.js",
+      "sha256": "1f4de31b6ce508452906667bdbdffbf795f7f7c92f75ce513f923c8f0a179395",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/linux_en_us.js",
+      "sha256": "d3730b3440d5dc7f4969116d760f693110b3fa3b91a737c517cc1166f6dd735e",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/linux_ru.js",
+      "sha256": "7291a1c0fa299c70b535d38d52123ee57d9a642a0cd18be57d1eb375794282e3",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/mac_de_ch.js",
+      "sha256": "6cc54e2124cb0c7e7ccbba5b477c6ea2969d99c0248d209afe49b8166ec8a8e7",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/mac_en_us.js",
+      "sha256": "86a9d584e9447be6758ee995252468a8380b9a7c6872bbe387c89b9fcaeee73a",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/mac_zh_hant.js",
+      "sha256": "fd0167a9ed04b21067c90cb60f0e9f928982888403a446e25bb3c6bc73f5ee03",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/mac_zh_hant2.js",
+      "sha256": "4b4a21e790c484d1b19878acd8529e88a22dbfe2801d2037d4395da62f8e6a5b",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/win_de_ch.js",
+      "sha256": "2e697c330a5742ab822e966438e22c4201811450d370f2da8b194e66f1c0ce77",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/win_en_us.js",
+      "sha256": "c6a286afb3e17ba19b835b065f5cd6c8abce5198196fc8b6c3d36ede9cbd25a4",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/win_por_ptb.js",
+      "sha256": "74996df6cf785adbc187fee6c6efe8da5bbf2b7a77531da267a4eb6fe621d55f",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/keybinding/test/node/win_ru.js",
+      "sha256": "22942b6c0e0aa70e0366a1fd0808148f9bdcb9f5dda48c861727f4cb098270fb",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: Argument name clash",
+      "findings": {},
+      "path": "src/vs/workbench/services/search/test/node/fixtures/examples/NullPoinderException.js",
+      "sha256": "f92410f141b2ac32b818a62c28c4ef23844aa4aa356413439529c89e11a50847",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [
+            "Argument name clash. (10:33)",
+            "Argument name clash. (10:43)",
+            "Argument name clash. (10:51)"
+          ],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/search/test/node/fixtures/examples/company.js",
+      "sha256": "8ad56113646f2cd0399fbe6b547ec5048c16356d28be9309439acd6821c31d57",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    },
+    {
+      "excluded": "upstream's parser reports Parsing error: The keyword 'implements' is reserved",
+      "findings": {},
+      "path": "src/vs/workbench/services/search/test/node/fixtures/examples/employee.js",
+      "sha256": "fc4ff6b243678defdaa34dd5c3392dd0e12faf4567abf86993835795f2301e0c",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": [
+            "TS1109 Expression expected."
+          ]
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": [
+            "Unexpected token (23:5)"
+          ]
+        }
+      ]
+    },
+    {
+      "excluded": null,
+      "findings": {},
+      "path": "src/vs/workbench/services/search/test/node/fixtures/examples/small.js",
+      "sha256": "4041bd2c4bb3ceb64fcfa15e82466f7b694c411fecce73ef7e5cb23809535300",
+      "task": "rerail:vscode",
+      "verdicts": [
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "typescript 5.9.3",
+          "syntax": []
+        },
+        {
+          "grammar": [],
+          "parser": "@babel/parser 7.28.5",
+          "syntax": []
+        }
+      ]
+    }
+  ],
+  "format": "rerail.gates-corpus/v1",
+  "pins": {
+    "corpora": [
+      {
+        "commit": "729f257fa411ea4b1cbdb7f404aa79941182209b",
+        "exclude": [],
+        "name": "vscode",
+        "paths": [
+          "src"
+        ],
+        "repository": "https://github.com/microsoft/vscode"
+      }
+    ],
+    "tasks": "bf4fb214fa72af777707d6e3c457cb836a7db1f33cffcaaeca7533d978e5c55e"
+  },
+  "rules": [
+    "vitest/expect-expect",
+    "vitest/no-disabled-tests",
+    "vitest/no-focused-tests"
+  ],
+  "tool": "eslint-plugin-vitest"
+}

@@ -112,6 +112,10 @@ jobs:
             tool: eslint
           - pack: javascript
             tool: eslint-plugin-unicorn
+          - pack: typescript
+            tool: typescript-eslint
+          - pack: typescript
+            tool: eslint-plugin-vitest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

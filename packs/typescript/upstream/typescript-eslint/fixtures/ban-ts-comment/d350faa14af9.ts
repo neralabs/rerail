@@ -1,0 +1,1 @@
+//// @ts-check - pragma comments may contain 2 or 3 leading slashes
