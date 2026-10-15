@@ -8,6 +8,7 @@ import {
   type RuleSteerDelivery,
   CodeRuleBridge,
   openRerailDatabase,
+  SqliteAuditControlStore,
   setRuleSetting,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
@@ -208,6 +209,94 @@ describe("Rerail session startup", () => {
       expect(begun).not.toHaveBeenCalled();
     } finally {
       begun.mockRestore();
+    }
+  });
+});
+
+describe("A scan requested while the session's evaluator is still opening", () => {
+  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested and claimed meanwhile. */
+  async function scanFixture() {
+    const root = await mkdtemp(join(tmpdir(), "rerail-scan-opening-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    const opening = Promise.withResolvers<void>();
+    const scans: string[] = [];
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath,
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ audits, workspaceRoot }) => ({
+        openWorkspace: async () => { await opening.promise; },
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        audit: async (sessionId, input) => {
+          // The repository audit the runtime starts itself once open is not the scan under test.
+          if (input.audit !== undefined) return [];
+          const auditId = audits.start({
+            sessionId, workspaceRoot, scope: input.scope, mode: input.mode,
+            revision: 0, catalogRevision: null, ruleRevisions: [], paths: [],
+          });
+          audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+          scans.push(auditId);
+          return [auditId];
+        },
+        close: async () => undefined,
+      }),
+    });
+    const session = { host: "omp" as const, sessionId: "scan-opening", cwd: root };
+    await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    const controls = new SqliteAuditControlStore(databasePath);
+    const request = controls.requestAudit(session.sessionId, { scope: "repository" });
+    // The control timer claims it within 250 ms, with the evaluator still held in its open.
+    const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
+    await vi.waitFor(() => expect(statusOf()).not.toBe("queued"), { timeout: 4_000 });
+    expect(statusOf()).toBe("running");
+    const settled = async () => {
+      await vi.waitFor(
+        () => expect(controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status).not.toBe("running"),
+        { timeout: 10_000 },
+      );
+      return controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)!;
+    };
+    const close = async () => {
+      opening.resolve();
+      await runtime.dispose();
+      controls.close();
+    };
+    return { opening, scans, settled, close };
+  }
+
+  it("completes with its audit once the evaluator has opened", async () => {
+    const test = await scanFixture();
+    try {
+      expect(test.scans).toEqual([]);
+      test.opening.resolve();
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
+      expect(test.scans).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("reports why the evaluator could not open when it fails, not that a run went unrecorded", async () => {
+    const test = await scanFixture();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      test.opening.reject(new Error("Workspace unavailable"));
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "failed", auditIds: [] });
+      expect(request.error).toContain("Workspace unavailable");
+      expect(request.error).not.toContain("without a recorded run");
+    } finally {
+      stderr.mockRestore();
+      await test.close();
     }
   });
 });

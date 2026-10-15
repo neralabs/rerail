@@ -146,14 +146,18 @@ describe("NativeSessionServer request boundary", () => {
   });
 
   describe("while the session's code-rule evaluator is still opening", () => {
-    async function held() {
+    async function held(realOpen = false) {
       root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
       vi.stubEnv("RERAIL_HOME", join(root, "home"));
       const databasePath = join(root, "rerail.sqlite");
       startTestRepository(root, databasePath);
       const opening = Promise.withResolvers<void>();
-      // The held evaluator opens when released; what it opens is not under test, that the bridge it opens for is closed is.
-      const openSpy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async () => { await opening.promise; });
+      // The held evaluator opens when released (really, when `realOpen`); that the bridge it opens for is closed is under test.
+      const open = CodeRuleBridge.prototype.openWorkspace;
+      const openSpy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async function (this: CodeRuleBridge, sessionId: string) {
+        await opening.promise;
+        if (realOpen) await open.call(this, sessionId);
+      });
       const closeSpy = vi.spyOn(CodeRuleBridge.prototype, "close");
       server = new NativeSessionServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath });
       return {
@@ -162,6 +166,20 @@ describe("NativeSessionServer request boundary", () => {
         restore: () => { opening.resolve(); openSpy.mockRestore(); closeSpy.mockRestore(); },
       };
     }
+
+    it("releases the evaluator it closed over while its stores are still open, and waits for that when the server closes", async () => {
+      const { opening, closeSpy, session, restore } = await held(true);
+      try {
+        await server!.handle({ ...session, operation: "initialize", entries: [] });
+        await server!.handle({ ...session, operation: "close" });
+        opening.resolve();
+        await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1), { timeout: 20_000 });
+        await server!.close();
+        await expect(closeSpy.mock.results[0]!.value).resolves.toBeUndefined();
+      } finally {
+        restore();
+      }
+    }, 30_000);
 
     it("closes the session without waiting for it, and the evaluator is closed once it has opened", async () => {
       const { opening, closeSpy, session, restore } = await held();

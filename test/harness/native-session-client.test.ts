@@ -487,6 +487,48 @@ describe("daemon native client polling resilience", () => {
     expect(gaps).toHaveLength(attempts);
   });
 
+  it("sends close five seconds after a daemon that never answers the closing gap record, and still closes", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const operations: string[] = [];
+    let wedged = false;
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const { operation } = readBody(init);
+      operations.push(operation);
+      if (wedged && operation === "record-gap") return await new Promise<Response>(() => undefined);
+      if (wedged && operation !== "initialize" && operation !== "close") {
+        return Response.json({ error: "native-request-invalid", message: "daemon wedged" }, { status: 500 });
+      }
+      return Response.json({ deliveries: [], entries: [], result: { ok: true } });
+    });
+    const client = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
+      host: "omp", sessionId: "wedged-close", entries: () => [],
+      appendEntry() {},
+      deliver() {},
+    });
+    await client.initialize({});
+    await client.activate();
+
+    // The daemon wedges and an event is dropped, so a gap is open when the host quits.
+    wedged = true;
+    await client.ingest({ kind: "user-prompt", sessionId: "wedged-close", eventId: "lost", text: "lost" });
+    operations.length = 0;
+
+    let closed = false;
+    const closing = client.close().then(() => { closed = true; });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(operations).toContain("record-gap");
+    expect(operations).not.toContain("close");
+    expect(closed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(operations.at(-1)).toBe("close");
+    await closing;
+    expect(closed).toBe(true);
+  });
+
   it.each([
     { status: 400, message: "Invalid option: expected one of \"initialize\"|\"ingest\"|\"poll\"|\"close\"" },
     { status: 404, message: "not-found" },
