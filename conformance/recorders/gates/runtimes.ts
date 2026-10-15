@@ -11,8 +11,10 @@ import type { Check } from "../../gates/types.js";
  * Pinned inputs an adapter runs upstream with: a sparse checkout of upstream's repository at the pinned commit, and
  * runtimes installed from the manifests committed under `runtimes/<runtime>/` beside this module. A manifest pins every
  * direct dependency at an exact version; transitive packages resolve at install time and no lockfile is committed, so
- * nothing here feeds Dependabot. When a transitive release changes what upstream answers, `gates:record --check` (the
- * nightly) fails, and the fix is to pin that package too (`overrides`). Every cached tree is reused only while it is
+ * only those direct pins are in GitHub's dependency graph (Dependabot's version updates cover the root package alone; a
+ * security update against a pin here changes it and fails `runtime-pins` until the tool-pack is recorded again). When a
+ * transitive release changes what upstream answers, `gates:record --check` (the nightly) fails, and the fix is to pin
+ * that package too (`overrides`). Every cached tree is reused only while it is
  * unmodified, so editing the cache never changes a result.
  */
 
@@ -125,9 +127,19 @@ export function runtimePinDigests(runtime: string, directory: string = RUNTIMES_
 /** An exact npm version, or an alias to one (`npm:<name>@<version>`). */
 const EXACT_NPM = /^(?:npm:(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+@)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 
-/** The direct dependencies of a runtime's package.json that are not pinned at an exact version. */
-export function unpinnedNpmDependencies(manifest: { dependencies?: Record<string, string> }): string[] {
-  return Object.entries(manifest.dependencies ?? {}).filter(([, version]) => !EXACT_NPM.test(version)).map(([name, version]) => `${name}@${version}`);
+/** npm `overrides` values, nested by dependent, as `path@version`: a `$name` reference stands for a direct dependency. */
+function overrideVersions(overrides: Record<string, unknown>, path: string[] = []): [string, string][] {
+  return Object.entries(overrides).flatMap(([key, value]): [string, string][] => {
+    if (typeof value === "string") return [[[...path, key === "." ? [] : [key]].flat().join(" > "), value]];
+    return value !== null && typeof value === "object" ? overrideVersions(value as Record<string, unknown>, [...path, key]) : [];
+  });
+}
+
+/** The dependencies and `overrides` of a runtime's package.json that are not pinned at an exact version. */
+export function unpinnedNpmDependencies(manifest: { dependencies?: Record<string, string>; overrides?: Record<string, unknown> }): string[] {
+  return [...Object.entries(manifest.dependencies ?? {}), ...overrideVersions(manifest.overrides ?? {})]
+    .filter(([, version]) => !EXACT_NPM.test(version) && !/^\$[A-Za-z0-9@/._-]+$/u.test(version))
+    .map(([name, version]) => `${name}@${version}`);
 }
 
 /** The dependencies of a runtime's pyproject.toml that are not pinned with `==` at an exact version. */

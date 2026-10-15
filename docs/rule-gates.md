@@ -117,8 +117,10 @@ npm run gates:record -- --pack python --tool ruff
 matches the pinned upstream, then judges every rule again (`--refresh-cache`) and saves the fresh results.
 
 Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
-(the recorder refuses a range), and no lockfile is committed (they are git-ignored), so the runtimes add nothing for
-Dependabot to update. Transitive packages resolve when a runtime is installed. When one of them changes what upstream
+and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored). Only those direct
+pins are in GitHub's dependency graph: Dependabot's version updates cover the root package alone, and a security update
+against a runtime's pin changes it and fails `runtime-pins` until the tool-pack is recorded again. Transitive packages
+resolve when a runtime is installed. When one of them changes what upstream
 answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
 `package.json`, or a direct `==` dependency in `pyproject.toml`) and record again.
 
