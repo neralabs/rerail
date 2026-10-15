@@ -103,9 +103,10 @@ matches no engine source, so the list cannot rot silently.
 Two things are deliberately out of the key. The native binary: it is not bit-reproducible, so hashing it made a
 build-cache miss on unchanged sources re-judge every rule, and the sources it was built from say the same thing
 reproducibly. That holds only while the binary is their build, so a binary older than an engine source it is built from
-(an edit not yet rebuilt) saves no result, and `--write` refuses to run on it. And the engine sources only `cargo test`
-compiles: every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle tests beside the
-code they check.
+(an edit not yet rebuilt) saves no result, and neither `--write` nor `merge --write` runs on it. A shard report does
+not record which binary made it, so shards run on a stale binary and merged after a rebuild are not caught: rerun them.
+And the engine sources only `cargo test` compiles: every file a `#[cfg(test)] mod` declaration reaches, which is how the
+engine keeps its oracle tests beside the code they check.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can

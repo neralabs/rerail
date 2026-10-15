@@ -58,7 +58,8 @@ async function gates(args: string[]): Promise<number> {
   const out = join(resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT), shard === undefined ? "" : shardName(shard));
   if (flags["--no-cache"] === true && flags["--refresh-cache"] === true) throw new Error(`--no-cache and --refresh-cache exclude each other\n${USAGE}`);
   // A native binary older than the engine sources may be another engine's build, judging under these sources' keys
-  // (engine.ts): its verdicts are reported, never saved for later runs or written to the goldens.
+  // (engine.ts): its verdicts are reported, never saved for later runs or written to the committed goldens here. A
+  // shard's report directory still gets its goldens, and merge --write checks the binary again before committing them.
   const stale = staleNativeBinary(root);
   const rebuild = `the native engine is older than ${stale}: rebuild it with npm run build:native`;
   if (stale !== undefined && flags["--write"] === true) throw new Error(`--write needs this checkout's engine; ${rebuild}`);
@@ -118,6 +119,9 @@ async function merge(args: string[]): Promise<number> {
   const [directory, ...rest] = args;
   if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
   const flags = parse(rest, [], ["--write"]);
+  // The shards' goldens come from this checkout's binary, so a stale one commits none (gates() above).
+  const stale = flags["--write"] === true ? staleNativeBinary(PACKAGE_ROOT) : undefined;
+  if (stale !== undefined) throw new Error(`merge --write needs this checkout's engine; the native engine is older than ${stale}: rebuild it with npm run build:native and run the shards again`);
   const { merged, problems } = await mergeDirectory(PACKAGE_ROOT, resolve(directory), flags["--write"] === true);
   for (const report of merged) console.log(`${report.toolPack}: merged ${report.rules.length} rules; ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blockingFailures(report)} blocking failure(s)`);
   for (const problem of problems) process.stderr.write(`not merged: ${problem}\n`);
