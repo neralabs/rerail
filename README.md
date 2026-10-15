@@ -294,6 +294,7 @@ rerail update rollback    # swap back to the previous version
 
 - `workflow_dispatch` builds and uploads the tarball as a run artifact without publishing. Install it with `npm install <tarball>` to try a build.
 - A `v<version>` tag, which must equal `package.json`'s version, publishes `@neralabs/rerail` to npmjs through npm trusted publishing from the protected `release` environment. The tag names the channel, which is the npm dist-tag: `v0.2.0` → `latest`, `v0.2.0-beta.1` → `beta`, `v0.2.0-next.1` → `next`; any other prerelease suffix is rejected. `latest` is stable; `beta` and `next` are opt-in through `rerail update --channel <tag>`.
+- `.github/workflows/release-cache.yml` keeps the native builds' cargo caches warm. A tag's run can restore only caches saved on `main`, so every night on `main` each target builds and saves its cache when none matches the current `Cargo.lock` and toolchain. `release.yml` only restores.
 
 To cut a release, bump `package.json` only (`npm version <version> --no-git-tag-version` also updates `package-lock.json`), add the release notes to `CHANGELOG.md`, merge, and push the tag. The Claude, Codex, and Cursor plugin manifests carry no version in the checkout: `npm pack` stamps `package.json`'s version into them (`prepack`) and restores the source form afterwards (`postpack`). If a pack fails partway, `node scripts/build/stamp-plugin-versions.mjs restore` puts them back.
 
