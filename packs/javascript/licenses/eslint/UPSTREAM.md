@@ -10379,3 +10379,9 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/yoda/145.js` | `tests/lib/rules/yoda.js` | derived |
 | `upstream/eslint/fixtures/yoda/146.js` | `tests/lib/rules/yoda.js` | derived |
 | `upstream/eslint/gates.json` | `tests/lib/rules/*.js`: the `code` of each RuleTester case | excerpts |
+
+> `gates.json` is a rule gate recording. It is not committed here: the tool-pack's `recording.lock` names it
+> and a GitHub release holds the bytes (docs/rule-gates.md). The excerpts of this upstream's tests it carries
+> are redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
+> this upstream's own, at the pinned commit.
+

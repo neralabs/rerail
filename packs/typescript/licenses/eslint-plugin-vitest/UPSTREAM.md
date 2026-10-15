@@ -102,3 +102,9 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/019.test.ts` | `tests/no-focused-tests.test.ts` | derived |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/020.test.ts` | `tests/no-focused-tests.test.ts` | derived |
 | `upstream/eslint-plugin-vitest/gates.json` | `tests/*.test.ts`: the `code` of each RuleTester case | excerpts |
+
+> `gates.json` is a rule gate recording. It is not committed here: the tool-pack's `recording.lock` names it
+> and a GitHub release holds the bytes (docs/rule-gates.md). The excerpts of this upstream's tests it carries
+> are redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
+> this upstream's own, at the pinned commit.
+

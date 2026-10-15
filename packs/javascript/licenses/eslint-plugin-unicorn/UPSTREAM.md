@@ -326,3 +326,9 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/gates.json` | `test/*.js`: the `code` of each RuleTester case | excerpts |
+
+> `gates.json` is a rule gate recording. It is not committed here: the tool-pack's `recording.lock` names it
+> and a GitHub release holds the bytes (docs/rule-gates.md). The excerpts of this upstream's tests it carries
+> are redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
+> this upstream's own, at the pinned commit.
+
