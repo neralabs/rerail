@@ -15,7 +15,7 @@ import { DAEMON_STATE_FILE, processAlive, readDaemonState, type DaemonState } fr
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
 import { linkSteers, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
-import { RERAIL_BRAND_FOREGROUND } from "./terminal-brand.generated.js";
+import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
 export type { PresentationPresence } from "../engine/storage/schema.js";
@@ -36,7 +36,7 @@ export interface PresentationCounts {
 
 export interface SessionPresentation {
   status: PresentationStatus;
-  /** The footer as plain text, e.g. `Rerail ● 26 rules  ·  steered 3×`. */
+  /** The footer as plain text, e.g. `R E R A I L ● 26 rules · steered 3×`. */
   text: string;
   /** This session's dashboard page; null without a verified session. */
   url: string | null;
@@ -73,8 +73,8 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
 const STATUS_MARKS: Record<PresentationStatus, string> = { on: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕" };
-/** Between the footer's items; the brand and its mark lead with single spaces. */
-const ITEM_SEPARATOR = "  ·  ";
+/** Between the footer's items (plan §3): single spaces, so a stacked footer stays short. */
+const ITEM_SEPARATOR = " · ";
 
 interface PresentationInput {
   status: PresentationStatus;
@@ -86,8 +86,8 @@ interface PresentationInput {
 }
 
 function presentation({ status, brandUrl = null, items, presence, repositoryState = null, counts = null }: PresentationInput): SessionPresentation {
-  const parts = [{ text: "Rerail", url: brandUrl }, ...items];
-  const text = `Rerail ${STATUS_MARKS[status]} ${items.map(item => item.text).join(ITEM_SEPARATOR)}`;
+  const parts = [{ text: RERAIL_MARK_TEXT, url: brandUrl }, ...items];
+  const text = `${RERAIL_MARK_TEXT} ${STATUS_MARKS[status]} ${items.map(item => item.text).join(ITEM_SEPARATOR)}`;
   return { status, text, url: brandUrl, parts, presence, repositoryState, counts };
 }
 
@@ -97,18 +97,30 @@ function silent(presence: PresentationPresence, repositoryState: RepositoryStart
 }
 
 /**
- * Only the brand receives color; each label owns its own immutable OSC 8 target.
- * BEL-terminated to match the host TUI, which frames every line with `ESC ] 8 ; ; BEL`.
+ * The ramp-coloured `R E R A I L` and the state-coloured mark are the only colour; each label owns its own immutable
+ * OSC 8 target. BEL-terminated to match the host TUI, which frames every line with `ESC ] 8 ; ; BEL`. `env` decides the
+ * colour depth (`COLORTERM`, `NO_COLOR`).
  */
-export function formatTerminalStatus({ status, parts }: SessionPresentation): string {
+export function formatTerminalStatus({ status, parts }: SessionPresentation, env: TerminalEnv = process.env): string {
   const link = (part: SessionPresentation["parts"][number], label: string): string => {
     const target = part.url === null ? null : terminalText(part.url);
     return target ? `\u001b]8;;${target}\u0007${label}\u001b]8;;\u0007` : label;
   };
   const [brand, ...items] = parts;
   if (brand === undefined) return "";
-  const name = link(brand, `${RERAIL_BRAND_FOREGROUND}${terminalText(brand.text)}\u001b[39m`);
-  return `${name} ${STATUS_MARKS[status]} ${items.map(item => link(item, terminalText(item.text))).join(ITEM_SEPARATOR)}`;
+  const depth = colourDepth(env);
+  const mark = stateMark(STATUS_MARKS[status], depth);
+  return `${link(brand, rerailMark(depth))} ${mark} ${items.map(item => link(item, terminalText(item.text))).join(ITEM_SEPARATOR)}`;
+}
+
+/**
+ * A footer drawn without asking any daemon, for hosts whose own read failed: `session unavailable` (●, the session is
+ * unknown) or `unavailable` (✕, nothing could be read).
+ */
+export function fallbackPresentation(reason: "session unavailable" | "unavailable"): SessionPresentation {
+  return reason === "unavailable"
+    ? unavailable("not-running", reason, "compact")
+    : unavailable("unavailable", reason, "compact");
 }
 
 function unavailable(
@@ -144,7 +156,7 @@ async function get<Schema extends z.ZodType>(origin: URL, path: string, schema: 
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** `Rerail ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
+/** `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
 function onPresentation(
   origin: URL,
   { session, hud }: z.infer<typeof sessionResponseSchema>,
@@ -181,7 +193,7 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
  * Deliveries with their steers' `Why?` links made absolute for `cwd`'s dashboard, scoped to its repository. The runtime keeps
  * links relative; each coding agent's adapter links them as it hands them over.
  */
-export async function linkDeliveries(deliveries: readonly AdapterDelivery[], cwd: string | undefined): Promise<AdapterDelivery[]> {
+export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
   const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
   return deliveries.map(delivery => ({ ...delivery, content: linkSteers(delivery.content, dashboard) }));
 }
@@ -239,7 +251,7 @@ const NOT_ON_HERE = "not on here";
 const NOT_SET_UP = "not set up";
 const SET_UP_HINT = "rerail start";
 
-/** `Rerail ○ not set up  ·  rerail start`: the rules link opens this repository's rules page to set it up. */
+/** `R E R A I L ○ not set up · rerail start`: the rules link opens this repository's rules page to set it up. */
 function notSetUpPresentation(origin: URL, scope: RulesDashboardScope | null, presence: PresentationPresence): SessionPresentation {
   return presentation({
     status: "not-set-up", items: [{ text: NOT_SET_UP, url: rulesDashboardUrl(origin, scope) }, { text: SET_UP_HINT, url: null }],

@@ -1,7 +1,10 @@
-/** One rule pack in the side panel: what it covers, Add or Remove pack, and its groups with their rules. */
+/**
+ * One rule pack in the side panel: what it covers, Add or Remove pack, once added how its rules treat linter
+ * suppression comments with a switch for the whole pack, and its groups with their rules.
+ */
 import { h, setContent, chevron, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { categoryLabel } from "../derive.js";
+import { categoryLabel, inPack, packSuppressions } from "../derive.js";
 import { data, ui, isAttached, packGroups, keptPacks, reviewing } from "../state.js";
 
 /** Whether the pack is on where its button shows: kept, during the review of a repository not set up yet; else added. */
@@ -42,9 +45,22 @@ export function startModeText(packs) {
 
 export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`span.ltr${monogram(pack).length > 2 ? ".l3" : ""}`, null, monogram(pack)));
 
+/** Once the pack is added: whether its rules here honour suppression comments, and the pack's switch for them. */
+function suppressionsLine(pack, suppressions) {
+  if (suppressions === null) return null;
+  return h("p.pintro", null, `Linter suppression comments, such as eslint-disable or noqa: ${suppressions.text}. `,
+    h("button.btn.sm.ghost.link", { "data-act": "packsuppress", "data-i": pack.id, "data-v": suppressions.next },
+      suppressions.next === "ignore" ? "Ignore them" : "Honour them"));
+}
+
 export function renderPackPanel(root, pack) {
   const added = isAttached(pack), groups = packGroups(pack);
-  const sig = `pack|${pack.id}|${added}|${packOn(pack)}|${ui.removeAsk === pack.id}|${[...data.rules.keys()].length}`;
+  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
+  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
+  // The pack's switch is written as the settings owner the page shows: the repository, or this worktree.
+  const owner = ui.scope?.checkout === undefined ? "repository" : ui.owner;
+  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, owner, data.checkout?.checkoutPath) : null;
+  const sig = `pack|${pack.id}|${added}|${packOn(pack)}|${ui.removeAsk === pack.id}|${[...data.rules.keys()].length}|${JSON.stringify(suppressions)}`;
   setContent(root, sig, () => h("div.pwrap", null,
     h("div.phead", null,
       h("div.ptop", null, packIcon(pack), h("div", null, h("div.eyebrow", null, `Rule pack · ${packKind(pack)}`), h("h2", null, pack.name)),
@@ -55,6 +71,7 @@ export function renderPackPanel(root, pack) {
       h("p.pintro", null, pack.covers, " ", added
         ? `Its rules sit under ${pack.name} on Rules; turn them on or off there.`
         : "Add it and its rules file under it on Rules, each on or off and in Log or Steer as listed below. Nothing else changes."),
+      suppressionsLine(pack, suppressions),
       groups.map(group => {
         const rules = pack.rules.filter(r => r.group === group);
         return h("details.pgrp", { open: true },

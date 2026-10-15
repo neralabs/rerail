@@ -3810,6 +3810,11 @@
             "rules": [
               "vitest/no-disabled-tests"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-disabled-tests"
+            ]
           }
         }
       }
@@ -3872,6 +3877,11 @@
           "eslint": {
             "rules": [
               "vitest/no-disabled-tests"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-disabled-tests"
             ]
           }
         }

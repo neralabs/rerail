@@ -87,3 +87,72 @@ fn eslint_directives_suppress_as_eslint_applies_them() {
     let named = starts("lines.ts", source, Some(other));
     assert!(named.len() < every.len() && named.len() > 10, "{named:?}");
 }
+
+/// HTML-like comments are line comments: cases checked against ESLint 9.39.1 and 10.11.0
+/// (`no-debugger`, as `.cjs` files, which espree parses as `commonjs` scripts), in every
+/// ECMAScript dialect: the 0-based lines of the `debugger` statements each keeps.
+#[test]
+fn html_like_comments_are_line_comments() {
+    let violation = json!({ "anchor": "witness.span", "code": "DEBUGGER", "message": "debugger",
+        "suppress": { "eslint": { "rules": ["no-debugger"] } } });
+    let document = clause_document(json!({ "id": "debugger", "violation": violation,
+        "forbid": { "ast": { "language": "typescript", "rule": { "kind": "debugger_statement" } } } }));
+    let compiled = compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    for (source, expected) in [
+        (
+            "<!-- eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            &[2][..],
+        ),
+        (
+            "--> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            &[2],
+        ),
+        (
+            "  --> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            &[2],
+        ),
+        (
+            "/*\n*/ --> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
+            &[3],
+        ),
+        (
+            "debugger; <!-- eslint-disable-line no-debugger\ndebugger;\n",
+            &[1],
+        ),
+        ("debugger; <!-- eslint-disable-line\ndebugger;\n", &[1]),
+        (
+            "debugger; /* a */ <!-- eslint-disable-line no-debugger\ndebugger;\n",
+            &[1],
+        ),
+        // `eslint-disable` in a line comment is no directive.
+        (
+            "<!-- eslint-disable no-debugger\ndebugger;\n--> eslint-enable no-debugger\ndebugger;\n",
+            &[1, 3],
+        ),
+        // Without ` -- `, `-->` is part of the rule list: the rule `no-debugger -->`.
+        (
+            "<!-- eslint-disable-next-line no-debugger -->\ndebugger;\ndebugger;\n",
+            &[1, 2],
+        ),
+    ] {
+        for (language, path) in [
+            ("javascript", "a.cjs"),
+            ("typescript", "a.cts"),
+            ("tsx", "a.tsx"),
+        ] {
+            let result = evaluate_file(&compiled, language, path, source);
+            assert_eq!(result["failures"], json!([]), "{result}");
+            let lines = result["violations"]
+                .as_array()
+                .expect("violations")
+                .iter()
+                .map(|violation| violation["span"]["startLine"].as_u64().expect("line"))
+                .collect::<Vec<_>>();
+            assert_eq!(lines, expected, "{language} {source:?}");
+        }
+    }
+}

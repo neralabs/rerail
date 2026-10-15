@@ -21,8 +21,10 @@ import {
   type LibraryRule,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleConfig,
   type RuleSetting,
   type RuleSettingTargetKind,
+  type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../engine/catalog/repository-registry.js";
@@ -37,6 +39,7 @@ import {
   validateLibraryDocument,
   writeLibraryRule,
 } from "../engine/catalog/rule-library.js";
+import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import type { RuleMode } from "../engine/catalog/rule-mode.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
@@ -211,6 +214,11 @@ function effectiveRuleRecord(rule: EffectiveRule): z.infer<typeof repositoryRule
     mode: rule.mode,
     onSource: rule.decidedBy.on,
     modeSource: rule.decidedBy.mode,
+    suppressions: rule.suppressions,
+    suppressionsSource: rule.decidedBy.suppressions,
+    config: rule.config === null ? null : { ...rule.config },
+    configSource: { ...rule.decidedBy.config },
+    configError: rule.configError,
     revision: rule.revision,
     payloadHash: rule.payloadHash,
   };
@@ -238,6 +246,8 @@ interface SettingChange {
   readonly targetId: string;
   readonly on?: boolean | null | undefined;
   readonly mode?: RuleMode | null | undefined;
+  readonly suppressions?: RuleSuppressions | null | undefined;
+  readonly config?: RuleConfig | null | undefined;
 }
 
 /**
@@ -255,9 +265,26 @@ function foldedChanges(changes: readonly SettingChange[]): SettingChange[] {
       targetId: change.targetId,
       on: change.on === undefined ? earlier?.on : change.on,
       mode: change.mode === undefined ? earlier?.mode : change.mode,
+      suppressions: change.suppressions === undefined ? earlier?.suppressions : change.suppressions,
+      config: change.config === undefined ? earlier?.config : change.config,
     });
   }
   return [...folded.values()];
+}
+
+/**
+ * Rejects a `config` that can't apply: it is for one code rule by Rerail over the whole repository, and each option
+ * must be one the rule's document declares, with a value its declaration allows.
+ */
+function checkConfig(stores: RerailApiStores, change: SettingChange): void {
+  if (change.config === undefined || change.config === null) return;
+  const id = change.targetId;
+  if (change.targetKind !== "rule") throw new ApiError(400, "invalid-setting", `config applies to one rule, not to pack ${id}`);
+  if (change.folder !== "") throw new ApiError(400, "invalid-setting", "config applies to a rule over the whole repository; set it with folder \"\"");
+  const library = stores.database().select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
+  const configured = configureBundledCodeRule(stores.bundle(), id, change.config);
+  if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
 }
 
 /** Whether the repository is not set up yet, read inside the caller's transaction. */
@@ -268,13 +295,14 @@ function notSetUp(db: Pick<RerailDatabase, "select">, repositoryKey: string): bo
 
 /** The setting `change` asks for: an omitted field keeps the stored value. */
 function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): RuleSetting {
-  const stored = db.select({ on: ruleSettings.on, mode: ruleSettings.mode }).from(ruleSettings).where(and(
-    eq(ruleSettings.ownerKind, owner.kind),
-    eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
-    eq(ruleSettings.folder, change.folder),
-    eq(ruleSettings.targetKind, change.targetKind),
-    eq(ruleSettings.targetId, change.targetId),
-  )).get();
+  const stored = db.select({ on: ruleSettings.on, mode: ruleSettings.mode, suppressions: ruleSettings.suppressions, config: ruleSettings.config })
+    .from(ruleSettings).where(and(
+      eq(ruleSettings.ownerKind, owner.kind),
+      eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
+      eq(ruleSettings.folder, change.folder),
+      eq(ruleSettings.targetKind, change.targetKind),
+      eq(ruleSettings.targetId, change.targetId),
+    )).get();
   return {
     owner,
     folder: change.folder,
@@ -282,6 +310,8 @@ function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["o
     targetId: change.targetId,
     on: change.on === undefined ? stored?.on ?? null : change.on,
     mode: change.mode === undefined ? stored?.mode ?? null : change.mode,
+    suppressions: change.suppressions === undefined ? stored?.suppressions ?? null : change.suppressions,
+    config: change.config === undefined ? stored?.config ?? null : change.config,
   };
 }
 
@@ -294,6 +324,8 @@ function settingRecord(setting: RuleSetting): z.infer<typeof ruleSettingRecordSc
     targetId: setting.targetId,
     on: setting.on,
     mode: setting.mode,
+    suppressions: setting.suppressions ?? null,
+    config: setting.config === undefined || setting.config === null ? null : { ...setting.config },
   };
 }
 
@@ -382,7 +414,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repository_rules_get",
     method: "GET",
     path: "/api/repository/rules",
-    summary: "List a repository's rules, each at the folder of the attachment that adds it, with its on/off and mode and what decided each (a checkout's or the repository's setting, the pack's starting value, or the rule's default). With a checkout, that checkout's own settings and its containing checkouts' apply. References that can't be resolved are listed as unavailable.",
+    summary: "List a repository's rules, each at the folder of the attachment that adds it, with its on/off, mode, whether linters' suppression comments silence it (suppressions), its option values (config), and what decided each (a checkout's or the repository's setting, the pack's starting value, or the rule's default). With a checkout, that checkout's own settings and its containing checkouts' apply. References that can't be resolved are listed as unavailable.",
     query: z.object({ ...targetShape }).strict(),
     output: repositoryRulesSchema,
     handler: (stores, input, caller) => {
@@ -405,7 +437,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repository_settings_set",
     method: "PUT",
     path: "/api/repository/settings",
-    summary: "Turn rules or whole packs on or off, or change their mode, for the repository or for one checkout (this worktree), optionally in one folder. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
+    summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
     output: z.object({ settings: z.array(ruleSettingRecordSchema) }),
     handler: (stores, input, caller) => {
@@ -420,9 +452,12 @@ export const repositoryOperations: readonly Operation[] = [
         guardAgent(stores, caller, target);
         owner = { kind: "repository", repositoryKey: target.repository.repositoryKey };
       }
-      const settings = input.targets.map(change => mergedSetting(db, owner, {
-        folder: target.folder, targetKind: change.kind, targetId: change.id, on: input.on, mode: input.mode,
+      const changes = input.targets.map((change): SettingChange => ({
+        folder: target.folder, targetKind: change.kind, targetId: change.id,
+        on: input.on, mode: input.mode, suppressions: input.suppressions, config: input.config,
       }));
+      for (const change of changes) checkConfig(stores, change);
+      const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
       return { settings: settings.map(settingRecord) };
     },
@@ -431,7 +466,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repository_attachments_set",
     method: "PUT",
     path: "/api/repository/attachments",
-    summary: "Add or remove rule packs, By Rerail rules and your library rules in a repository, per folder (whole repository by default), with optional repository settings. The first call that adds anything, or passes configure: true, sets the repository up; it does not start Rerail. A coding agent may do this only before the repository is set up.",
+    summary: "Add or remove rule packs, By Rerail rules and your library rules in a repository, per folder (whole repository by default), with optional repository settings (on, mode, suppressions, config, as repository_settings_set takes them). The first call that adds anything, or passes configure: true, sets the repository up; it does not start Rerail. A coding agent may do this only before the repository is set up.",
     body: attachmentsSetBodySchema,
     output: z.object({ repository: repositorySummarySchema, attachments: z.array(attachmentRecordSchema) }),
     handler: (stores, input, caller) => {
@@ -445,6 +480,7 @@ export const repositoryOperations: readonly Operation[] = [
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
+      for (const change of changes) checkConfig(stores, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
         const settings = changes.map(change => mergedSetting(tx, owner, change));

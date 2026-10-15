@@ -2,12 +2,13 @@
  * The repository-owned rule model: the types every module agrees on.
  *
  * A repository owns its rule configuration. It is recognised on this machine by its key and has checkouts
- * (each clone's main checkout and worktrees). Rule attachments add packs, By Rerail rules or library rules to
- * a repository, optionally in one folder. Rule settings change a rule's or a pack's `on` / `mode`, and belong to
- * the repository or to one checkout. Precedence per field: this checkout, its parent checkouts (nearest first),
- * the repository; within one owner the deepest folder; within one folder the rule before its pack; then the
- * pack's starting value, then the rule's own default.
+ * a repository, optionally in one folder. Rule settings change a rule's or a pack's `on` / `mode` / `suppressions`,
+ * or a rule's option values (`config`), and belong to the repository or to one checkout. Precedence per field
+ * (per option for `config`): this checkout, its parent checkouts (nearest first), the repository; within one owner
+ * the deepest folder; within one folder the rule before its pack; then the pack's starting value, then the rule's
+ * own default.
  */
+import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePack } from "./rule-packs.js";
 import type { RuleDocument } from "./rule-store.js";
@@ -69,6 +70,13 @@ export type RuleSettingOwnerKind = (typeof RULE_SETTING_OWNER_KINDS)[number];
 export const RULE_SETTING_TARGET_KINDS = ["rule", "pack"] as const;
 export type RuleSettingTargetKind = (typeof RULE_SETTING_TARGET_KINDS)[number];
 
+/** Whether a linter's suppression comment (`// eslint-disable-line`, `# noqa`, ...) silences a ported rule. */
+export const RULE_SUPPRESSIONS = ["honour", "ignore"] as const;
+export type RuleSuppressions = (typeof RULE_SUPPRESSIONS)[number];
+
+/** Option values for a code rule by Rerail, by option name: they replace the values its `define.options` declare. */
+export type RuleConfig = Readonly<Record<string, CodeRuleDslValue>>;
+
 export type SettingOwner =
   | { readonly kind: "repository"; readonly repositoryKey: RepositoryKey }
   | { readonly kind: "checkout"; readonly checkoutPath: string };
@@ -81,7 +89,10 @@ export interface RuleAttachment {
   readonly sourceId: string;
 }
 
-/** Changes `on` and/or `mode` of a rule or a whole pack; `null` leaves the field to the next owner. */
+/**
+ * Changes `on`, `mode` and/or `suppressions` of a rule or a whole pack, or the option values (`config`) of one rule
+ * by Rerail; `null` (or omitted) leaves the field to the next owner.
+ */
 export interface RuleSetting {
   readonly owner: SettingOwner;
   readonly folder: string;
@@ -89,6 +100,8 @@ export interface RuleSetting {
   readonly targetId: string;
   readonly on: boolean | null;
   readonly mode: RuleMode | null;
+  readonly suppressions?: RuleSuppressions | null;
+  readonly config?: RuleConfig | null;
 }
 
 /** What decided one field of an effective rule. */
@@ -106,7 +119,22 @@ export interface EffectiveRule {
   readonly attachmentFolder: string;
   readonly on: boolean;
   readonly mode: RuleMode;
-  readonly decidedBy: { readonly on: Decider; readonly mode: Decider };
+  /** `ignore`: no linter suppression comment silences the rule. Defaults from the pack's `honourSuppressionComments`. */
+  readonly suppressions: RuleSuppressions;
+  /**
+   * Option values set by rule settings, merged per option; `null` when no setting sets one. Applies to code rules by
+   * Rerail, wherever the rule runs in the checkout: only a setting for the whole repository (folder `""`) sets it.
+   */
+  readonly config: RuleConfig | null;
+  /** Why `config` could not be applied to the document (an option it no longer declares, ...); the rule runs nowhere. */
+  readonly configError: string | null;
+  readonly decidedBy: {
+    readonly on: Decider;
+    readonly mode: Decider;
+    readonly suppressions: Decider;
+    /** The setting that decided each option in `config`. */
+    readonly config: Readonly<Record<string, Decider>>;
+  };
   readonly revision: number;
   readonly payloadHash: string;
 }
@@ -148,18 +176,25 @@ export interface BundledCatalog {
   readonly packs: ReadonlyMap<string, RulePack>;
   /** Rule id → id of the pack that holds it (a rule is in at most one pack). */
   readonly packOf: ReadonlyMap<string, string>;
+  /**
+   * Rule id → the code rule's document as written, its `$option` references unresolved (`documents` holds it
+   * resolved). A rule setting's `config` is applied to this one.
+   */
+  readonly sources: ReadonlyMap<string, unknown>;
   /** Changes whenever a bundled document or pack file changes. */
   readonly digest: string;
 }
 
 /**
  * Native placement of one compiled code rule in one checkout: for a path, the entry with the deepest folder that
- * contains it decides; `mode: null` means off there. A path no entry contains is not evaluated. Folders are
+ * contains it decides; `mode: null` means off there. A path no entry contains is not evaluated. `suppressions:
+ * "ignore"` means no linter suppression comment silences a violation there; omitted means honour. Folders are
  * normalised (see {@link normalizeFolder}); entries are sorted by folder.
  */
 export interface CodeRulePlacementEntry {
   readonly folder: string;
   readonly mode: RuleMode | null;
+  readonly suppressions?: "ignore";
 }
 export type CodeRulePlacement = readonly CodeRulePlacementEntry[];
 

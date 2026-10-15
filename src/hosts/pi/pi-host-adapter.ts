@@ -12,6 +12,7 @@ import {
 } from "../../engine/adapter-contract.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
+import { contained } from "../../harness/contained-hook.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin } from "../../presentation/session-presentation.js";
@@ -189,7 +190,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       randomUUID(),
     ));
   });
-  pi.on("tool_call", async event => {
+  // A tool hook must never block the tool: Pi fails a `tool_call` handler that throws closed.
+  pi.on("tool_call", event => contained("tool_call", (async () => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;
     await runtime.ingest(callEvent(
@@ -199,8 +201,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       event.toolName,
       event.input,
     ));
-  });
-  pi.on("tool_result", async event => {
+  })()));
+  pi.on("tool_result", event => contained("tool_result", (async () => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;
     await runtime.ingest(resultEvent(
@@ -211,7 +213,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       event.content,
       event.isError,
     ));
-  });
+  })()));
   pi.on("turn_end", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;

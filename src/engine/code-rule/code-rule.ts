@@ -3,6 +3,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { steerBlock } from "./rerail-steer.js";
+import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1315,16 +1316,24 @@ function suggestedFix(fix: CodeRuleViolationFix): string {
   return `  Suggested fix: replace ${range} with:\n${indented}`;
 }
 
-/** One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. */
-export function renderSteer(violations: readonly CodeRuleViolation[]): string {
-  const byRule = new Map<string, string[]>();
+/** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
+export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
+
+/**
+ * One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. The block
+ * names the rule's pack (or library) and its mode, from the first violation of that rule.
+ */
+export function renderSteer(violations: readonly CodeRuleViolation[], sourceOf: SteerSourceOf = () => undefined): string {
+  const byRule = new Map<string, { mode: RuleMode; lines: string[] }>();
   for (const violation of violations) {
     const line = `${violation.message}${violationLocation(violation)}`;
-    const lines = byRule.get(violation.ruleId) ?? [];
-    lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
-    byRule.set(violation.ruleId, lines);
+    const entry = byRule.get(violation.ruleId) ?? { mode: violation.mode, lines: [] };
+    entry.lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
+    byRule.set(violation.ruleId, entry);
   }
-  return [...byRule].map(([ruleId, lines]) => steerBlock(ruleId, lines.join("\n"))).join("\n\n");
+  return [...byRule]
+    .map(([ruleId, { mode, lines }]) => steerBlock(ruleId, lines.join("\n"), { mode, origin: steerOrigin(ruleId, sourceOf(ruleId)) }))
+    .join("\n\n");
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1335,9 +1344,10 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
 /** The rendered steer text with its contributing rule ids; the text is byte-identical to `renderSteer`. */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
+  sourceOf?: SteerSourceOf,
 ): { content: string; ruleIds: string[] } {
   return {
-    content: renderSteer(violations),
+    content: renderSteer(violations, sourceOf),
     ruleIds: steerRuleIds(violations),
   };
 }

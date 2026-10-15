@@ -127,7 +127,8 @@ impl SegmentMap {
 #[cfg(test)]
 mod tests {
     use super::SegmentMap;
-    use ast_grep_language::{LanguageExt, SupportLang};
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use ast_grep_language::LanguageExt;
 
     /// A copied stretch maps byte for byte; a written one stands for its whole anchor; a node
     /// inside an omitted placeholder is omitted.
@@ -139,7 +140,7 @@ mod tests {
         map.push(8, 11, 30..33, true, false);
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(&SupportLang::JavaScript.get_ts_language())
+            .set_language(&GrammarDialect::JavaScript.get_ts_language())
             .unwrap();
         let tree = parser.parse("a=1;b=2;c=3", None).unwrap();
         let statement = |index| tree.root_node().named_child(index).unwrap();

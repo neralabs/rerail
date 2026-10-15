@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-negated-condition",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-negated-condition` (https://eslint.org/docs/latest/rules/no-negated-condition). Flags `if` with a plain `else` and ternaries whose test is `!x`, `!=` or `!==`.",
   "scope": {
@@ -90,7 +90,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-negated-condition",
-        "message": "Unexpected negated condition."
+        "message": "Unexpected negated condition.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-negated-condition"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-negated-condition"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noNegationElse"
+            ]
+          }
+        }
       }
     }
   ]

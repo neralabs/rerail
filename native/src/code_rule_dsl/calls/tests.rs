@@ -337,6 +337,7 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
             captures: Default::default(),
             message: None,
             fix: None,
+            ignored: false,
         })
         .collect::<Vec<_>>();
     let summary = summarize("m", SOURCE);
