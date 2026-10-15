@@ -14,9 +14,10 @@ Data read from the pinned tools (through `node`):
 - eslint-plugin-n 18.4.1 `lib/rules/no-deprecated-api.js` rawModules and globals (the deprecation trace map);
 - globals 17.13.0 `node` (Node's globals).
 
-Writes (every other policy of the pack is hand-written: packs/node/rules/n-no-process-exit.json):
-- packs/node/rules/<id>.json: every ported rule but n-no-process-exit;
-- packs/node/candidates/rules/<id>.json: n-no-deprecated-api, n-hashbang;
+Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
+- packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
+  eslint-plugin-n is gated (NER-1898); a port that passes the rule gates moves to packs/node/rules/ and is written there,
+  shipped;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
 
@@ -674,7 +675,7 @@ def main():
     args = parser.parse_args()
     builtins, globals_node, trace = load_data(os.path.abspath(args.tools or nearest_tools()))
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins)]:
-        write(args.root, os.path.join(PACK, "rules"), doc, shipped=True)
+        write(args.root, os.path.join(PACK, "candidates", "rules"), doc)
     write(args.root, os.path.join(PACK, "candidates", "rules"), no_deprecated_api_doc(trace), compact=True)
     write(args.root, os.path.join(PACK, "candidates", "rules"), hashbang_doc())
     for doc in probe_docs(builtins, globals_node):

@@ -81,9 +81,10 @@ complete. The report's method text says so.
 tool-pack listed there is still validated in nera-rule-validation until its recordings land, is reported as pending
 and is not frozen.
 
-`ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity, node).
+`ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity).
 It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted `rules[].id` of
-each of those packs' `pack.json`; php and blade left it when main moved all their rules to `candidates/`, and sql and vue
+each of those packs' `pack.json`; php and blade left it when main moved all their rules to `candidates/`, node when its
+22 rules moved there too (NER-1897), and sql and vue
 ship none. Gating is decided per (pack, tool), by each shipped rule's
 `conformance.json` entry: a rule of a tool with a `gates.yaml` is judged, a rule of a pending tool is pending, and any
 other shipped rule, in a gated pack too, must be on the frozen list. A shipped rule that must be and is not listed fails

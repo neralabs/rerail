@@ -52,7 +52,7 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   `typescript/typescript-eslint` (in 8 shards), `typescript/eslint-plugin-vitest`, `next/eslint-plugin-next`.
 - **Pending:** none. A tool-pack listed in `conformance/gates/pending.json` is still validated in
   nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
-- **Not gated:** packs with no upstream adapter (node and complexity ship rules; php, blade, sql and vue ship only
+- **Not gated:** packs with no upstream adapter (complexity ships rules; node, php, blade, sql and vue ship only
   candidates, which run nowhere yet). Their current shipped rules are frozen in
   `conformance/gates/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
   pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
