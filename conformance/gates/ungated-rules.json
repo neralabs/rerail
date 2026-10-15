@@ -1,23 +1,4 @@
 {
-  "blade": [
-    "blade-parser-component-shorthand-variable-parameter",
-    "blade-parser-debug-directive",
-    "blade-parser-duplicate-condition-expressions",
-    "blade-parser-for-else-structure",
-    "bladestan-argument-sprintf",
-    "bladestan-array-duplicate-key",
-    "bladestan-identical-always-true",
-    "bladestan-if-always-false",
-    "bladestan-if-always-true",
-    "bladestan-missing-function-return-type",
-    "bladestan-random-int-parameters",
-    "bladestan-variable-undefined",
-    "tlint-no-dump-directives",
-    "tlint-no-json-directive",
-    "tlint-no-ray-directive",
-    "tlint-space-after-blade-directives",
-    "tlint-spaces-around-blade-render-content"
-  ],
   "complexity": [
     "complexity-cyclomatic-javascript",
     "complexity-cyclomatic-python",
@@ -46,25 +27,5 @@
     "n-prefer-node-protocol",
     "n-prefer-promises-dns",
     "n-prefer-promises-fs"
-  ],
-  "php": [
-    "phpcs-generic-code-analysis-empty-statement",
-    "phpcs-generic-php-backtick-operator",
-    "phpcs-generic-php-deprecated-functions",
-    "phpcs-generic-php-forbidden-functions",
-    "phpcs-generic-php-lower-case-constant",
-    "phpcs-generic-php-no-silenced-errors",
-    "phpcs-squiz-php-disallow-size-functions-in-loops",
-    "phpcs-squiz-php-eval",
-    "phpstan-argument-sprintf",
-    "phpstan-argument-sscanf",
-    "phpstan-array-duplicate-key",
-    "phpstan-if-always-false",
-    "phpstan-if-always-true",
-    "phpstan-missing-function-return-type",
-    "phpstan-random-int-parameters",
-    "phpstan-variable-undefined",
-    "psalm-forbidden-code",
-    "psalm-unused-variable"
   ]
 }
