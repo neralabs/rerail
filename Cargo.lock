@@ -59,12 +59,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "ast-grep-language"
-version = "0.45.3"
+name = "ast-grep-core"
+version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144473f99493f0941ae7f96018f00b41c1571ece0e6686b38a551a2fc5ecad8b"
+checksum = "293d10e919afafbe2a6f9551de33e464cbd2aaff6cb81e7885d74bf08f82592b"
 dependencies = [
- "ast-grep-core",
+ "bit-set 0.11.1",
+ "regex",
+ "thiserror",
+ "tree-sitter",
+]
+
+[[package]]
+name = "ast-grep-language"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7f52d71a3972507f829ae1101f75d1549a9719170c9d6f6b52a153c670b103c"
+dependencies = [
+ "ast-grep-core 0.50.0",
  "ignore",
  "serde",
  "tree-sitter",
@@ -2425,7 +2437,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
- "ast-grep-core",
+ "ast-grep-core 0.45.3",
  "ast-grep-language",
  "cc",
  "fancy-regex 0.17.0",
