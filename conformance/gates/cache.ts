@@ -45,7 +45,6 @@ export function trackedDigest(root: string, pathspec: string | readonly string[]
 export interface SharedKeyInputs {
   gateCode: string;
   dependencies: string;
-  engine: string;
   gatesYaml: string;
   gatesJson: string;
   gatesCorpus: string;
@@ -55,6 +54,8 @@ export interface SharedKeyInputs {
 
 /** The inputs one rule adds. */
 export interface RuleKeyInputs {
+  /** The engine the rule can be judged by: the shared engine and its own language family's (engine.ts's `engineKey`). */
+  engine: string;
   document: string;
   conformanceEntry: string;
   goldens: string;
@@ -62,13 +63,15 @@ export interface RuleKeyInputs {
 }
 
 /**
- * A rule's result key: sha256 over the gate code and its dependencies, the engine identity, the tool-pack's manifest and recordings, the
- * corpus pins, and the rule's own document, conformance entry, goldens and case sources, each digested in that order.
+ * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest and recordings, the
+ * corpus pins, and the rule's own engine key, document, conformance entry, goldens and case sources, each digested in
+ * that order. The engine is the rule's own input rather than the tool-pack's because it is only the part of the
+ * engine the rule's language family reads.
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.engine, shared.gatesYaml, shared.gatesJson, shared.gatesCorpus, shared.corpusTasks, shared.corpora,
-    rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.gatesJson, shared.gatesCorpus, shared.corpusTasks, shared.corpora,
+    rule.engine, rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }
@@ -83,8 +86,12 @@ export function resultPath(cacheRoot: string, pack: string, tool: string, key: s
 
 /**
  * A cached entry, or undefined when there is none or it is not one `valid` accepts: an entry that is not JSON, was
- * written by another cache layout, or does not have the shape the run reads is a miss, never a verdict. The shape check
- * guards against corruption, not forgery; pull request runs never save the cache (rule-gates.yml).
+ * written by another cache layout, or does not have the shape the run reads is a miss, never a verdict.
+ *
+ * The shape check guards against corruption, not forgery. A pull request run saves its results (rule-gates.yml), and
+ * GitHub scopes a pull request's cache to that pull request: main never reads it, and a push to main reads only what
+ * main's own runs saved. A pull request could therefore write verdicts its own head then reads back as passes, but it
+ * can edit the gate code that decides them just as easily, so reading its own cache opens no route it did not have.
  */
 export async function readCached<T>(cacheRoot: string, pack: string, tool: string, key: string, valid: (value: unknown) => value is T, shard?: Shard): Promise<T | undefined> {
   const path = resultPath(cacheRoot, pack, tool, key, shard);

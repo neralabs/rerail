@@ -12,7 +12,7 @@ import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SI
 import { CASES_PER_KIND, differingFiles, MATCHES_REAL_CODE_METHOD, matchesRealCodeGate, type MatchesRealCodeResult, type RealCodeCase } from "./checks/matches-real-code.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, readPath, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
 import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
-import { engineIdentity, loadEngine, type Engine, type EngineIdentity } from "./engine.js";
+import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, promote, readGoldens, serializeGoldens, type Golden, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
@@ -495,7 +495,6 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const shared: SharedKeyInputs = {
     gateCode: trackedDigest(root, GATE_CODE),
     dependencies: trackedDigest(root, GATE_DEPENDENCIES),
-    engine: engineIdentity(root).sha256,
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     gatesJson: sha256(readOr(GATES_RECORDING)),
     gatesCorpus: sha256(readOr(GATES_CORPUS)),
@@ -506,6 +505,9 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     const id = entry.rule.id ?? entry.rule.file;
     const caseFiles = [...new Set((inputs.recording.rules[entry.rule.rule]?.cases ?? []).map((testCase) => testCase.file).filter((file): file is string => file !== null))].sort(byText);
     const key = ruleKey(shared, {
+      // The shared engine and the families this rule's document names; the whole engine when it names none the
+      // language registry knows, so a rule the gates cannot place is judged again on any engine change.
+      engine: engineKey(engine.identity, policyFamilies(entry.rule.text)),
       document: entry.rule.text,
       conformanceEntry: JSON.stringify({ entry: entry.entry, on: entry.location === "shipped" ? (on.get(entry.path) ?? true) : null }),
       goldens: JSON.stringify(goldens.get(id) ?? []),
@@ -618,7 +620,8 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     tool,
     toolPack: `${pack}/${tool}`,
     upstream: { ...manifest.upstream, identity: adapter.identity },
-    engine: { sha256: shared.engine },
+    // The whole engine, every family's files included: what the run judged on, not what any one rule keyed on.
+    engine: { sha256: engine.identity.sha256 },
     gates: GATES.map((entry) => ({ ...entry })),
     method: method(manifest),
     toolPackChecks: toolPack,
