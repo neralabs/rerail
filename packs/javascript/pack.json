@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript",
   "category": "language",
-  "covers": "65 ESLint core rules ported to Rerail, 22 of them on and 43 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
+  "covers": "72 ESLint core rules ported to Rerail, 24 of them on and 48 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
   "reason": "matches JavaScript",
   "match": {
     "any": [
@@ -77,6 +77,13 @@
       "on": false
     },
     {
+      "id": "eslint-curly",
+      "document": "rules/eslint-curly.json",
+      "title": "ESLint curly: Enforce consistent brace style for all control statements",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-default-case",
       "document": "rules/eslint-default-case.json",
       "title": "ESLint default-case: Require default cases in switch statements",
@@ -108,6 +115,13 @@
       "id": "eslint-guard-for-in",
       "document": "rules/eslint-guard-for-in.json",
       "title": "ESLint guard-for-in: Require for-in loops to include an if statement",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-array-constructor",
+      "document": "rules/eslint-no-array-constructor.json",
+      "title": "ESLint no-array-constructor: Disallow Array constructors",
       "group": "ESLint",
       "on": false
     },
@@ -235,6 +249,13 @@
       "on": false
     },
     {
+      "id": "eslint-no-labels",
+      "document": "rules/eslint-no-labels.json",
+      "title": "ESLint no-labels: Disallow labeled statements",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-loss-of-precision",
       "document": "rules/eslint-no-loss-of-precision.json",
       "title": "ESLint no-loss-of-precision: Disallow literal numbers that lose precision",
@@ -280,6 +301,13 @@
       "document": "rules/eslint-no-nonoctal-decimal-escape.json",
       "title": "ESLint no-nonoctal-decimal-escape: Disallow \\8 and \\9 escape sequences in string literals",
       "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-object-constructor",
+      "document": "rules/eslint-no-object-constructor.json",
+      "title": "ESLint no-object-constructor: Disallow calls to the Object constructor without an argument",
+      "group": "ESLint",
+      "on": false
     },
     {
       "id": "eslint-no-octal",
@@ -336,6 +364,13 @@
       "on": false
     },
     {
+      "id": "eslint-no-sequences",
+      "document": "rules/eslint-no-sequences.json",
+      "title": "ESLint no-sequences: Disallow comma operators",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-setter-return",
       "document": "rules/eslint-no-setter-return.json",
       "title": "ESLint no-setter-return: Disallow returning values from setters",
@@ -378,6 +413,18 @@
       "id": "eslint-no-unsafe-negation",
       "document": "rules/eslint-no-unsafe-negation.json",
       "title": "ESLint no-unsafe-negation: Disallow negating the left operand of relational operators",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-unused-labels",
+      "document": "rules/eslint-no-unused-labels.json",
+      "title": "ESLint no-unused-labels: Disallow unused labels",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-unused-private-class-members",
+      "document": "rules/eslint-no-unused-private-class-members.json",
+      "title": "ESLint no-unused-private-class-members: Disallow unused private class members",
       "group": "ESLint"
     },
     {

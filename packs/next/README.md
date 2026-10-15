@@ -1,6 +1,6 @@
 # Rerail rule pack: Next.js
 
-17 code rules for Next.js projects, ported from `@next/eslint-plugin-next` 16.3.8. Each is scored against the
+21 code rules for Next.js projects, ported from `@next/eslint-plugin-next` 16.3.8. Each is scored against the
 plugin's own findings on the plugin's rule tests, through the engine's production workspace path; no disagreement is
 declared today, so the pack has no `divergences.json`.
 
@@ -13,7 +13,7 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises, the shipped rules first and then the candidates; the pinned plugin and the pinned corpora (shadcn-ui, next-examples, commerce) |
 | `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`, `fixtures.cases.json`) and the recorder (`generate.mjs`) |
-| `candidates/` | Ports that cannot pass their fixtures yet or that fail the V1 rule validation gates (`rules/`; scored through `conformance.json`, never gating), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
+| `candidates/` | Ports that cannot pass their fixtures yet or that fail the rule gates (`rules/`, none today; scored through `conformance.json`, never gating), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
 | `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, listing every copied file |
 
 The rule documents, `conformance.json`'s and `pack.json`'s rule lists and the candidates are generated, offline:

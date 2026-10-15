@@ -904,7 +904,7 @@
         "tool": "eslint",
         "rule": "curly"
       },
-      "policy": "candidates/rules/eslint-curly.json",
+      "policy": "rules/eslint-curly.json",
       "capabilities": [
         "syntax",
         "value",
@@ -987,7 +987,7 @@
         "tool": "eslint",
         "rule": "no-unused-private-class-members"
       },
-      "policy": "candidates/rules/eslint-no-unused-private-class-members.json",
+      "policy": "rules/eslint-no-unused-private-class-members.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1166,7 +1166,7 @@
         "tool": "eslint",
         "rule": "no-array-constructor"
       },
-      "policy": "candidates/rules/eslint-no-array-constructor.json",
+      "policy": "rules/eslint-no-array-constructor.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1318,7 +1318,7 @@
         "tool": "eslint",
         "rule": "no-labels"
       },
-      "policy": "candidates/rules/eslint-no-labels.json",
+      "policy": "rules/eslint-no-labels.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1400,7 +1400,7 @@
         "tool": "eslint",
         "rule": "no-object-constructor"
       },
-      "policy": "candidates/rules/eslint-no-object-constructor.json",
+      "policy": "rules/eslint-no-object-constructor.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1445,7 +1445,7 @@
         "tool": "eslint",
         "rule": "no-sequences"
       },
-      "policy": "candidates/rules/eslint-no-sequences.json",
+      "policy": "rules/eslint-no-sequences.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1511,7 +1511,7 @@
         "tool": "eslint",
         "rule": "no-unused-labels"
       },
-      "policy": "candidates/rules/eslint-no-unused-labels.json",
+      "policy": "rules/eslint-no-unused-labels.json",
       "capabilities": [
         "syntax",
         "suppression"

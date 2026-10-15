@@ -65,40 +65,12 @@ async function hooksPack(): Promise<string> {
   return directory;
 }
 
-const NAMESPACE_RULE = "typescript-eslint-no-namespace";
-
-/**
- * A pack shipping the typescript pack's no-namespace port, a candidate since the rule gates (it fails
- * engine-reads-goldens), as it is: its upstream names are what the bare-key case below reads.
- */
-async function namespacePack(): Promise<string> {
-  const directory = join(realpathSync(await mkdtemp(join(tmpdir(), "rerail-namespace-pack-"))), "namespace");
-  mkdirSync(join(directory, "rules"), { recursive: true });
-  const document = readFileSync(join(packDirectory("typescript"), "candidates", "rules", `${NAMESPACE_RULE}.json`), "utf8");
-  writeFileSync(join(directory, "rules", `${NAMESPACE_RULE}.json`), document);
-  writeFileSync(join(directory, "pack.json"), JSON.stringify({
-    format: "rerail.rule-pack/v1",
-    id: "namespace",
-    name: "Namespace",
-    category: "language",
-    covers: "TypeScript namespaces.",
-    reason: "TypeScript.",
-    rules: [{ id: NAMESPACE_RULE, document: `rules/${NAMESPACE_RULE}.json`, title: "No namespace", group: "TypeScript" }],
-  }));
-  return directory;
-}
-
 let bundle: BundledCatalog;
 let hooksDirectory: string;
-let namespaceDirectory: string;
 beforeAll(async () => {
   hooksDirectory = await hooksPack();
-  namespaceDirectory = await namespacePack();
-  bundle = readBundledCatalog([...["typescript", "javascript", "python"].map(packDirectory), hooksDirectory, namespaceDirectory]);
-  return async () => {
-    await rm(join(hooksDirectory, ".."), { recursive: true, force: true });
-    await rm(join(namespaceDirectory, ".."), { recursive: true, force: true });
-  };
+  bundle = readBundledCatalog([...["typescript", "javascript", "python"].map(packDirectory), hooksDirectory]);
+  return () => rm(join(hooksDirectory, ".."), { recursive: true, force: true });
 });
 
 describe("parseJsonc", () => {
@@ -416,13 +388,13 @@ describe("proposeLintConfigSettings", () => {
     for (const key of ["typescript/ban-tslint-comment", "@typescript-eslint/ban-tslint-comment", "ban-tslint-comment"]) {
       expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint-ban-tslint-comment"]);
     }
-    // oxlint runs its ESLint no-array-constructor for typescript-eslint's; every key names that one rule.
-    for (const key of ["no-array-constructor", "typescript/no-array-constructor", "@typescript-eslint/no-array-constructor"]) {
-      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint-no-array-constructor"]);
+    // oxlint runs its ESLint default-param-last for typescript-eslint's; every key names that one rule.
+    for (const key of ["default-param-last", "typescript/default-param-last", "@typescript-eslint/default-param-last"]) {
+      expect(await oxlintOff({ [key]: "off" }, ["typescript"])).toEqual(["typescript-eslint-default-param-last"]);
     }
     // A bare no-namespace is the import plugin's, the first of three plugins with a rule of that name.
-    expect(await oxlintOff({ "no-namespace": "off" }, ["namespace"])).toEqual([]);
-    expect(await oxlintOff({ "typescript/no-namespace": "off" }, ["namespace"])).toEqual([NAMESPACE_RULE]);
+    expect(await oxlintOff({ "no-namespace": "off" }, ["typescript"])).toEqual([]);
+    expect(await oxlintOff({ "typescript/no-namespace": "off" }, ["typescript"])).toEqual(["typescript-eslint-no-namespace"]);
   });
 
   it("takes react-hooks as oxlint's react plugin, and an unknown plugin as no built-in one", async () => {

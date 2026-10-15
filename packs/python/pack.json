@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "135 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "136 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -211,6 +211,12 @@
       "id": "ruff-b029-except-with-empty-tuple",
       "document": "rules/ruff-b029-except-with-empty-tuple.json",
       "title": "Ruff B029: Except with empty tuple",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-b030-except-with-non-exception-classes",
+      "document": "rules/ruff-b030-except-with-non-exception-classes.json",
+      "title": "Ruff B030: Except with non exception classes",
       "group": "Ruff"
     },
     {

@@ -2292,7 +2292,7 @@
         "tool": "ruff",
         "rule": "B030"
       },
-      "policy": "candidates/rules/ruff-b030-except-with-non-exception-classes.json",
+      "policy": "rules/ruff-b030-except-with-non-exception-classes.json",
       "capabilities": [
         "suppression",
         "syntax"

@@ -63,7 +63,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/default-param-last"
       },
-      "policy": "candidates/rules/typescript-eslint-default-param-last.json",
+      "policy": "rules/typescript-eslint-default-param-last.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -89,7 +89,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-confusing-non-null-assertion"
       },
-      "policy": "candidates/rules/typescript-eslint-no-confusing-non-null-assertion.json",
+      "policy": "rules/typescript-eslint-no-confusing-non-null-assertion.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -102,7 +102,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-dupe-class-members"
       },
-      "policy": "candidates/rules/typescript-eslint-no-dupe-class-members.json",
+      "policy": "rules/typescript-eslint-no-dupe-class-members.json",
       "capabilities": [
         "syntax",
         "value",
@@ -117,7 +117,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-duplicate-enum-values"
       },
-      "policy": "candidates/rules/typescript-eslint-no-duplicate-enum-values.json",
+      "policy": "rules/typescript-eslint-no-duplicate-enum-values.json",
       "capabilities": [
         "syntax",
         "value",
@@ -132,7 +132,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-empty-function"
       },
-      "policy": "candidates/rules/typescript-eslint-no-empty-function.json",
+      "policy": "rules/typescript-eslint-no-empty-function.json",
       "capabilities": [
         "syntax",
         "value",
@@ -172,7 +172,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-namespace"
       },
-      "policy": "candidates/rules/typescript-eslint-no-namespace.json",
+      "policy": "rules/typescript-eslint-no-namespace.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -185,7 +185,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-non-null-asserted-optional-chain"
       },
-      "policy": "candidates/rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
+      "policy": "rules/typescript-eslint-no-non-null-asserted-optional-chain.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -198,7 +198,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-non-null-assertion"
       },
-      "policy": "candidates/rules/typescript-eslint-no-non-null-assertion.json",
+      "policy": "rules/typescript-eslint-no-non-null-assertion.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -224,7 +224,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-unsafe-function-type"
       },
-      "policy": "candidates/rules/typescript-eslint-no-unsafe-function-type.json",
+      "policy": "rules/typescript-eslint-no-unsafe-function-type.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -237,7 +237,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-unused-expressions"
       },
-      "policy": "candidates/rules/typescript-eslint-no-unused-expressions.json",
+      "policy": "rules/typescript-eslint-no-unused-expressions.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -250,7 +250,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-useless-empty-export"
       },
-      "policy": "candidates/rules/typescript-eslint-no-useless-empty-export.json",
+      "policy": "rules/typescript-eslint-no-useless-empty-export.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -317,7 +317,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/prefer-namespace-keyword"
       },
-      "policy": "candidates/rules/typescript-eslint-prefer-namespace-keyword.json",
+      "policy": "rules/typescript-eslint-prefer-namespace-keyword.json",
       "capabilities": [
         "syntax",
         "suppression"

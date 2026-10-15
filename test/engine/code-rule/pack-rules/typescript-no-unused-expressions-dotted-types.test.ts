@@ -30,9 +30,8 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  // A candidate since the rule gates (NER-1900): it fails engine-reads-goldens on vscode files the engine cannot fully read.
-  const document = loadBundledRules([repositoryPath("packs", "typescript", "candidates")]).find(candidate => candidate.rule.id === RULE_ID);
-  if (document === undefined) throw new Error(`${RULE_ID} is not in packs/typescript/candidates`);
+  const document = loadBundledRules([repositoryPath("packs", "typescript")]).find(candidate => candidate.rule.id === RULE_ID);
+  if (document === undefined) throw new Error(`${RULE_ID} is not in packs/typescript`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

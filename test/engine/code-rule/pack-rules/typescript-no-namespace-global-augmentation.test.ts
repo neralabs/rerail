@@ -1,5 +1,5 @@
 /**
- * typescript-eslint-no-namespace (packs/typescript/candidates/) must not report a global augmentation (NER-1875). Inside
+ * typescript-eslint-no-namespace (packs/typescript/) must not report a global augmentation (NER-1875). Inside
  * `declare module 'x' { … }`, TypeScript accepts `global { … }` without `declare`, and the patched grammar reads it as
  * an `internal_module` named `global` (Patch 26 in `native/grammars/tree-sitter-typescript/PATCHES.md`).
  * typescript-eslint's selector, `TSModuleDeclaration[global!=true][id.type!='Literal']`, never reports one, so only an
@@ -16,7 +16,7 @@ import { repositoryPath } from "../../../support/oracles.js";
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-const DOCUMENT = repositoryPath("packs", "typescript", "candidates", "rules", "typescript-eslint-no-namespace.json");
+const DOCUMENT = repositoryPath("packs", "typescript", "rules", "typescript-eslint-no-namespace.json");
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),
