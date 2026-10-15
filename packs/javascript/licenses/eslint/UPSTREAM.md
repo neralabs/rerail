@@ -10378,3 +10378,4 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/yoda/144.js` | `tests/lib/rules/yoda.js` | derived |
 | `upstream/eslint/fixtures/yoda/145.js` | `tests/lib/rules/yoda.js` | derived |
 | `upstream/eslint/fixtures/yoda/146.js` | `tests/lib/rules/yoda.js` | derived |
+| `upstream/eslint/gates.json` | `tests/lib/rules/*.js`: the `code` of each RuleTester case | excerpts |

@@ -2874,3 +2874,4 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/unified-signatures/e773f2c7d058.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/unified-signatures/f8b677b197c6.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/unified-signatures/fa8903378699.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
+| `upstream/typescript-eslint/gates.json` | `packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each RuleTester case | excerpts |

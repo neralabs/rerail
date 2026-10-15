@@ -375,3 +375,4 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/syntax_errors/late_future_import.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/late_future_import.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/return_outside_function.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/return_outside_function.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/yield_scope.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/yield_scope.py` | verbatim |
+| `upstream/ruff/gates.json` | `crates/ruff_linter/src/rules/*/mod.rs`, `crates/ruff_linter/src/linter.rs`: their test modules' string literals | excerpts |

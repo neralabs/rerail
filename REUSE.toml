@@ -951,3 +951,42 @@ path = "packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# The rule gates' recordings that hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's
+# tests beside Rerail's recorded answers, listed in each upstream's UPSTREAM.md. The JavaScript pack's are annotated
+# with its fixtures above.
+
+# Ruff 0.16.9: test excerpts in the rule gates' recording (packs/python/licenses/ruff/UPSTREAM.md)
+[[annotations]]
+path = "packs/python/upstream/ruff/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# typescript-eslint 8.70.1: test excerpts in the rule gates' recording (packs/typescript/licenses/typescript-eslint/UPSTREAM.md)
+[[annotations]]
+path = "packs/typescript/upstream/typescript-eslint/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# @vitest/eslint-plugin 1.6.27: test excerpts in the rule gates' recording (packs/typescript/licenses/eslint-plugin-vitest/UPSTREAM.md)
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# eslint-plugin-react 7.37.5: test excerpts in the rule gates' recording (packs/react/licenses/eslint-plugin-react/UPSTREAM.md)
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Yannick Croissant", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# eslint-plugin-react-hooks 7.1.1: test excerpts in the rule gates' recording (packs/react/licenses/react/UPSTREAM.md)
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react-hooks/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
