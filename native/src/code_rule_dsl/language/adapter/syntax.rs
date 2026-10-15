@@ -42,10 +42,10 @@ pub(crate) trait SyntaxRules: Adapter {
         python: Option<&PythonOptions>,
         document: &Options,
     ) -> napi::Result<bool>;
-    /// Whether a pattern of `text` (a pattern's source, or a contextual pattern's context) is
-    /// the language the template embeds rather than the template's own: Blade's text with no
-    /// Blade construct is PHP (`rule_pattern`).
-    fn embeds_pattern(text: &str) -> bool;
+    /// The embedded dialect a pattern of `text` (a pattern's source, or a contextual pattern's
+    /// context) is written in, where it is the language the document embeds rather than its own:
+    /// Blade's text with no Blade construct is PHP (`rule_pattern`). `None`: the dialect's own.
+    fn embedded_pattern(text: &str) -> Option<GrammarDialect>;
     /// Whether the `comment` node of kind `id` in `language` is a comment of the PHP the family's
     /// documents hold, a PHP doc comment's host: Blade's own `{{-- --}}` comments are not.
     fn php_comment(language: GrammarDialect, id: u16) -> bool;
@@ -98,8 +98,8 @@ impl SyntaxRules for Python {
         options::compile_python_when(value, path, python, document)
     }
 
-    fn embeds_pattern(_: &str) -> bool {
-        false
+    fn embedded_pattern(_: &str) -> Option<GrammarDialect> {
+        None
     }
 
     fn php_comment(_: GrammarDialect, _: u16) -> bool {
@@ -138,8 +138,8 @@ impl SyntaxRules for Ecma {
         options::compile_ecma_when(value, path, options, document)
     }
 
-    fn embeds_pattern(_: &str) -> bool {
-        false
+    fn embedded_pattern(_: &str) -> Option<GrammarDialect> {
+        None
     }
 
     fn php_comment(_: GrammarDialect, _: u16) -> bool {
@@ -191,8 +191,8 @@ impl SyntaxRules for Php {
         <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)
     }
 
-    fn embeds_pattern(_: &str) -> bool {
-        false
+    fn embedded_pattern(_: &str) -> Option<GrammarDialect> {
+        None
     }
 
     fn php_comment(_: GrammarDialect, _: u16) -> bool {
@@ -246,8 +246,8 @@ impl SyntaxRules for Blade {
         <Php as SyntaxRules>::compile_when(value, path, options, python, document)
     }
 
-    fn embeds_pattern(text: &str) -> bool {
-        blade_text(text)
+    fn embedded_pattern(text: &str) -> Option<GrammarDialect> {
+        blade_text(text).then_some(GrammarDialect::Php)
     }
 
     fn php_comment(language: GrammarDialect, id: u16) -> bool {
@@ -340,7 +340,7 @@ pub(super) mod kit {
         .map(|grammar| refusal(A::feature(SyntaxFeature::Parse(grammar))));
         assert_eq!(parse, expect.parse.map(|m| m.map(str::to_owned)));
         for (text, embeds) in expect.embeds {
-            assert_eq!(A::embeds_pattern(text), *embeds, "{text:?}");
+            assert_eq!(A::embedded_pattern(text).is_some(), *embeds, "{text:?}");
         }
         let (source, count) = expect.php_comments;
         let doc = tape(source);

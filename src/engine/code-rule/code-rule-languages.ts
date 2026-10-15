@@ -41,6 +41,8 @@ interface CodeRuleDialect {
 
 const SUPPORTED: readonly SupportedEntry[] = LANGUAGE_REGISTRY.filter((entry): entry is SupportedEntry => entry.status === "supported");
 const ENTRIES = Object.fromEntries(LANGUAGE_REGISTRY.map(entry => [entry.id, entry])) as Readonly<Record<CodeRuleLanguageId, RegistryEntry>>;
+/** Each language's status, typed as every status the registry format allows: a registry may hold no planned language. */
+const STATUSES: Readonly<Record<string, "supported" | "planned">> = Object.fromEntries(LANGUAGE_REGISTRY.map(entry => [entry.id, entry.status]));
 
 /** Each supported dialect: its file label, the file suffixes that select it, and the family it is read with. */
 export const CODE_RULE_DIALECTS = Object.fromEntries(
@@ -67,7 +69,7 @@ export function languageOfPath<T>(languages: ReadonlyMap<string, T>, path: strin
 }
 
 export const isCodeRuleAstLanguage = (language: string): language is CodeRuleAstLanguage => ENTRIES[language as CodeRuleLanguageId]?.status === "supported";
-export const isCodeRulePlannedLanguage = (language: string): language is CodeRulePlannedLanguage => ENTRIES[language as CodeRuleLanguageId]?.status === "planned";
+export const isCodeRulePlannedLanguage = (language: string): language is CodeRulePlannedLanguage => STATUSES[language] === "planned";
 export const codeRuleLanguageFamily = (language: CodeRuleAstLanguage): CodeRuleLanguageFamily => ENTRIES[language].family as CodeRuleLanguageFamily;
 /** The dialects a language's rules run on, the first being the one its own text is read in. */
 export const codeRuleLanguageDialects = (language: CodeRuleAstLanguage): readonly CodeRuleDialectLabel[] => {
@@ -107,7 +109,7 @@ const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Ma
 ]);
 
 /** Each planned language's suffixes: their files are read as text until the engine reads the language. */
-const PLANNED_SUFFIXES: readonly string[] = LANGUAGE_REGISTRY.flatMap(entry => (entry.status === "planned" ? entry.dialects.flatMap(dialect => dialect.suffixes) : []));
+const PLANNED_SUFFIXES: readonly string[] = LANGUAGE_REGISTRY.flatMap(entry => (STATUSES[entry.id] === "planned" ? entry.dialects.flatMap(dialect => dialect.suffixes) : []));
 
 /**
  * The suffixes audits and the bridge read and the file label each selects: every supported dialect's, each planned

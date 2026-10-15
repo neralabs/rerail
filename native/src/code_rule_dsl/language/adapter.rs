@@ -13,16 +13,20 @@ mod format_args;
 #[cfg(test)]
 mod kit;
 mod scope;
+mod sql;
 mod syntax;
 mod value;
+mod vue;
 
 pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
 pub(crate) use scope::{ScopeFeature, ScopeRules};
+pub(crate) use sql::Sql;
 pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
+pub(crate) use vue::Vue;
 
 use super::{Family, GrammarDialect, language_not_supported};
 use crate::code_rule_dsl::identifier::python_name;
@@ -37,6 +41,7 @@ use crate::code_rule_dsl::suppress::{
     BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
     PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
 };
+use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use ast_grep_language::LanguageExt;
@@ -58,13 +63,49 @@ pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
 
-/// A part of a document a family's semantics read: the root of its tree.
+/// A part of a document a family's semantics read: the root of its tree, and the dialect that
+/// tree is read as (the file's own, or the one its embedder built an embedded program in:
+/// `tape::EmbeddedProgram`).
 pub(crate) struct Region<'r, D: Doc> {
     pub(crate) root: Node<'r, D>,
+    pub(crate) dialect: GrammarDialect,
 }
 
-/// A document's regions: one, or none for a template without embedded PHP.
-pub(crate) type Regions<'r, D> = std::option::IntoIter<Region<'r, D>>;
+/// The parts of the document of `dialect` rooted at `root` that its family's semantics read: the
+/// root itself, but in a dialect that embeds others (`GrammarDialect::embeds`) the programs its
+/// tape embeds (`embed`), each read as the dialect its embedder built it in, which a tape records
+/// (`tape::EmbeddedProgram`): a Blade template's compiled view, PHP; none where it embeds nothing
+/// (or is no tape). At most one program per registry `via`. Consumers read every region; call
+/// summaries read the first (`calls::summarize`), so a family whose documents may hold several
+/// refuses calls.
+pub(crate) fn regions<'r, D: Doc>(
+    root: &Node<'r, D>,
+    dialect: GrammarDialect,
+) -> impl Iterator<Item = Region<'r, D>> + use<'r, D> {
+    let doc: &'r dyn std::any::Any = root.get_doc();
+    let programs = doc
+        .downcast_ref::<TapeDoc>()
+        .map_or(&[][..], TapeDoc::programs);
+    let embedding = dialect.kinds().has_embedded();
+    let whole = (!embedding).then(|| Region {
+        root: root.clone(),
+        dialect,
+    });
+    // The programs are the root's last children, in tape order.
+    let host = root.clone();
+    let count = if embedding { host.children().len() } else { 0 };
+    let embedded = (count.saturating_sub(programs.len())..count).filter_map(move |nth| {
+        let child = host.child(nth)?;
+        let program = programs
+            .iter()
+            .find(|program| program.root as usize == child.node_id())?;
+        Some(Region {
+            root: child,
+            dialect: program.dialect,
+        })
+    });
+    whole.into_iter().chain(embedded)
+}
 
 /// A registry family's semantics.
 pub(crate) trait Adapter: 'static {
@@ -88,9 +129,6 @@ pub(crate) trait Adapter: 'static {
     type FormatArgs: FormatArgRules;
     /// An identifier's text as the family compares names (Python: NFKC; others: as written).
     fn name(text: Cow<'_, str>) -> Cow<'_, str>;
-    /// The parts of a document this family's semantics read: the root itself, but for an
-    /// embedding family; Blade's is its compiled view's `program` (`blade::program`).
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D>;
     /// The bytes tree-sitter parses for a file of the family, as long as `source` and with its
     /// character boundaries and line ends: `source` itself, but for PHP's view of a template
     /// (`php_view`). A tree of them reads `source`.
@@ -126,10 +164,6 @@ impl Adapter for Python {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         python_name(text)
-    }
-
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
     }
 
     fn parse_input(source: &str) -> Cow<'_, str> {
@@ -178,10 +212,6 @@ impl Adapter for Ecma {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text
-    }
-
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
     }
 
     fn parse_input(source: &str) -> Cow<'_, str> {
@@ -235,10 +265,6 @@ impl Adapter for Php {
         text
     }
 
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        Some(Region { root: root.clone() }).into_iter()
-    }
-
     fn parse_input(source: &str) -> Cow<'_, str> {
         crate::code_rule_dsl::php_view::view(source)
     }
@@ -287,12 +313,6 @@ impl Adapter for Blade {
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text
-    }
-
-    fn regions<'r, D: Doc>(root: &Node<'r, D>) -> Regions<'r, D> {
-        crate::code_rule_dsl::blade::program(root)
-            .map(|root| Region { root })
-            .into_iter()
     }
 
     /// Forte parses a template (`blade::forte`), never tree-sitter.

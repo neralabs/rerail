@@ -29,26 +29,75 @@ family's grammar) is the engine's answer alone. The host's schema checks a rule'
 
 ## The engine adapter
 
-Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`) implementing `Adapter`. The
-`with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family; every other
-call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
-`A: Adapter` from inside the macro.
+Each registry family has one adapter type (`Python`, `Ecma`, `Php`, `Blade`, `Vue`, `Sql`) implementing `Adapter`. The
+`with_adapter!` macro, generated from the registry's families, is the one exhaustive match on a family, and the
+registry also generates `Family`, `GrammarDialect`, `Family::of` and `honours`, so no enum is edited by hand. Every
+other call site asks the adapter. A call site that needs a concern's associated type calls a function generic over
+`A: Adapter` from inside the macro. A family's call names carry their family (`CallRules::NAMES`), and its value
+semantics (`truthy`, `type_name`, `equals`, `order`, `relation`, `numeric`, `integer`, `to_str`) belong to
+`ValueRules`. [Adding a language](#adding-a-language) lists the steps.
 
 | Part | Holds |
 |---|---|
-| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`), module paths from package markers (Python), and inline suppression comments |
-| `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, and refusals of binding and resolution features |
+| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC, SQL's PostgreSQL case folding), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`; Vue's script-block `program`), module paths from package markers (Python), and inline suppression comments |
+| `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, SQL's query blocks, and refusals of binding and resolution features |
 | `ValueRules` (`adapter/value.rs`) | Value decoding, kinds, structures, names, keys and references for comparisons, type names, and refusals of compare modes |
 | `ArgumentRules` (`adapter/arguments.rs`) | Call kinds, the arguments a call passes, and refusals of signature markers and modes |
 | `CallRules` (`adapter/calls.rs`) | Call and function kinds, per-file call summaries, call-graph links and labels |
 | `FormatArgRules` (`adapter/format_args.rs`) | The format styles a family reads |
-| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's text-only patterns |
+| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's and Vue's text-only patterns |
 
-A concern the registry does not mark `supported` for a family is `Refused` (Ecma's `calls` and `formatArgs`). An
-embedding family reuses the embedded language's concerns (Blade's delegate to PHP's) and overrides only what reads
-the template itself. Refusals go through one gate (`gate`), which reports a refused feature as invalid and a planned
-one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite over every adapter, and
-checks that each family's adapter reads exactly the capabilities its registry entries support.
+A concern the registry does not mark `supported` for a family is `Refused` (Ecma's, Vue's and Sql's `calls` and
+`formatArgs`). An embedding family reuses the embedded language's concerns (Blade's delegate to PHP's, Vue's to
+Ecma's) and overrides only what reads the template itself. Refusals go through one gate (`gate`), which reports a
+refused feature as invalid and a planned one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs
+one generic suite over every adapter, and checks that each family's adapter reads exactly the capabilities its
+registry entries support.
+
+### Vue
+
+Vue's adapter is `adapter/vue.rs`. A `.vue` file's tape holds its tree-sitter-vue tree and, as the root's last
+child, the one program its `<script>` blocks and template expressions make (`vue::view`, embedded through
+`script-block`, `embed/script_block.rs`): TypeScript for `lang="ts"`, TSX for `lang="tsx"`, JavaScript otherwise;
+a script in another language (`coffee`) embeds none. The three grammars share one numbering on a Vue tape
+(`KindCatalog`): TypeScript's kinds and fields follow Vue's own, and TSX's and JavaScript's take TypeScript's codes
+wherever their names agree, so a rule's `kind`, `field` and `pattern` read every program alike.
+
+| Concern | Vue |
+|---|---|
+| Regions | The embedded `program`, read as the dialect `ScriptBlock` built it in, which the tape records (`tape::EmbeddedProgram`: the shared kind codes do not tell the three apart); it stands apart from the template (`Embedder::APART`), so a template's syntax error leaves a clause over a clean program complete |
+| Scope, value, arguments | Ecma's, over the program: template references resolve in the scopes Vue's compiler gives them; a token the view writes (an interpolation's `(` and `);`) is not spelled (`embed::rewritten`) |
+| Calls, format arguments | Refused, as ECMAScript's are: vue-eslint-parser hands the scripts to ESLint, which has neither |
+| Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
+| Patterns | A pattern holding a Vue construct (an element, a directive, an interpolation, a comment) is Vue's; any other is TypeScript and matches the program in any of its grammars (JSX, TSX's alone, matches none) |
+| `languageOptions`, `when` | Ecma's keys |
+
+### The SQL adapter
+
+`adapter/sql.rs` reads SQL as SQLFluff 4.4.0 does, over one generic dialect (`GrammarDialect::Sql`, the vendored
+tree-sitter-sql with Rerail's patches, `native/grammars/tree-sitter-sql/PATCHES.md`) for PostgreSQL, SQLite, MySQL
+and ANSI files. Where the dialects read a file differently it reads PostgreSQL's, and the pack declares the other
+readings as divergences. Each concern and its oracle:
+
+| Concern | What it reads | Oracle |
+|---|---|---|
+| `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); one region, the file's root; SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
+| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's RF01 and AL05 recordings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`), with the declared ANSI-versus-PostgreSQL mismatches |
+| `ValueRules` | Literals and names (`value/sql.rs`) only where PostgreSQL's and SQLite's readings agree; `type`, the key, member, reference and structural compare modes are refused | `fixtures/sql/scope/postgres.expected.json` (PostgreSQL 18.6 through libpg_query) and `fixtures/sql/value/sqlite.expected.json` (SQLite 3.50.4) |
+| `ArgumentRules` | An `invocation`'s arguments as PostgreSQL 18.6's parser binds them (`matcher/arguments_sql.rs`): by position, then by name; signature markers, `syntactic` and `estree` are refused | `fixtures/sql/matcher/arguments/postgres.expected.json`, 50 calls: 48 matched by position, 2 asserted unreadable (`substring(s FOR n)`, `substring(s FOR n FROM m)`) |
+| `SyntaxRules` | No literal grammar (`parse`) and no `languageOptions`; `when` reads the document's options | |
+
+`calls` and `formatArgs` are `refused` in `languages/sql.json`, because SQL gives the engine nothing to read for them
+(the evidence is in the module doc of `adapter/sql.rs`):
+
+- `calls`: no SQLFluff rule follows a call into a routine. A routine's body is a string literal of another language
+  (`$$ ... $$`, PL/pgSQL), not SQL the grammar parses, and a `.sql` file has no workspace-resolvable call graph: no
+  import or module links one file's routines to another's.
+- `formatArgs`: no SQLFluff rule reads a format string, and ISO SQL has no format function; PostgreSQL's `format()`
+  and SQLite's `printf()` are dialect extensions.
+
+A rule reading either is invalid for `sql`, never `language-not-supported`. The pack's ports read `syntax`, `value`,
+`compare`, `scope` and `suppression`; none reads `arguments`, which the capability's own oracle proves.
 
 ## The registry entry
 
@@ -75,15 +124,17 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)), its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`) and its `tapeTag` (persisted, never reused) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. SQL's is 10; reserved today: Rust 9 and Vue 12 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
-| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`) |
+| `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `sqlfluff`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
 
-`parser` and `embeds` are validated but drive no behaviour yet: an embedding family's adapter finds the embedded
-code itself (`Adapter::regions`). Changes stay additive within `rerail.language/v1`: a new optional field or a new
-value is a v1 change, and renaming or removing a field, or changing what a value means, needs `rerail.language/v2`.
+`parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
+(`via`); a supported entry may embed only supported languages. An embedding's `Embedder` builds at most one program
+per file and `via`, and `adapter::regions` yields it as a region in the dialect the tape records for it. Changes stay
+additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing a
+field, or changing what a value means, needs `rerail.language/v2`.
 
 The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
@@ -109,27 +160,87 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
 3. **Supported.** The entry flips to `supported` once its dialects have a grammar, a parser and a tape tag and its
    adapter is in place; the build fails until each exists.
 
+## The test-only language
+
+`native/test-languages/exemplar.json` is a planned language only tests see: family `exemplar`, one dialect `exemplar`
+with the suffix `.exemplar`, every capability `not-supported-yet`, no suppressions and no tape tag. A test that needs
+"a planned language" names it, so flipping a real planned language to supported never touches a test. It is in no
+package and never in the product:
+
+- `languages/` and the generated host module do not list it; `npm run generate:languages` reads `languages/` alone.
+- `native/build.rs` validates it with the same rules as any entry, and against the registry for repeated ids, labels,
+  suffixes and tape tags, and generates it only as `#[cfg(test)]` items: `PLANNED_LANGUAGES` lists it in test builds
+  (`TEST_PLANNED_LANGUAGES` names the languages only tests plan) and not otherwise. It is no part of the engine's
+  identity.
+- A host test mocks the generated module with `exemplarRegistryModule()` and the native module with
+  `nativeRefusingExemplar` (`test/engine/support/exemplar-registry.ts`, `exemplar-engine.ts`): the native binding the host
+  loads is a product build and does not know it. `nativeRefusingExemplar` refuses only rules that name the exemplar and
+  hands every other rule to the real binding. The engine's own refusal, `language-not-supported`, is checked by a native
+  test and, through the real binding with nothing mocked, by `test/engine/code-rule/language-not-supported-engine.test.ts`,
+  which compiles a rule of a product language the registry still plans.
+
+Embedding has a test-only counterpart in the engine: the test-only HTML grammar embeds TypeScript, TSX and JavaScript
+through `Via::TestScript` (`language::test_embeds`, `native/src/code_rule_dsl/embed/test_script.rs`), whose program is
+an HTML file's scripts and then its `on*` handlers. Its tests (`embed/tests.rs`) run the tape's embedder loop, the
+persisted program records, region dialects, and scope and usage over a program whose nodes stand out of file order.
+The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
+
 ## Adding a language
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
-   capability `not-supported-yet`, its suppressions and anything it embeds. Run `npm run generate:languages` and
-   commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs for it can land now.
-2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and give each dialect a
-   `variant`, `parser`, `grammar` and the next unused `tapeTag`.
-3. Write its adapter. For a new dialect in an existing family, add the `GrammarDialect` variant; the compiler names
-   each per-dialect table that must learn it (ECMAScript's scope scripts in `scope/ecma.rs`, for one). For a new
-   family, add the `Family` variant and its adapter type in `language/adapter.rs`: implement `Adapter`
-   and each concern trait it supports (`Refused` for the rest), and add its expectations to the adapter kit. The
-   generated `with_adapter!` then dispatches to it; the build fails until every trait item exists.
-4. Flip `status` to `supported`, and each capability to `supported` as its oracle suite passes; mark one the language
-   will never have `refused`.
+   capability `not-supported-yet`, its suppressions and anything it embeds. Give each dialect the `tapeTag` it
+   reserves (Rust 9, SQL 10 and Vue 12 are taken; 11 is free for a second SQL dialect). Run
+   `npm run generate:languages` and commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`.
+   Rules and packs for it can land now.
+2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and flip the entry to
+   `supported` with each dialect's `variant`, `parser` and `grammar`. The build generates `GrammarDialect::<Variant>`,
+   `Family::<Family>`, `Family::of` and `honours`, and the `with_adapter!` arm; no enum is edited by hand. The build
+   fails until `adapter::<Family>` exists.
+3. Write its adapter module, in its own file, registered by one `mod` and one `pub(crate) use` line in
+   `native/src/code_rule_dsl/language/adapter.rs`. For a new family, its type implements `Adapter` and each concern
+   trait, or `Refused` for a concern the language will not have:
+   - `ScopeRules`;
+   - `ValueRules`, with `const LANG: Family = Family::<Family>` and the hooks `truthy`, `type_name`, `equals`,
+     `order`, `relation`, `numeric`, `integer` and `to_str`;
+   - `ArgumentRules`;
+   - `CallRules`, with `const NAMES: Option<Family>`, the family whose namespace its call names live in;
+   - `FormatArgRules`;
+   - `SyntaxRules`, including `embedded_pattern`.
+   A new dialect in an existing family needs no per-dialect table: ECMAScript's scope reads each dialect's grammar,
+   embedded or not, as the file's tape numbers it (`scope::ecma::script`).
+4. A suppression kind the language needs and the engine lacks is one row in `suppression_kinds!` in
+   `native/src/code_rule_dsl/suppress.rs` (`Variant key: Spec = linter::spec, "detail";`, its parser in
+   `suppress/<linter>.rs`), one entry in `codeRuleSuppressSchema` in
+   `src/engine/code-rule/code-rule-schema-semantic.ts`, its name in the registry entry's `suppressions`, and its use in
+   the adapter's `suppresses`.
+5. An embedding (`embeds` with a new `via`) adds `native/src/code_rule_dsl/embed/<via>.rs`, implementing `Embedder`
+   (`APART`, whether its program is a tree apart from the host's that host syntax errors leave whole, and `build`)
+   and `Program` (`dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's bytes to
+   the host's, in any order), and one `mod` and one `pub(crate) use` line in `embed.rs`. `build` returns one program
+   or none, so a file holds at most one program per `via`. Nothing else in the engine changes:
+   - `KindCatalog` numbers each embedded grammar's kinds and fields after the host's, and the tape records each
+     program's dialect and apartness (`tape::EmbeddedProgram`): TypeScript, TSX and JavaScript share kind codes.
+   - `adapter::regions(root, dialect)` yields each program as `Region { root, dialect }`, in the dialect its embedder
+     built it in. ECMAScript's scope and usage read every region (`scope::ecma`), Blade's its compiled view; rule
+     kinds, patterns and values match the whole tape, programs included.
+   - A clause whose witnesses all lie in programs apart from the host, free of syntax errors of their own, is
+     complete whatever the host's errors (`soundness::SyntaxErrors`).
+   - A call summary reads the first region only, so a family whose files may hold several refuses calls.
+
+   The embedding family's adapter (step 3) delegates each concern to the embedded family's, as Blade's does to PHP's.
+6. Add one `#[test]` function for the family to `native/src/code_rule_dsl/language/adapter/kit.rs`, calling
+   `kit::<Family>(&Expect { .. })` with the family's expectations.
+7. Flip each capability to `supported` only when it is implemented and proven by its oracle suite; mark one the
+   language will never have `refused`. Flip `status` last.
 
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
-The models to copy: `packs/python/`, `packs/php/` or `packs/typescript/` (ported language packs), `packs/node/` or
-`packs/next/` (framework packs over a supported language), `fixtures/packs/valid/` (the smallest pack, with an
-example-proven rule and a ported one) and `fixtures/packs/vue/` (a pack for a planned language).
+The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/` or `packs/next/`
+(framework packs over a supported language), `packs/php/` or `packs/blade/` (language packs that ship no rules yet,
+their ports kept in `candidates/rules/` until they pass the V1 rule validation gates), `fixtures/packs/valid/` (the
+smallest pack, with an example-proven rule and a ported one) and `fixtures/packs/exemplar/` (a pack for a planned
+language).
 
 ### A pack for a supported language
 
@@ -223,12 +334,12 @@ entry (below).
 
 ### A pack for a planned language
 
-The same files, with rules whose `language` the registry lists as `planned` (`vue`, `rust`, `sql`), or that read a
-capability their language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is
-skipped as `not supported yet` with the engine's reason, for example
-``/clauses/0/forbid/ast/language: `vue` is not supported yet``. Write its `examples` now; checks 3 and 4 run them
-once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/vue/` is a
-complete example.
+The same files, with rules whose `language` the registry lists as `planned`, or that read a capability their
+language has `not-supported-yet`. The pack lands: its checks pass, and each such rule's test is skipped as
+`not supported yet` with the engine's reason, for example
+``/clauses/0/forbid/ast/language: `exemplar` is not supported yet``. Write its `examples` now; checks 3 and 4 run
+them once core reads the language, and any other compile error fails check 1 today. `fixtures/packs/exemplar/` is a
+complete example, for the test-only planned language above.
 
 ### A ported pack
 

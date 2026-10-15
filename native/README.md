@@ -10,6 +10,8 @@ TypeScript side (`src/engine/`) calls it through `src/engine/native/`.
   (`content_store/`), the Git workspace index, the process and main-instance helpers, and `build_languages.rs`.
 - `build.rs` validates `languages/` and generates the language tables. It also locates `fixtures/` for the engine's
   tests: the one Rust fixtures-root resolver.
+- `test-languages/` holds the planned languages only tests see (`exemplar.json`, [docs/language-packs.md](../docs/language-packs.md)):
+  `build.rs` generates them as `#[cfg(test)]` items, so no product build knows them.
 - `grammars/` holds the vendored tree-sitter grammars, each with its LICENSE, and a PATCHES.md where Rerail carries
   patches in-tree.
 

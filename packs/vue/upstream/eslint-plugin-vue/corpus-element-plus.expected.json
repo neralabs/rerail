@@ -1,0 +1,573 @@
+{
+ "tool": "eslint-plugin-vue",
+ "version": "10.11.1",
+ "source": {
+  "kind": "corpus",
+  "name": "element-plus",
+  "repository": "https://github.com/element-plus/element-plus",
+  "commit": "88f4a8ed77ac6c985177d112300a36ea98bc8f97",
+  "rules": [
+   "vue/require-v-for-key",
+   "vue/no-use-v-if-with-v-for",
+   "vue/no-duplicate-attributes",
+   "vue/no-v-html",
+   "vue/no-child-content",
+   "vue/no-deprecated-v-on-native-modifier",
+   "vue/valid-v-for",
+   "vue/no-v-text-v-html-on-component",
+   "vue/v-on-event-hyphenation",
+   "vue/attribute-hyphenation",
+   "vue/no-dupe-v-else-if",
+   "vue/no-unused-vars",
+   "vue/no-template-shadow",
+   "vue/no-unused-refs",
+   "vue/no-ref-as-operand",
+   "vue/no-mutating-props",
+   "vue/no-dupe-keys",
+   "vue/return-in-computed-property",
+   "vue/no-async-in-computed-properties",
+   "vue/no-side-effects-in-computed-properties",
+   "vue/no-export-in-script-setup",
+   "vue/no-setup-props-reactivity-loss",
+   "vue/no-watch-after-await",
+   "vue/require-valid-default-prop"
+  ],
+  "skipped": []
+ },
+ "findings": [
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/common/vp-markdown.vue",
+   "line": 29,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/demo/vp-source-code.vue",
+   "line": 106,
+   "column": 49
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "docs/.vitepress/vitepress/components/doc-content/vp-table-of-content.vue",
+   "line": 19,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/doc-content/vp-table-of-content.vue",
+   "line": 29,
+   "column": 41
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/doc-content/vp-table-of-content.vue",
+   "line": 37,
+   "column": 50
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/globals/resource.vue",
+   "line": 90,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "docs/.vitepress/vitepress/components/globals/vp-component-meta.vue",
+   "line": 30,
+   "column": 54
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/globals/vp-component-meta.vue",
+   "line": 159,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "docs/.vitepress/vitepress/components/navbar/vp-social-link.vue",
+   "line": 13,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "docs/.vitepress/vitepress/components/vp-demo.vue",
+   "line": 80,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "docs/examples/popover/basic-usage.vue",
+   "line": 27,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "docs/examples/popover/basic-usage.vue",
+   "line": 40,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/anchor/src/anchor.vue",
+   "line": 245,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/color-picker-panel/src/color-picker-panel.vue",
+   "line": 25,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/date-picker-panel/src/date-picker-com/basic-month-table.vue",
+   "line": 72,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/date-picker-panel/src/date-picker-com/basic-month-table.vue",
+   "line": 73,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/date-picker-panel/src/date-picker-com/basic-month-table.vue",
+   "line": 73,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/date-picker-panel/src/date-picker-com/basic-month-table.vue",
+   "line": 73,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/date-picker-panel/src/date-picker-com/basic-month-table.vue",
+   "line": 73,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/image-viewer/src/image-viewer.vue",
+   "line": 214,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/image-viewer/src/image-viewer.vue",
+   "line": 223,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/input-number/src/input-number.vue",
+   "line": 142,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/input-otp/src/input-otp.vue",
+   "line": 99,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/input/src/input.vue",
+   "line": 290,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/menu/src/menu-item.vue",
+   "line": 81,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "packages/components/message-box/src/index.vue",
+   "line": 84,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/components/message-box/src/index.vue",
+   "line": 90,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "packages/components/message-box/src/index.vue",
+   "line": 90,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/components/message/src/message.vue",
+   "line": 44,
+   "column": 42
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/components/notification/src/notification.vue",
+   "line": 30,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/pagination/src/components/sizes.vue",
+   "line": 42,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/rate/src/rate.vue",
+   "line": 148,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/rate/src/rate.vue",
+   "line": 148,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/roving-focus-group/src/roving-focus-group-impl.vue",
+   "line": 39,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 10,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 33,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 45,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 51,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 98,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 123,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 143,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 188,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 254,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select-v2/src/select.vue",
+   "line": 289,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 10,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 33,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 45,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 51,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 96,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 121,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 141,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 186,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 243,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 275,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/select/src/select.vue",
+   "line": 286,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/skeleton/src/skeleton.vue",
+   "line": 42,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/slider/src/button.vue",
+   "line": 50,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/slider/src/slider.vue",
+   "line": 93,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/switch/src/switch.vue",
+   "line": 147,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/switch/src/switch.vue",
+   "line": 186,
+   "column": 6
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 29,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 30,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 35,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 40,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 52,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 62,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 73,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 89,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 119,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 129,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 139,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/table/src/table.vue",
+   "line": 167,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/table/src/table.vue",
+   "line": 315,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/time-picker/src/time-picker-com/basic-time-spinner.vue",
+   "line": 112,
+   "column": 58
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/time-picker/src/time-picker-com/basic-time-spinner.vue",
+   "line": 375,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/time-picker/src/time-picker-com/basic-time-spinner.vue",
+   "line": 376,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/time-picker/src/time-picker-com/panel-time-pick.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/time-picker/src/time-picker-com/panel-time-range.vue",
+   "line": 13,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/time-picker/src/time-picker-com/panel-time-range.vue",
+   "line": 34,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "packages/components/tooltip/src/tooltip.vue",
+   "line": 45,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/tour/src/content.vue",
+   "line": 49,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/tour/src/content.vue",
+   "line": 50,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/tour/src/tour.vue",
+   "line": 68,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "packages/components/tree-v2/src/tree-node.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "packages/components/tree/src/tree.vue",
+   "line": 74,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "ssr-testing/cases/popover.vue",
+   "line": 3,
+   "column": 9
+  }
+ ]
+}

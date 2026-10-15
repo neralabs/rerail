@@ -1,0 +1,2918 @@
+{
+ "tool": "sqlfluff",
+ "version": "4.4.0",
+ "source": {
+  "kind": "corpus",
+  "name": "postgres",
+  "repository": "https://github.com/postgres/postgres",
+  "commit": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
+  "rules": [
+   "AL04",
+   "AL05",
+   "AL08",
+   "AL09",
+   "AM01",
+   "AM02",
+   "AM05",
+   "AM09",
+   "CV02",
+   "CV04",
+   "CV05",
+   "CV08",
+   "PG01",
+   "PG02",
+   "RF01",
+   "RF04",
+   "RF05",
+   "RF06",
+   "ST01",
+   "ST02",
+   "ST08",
+   "ST10"
+  ],
+  "skipped": [
+   "contrib/amcheck/sql/check_heap.sql",
+   "contrib/auto_explain/sql/alter_reset.sql",
+   "contrib/bloom/bloom--1.0.sql",
+   "contrib/bloom/sql/bloom.sql",
+   "contrib/bool_plperl/bool_plperl--1.0.sql",
+   "contrib/bool_plperl/bool_plperlu--1.0.sql",
+   "contrib/bool_plperl/sql/bool_plperl.sql",
+   "contrib/bool_plperl/sql/bool_plperlu.sql",
+   "contrib/btree_gin/btree_gin--1.0--1.1.sql",
+   "contrib/btree_gin/btree_gin--1.0.sql",
+   "contrib/btree_gin/btree_gin--1.1--1.2.sql",
+   "contrib/btree_gin/btree_gin--1.2--1.3.sql",
+   "contrib/btree_gin/sql/bool.sql",
+   "contrib/btree_gin/sql/bpchar.sql",
+   "contrib/btree_gin/sql/enum.sql",
+   "contrib/btree_gin/sql/name.sql",
+   "contrib/btree_gin/sql/uuid.sql",
+   "contrib/btree_gist/btree_gist--1.0--1.1.sql",
+   "contrib/btree_gist/btree_gist--1.2--1.3.sql",
+   "contrib/btree_gist/btree_gist--1.2.sql",
+   "contrib/btree_gist/btree_gist--1.3--1.4.sql",
+   "contrib/btree_gist/btree_gist--1.4--1.5.sql",
+   "contrib/btree_gist/btree_gist--1.6--1.7.sql",
+   "contrib/btree_gist/btree_gist--1.7--1.8.sql",
+   "contrib/btree_gist/sql/bit.sql",
+   "contrib/btree_gist/sql/bool.sql",
+   "contrib/btree_gist/sql/bytea.sql",
+   "contrib/btree_gist/sql/cash.sql",
+   "contrib/btree_gist/sql/char.sql",
+   "contrib/btree_gist/sql/date.sql",
+   "contrib/btree_gist/sql/enum.sql",
+   "contrib/btree_gist/sql/float4.sql",
+   "contrib/btree_gist/sql/float8.sql",
+   "contrib/btree_gist/sql/inet.sql",
+   "contrib/btree_gist/sql/int2.sql",
+   "contrib/btree_gist/sql/int4.sql",
+   "contrib/btree_gist/sql/int8.sql",
+   "contrib/btree_gist/sql/interval.sql",
+   "contrib/btree_gist/sql/macaddr.sql",
+   "contrib/btree_gist/sql/macaddr8.sql",
+   "contrib/btree_gist/sql/not_equal.sql",
+   "contrib/btree_gist/sql/numeric.sql",
+   "contrib/btree_gist/sql/text.sql",
+   "contrib/btree_gist/sql/time.sql",
+   "contrib/btree_gist/sql/timestamp.sql",
+   "contrib/btree_gist/sql/timestamptz.sql",
+   "contrib/btree_gist/sql/varbit.sql",
+   "contrib/btree_gist/sql/without_overlaps.sql",
+   "contrib/citext/citext--1.4--1.5.sql",
+   "contrib/citext/citext--1.4.sql",
+   "contrib/citext/citext--1.5--1.6.sql",
+   "contrib/citext/sql/citext.sql",
+   "contrib/citext/sql/citext_utf8.sql",
+   "contrib/citext/sql/create_index_acl.sql",
+   "contrib/cube/cube--1.0--1.1.sql",
+   "contrib/cube/cube--1.2--1.3.sql",
+   "contrib/cube/cube--1.2.sql",
+   "contrib/cube/cube--1.3--1.4.sql",
+   "contrib/cube/cube--1.4--1.5.sql",
+   "contrib/cube/sql/cube.sql",
+   "contrib/dblink/dblink--1.0--1.1.sql",
+   "contrib/dblink/dblink--1.2.sql",
+   "contrib/dblink/sql/dblink.sql",
+   "contrib/dict_int/dict_int--1.0.sql",
+   "contrib/dict_int/sql/dict_int.sql",
+   "contrib/dict_xsyn/dict_xsyn--1.0.sql",
+   "contrib/dict_xsyn/sql/dict_xsyn.sql",
+   "contrib/earthdistance/earthdistance--1.1--1.2.sql",
+   "contrib/earthdistance/earthdistance--1.1.sql",
+   "contrib/earthdistance/sql/earthdistance.sql",
+   "contrib/file_fdw/sql/file_fdw.sql",
+   "contrib/hstore/hstore--1.4--1.5.sql",
+   "contrib/hstore/hstore--1.4.sql",
+   "contrib/hstore/hstore--1.5--1.6.sql",
+   "contrib/hstore/hstore--1.6--1.7.sql",
+   "contrib/hstore/hstore--1.7--1.8.sql",
+   "contrib/hstore/sql/hstore.sql",
+   "contrib/hstore_plperl/hstore_plperl--1.0.sql",
+   "contrib/hstore_plperl/hstore_plperlu--1.0.sql",
+   "contrib/hstore_plperl/sql/create_transform.sql",
+   "contrib/hstore_plpython/hstore_plpython3u--1.0.sql",
+   "contrib/intarray/intarray--1.0--1.1.sql",
+   "contrib/intarray/intarray--1.2--1.3.sql",
+   "contrib/intarray/intarray--1.2.sql",
+   "contrib/intarray/intarray--1.3--1.4.sql",
+   "contrib/intarray/intarray--1.4--1.5.sql",
+   "contrib/intarray/sql/_int.sql",
+   "contrib/isn/isn--1.1--1.2.sql",
+   "contrib/isn/isn--1.1.sql",
+   "contrib/isn/isn--1.2--1.3.sql",
+   "contrib/isn/sql/isn.sql",
+   "contrib/jsonb_plperl/jsonb_plperl--1.0.sql",
+   "contrib/jsonb_plperl/jsonb_plperlu--1.0.sql",
+   "contrib/jsonb_plpython/jsonb_plpython3u--1.0.sql",
+   "contrib/ltree/ltree--1.1--1.2.sql",
+   "contrib/ltree/ltree--1.1.sql",
+   "contrib/ltree/ltree--1.2--1.3.sql",
+   "contrib/ltree/sql/ltree.sql",
+   "contrib/ltree_plpython/ltree_plpython3u--1.0.sql",
+   "contrib/pageinspect/sql/brin.sql",
+   "contrib/pageinspect/sql/btree.sql",
+   "contrib/pageinspect/sql/checksum.sql",
+   "contrib/pageinspect/sql/gin.sql",
+   "contrib/pageinspect/sql/gist.sql",
+   "contrib/pageinspect/sql/hash.sql",
+   "contrib/pageinspect/sql/page.sql",
+   "contrib/passwordcheck/sql/passwordcheck.sql",
+   "contrib/pg_overexplain/sql/pg_overexplain.sql",
+   "contrib/pg_stat_statements/sql/cursors.sql",
+   "contrib/pg_stat_statements/sql/dml.sql",
+   "contrib/pg_stat_statements/sql/entry_timestamp.sql",
+   "contrib/pg_stat_statements/sql/extended.sql",
+   "contrib/pg_stat_statements/sql/level_tracking.sql",
+   "contrib/pg_stat_statements/sql/parallel.sql",
+   "contrib/pg_stat_statements/sql/planning.sql",
+   "contrib/pg_stat_statements/sql/privileges.sql",
+   "contrib/pg_stat_statements/sql/select.sql",
+   "contrib/pg_stat_statements/sql/squashing.sql",
+   "contrib/pg_stat_statements/sql/user_activity.sql",
+   "contrib/pg_stat_statements/sql/utility.sql",
+   "contrib/pg_stat_statements/sql/wal.sql",
+   "contrib/pg_trgm/pg_trgm--1.0--1.1.sql",
+   "contrib/pg_trgm/pg_trgm--1.1--1.2.sql",
+   "contrib/pg_trgm/pg_trgm--1.3--1.4.sql",
+   "contrib/pg_trgm/pg_trgm--1.3.sql",
+   "contrib/pg_trgm/pg_trgm--1.4--1.5.sql",
+   "contrib/pg_trgm/pg_trgm--1.5--1.6.sql",
+   "contrib/pg_trgm/sql/pg_strict_word_trgm.sql",
+   "contrib/pg_trgm/sql/pg_trgm.sql",
+   "contrib/pg_trgm/sql/pg_word_trgm.sql",
+   "contrib/pg_visibility/sql/pg_visibility.sql",
+   "contrib/pg_walinspect/sql/pg_walinspect.sql",
+   "contrib/pgcrypto/sql/crypt-des.sql",
+   "contrib/pgstattuple/sql/pgstattuple.sql",
+   "contrib/postgres_fdw/sql/postgres_fdw.sql",
+   "contrib/postgres_fdw/sql/query_cancel.sql",
+   "contrib/seg/seg--1.1--1.2.sql",
+   "contrib/seg/seg--1.1.sql",
+   "contrib/seg/seg--1.2--1.3.sql",
+   "contrib/seg/seg--1.3--1.4.sql",
+   "contrib/seg/sql/security.sql",
+   "contrib/seg/sql/seg.sql",
+   "contrib/sepgsql/sql/alter.sql",
+   "contrib/sepgsql/sql/ddl.sql",
+   "contrib/sepgsql/sql/label.sql",
+   "contrib/sepgsql/sql/misc.sql",
+   "contrib/test_decoding/sql/ddl.sql",
+   "contrib/test_decoding/sql/decoding_in_xact.sql",
+   "contrib/test_decoding/sql/prepared.sql",
+   "contrib/test_decoding/sql/replorigin.sql",
+   "contrib/test_decoding/sql/rewrite.sql",
+   "contrib/test_decoding/sql/slot.sql",
+   "contrib/test_decoding/sql/spill.sql",
+   "contrib/test_decoding/sql/stats.sql",
+   "contrib/test_decoding/sql/stream.sql",
+   "contrib/test_decoding/sql/toast.sql",
+   "contrib/test_decoding/sql/twophase.sql",
+   "contrib/test_decoding/sql/twophase_stream.sql",
+   "contrib/test_decoding/sql/xact.sql",
+   "contrib/tsm_system_rows/sql/tsm_system_rows.sql",
+   "contrib/tsm_system_time/sql/tsm_system_time.sql",
+   "contrib/unaccent/unaccent--1.1.sql",
+   "src/backend/catalog/information_schema.sql",
+   "src/backend/catalog/system_functions.sql",
+   "src/backend/catalog/system_views.sql",
+   "src/pl/plpgsql/src/sql/plpgsql_copy.sql",
+   "src/pl/plpgsql/src/sql/plpgsql_record.sql",
+   "src/pl/plpgsql/src/sql/plpgsql_trap.sql",
+   "src/test/regress/sql/aggregates.sql",
+   "src/test/regress/sql/alter_generic.sql",
+   "src/test/regress/sql/alter_operator.sql",
+   "src/test/regress/sql/alter_table.sql",
+   "src/test/regress/sql/arrays.sql",
+   "src/test/regress/sql/bit.sql",
+   "src/test/regress/sql/boolean.sql",
+   "src/test/regress/sql/box.sql",
+   "src/test/regress/sql/brin.sql",
+   "src/test/regress/sql/brin_bloom.sql",
+   "src/test/regress/sql/brin_multi.sql",
+   "src/test/regress/sql/btree_index.sql",
+   "src/test/regress/sql/case.sql",
+   "src/test/regress/sql/char.sql",
+   "src/test/regress/sql/cluster.sql",
+   "src/test/regress/sql/collate.icu.utf8.sql",
+   "src/test/regress/sql/collate.linux.utf8.sql",
+   "src/test/regress/sql/collate.sql",
+   "src/test/regress/sql/collate.utf8.sql",
+   "src/test/regress/sql/collate.windows.win1252.sql",
+   "src/test/regress/sql/combocid.sql",
+   "src/test/regress/sql/compression.sql",
+   "src/test/regress/sql/compression_pglz.sql",
+   "src/test/regress/sql/constraints.sql",
+   "src/test/regress/sql/conversion.sql",
+   "src/test/regress/sql/copy.sql",
+   "src/test/regress/sql/copy2.sql",
+   "src/test/regress/sql/copydml.sql",
+   "src/test/regress/sql/copyselect.sql",
+   "src/test/regress/sql/create_aggregate.sql",
+   "src/test/regress/sql/create_am.sql",
+   "src/test/regress/sql/create_function_c.sql",
+   "src/test/regress/sql/create_function_sql.sql",
+   "src/test/regress/sql/create_index.sql",
+   "src/test/regress/sql/create_index_spgist.sql",
+   "src/test/regress/sql/create_misc.sql",
+   "src/test/regress/sql/create_operator.sql",
+   "src/test/regress/sql/create_procedure.sql",
+   "src/test/regress/sql/create_role.sql",
+   "src/test/regress/sql/create_schema.sql",
+   "src/test/regress/sql/create_table.sql",
+   "src/test/regress/sql/create_table_like.sql",
+   "src/test/regress/sql/create_type.sql",
+   "src/test/regress/sql/create_view.sql",
+   "src/test/regress/sql/database.sql",
+   "src/test/regress/sql/date.sql",
+   "src/test/regress/sql/dependency.sql",
+   "src/test/regress/sql/domain.sql",
+   "src/test/regress/sql/drop_if_exists.sql",
+   "src/test/regress/sql/drop_operator.sql",
+   "src/test/regress/sql/encoding.sql",
+   "src/test/regress/sql/enum.sql",
+   "src/test/regress/sql/equivclass.sql",
+   "src/test/regress/sql/errors.sql",
+   "src/test/regress/sql/event_trigger.sql",
+   "src/test/regress/sql/event_trigger_login.sql",
+   "src/test/regress/sql/expressions.sql",
+   "src/test/regress/sql/fast_default.sql",
+   "src/test/regress/sql/float4.sql",
+   "src/test/regress/sql/float8.sql",
+   "src/test/regress/sql/foreign_data.sql",
+   "src/test/regress/sql/foreign_key.sql",
+   "src/test/regress/sql/generated_stored.sql",
+   "src/test/regress/sql/generated_virtual.sql",
+   "src/test/regress/sql/geometry.sql",
+   "src/test/regress/sql/gin.sql",
+   "src/test/regress/sql/gist.sql",
+   "src/test/regress/sql/groupingsets.sql",
+   "src/test/regress/sql/guc.sql",
+   "src/test/regress/sql/hash_index.sql",
+   "src/test/regress/sql/horology.sql",
+   "src/test/regress/sql/identity.sql",
+   "src/test/regress/sql/incremental_sort.sql",
+   "src/test/regress/sql/index_including.sql",
+   "src/test/regress/sql/index_including_gist.sql",
+   "src/test/regress/sql/indexing.sql",
+   "src/test/regress/sql/indirect_toast.sql",
+   "src/test/regress/sql/inet.sql",
+   "src/test/regress/sql/inherit.sql",
+   "src/test/regress/sql/insert.sql",
+   "src/test/regress/sql/insert_conflict.sql",
+   "src/test/regress/sql/int2.sql",
+   "src/test/regress/sql/int4.sql",
+   "src/test/regress/sql/int8.sql",
+   "src/test/regress/sql/interval.sql",
+   "src/test/regress/sql/join.sql",
+   "src/test/regress/sql/join_hash.sql",
+   "src/test/regress/sql/json.sql",
+   "src/test/regress/sql/jsonb.sql",
+   "src/test/regress/sql/largeobject.sql",
+   "src/test/regress/sql/limit.sql",
+   "src/test/regress/sql/line.sql",
+   "src/test/regress/sql/lock.sql",
+   "src/test/regress/sql/matview.sql",
+   "src/test/regress/sql/memoize.sql",
+   "src/test/regress/sql/merge.sql",
+   "src/test/regress/sql/misc.sql",
+   "src/test/regress/sql/misc_functions.sql",
+   "src/test/regress/sql/namespace.sql",
+   "src/test/regress/sql/numeric_big.sql",
+   "src/test/regress/sql/numerology.sql",
+   "src/test/regress/sql/object_address.sql",
+   "src/test/regress/sql/partition_aggregate.sql",
+   "src/test/regress/sql/partition_join.sql",
+   "src/test/regress/sql/partition_prune.sql",
+   "src/test/regress/sql/pg_lsn.sql",
+   "src/test/regress/sql/plancache.sql",
+   "src/test/regress/sql/plpgsql.sql",
+   "src/test/regress/sql/polygon.sql",
+   "src/test/regress/sql/polymorphism.sql",
+   "src/test/regress/sql/portals.sql",
+   "src/test/regress/sql/portals_p2.sql",
+   "src/test/regress/sql/predicate.sql",
+   "src/test/regress/sql/prepared_xacts.sql",
+   "src/test/regress/sql/privileges.sql",
+   "src/test/regress/sql/psql.sql",
+   "src/test/regress/sql/psql_crosstab.sql",
+   "src/test/regress/sql/psql_pipeline.sql",
+   "src/test/regress/sql/publication.sql",
+   "src/test/regress/sql/rangefuncs.sql",
+   "src/test/regress/sql/rangetypes.sql",
+   "src/test/regress/sql/regex.sql",
+   "src/test/regress/sql/replica_identity.sql",
+   "src/test/regress/sql/returning.sql",
+   "src/test/regress/sql/rowsecurity.sql",
+   "src/test/regress/sql/rowtypes.sql",
+   "src/test/regress/sql/rules.sql",
+   "src/test/regress/sql/security_label.sql",
+   "src/test/regress/sql/select.sql",
+   "src/test/regress/sql/select_distinct.sql",
+   "src/test/regress/sql/select_distinct_on.sql",
+   "src/test/regress/sql/select_into.sql",
+   "src/test/regress/sql/select_parallel.sql",
+   "src/test/regress/sql/select_views.sql",
+   "src/test/regress/sql/sequence.sql",
+   "src/test/regress/sql/spgist.sql",
+   "src/test/regress/sql/sqljson.sql",
+   "src/test/regress/sql/sqljson_jsontable.sql",
+   "src/test/regress/sql/sqljson_queryfuncs.sql",
+   "src/test/regress/sql/stats.sql",
+   "src/test/regress/sql/stats_ext.sql",
+   "src/test/regress/sql/strings.sql",
+   "src/test/regress/sql/subscription.sql",
+   "src/test/regress/sql/subselect.sql",
+   "src/test/regress/sql/sysviews.sql",
+   "src/test/regress/sql/tablesample.sql",
+   "src/test/regress/sql/tablespace.sql",
+   "src/test/regress/sql/temp.sql",
+   "src/test/regress/sql/test_setup.sql",
+   "src/test/regress/sql/text.sql",
+   "src/test/regress/sql/tidrangescan.sql",
+   "src/test/regress/sql/tidscan.sql",
+   "src/test/regress/sql/timestamptz.sql",
+   "src/test/regress/sql/timetz.sql",
+   "src/test/regress/sql/transactions.sql",
+   "src/test/regress/sql/triggers.sql",
+   "src/test/regress/sql/tsdicts.sql",
+   "src/test/regress/sql/tsearch.sql",
+   "src/test/regress/sql/tsrf.sql",
+   "src/test/regress/sql/tuplesort.sql",
+   "src/test/regress/sql/txid.sql",
+   "src/test/regress/sql/type_sanity.sql",
+   "src/test/regress/sql/union.sql",
+   "src/test/regress/sql/updatable_views.sql",
+   "src/test/regress/sql/update.sql",
+   "src/test/regress/sql/uuid.sql",
+   "src/test/regress/sql/vacuum.sql",
+   "src/test/regress/sql/window.sql",
+   "src/test/regress/sql/with.sql",
+   "src/test/regress/sql/without_overlaps.sql",
+   "src/test/regress/sql/write_parallel.sql",
+   "src/test/regress/sql/xid.sql",
+   "src/test/regress/sql/xml.sql",
+   "src/test/regress/sql/xmlmap.sql"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "AL04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 192,
+   "column": 15
+  },
+  {
+   "rule": "AL04",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 75,
+   "column": 24
+  },
+  {
+   "rule": "AL04",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 112,
+   "column": 24
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/pg_buffercache/sql/pg_buffercache.sql",
+   "line": 19,
+   "column": 41
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 33,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 34,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 35,
+   "column": 109
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 49,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 51,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 53,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 55,
+   "column": 6
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 80,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 86,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 92,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 98,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 104,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 110,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 116,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 122,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 128,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 134,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 138,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 144,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 184,
+   "column": 87
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 187,
+   "column": 82
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 200,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 203,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 211,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 214,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 217,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 220,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 221,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 224,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 225,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 226,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 227,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 228,
+   "column": 83
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 229,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 230,
+   "column": 89
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 234,
+   "column": 78
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 236,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 238,
+   "column": 94
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 240,
+   "column": 97
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 250,
+   "column": 84
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 25,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 27,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 33,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 35,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 46,
+   "column": 4
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/explain.sql",
+   "line": 107,
+   "column": 46
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 19,
+   "column": 19
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 30,
+   "column": 21
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 55,
+   "column": 35
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 448,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 456,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 465,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 843,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 931,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 936,
+   "column": 22
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1127,
+   "column": 17
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1152,
+   "column": 17
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1265,
+   "column": 14
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1414,
+   "column": 31
+  },
+  {
+   "rule": "AL05",
+   "path": "src/test/regress/sql/sanity_check.sql",
+   "line": 13,
+   "column": 45
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/jsonb_jsonpath.sql",
+   "line": 1149,
+   "column": 11
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 516,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 524,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 535,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 543,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 554,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 562,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 573,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 582,
+   "column": 41
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 78,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 78,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 93,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 93,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 374,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 374,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 533,
+   "column": 28
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 581,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 581,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 594,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 594,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 611,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 611,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 648,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 648,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 693,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 702,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 714,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 725,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 743,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 809,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 809,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 816,
+   "column": 31
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 816,
+   "column": 39
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 874,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 898,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 921,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 950,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 971,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 993,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1016,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1025,
+   "column": 49
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1025,
+   "column": 63
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1025,
+   "column": 73
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1088,
+   "column": 10
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1088,
+   "column": 22
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1088,
+   "column": 38
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1088,
+   "column": 53
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1192,
+   "column": 19
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1199,
+   "column": 19
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1221,
+   "column": 30
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1231,
+   "column": 30
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1255,
+   "column": 19
+  },
+  {
+   "rule": "AL08",
+   "path": "src/test/regress/sql/select_implicit.sql",
+   "line": 64,
+   "column": 11
+  },
+  {
+   "rule": "AM05",
+   "path": "contrib/hstore_plperl/sql/hstore_plperl.sql",
+   "line": 6,
+   "column": 36
+  },
+  {
+   "rule": "AM05",
+   "path": "contrib/hstore_plperl/sql/hstore_plperlu.sql",
+   "line": 6,
+   "column": 36
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 60,
+   "column": 20
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 66,
+   "column": 20
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 72,
+   "column": 20
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 78,
+   "column": 20
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 165,
+   "column": 20
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 55,
+   "column": 17
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/misc_sanity.sql",
+   "line": 77,
+   "column": 17
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 397,
+   "column": 17
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 404,
+   "column": 17
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 774,
+   "column": 18
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 795,
+   "column": 18
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1160,
+   "column": 19
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1354,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1355,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 58,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 62,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 66,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 73,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 81,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 85,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 89,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 93,
+   "column": 3
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/sanity_check.sql",
+   "line": 10,
+   "column": 67
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 943,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 960,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 973,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 987,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 1000,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 1014,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 1027,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 1041,
+   "column": 1
+  },
+  {
+   "rule": "AM05",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 1054,
+   "column": 1
+  },
+  {
+   "rule": "AM09",
+   "path": "contrib/test_decoding/sql/time.sql",
+   "line": 16,
+   "column": 23
+  },
+  {
+   "rule": "AM09",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 86,
+   "column": 50
+  },
+  {
+   "rule": "AM09",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 407,
+   "column": 45
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 51,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 103,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 137,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 160,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 170,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 36,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 47,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 57,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/bit.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/bytea.sql",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/cidr.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/date.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/float4.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/float8.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/inet.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/int2.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/int4.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/int8.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/interval.sql",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/macaddr.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/macaddr8.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/money.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/numeric.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/oid.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/text.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/time.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/timestamp.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/timestamptz.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/timetz.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/varbit.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gin/sql/varchar.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gist/sql/cidr.sql",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gist/sql/oid.sql",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gist/sql/timetz.sql",
+   "line": 45,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gist/sql/uuid.sql",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/btree_gist/sql/varchar.sql",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/ltree/ltreetest.sql",
+   "line": 20,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/ltree/ltreetest.sql",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/ltree/ltreetest.sql",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pageinspect/sql/oldextversions.sql",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pageinspect/sql/oldextversions.sql",
+   "line": 28,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pg_freespacemap/sql/pg_freespacemap.sql",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pg_freespacemap/sql/pg_freespacemap.sql",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pg_freespacemap/sql/pg_freespacemap.sql",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/pg_trgm/sql/pg_utf8_trgm.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/seg/sql/partition.sql",
+   "line": 24,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/seg/sql/partition.sql",
+   "line": 26,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/seg/sql/partition.sql",
+   "line": 28,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/spi/sql/refint.sql",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/spi/sql/refint.sql",
+   "line": 8,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/spi/sql/refint.sql",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "contrib/xml2/sql/xml2.sql",
+   "line": 73,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/amutils.sql",
+   "line": 80,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/amutils.sql",
+   "line": 90,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/bitmapops.sql",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/bitmapops.sql",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/macaddr.sql",
+   "line": 25,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/macaddr.sql",
+   "line": 26,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/macaddr8.sql",
+   "line": 62,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/macaddr8.sql",
+   "line": 63,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/maintain_every.sql",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/multirangetypes.sql",
+   "line": 100,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/multirangetypes.sql",
+   "line": 440,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/multirangetypes.sql",
+   "line": 610,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/mvcc.sql",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 32,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 33,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 37,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 39,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 41,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/partition_info.sql",
+   "line": 43,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/point.sql",
+   "line": 82,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 27,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 28,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 29,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 30,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 31,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 36,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 37,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 38,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 39,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 40,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 41,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 46,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 47,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 48,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 49,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 50,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reindex_catalog.sql",
+   "line": 51,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 119,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 123,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 125,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 129,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 130,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/reloptions.sql",
+   "line": 137,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 117,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 902,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 910,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/tid.sql",
+   "line": 35,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/tid.sql",
+   "line": 46,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/tid.sql",
+   "line": 48,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/vacuum_parallel.sql",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/vacuum_parallel.sql",
+   "line": 13,
+   "column": 1
+  },
+  {
+   "rule": "PG01",
+   "path": "src/test/regress/sql/vacuum_parallel.sql",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "PG02",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 37,
+   "column": 1
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 3,
+   "column": 36
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 6,
+   "column": 24
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 7,
+   "column": 25
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 8,
+   "column": 26
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 9,
+   "column": 27
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 10,
+   "column": 25
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 11,
+   "column": 26
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 12,
+   "column": 27
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 13,
+   "column": 28
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 14,
+   "column": 24
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 15,
+   "column": 25
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 16,
+   "column": 26
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 17,
+   "column": 27
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 18,
+   "column": 26
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 19,
+   "column": 27
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 20,
+   "column": 36
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 21,
+   "column": 37
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/cube/sql/cube_sci.sql",
+   "line": 22,
+   "column": 37
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/ltree/ltreetest.sql",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/crypt-blowfish.sql",
+   "line": 18,
+   "column": 21
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/crypt-md5.sql",
+   "line": 9,
+   "column": 21
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/crypt-shacrypt.sql",
+   "line": 10,
+   "column": 21
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/crypt-xdes.sql",
+   "line": 25,
+   "column": 21
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/pgp-pubkey-decrypt.sql",
+   "line": 10,
+   "column": 2
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/pgcrypto/sql/pgp-pubkey-decrypt.sql",
+   "line": 16,
+   "column": 2
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/sepgsql/sql/truncate.sql",
+   "line": 8,
+   "column": 31
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/sepgsql/sql/truncate.sql",
+   "line": 12,
+   "column": 24
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 14,
+   "column": 40
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 14,
+   "column": 52
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 60,
+   "column": 29
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/tablefunc/sql/tablefunc.sql",
+   "line": 60,
+   "column": 58
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/test_decoding/sql/permissions.sql",
+   "line": 8,
+   "column": 22
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/test_decoding/sql/time.sql",
+   "line": 3,
+   "column": 24
+  },
+  {
+   "rule": "RF04",
+   "path": "contrib/test_decoding/sql/truncate.sql",
+   "line": 6,
+   "column": 38
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/amutils.sql",
+   "line": 41,
+   "column": 76
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/amutils.sql",
+   "line": 56,
+   "column": 66
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/comments.sql",
+   "line": 5,
+   "column": 22
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/comments.sql",
+   "line": 6,
+   "column": 49
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 85,
+   "column": 45
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 111,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 113,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 121,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/functional_deps.sql",
+   "line": 122,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 16,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 23,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 30,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 37,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 44,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 51,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 58,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 66,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 74,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 83,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 90,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 99,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 107,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 115,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 124,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 134,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 136,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 139,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 147,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 155,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 163,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 173,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 183,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 194,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 203,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 211,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 221,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 230,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 241,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 251,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 253,
+   "column": 13
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/mvcc.sql",
+   "line": 17,
+   "column": 33
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/mvcc.sql",
+   "line": 17,
+   "column": 42
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 656,
+   "column": 18
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1004,
+   "column": 32
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1005,
+   "column": 40
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1006,
+   "column": 40
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1013,
+   "column": 54
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1019,
+   "column": 38
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1020,
+   "column": 46
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1021,
+   "column": 46
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1027,
+   "column": 30
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1028,
+   "column": 38
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1029,
+   "column": 38
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1093,
+   "column": 43
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 824,
+   "column": 32
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/opr_sanity.sql",
+   "line": 1351,
+   "column": 31
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/stats_import.sql",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 301,
+   "column": 30
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 301,
+   "column": 63
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 302,
+   "column": 29
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 302,
+   "column": 60
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 303,
+   "column": 32
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 303,
+   "column": 68
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 307,
+   "column": 33
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 312,
+   "column": 68
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 134,
+   "column": 36
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 26,
+   "column": 30
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 27,
+   "column": 30
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 28,
+   "column": 31
+  },
+  {
+   "rule": "RF04",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 29,
+   "column": 31
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/jsonb_jsonpath.sql",
+   "line": 174,
+   "column": 7
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/jsonb_jsonpath.sql",
+   "line": 187,
+   "column": 7
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/numeric.sql",
+   "line": 1309,
+   "column": 23
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 154,
+   "column": 20
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 157,
+   "column": 20
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 172,
+   "column": 20
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 175,
+   "column": 20
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 326,
+   "column": 13
+  },
+  {
+   "rule": "RF05",
+   "path": "src/test/regress/sql/truncate.sql",
+   "line": 327,
+   "column": 13
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_btree.sql",
+   "line": 144,
+   "column": 17
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 3,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 8,
+   "column": 31
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 16,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 17,
+   "column": 31
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 31,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 36,
+   "column": 42
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 43,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 43,
+   "column": 32
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 47,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 47,
+   "column": 65
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 55,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/amcheck/sql/check_gin.sql",
+   "line": 57,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 4,
+   "column": 4
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 11,
+   "column": 38
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 12,
+   "column": 39
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 13,
+   "column": 38
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 14,
+   "column": 39
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/btree_gin/sql/char.sql",
+   "line": 15,
+   "column": 38
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pageinspect/pageinspect--1.11--1.12.sql",
+   "line": 11,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pageinspect/pageinspect--1.5.sql",
+   "line": 164,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pageinspect/pageinspect--1.8--1.9.sql",
+   "line": 92,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-blowfish.sql",
+   "line": 23,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-md5.sql",
+   "line": 14,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-shacrypt.sql",
+   "line": 16,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-shacrypt.sql",
+   "line": 22,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-shacrypt.sql",
+   "line": 43,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-shacrypt.sql",
+   "line": 49,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "contrib/pgcrypto/sql/crypt-xdes.sql",
+   "line": 30,
+   "column": 34
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 54,
+   "column": 23
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 300,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 306,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 311,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 317,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/timestamp.sql",
+   "line": 327,
+   "column": 14
+  },
+  {
+   "rule": "RF06",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 20,
+   "column": 8
+  },
+  {
+   "rule": "ST08",
+   "path": "src/test/regress/sql/hash_func.sql",
+   "line": 86,
+   "column": 24
+  },
+  {
+   "rule": "ST10",
+   "path": "contrib/uuid-ossp/sql/uuid_ossp.sql",
+   "line": 62,
+   "column": 40
+  },
+  {
+   "rule": "ST10",
+   "path": "contrib/uuid-ossp/sql/uuid_ossp.sql",
+   "line": 67,
+   "column": 40
+  },
+  {
+   "rule": "ST10",
+   "path": "contrib/uuid-ossp/sql/uuid_ossp.sql",
+   "line": 75,
+   "column": 27
+  },
+  {
+   "rule": "ST10",
+   "path": "src/test/regress/sql/prepare.sql",
+   "line": 41,
+   "column": 27
+  },
+  {
+   "rule": "ST10",
+   "path": "src/test/regress/sql/unicode.sql",
+   "line": 6,
+   "column": 25
+  }
+ ]
+}

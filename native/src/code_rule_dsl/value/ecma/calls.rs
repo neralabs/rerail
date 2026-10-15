@@ -5,6 +5,8 @@
 //! `'a'.length`, `/a/g.flags`). A call folds only through a function on eslint-utils' allowlists
 //! (`builtins.rs`, generated from its source) that is implemented here; anything else is unknown.
 
+use crate::code_rule_dsl::language::Family;
+
 use super::builtins::{BUILTIN_NAMES, CALL_ALLOWED, CALL_PASS_THROUGH, CONSTANTS, GETTER_ALLOWED};
 use super::ops::{self, to_number, to_primitive, to_string};
 use super::{decode, operand};
@@ -12,7 +14,7 @@ use crate::code_rule_dsl::value::key::{
     identifier_name, number_to_string, string_to_bigint, to_int32, to_uint32,
 };
 use crate::code_rule_dsl::value::{
-    BigInt, ContainerKind, Context, Lang, MAX_ELEMENTS, MAX_STRING_BYTES, Value,
+    BigInt, ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value,
 };
 use ast_grep_core::{Doc, Node};
 use num_traits::{Signed, ToPrimitive, Zero};
@@ -659,7 +661,7 @@ fn apply(name: &str, this: Option<&Value>, values: &[Value]) -> Value {
             }))
         }
         ("Boolean" | "Boolean.prototype.constructor", _) => {
-            known(first.truthy(Lang::Js).map(Value::Bool))
+            known(first.truthy(Family::Ecma).map(Value::Bool))
         }
         ("BigInt" | "BigInt.prototype.constructor", _) => known(to_bigint(first)),
         ("parseInt" | "Number.parseInt", _) => known(parse_int(first, second)),
@@ -678,7 +680,7 @@ fn apply(name: &str, this: Option<&Value>, values: &[Value]) -> Value {
             if object_like(first) || object_like(second) {
                 return Value::Unknown;
             }
-            known(first.equals(second, Lang::Js).map(Value::Bool))
+            known(first.equals(second, Family::Ecma).map(Value::Bool))
         }
         ("Array.isArray", _) => Value::Bool(matches!(
             first,
@@ -1286,7 +1288,7 @@ fn apply_array(name: &str, items: &[Value], values: &[Value]) -> Option<Value> {
                         left == right
                             || (name.ends_with("includes") && left.is_nan() && right.is_nan())
                     }
-                    _ => !object_like(item) && item.equals(first, Lang::Js)?,
+                    _ => !object_like(item) && item.equals(first, Family::Ecma)?,
                 };
                 if equal {
                     found = Some(at);
@@ -1324,7 +1326,7 @@ fn apply_array(name: &str, items: &[Value], values: &[Value]) -> Option<Value> {
                 .find(|at| match (&items[*at], first) {
                     (Value::Float(left), Value::Float(right)) => left == right,
                     (item, first) => {
-                        !object_like(item) && item.equals(first, Lang::Js) == Some(true)
+                        !object_like(item) && item.equals(first, Family::Ecma) == Some(true)
                     }
                 });
             Value::Float(found.map_or(-1.0, |at| at as f64))

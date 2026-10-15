@@ -451,8 +451,9 @@ impl<'a> Leaf<'a> {
                     return Ok(FileStep::Skipped);
                 };
                 let (doc, lines) = file_tape(grammar.language, file)?;
-                // From the tape: a Blade file's embedded PHP is part of it (`blade::view`).
-                let errors = SyntaxErrors::from_ranges(doc.syntax_error_ranges());
+                // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
+                // program apart from its host reads only its own (`SyntaxErrors::of_doc`).
+                let errors = SyntaxErrors::of_doc(&doc);
                 let mut partial = None;
                 if !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
@@ -460,14 +461,14 @@ impl<'a> Leaf<'a> {
                         SyntaxReading::Partial(message) => message,
                         SyntaxReading::Unread(detail) => return Ok(FileStep::Failed(Some(detail))),
                     };
-                    if !grammar.sound_under_errors {
+                    if errors.incomplete(grammar) {
                         return Ok(FileStep::Failed(None));
                     }
                     partial = Some(message);
                 }
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
-                    FileScopeSlot::install(Vec::new(), file.module.clone(), !errors.is_empty())
+                    FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())
                         .path(&file.path);
                 let _calls = crate::code_rule_dsl::calls::FileCallsSlot::for_path(&file.path);
                 let decided = match evaluate_file_clause(

@@ -5,7 +5,7 @@ the core package at the repository root.
 
 > Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the
 > complexity pack inside its own package (`complexity/pack.json` and `complexity/rules/`). The packs here: `python`,
-> `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Every rule document Rerail ships lives in
+> `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `sql` and `complexity`. Every rule document Rerail ships lives in
 > a pack; core has no rules of its own.
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.

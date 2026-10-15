@@ -415,7 +415,7 @@ jobs:
             --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" > "$results/omp.log" 2>&1 &
           omp_pid=$!
           node --import tsx scripts/host/host-lifecycle.ts pi -- \
-            --provider azure-openai-responses --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
+            --provider azure --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
           pi_pid=$!
           status=0
           if ! wait "$omp_pid"; then status=1; fi

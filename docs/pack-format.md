@@ -1,7 +1,7 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next` and `complexity`. Core does not load
+`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `sql` and `complexity`. Core does not load
 installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
 `packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)).
 Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it
@@ -320,12 +320,12 @@ repository allowlist are accepted.
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
 | Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
 
-Moved: `python`, `php`, `blade`, `typescript`, `react`, `node` and `next`, each from `conformance/languages/<id>/`,
+Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `sql`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
-parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. Not moved yet: `rust`, `sql` and `vue`, which have upstream
-recordings but no rules: they stay in `fixtures/<id>/upstream/` beside each language's draft manifest
-(`fixtures/rust/upstream/conformance.draft.json`, `fixtures/sql/upstream/conformance.draft.json`,
-`fixtures/vue/upstream/rules.json`) until their packs gain rules, when the draft becomes `packs/<id>/conformance.json`
-and `upstream/` moves to `packs/<id>/upstream/`.
+parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
+draft `rules.json` becoming `packs/vue/conformance.json`. Not moved yet: `rust`, which has upstream recordings but no
+rules: it stays in `fixtures/rust/upstream/` beside its draft manifest (`fixtures/rust/upstream/conformance.draft.json`)
+until its pack gains rules, when the draft becomes `packs/rust/conformance.json` and `upstream/` moves to
+`packs/rust/upstream/`.

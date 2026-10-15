@@ -4,6 +4,7 @@
 
 use super::view::View;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::regions;
 use crate::code_rule_dsl::scope::php::{Defined, Quiet};
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
@@ -128,6 +129,13 @@ fn tape(source: &str) -> AstGrep<TapeDoc> {
     )
 }
 
+/// The PHP program a Blade tape embeds: its one region (`adapter::regions`).
+fn program<'r>(root: &Node<'r, TapeDoc>) -> Option<Node<'r, TapeDoc>> {
+    regions(root, GrammarDialect::Blade)
+        .next()
+        .map(|region| region.root)
+}
+
 fn descendants<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
     node.dfs().collect()
 }
@@ -209,7 +217,7 @@ fn compare_definedness(
         Reading::default(),
     )
     .expect("table builds");
-    let Some(program) = super::program(&doc.root()) else {
+    let Some(program) = program(&doc.root()) else {
         assert!(reported.is_empty(), "{name}: PHPStan reports; no program");
         return;
     };
@@ -346,7 +354,7 @@ fn a_template_variable_some_paths_define_is_unknown() {
     )
     .expect("table builds");
     let flow = table.php.as_deref().expect("a PHP flow");
-    let program = super::program(&doc.root()).expect("an embedded program");
+    let program = program(&doc.root()).expect("an embedded program");
     let read = descendants(&program)
         .into_iter()
         .filter(|node| node.kind() == "variable_name" && node.text() == "$x")
@@ -368,7 +376,7 @@ fn blade_constant_expressions_agree_with_php() {
     for (name, record) in expected["fixtures"].as_object().expect("fixtures") {
         let source = fixture(name);
         let doc = tape(&source);
-        let program = super::program(&doc.root()).expect("an embedded program");
+        let program = program(&doc.root()).expect("an embedded program");
         for case in record["values"].as_array().expect("values") {
             cases += 1;
             let span = range(&case["span"]);

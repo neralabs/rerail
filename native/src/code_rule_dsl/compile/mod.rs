@@ -1449,7 +1449,7 @@ mod tests {
     fn a_planned_language_or_capability_is_language_not_supported() {
         let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
         let forbid = |language: &str| json!({ "id": "c", "forbid": { "ast": { "language": language, "rule": { "kind": "identifier" } } }, "violation": violation() });
-        for language in ["vue", "sql", "rust"] {
+        for language in crate::code_rule_dsl::language::PLANNED_LANGUAGES {
             assert_eq!(
                 rejection(compile_document_with(
                     clause_document(forbid(language)),
@@ -1462,12 +1462,12 @@ mod tests {
         }
         let mut defined = clause_document(forbid("python"));
         defined["clauses"] = json!([
-            { "id": "d", "define": { "language": "vue", "utils": { "u": { "kind": "identifier" } } } },
+            { "id": "d", "define": { "language": "exemplar", "utils": { "u": { "kind": "identifier" } } } },
             forbid("python")
         ]);
         assert_eq!(
             rejection(compile_document_with(defined, &capabilities)),
-            "language-not-supported: /clauses/0/define/language: `vue` is not supported yet"
+            "language-not-supported: /clauses/0/define/language: `exemplar` is not supported yet"
         );
         assert_eq!(
             super::unsupported_semantic(

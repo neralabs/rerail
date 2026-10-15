@@ -1,7 +1,7 @@
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, Region, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{SourceType, is_stub_file};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -13,7 +13,7 @@ use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
     BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
-    PhpstanIndex, PsalmIndex, RerailIgnores,
+    PhpstanIndex, PsalmIndex, RerailIgnores, SqlfluffIndex, VueDirectives,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -881,6 +881,9 @@ struct FileScopes {
     lines: [Option<Rc<LineTable>>; 2],
     /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
     eslint_directives: Option<Rc<EslintDirectives>>,
+    /// The file's eslint-plugin-vue template comment directives (`suppress.eslint` in a Vue
+    /// file), read on first use.
+    vue_directives: Option<Rc<VueDirectives>>,
     /// The file's oxlint directive comments (`suppress.oxlint`), read on first use.
     oxlint_directives: Option<Rc<OxlintDirectives>>,
     /// The file's Biome suppression comments (`suppress.biome`), read on first use.
@@ -895,6 +898,8 @@ struct FileScopes {
     psalm: Option<Rc<PsalmIndex>>,
     /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
     phpcs: Option<Rc<PhpcsIndex>>,
+    /// The file's SQLFluff `-- noqa` directives (`suppress.sqlfluff`), read on first use.
+    sqlfluff: Option<Rc<SqlfluffIndex>>,
     /// The file's `rerail-ignore` directives, read on first use.
     rerail_ignores: Option<Rc<RerailIgnores>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
@@ -937,6 +942,7 @@ impl FileScopeSlot {
             value_parses: HashMap::new(),
             lines: [None, None],
             eslint_directives: None,
+            vue_directives: None,
             oxlint_directives: None,
             biome_suppressions: None,
             noqa: None,
@@ -944,6 +950,7 @@ impl FileScopeSlot {
             phpstan: None,
             psalm: None,
             phpcs: None,
+            sqlfluff: None,
             rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
@@ -1050,6 +1057,25 @@ pub(crate) fn file_eslint_directives(
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
             scopes.eslint_directives = Some(Rc::clone(&directives));
+        }
+    });
+    directives
+}
+
+/// The eslint-plugin-vue template comment directives of the file being matched: read once per
+/// file while a file is being matched, and fresh outside one.
+pub(crate) fn file_vue_directives(read: impl FnOnce() -> VueDirectives) -> Rc<VueDirectives> {
+    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.vue_directives.clone())
+    }) {
+        return directives;
+    }
+    let directives = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.vue_directives = Some(Rc::clone(&directives));
         }
     });
     directives
@@ -1196,6 +1222,23 @@ pub(crate) fn file_phpcs(read: impl FnOnce() -> PhpcsIndex) -> Rc<PhpcsIndex> {
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
             scopes.phpcs = Some(Rc::clone(&index));
+        }
+    });
+    index
+}
+
+/// The SQLFluff `noqa` index of the file being matched: read once per file while a file is being
+/// matched, and fresh outside one.
+pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<SqlfluffIndex> {
+    if let Some(index) =
+        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.sqlfluff.clone()))
+    {
+        return index;
+    }
+    let index = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.sqlfluff = Some(Rc::clone(&index));
         }
     });
     index
@@ -1383,8 +1426,23 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         return None;
     }
     let root = node.root().root();
-    // A Blade template's names are its embedded program's (`blade::view`): its region's.
-    let root = with_adapter!(Family::of(language), A => A::regions(&root).next())
+    // A Blade template's names are its embedded program's (`blade::view`): those of the region
+    // that holds `node`, else of its first region.
+    let at = node.range();
+    let holds = |region: &Region<'_, D>| {
+        let range = region.root.range();
+        range.start <= at.start && at.end <= range.end
+    };
+    let mut regions = crate::code_rule_dsl::language::adapter::regions(&root, language);
+    let root = regions
+        .next()
+        .map(|first| {
+            if holds(&first) {
+                first
+            } else {
+                regions.find(|region| holds(region)).unwrap_or(first)
+            }
+        })
         .map_or(root, |region| region.root);
     let build = |cap| PhpNames::build(root.clone(), cap, &budget::matcher_budget_exhausted);
     let clause = CURRENT_CLAUSE.get();
