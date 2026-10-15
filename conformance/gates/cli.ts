@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "./corpus.js";
+import { staleNativeBinary } from "./engine.js";
 import { goldensPath } from "./goldens.js";
 import { toolPackDirectory } from "./manifest.js";
 import { mergeDirectory } from "./merge.js";
@@ -56,9 +57,15 @@ async function gates(args: string[]): Promise<number> {
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
   const out = join(resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT), shard === undefined ? "" : shardName(shard));
   if (flags["--no-cache"] === true && flags["--refresh-cache"] === true) throw new Error(`--no-cache and --refresh-cache exclude each other\n${USAGE}`);
+  // A native binary older than the engine sources may be another engine's build, judging under these sources' keys
+  // (engine.ts): its verdicts are reported, never saved for later runs or written to the goldens.
+  const stale = staleNativeBinary(root);
+  const rebuild = `the native engine is older than ${stale}: rebuild it with npm run build:native`;
+  if (stale !== undefined && flags["--write"] === true) throw new Error(`--write needs this checkout's engine; ${rebuild}`);
+  if (stale !== undefined) console.warn(`${rebuild}. This run's results are not cached.`);
   // --no-cache neither reads nor saves results; --refresh-cache judges every rule again and saves the fresh results.
   const readCache = flags["--no-cache"] !== true && flags["--refresh-cache"] !== true;
-  const writeCache = flags["--no-cache"] !== true;
+  const writeCache = flags["--no-cache"] !== true && stale === undefined;
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   await mkdir(out, { recursive: true });
   const runner = new ProcessCommandRunner();

@@ -5,8 +5,8 @@
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   bundledCodeRuleDslDirectory,
   CODE_RULE_AST_LANGUAGES,
@@ -17,6 +17,7 @@ import {
   loadNativeBinding,
   PACKAGE_ROOT,
   parseJsonWithoutDuplicateKeys,
+  resolveNativeBindingPath,
   stableJsonText,
 } from "../../src/engine/index.js";
 
@@ -26,7 +27,8 @@ import {
  * language family does, so a rule keys on the engine it can actually be judged by.
  *
  * The native binary is not part of it. It is not bit-reproducible, so hashing it made a build-cache miss on unchanged
- * sources re-judge every rule; the sources it was built from say the same thing, and say it reproducibly.
+ * sources re-judge every rule; the sources it was built from say the same thing, and say it reproducibly. That holds
+ * only while the binary is their build: one older than a source (`staleNativeBinary`) saves no result.
  */
 export interface EngineIdentity {
   /** sha256 over each shared engine source file's path and the sha256 of its bytes in the working tree. */
@@ -273,6 +275,28 @@ export function engineSources(root: string = PACKAGE_ROOT): { shared: string[]; 
   const listed = tracked(root, ENGINE_SOURCES);
   const testOnly = testOnlySources(root, listed);
   return splitEngineSources(listed.filter((path) => !testOnly.has(path)));
+}
+
+/**
+ * An engine source the native binary at `binary` is older than, by modification time (a deleted one by its
+ * directory's), or undefined when there is none. Only the sources the binary is built from count: `src/engine` is
+ * imported as TypeScript, so its edits take effect without a build.
+ *
+ * The binary is no part of a rule's key, so one left over from before a source edit would judge rules under the edited
+ * sources' key and its verdicts would be read back as theirs; a run on one saves no result and writes no goldens
+ * (cli.ts). `npm run build:native` writes the binary after cargo rebuilds what a newer source changed, and CI unpacks
+ * it from the build job's artifact after the checkout, so a binary built from these sources is newer than all of them.
+ * A binary misjudged stale costs a run its cache writes and `--write`, never a verdict.
+ */
+export function staleNativeBinary(root: string = PACKAGE_ROOT, binary: string = resolveNativeBindingPath()): string | undefined {
+  const built = statSync(binary).mtimeMs;
+  const modified = (path: string): number => {
+    let absolute = join(root, path);
+    while (!existsSync(absolute)) absolute = dirname(absolute);
+    return statSync(absolute).mtimeMs;
+  };
+  const { shared, families } = engineSources(root);
+  return [...shared, ...Object.values(families).flat()].find((path) => !path.startsWith("src/engine/") && modified(path) > built);
 }
 
 /**

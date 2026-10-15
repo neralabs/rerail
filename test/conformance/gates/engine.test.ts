@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, test } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { engineIdentity, engineKey, engineSources, FAMILY_SOURCES, policyFamilies, withExpando } from "../../../conformance/gates/engine.js";
+import { engineIdentity, engineKey, engineSources, FAMILY_SOURCES, policyFamilies, staleNativeBinary, withExpando } from "../../../conformance/gates/engine.js";
 
 test("pattern text takes ast-grep's expando exactly where ast-grep's pre_process_pattern puts it", () => {
   assert.equal(withExpando("def f($NAME=$VALUE):", "µ"), "def f(µNAME=µVALUE):");
@@ -139,6 +139,29 @@ describe("a rule's engine key", () => {
     const root = checkout(sources);
     writeFileSync(join(root, "native", "rerail_engine.darwin-arm64.node"), "the binary of some other build\n");
     assert.deepEqual(engineIdentity(root), before);
+  });
+
+  // The key cannot tell a binary left over from before a source edit from the edited sources' build; its age can.
+  test("a native binary older than an engine source it is built from is stale", () => {
+    const root = checkout({ ...sources, "languages/python.json": "{}\n", "src/engine/index.ts": "export {};\n" });
+    const binary = join(root, "native", "rerail_engine.darwin-arm64.node");
+    writeFileSync(binary, "a build\n");
+    const at = (path: string, seconds: number) => utimesSync(join(root, path), seconds, seconds);
+    for (const path of [...Object.keys(sources), "languages/python.json", "src/engine/index.ts"]) at(path, 1_000);
+    at("native/rerail_engine.darwin-arm64.node", 2_000);
+    assert.equal(staleNativeBinary(root, binary), undefined);
+    // The TypeScript engine is imported from source, so an edit to it needs no build.
+    at("src/engine/index.ts", 3_000);
+    assert.equal(staleNativeBinary(root, binary), undefined);
+    at("native/src/code_rule_dsl/scope/python.rs", 3_000);
+    assert.equal(staleNativeBinary(root, binary), "native/src/code_rule_dsl/scope/python.rs");
+    at("native/src/code_rule_dsl/scope/python.rs", 1_000);
+    // A deleted source is as new as the directory it was deleted from.
+    unlinkSync(join(root, "languages/python.json"));
+    at("languages", 3_000);
+    assert.equal(staleNativeBinary(root, binary), "languages/python.json");
+    at("native/rerail_engine.darwin-arm64.node", 4_000);
+    assert.equal(staleNativeBinary(root, binary), undefined);
   });
 
   test("a rule of no family, or of one with no sources of its own, keys on the whole engine", () => {

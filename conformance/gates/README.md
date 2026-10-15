@@ -73,7 +73,7 @@ native engine; it reads no upstream runtime. It fetches only the pinned corpora 
 Per-rule results are cached under `.rerail/gates/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
 The key covers the gate code and its dependencies (`package.json`, `package-lock.json`), the engine (tracked engine
-sources and the native binary), the tool-pack's `gates.yaml` and the two recording digests its `recording.lock` names, the corpus pins, and
+sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml` and the two recording digests its `recording.lock` names, the corpus pins, and
 the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
 evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
 or names another document is a miss. In CI, pull request runs only read the cache; pushes to main and the nightly save
