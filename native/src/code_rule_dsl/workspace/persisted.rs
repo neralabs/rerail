@@ -23,8 +23,8 @@ use crate::code_rule_dsl::soundness::UNREAD;
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
-    CandidateCatalogIdentity, CandidateClause, HashKey, LocalResultPublication,
-    OverlayFilePublication, PublicationResult, StoredFile, TapePayload, compress,
+    BusyRetries, CandidateCatalogIdentity, CandidateClause, HashKey, LocalResultPublication,
+    OverlayFilePublication, PublicationResult, StoreError, StoredFile, TapePayload, compress,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -33,6 +33,18 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
+
+#[cfg(test)]
+thread_local! {
+    /// Runs on the apply's thread once `persist_files` has published its files, before it
+    /// promotes them and renews the lease: a test takes the store there.
+    pub(super) static AFTER_FILES_PUBLISHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Lease renewals `persist_files` attempted on this thread: a test shows a busy promotion
+    /// leaves the renewal unattempted.
+    pub(super) static LEASE_RENEWAL_ATTEMPTS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 /// Fill `file` with its stored results. `None` unless every eligible clause has a decodable one:
 /// a partial result set is never presented as the file's result.
@@ -509,6 +521,24 @@ fn hash_candidate_catalog(
     .map_err(|error| invalid(error.to_string()))
 }
 
+/// What publishing a chunk of files did.
+pub(super) enum Persisted {
+    /// The files are stored. `busy_during` says which write after the publication (sharing the
+    /// files with the snapshot, or renewing the lease) found the store busy past its write
+    /// deadline. A busy snapshot promotion is skipped and only costs snapshot reuse for those
+    /// files; maintenance redoes a lease renewal. The store is busy.
+    Published {
+        result: PublicationResult,
+        busy_during: Option<&'static str>,
+    },
+    /// The store stayed busy past its write deadline and nothing was published; `retries` is
+    /// what the publication spent waiting.
+    Busy { retries: BusyRetries },
+}
+
+/// Publishes `paths`' evaluated files; `Persisted::Busy` when the store stayed busy past its
+/// write deadline and nothing was published. The store is a cache: the caller keeps the files
+/// resident, so the evaluation's results stand and only their reuse is lost.
 pub(super) fn persist_files(
     storage: &StorageContext,
     paths: &[String],
@@ -516,7 +546,7 @@ pub(super) fn persist_files(
     code_rules: &[Arc<CompiledCodeRule>],
     consumers: &Consumers,
     closed: &AtomicBool,
-) -> Result<PublicationResult> {
+) -> Result<Persisted> {
     let catalog = candidate_catalog(code_rules)?;
     let rule_hashes = rule_hashes(code_rules);
     let candidate = |&(code_rule_index, clause_index): &ClauseId| {
@@ -632,30 +662,62 @@ pub(super) fn persist_files(
         .collect::<Vec<_>>();
     #[cfg(feature = "code-rule-profile")]
     let _store_timer = profile::PhaseTimer::start(profile::Phase::StoreWrite);
-    let result = storage
-        .store
-        .publish_overlay_files_cancellable(storage.workspace_id, &publications, &|| {
-            closed.load(Ordering::Acquire)
-        })
-        .map_err(|error| invalid(error.to_string()))?;
+    let mut busy = BusyRetries::default();
+    let result = match storage.store.publish_overlay_files_reporting_busy(
+        storage.workspace_id,
+        &publications,
+        &|| closed.load(Ordering::Acquire),
+        &mut busy,
+    ) {
+        Ok(result) => result,
+        Err(StoreError::Busy) => return Ok(Persisted::Busy { retries: busy }),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
     }
+    #[cfg(test)]
+    if let Some(published) = AFTER_FILES_PUBLISHED.take() {
+        published();
+    }
+    // The files are stored; sharing them with the snapshot and renewing the lease (which the
+    // maintenance thread also does) only serve reuse, so a busy store skips them, and the caller
+    // learns which write found it busy. A promotion that waited out the deadline leaves the
+    // renewal unattempted: it would wait the same deadline again.
+    let busy_store =
+        |written: crate::content_store::StoreResult<()>, during: &'static str| match written {
+            Ok(()) => Ok(None),
+            Err(StoreError::Busy) => Ok(Some(during)),
+            Err(error) => Err(invalid(error.to_string())),
+        };
     let clean_paths = prepared
         .iter()
         .filter(|(_, _, _, _, aliases, _)| !aliases.is_empty())
         .map(|(file, _, _, _, _, _)| file.input.path.as_str())
         .collect::<Vec<_>>();
-    storage
-        .store
-        .promote_overlay_files_to_snapshot(storage.workspace_id, storage.snapshot_id, &clean_paths)
-        .map_err(|error| invalid(error.to_string()))?;
-    let now = unix_seconds()?;
-    storage
-        .store
-        .renew_workspace_lease(storage.workspace_id, &storage.owner, now + 120)
-        .map_err(|error| invalid(error.to_string()))?;
-    Ok(result)
+    let mut busy_during = busy_store(
+        storage.store.promote_overlay_files_to_snapshot(
+            storage.workspace_id,
+            storage.snapshot_id,
+            &clean_paths,
+        ),
+        "while sharing results with the snapshot",
+    )?;
+    if busy_during.is_none() {
+        let now = unix_seconds()?;
+        #[cfg(test)]
+        LEASE_RENEWAL_ATTEMPTS.set(LEASE_RENEWAL_ATTEMPTS.get() + 1);
+        busy_during = busy_store(
+            storage
+                .store
+                .renew_workspace_lease(storage.workspace_id, &storage.owner, now + 120),
+            "while renewing the workspace lease",
+        )?;
+    }
+    Ok(Persisted::Published {
+        result,
+        busy_during,
+    })
 }
 
 /// The committed blob identity of `file`'s evaluated bytes, whoever supplied them: hashed only

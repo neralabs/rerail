@@ -358,6 +358,76 @@ describe("CodeRuleBridge", () => {
     }]]);
   });
 
+  it("answers a turn checkpoint once its wait runs out on a baseline walk, and audits what the walk finds behind it", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 50 });
+    const baseline = holdDiscovery("directories", root);
+    await bridge.openWorkspace("session-1");
+    await baseline.entered;
+    await writeFile(path, "shell write\n");
+
+    await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+      failures: [expect.objectContaining({ code: "source-incomplete", message: "Initial source discovery is still pending" })],
+    }));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    baseline.release();
+    await vi.waitFor(() => expect(auditGeneratedEdits).toHaveBeenCalledTimes(1));
+    expect(auditGeneratedEdits.mock.calls).toEqual([["session-1", expect.objectContaining({
+      edits: [expect.objectContaining({ path: "src/a.py", generatedText: "shell write\n" })],
+    })]]);
+  });
+
+  it("answers a shell result once its wait runs out on a baseline walk, marks the command boundary, and audits the write behind it", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const pending: string[] = [];
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); } });
+    const baseline = holdDiscovery("directories", root);
+    await bridge.openWorkspace("session-1");
+    await baseline.entered;
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 -c \"...write_text(...)\"" });
+    await writeFile(path, "shell write\n");
+    await expect(bridge.finish("shell-1")).resolves.toEqual([]);
+    expect(pending).toEqual(["command"]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    baseline.release();
+    await vi.waitFor(() => expect(auditGeneratedEdits).toHaveBeenCalledTimes(1));
+    expect(auditGeneratedEdits.mock.calls).toEqual([["session-1", expect.objectContaining({
+      edits: [expect.objectContaining({ path: "src/a.py", generatedText: "shell write\n" })],
+    })]]);
+  });
+
+  it("answers a boundary and still closes the evaluator when recording that the walk is still pending fails", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const root = await workspace();
+    const evaluator = auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch)));
+    const onDiscoveryPending = vi.fn(() => { throw new Error("database is locked"); });
+    const bridge = createBridge(root, evaluator, { discoveryWaitMs: 50, onDiscoveryPending });
+    const baseline = holdDiscovery("directories", root);
+    try {
+      await bridge.openWorkspace("session-1");
+      await baseline.entered;
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ code: "source-incomplete" })],
+      }));
+      await expect(bridge.close()).resolves.toBeUndefined();
+      expect(onDiscoveryPending.mock.calls).toEqual([["turn"], ["close"]]);
+      expect(evaluator.close).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed: database is locked"));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("discovers a shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
@@ -400,7 +470,7 @@ describe("CodeRuleBridge", () => {
       checkpoints: ["edit", "function"],
       edits: [
         { path: "src/a.py", language: "python", previousText: "before\n", generatedText: "after\n" },
-        { path: "src/b.rs", language: "text", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
+        { path: "src/b.rs", language: "rust", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
       ],
     });
   });

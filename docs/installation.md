@@ -73,9 +73,9 @@ person says yes.
    `~/.rerail/current` so future updates never touch coding agent config:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-ui`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-rage-quit`) under `~/.claude/commands/` (`/rerail-ui` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
-   - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, and so on
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-ui` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
    Existing entries from other tools are preserved byte-for-byte. Entries
    another install of this package wrote (identified by the `package.json`
@@ -278,7 +278,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
-rerail ui                # opens the rules page (--print only prints the URL)
+rerail manage            # opens the rules page (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
@@ -289,10 +289,14 @@ rerail rules export      # dump your rules and every repository's configuration 
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
 ```
 
-Every coding agent gets the same commands: `/rerail`, `/rerail-ui`,
-`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update` and
-`/rerail-rage-quit` (`$rerail`, `$rerail-ui`, and so on in Codex). Settings,
-scans, status, update checks, rollback and reset are the CLI commands above.
+Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
+`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
+`/rerail-uninstall`, `/rerail-help` and `/rerail-show-me` (`$rerail`,
+`$rerail-manage`, and so on in Codex). `rerail install` also removes the
+`rerail-ui` and `rerail-rage-quit` files an earlier build wrote; `rerail update`
+does not rewrite command files, so run `rerail install` after updating.
+Settings, scans, status, update checks, rollback and reset are the CLI
+commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)

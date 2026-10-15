@@ -325,7 +325,7 @@ impl CallRules for Refused {
     fn feature(feature: CallFeature) -> Result<(), Refusal> {
         match feature {
             CallFeature::Calls => Err(Refusal::Refused(Cow::Borrowed(
-                "calls follows Python and PHP calls only",
+                "calls follows Python, PHP and Rust calls only",
             ))),
         }
     }

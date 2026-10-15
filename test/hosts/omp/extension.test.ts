@@ -29,7 +29,8 @@ import {
   setRuleSetting,
 } from "../../../src/engine/index.js";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
-import { SqliteSessionReader, isRerailStarted } from "../../../src/runtime/index.js";
+import { NativeSessionClient } from "../../../src/harness/index.js";
+import { EVENTS_DROPPED_ENTRY_TYPE, SqliteSessionReader, isRerailStarted } from "../../../src/runtime/index.js";
 import { steerDashboard } from "../../../src/presentation/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
@@ -522,8 +523,9 @@ describe("OMP conversation-rules extension", () => {
   });
 
   /**
-   * A running daemon whose native sessions can be refused by name, whose next initialize can be held mid-flight, and
-   * whose ingests `state.ingest` can hold or answer with deliveries.
+   * A running daemon whose native sessions can be refused by name, whose next initialize can be held mid-flight, whose
+   * ingests `state.ingest` can hold or answer with deliveries, and which keeps the gaps it is asked to record and the
+   * events it took.
    */
   function flakyDaemon(cwd: string) {
     daemonRoute.start = async () => ({
@@ -537,9 +539,12 @@ describe("OMP conversation-rules extension", () => {
       ingest: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
     };
     const requests: Array<{ operation: string; sessionId: string }> = [];
+    const gaps: unknown[] = [];
+    const ingested: unknown[] = [];
     vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
       if (url.port !== "4737") return fetchNative(url, init);
-      const request = z.object({ operation: z.string(), sessionId: z.string() }).parse(JSON.parse(String(init.body)));
+      const body: unknown = JSON.parse(String(init.body));
+      const request = z.object({ operation: z.string(), sessionId: z.string() }).parse(body);
       requests.push(request);
       if (request.operation === "initialize" && state.hold !== undefined) {
         const { promise } = state.hold;
@@ -547,13 +552,16 @@ describe("OMP conversation-rules extension", () => {
         await promise;
       }
       if (state.down.has(request.sessionId)) throw new TypeError("fetch failed");
+      if (request.operation === "record-gap") gaps.push(z.object({ input: z.unknown() }).parse(body).input);
+      if (request.operation === "ingest") ingested.push(z.object({ event: z.object({ json: z.unknown() }) }).parse(body).event.json);
       const deliveries = request.operation === "ingest" && state.ingest !== undefined ? await state.ingest() : [];
       return Response.json({ result: null, deliveries, entries: [] });
     });
-    return { state, requests, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
+    return { state, requests, gaps, ingested, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
   }
 
   describe("attach retry", () => {
+
     it("surfaces the first failure, retries quietly with backoff, and reports once when it attaches", async () => {
       const harness = await createHarness();
       const daemon = flakyDaemon(harness.context.cwd);
@@ -661,6 +669,244 @@ describe("OMP conversation-rules extension", () => {
       expect(daemon.initializes("omp-test-session")).toBe(1);
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, next);
       expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
+      vi.useRealTimers();
+    });
+
+    const delta = (responseId: string, text: string) => ({
+      type: "message_update",
+      message: { role: "assistant", timestamp: 1, responseId },
+      assistantMessageEvent: { type: "text_delta", delta: text },
+    });
+    const droppedMarkers = (entries: ReadonlyArray<{ customType: string; data: unknown }>) =>
+      entries.filter(entry => entry.customType === EVENTS_DROPPED_ENTRY_TYPE).map(entry => entry.data);
+
+    it("counts an event that waited on a breaker-driven reattach that failed, and records it once the daemon is back", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // Three failed polls put the breaker one 400ms wait from asking the host to rebuild; the rebuild's initialize is held open.
+      daemon.state.down.add("omp-test-session");
+      await vi.advanceTimersByTimeAsync(400);
+      expect(daemon.requests.filter(r => r.operation === "poll")).toHaveLength(3);
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      await vi.advanceTimersByTimeAsync(400);
+      await settleIo();
+      expect(daemon.initializes("omp-test-session")).toBe(2);
+
+      // An event waits on that rebuild, which fails: it rejects with the failure, and the runtime it left current counts it.
+      const racing = expect((harness.handlers.get("message_update")!(delta("racing", "while rebuilding"), harness.context) as Promise<void>))
+        .rejects.toThrow("fetch failed");
+      held.resolve();
+      await racing;
+      expect(droppedMarkers(harness.entries)).toEqual([
+        expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 }, recovered: false }),
+      ]);
+
+      daemon.state.down.delete("omp-test-session");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(daemon.gaps).toEqual([expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 } })]));
+      expect(droppedMarkers(harness.entries).at(-1)).toEqual(expect.objectContaining({ count: 1, recovered: true }));
+      vi.useRealTimers();
+    });
+
+    it("counts an event that waited on a conversation rules reload that failed, and records it once the daemon is back", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // The first failed poll opens the breaker; the reload's initialize is held open.
+      daemon.state.down.add("omp-test-session");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(daemon.requests.filter(r => r.operation === "poll")).toHaveLength(1);
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      const reloading = expect(harness.commands.get("cosine-rules")!("reload", { ui: { notify() {} } })).rejects.toThrow("fetch failed");
+      await settleIo();
+      expect(daemon.initializes("omp-test-session")).toBe(2);
+
+      const racing = expect((harness.handlers.get("message_update")!(delta("racing", "while reloading"), harness.context) as Promise<void>))
+        .rejects.toThrow("fetch failed");
+      held.resolve();
+      await Promise.all([reloading, racing]);
+      expect(droppedMarkers(harness.entries)).toEqual([
+        expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 }, recovered: false }),
+      ]);
+
+      daemon.state.down.delete("omp-test-session");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(daemon.gaps).toEqual([expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 } })]));
+      vi.useRealTimers();
+    });
+
+    it("sends the full assistant text when a delta counted during a failing attach is followed by the attach and the message end", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // The host re-attaches the same session while the daemon is out; a delta waits on that attach, which fails and counts it.
+      daemon.state.down.add("omp-test-session");
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      const attaching = expect(harness.handlers.get("session_tree")!({ type: "session_tree" }, harness.context) as Promise<void>).rejects.toThrow("fetch failed");
+      const counted = expect(harness.handlers.get("message_update")!(delta("streaming", "Guest checkout "), harness.context) as Promise<void>).rejects.toThrow("fetch failed");
+      held.resolve();
+      await Promise.all([attaching, counted]);
+      expect(droppedMarkers(harness.entries)).toEqual([expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 }, recovered: false })]);
+
+      // The retry attaches onto the runtime the session already had, so nothing resets its streamed messages.
+      daemon.state.down.delete("omp-test-session");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(3));
+
+      const message = { role: "assistant", timestamp: 1, responseId: "streaming", content: [{ type: "text", text: "Guest checkout remains available." }], stopReason: "stop" };
+      await harness.handlers.get("message_end")!({ type: "message_end", message }, harness.context);
+      expect(daemon.ingested).toEqual([expect.objectContaining({ kind: "assistant-delta", final: true, delta: "Guest checkout remains available." })]);
+      vi.useRealTimers();
+    });
+
+    it("sends the full assistant text when the open breaker dropped its deltas and the daemon is back by the message end", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // The first failed poll opens the breaker; the delta of the streaming message is counted instead of sent.
+      daemon.state.down.add("omp-test-session");
+      await vi.advanceTimersByTimeAsync(100);
+      await harness.handlers.get("message_update")!(delta("streaming", "Guest checkout "), harness.context);
+      expect(daemon.ingested).toEqual([]);
+      expect(droppedMarkers(harness.entries)).toEqual([expect.objectContaining({ count: 1, recovered: false })]);
+
+      daemon.state.down.delete("omp-test-session");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recovered; 1 session event(s)")));
+
+      const message = { role: "assistant", timestamp: 1, responseId: "streaming", content: [{ type: "text", text: "Guest checkout remains available." }], stopReason: "stop" };
+      await harness.handlers.get("message_end")!({ type: "message_end", message }, harness.context);
+      expect(daemon.ingested).toEqual([expect.objectContaining({ kind: "assistant-delta", final: true, delta: "Guest checkout remains available." })]);
+      vi.useRealTimers();
+    });
+
+    it("aborts the partial stream and sends the whole text as one message when only some deltas were delivered", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // The first delta reaches the daemon; the breaker then opens and counts the second.
+      await harness.handlers.get("message_update")!(delta("streaming", "Guest checkout "), harness.context);
+      daemon.state.down.add("omp-test-session");
+      await vi.advanceTimersByTimeAsync(100);
+      await harness.handlers.get("message_update")!(delta("streaming", "remains available."), harness.context);
+      expect(daemon.ingested).toEqual([expect.objectContaining({ kind: "assistant-delta", delta: "Guest checkout ", final: false })]);
+
+      daemon.state.down.delete("omp-test-session");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recovered; 1 session event(s)")));
+
+      const message = { role: "assistant", timestamp: 1, responseId: "streaming", content: [{ type: "text", text: "Guest checkout remains available." }], stopReason: "stop" };
+      await harness.handlers.get("message_end")!({ type: "message_end", message }, harness.context);
+      expect(daemon.ingested.slice(1)).toEqual([
+        expect.objectContaining({ kind: "assistant-abort", messageId: "1:streaming" }),
+        expect.objectContaining({ kind: "assistant-message", text: "Guest checkout remains available." }),
+      ]);
+      vi.useRealTimers();
+    });
+
+    it("counts a delta whose ingest rejected after the daemon took it as delivered, so the message end does not store its text twice", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // The daemon takes each delta; the host then refuses something the event asked for, which rejects the ingest.
+      const ingest = NativeSessionClient.prototype.ingest;
+      const refusing = vi.spyOn(NativeSessionClient.prototype, "ingest").mockImplementation(async function (this: NativeSessionClient, event) {
+        const delivered = await ingest.call(this, event);
+        if (event.kind === "assistant-delta") throw new Error("host refused a steer delivery");
+        return delivered;
+      });
+      try {
+        await expect(harness.handlers.get("message_update")!(delta("streaming", "Guest checkout "), harness.context) as Promise<void>)
+          .rejects.toThrow("host refused a steer delivery");
+        await expect(harness.handlers.get("message_update")!(delta("streaming", "remains available."), harness.context) as Promise<void>)
+          .rejects.toThrow("host refused a steer delivery");
+
+        const message = { role: "assistant", timestamp: 1, responseId: "streaming", content: [{ type: "text", text: "Guest checkout remains available." }], stopReason: "stop" };
+        await expect(harness.handlers.get("message_end")!({ type: "message_end", message }, harness.context) as Promise<void>)
+          .rejects.toThrow("host refused a steer delivery");
+        expect(daemon.ingested).toEqual([
+          expect.objectContaining({ kind: "assistant-delta", delta: "Guest checkout ", final: false }),
+          expect.objectContaining({ kind: "assistant-delta", delta: "remains available.", final: false }),
+          expect.objectContaining({ kind: "assistant-delta", delta: "", final: true }),
+        ]);
+      } finally {
+        refusing.mockRestore();
+      }
+    });
+
+    it("hands an event that waited on a failed attach to the session OMP moved on to, not the one it left", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      const sessionContext = (sessionId: string) => ({ ...harness.context, sessionManager: { getSessionId: () => sessionId, getBranch: () => [] } }) as unknown as ExtensionContext;
+      const second = sessionContext("omp-second-session");
+      const third = sessionContext("omp-third-session");
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // OMP switches to a session whose attach fails, and on to another while that attach is held open; a delta waits on the first.
+      daemon.state.down.add("omp-second-session");
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      daemon.requests.length = 0;
+      const failed = expect(harness.handlers.get("session_switch")!({ type: "session_switch" }, second) as Promise<void>).rejects.toThrow("fetch failed");
+      await vi.waitFor(() => expect(daemon.initializes("omp-second-session")).toBe(1));
+      const racing = harness.handlers.get("message_update")!(delta("racing", "Guest checkout "), third) as Promise<void>;
+      const switching = harness.handlers.get("session_switch")!({ type: "session_switch" }, third) as Promise<void>;
+      held.resolve();
+      await failed;
+      await switching;
+      await racing;
+
+      expect(daemon.requests.filter(request => request.operation === "ingest")).toEqual([{ operation: "ingest", sessionId: "omp-third-session" }]);
+    });
+
+    it("counts an event of a session whose attach failed in that session's gap, though the previous session's runtime survived", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      const second = { ...harness.context, sessionManager: { getSessionId: () => "omp-second-session", getBranch: () => [] } } as unknown as ExtensionContext;
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      // OMP switches to a session whose attach fails; the first session's runtime is still there.
+      daemon.state.down.add("omp-second-session");
+      await expect(harness.handlers.get("session_switch")!({ type: "session_switch" }, second) as Promise<void>).rejects.toThrow("fetch failed");
+      daemon.requests.length = 0;
+
+      await harness.handlers.get("message_update")!(delta("streaming", "Guest checkout "), second);
+
+      expect(daemon.requests.filter(request => request.operation === "ingest")).toEqual([]);
+      expect(daemon.ingested).toEqual([]);
+      expect(droppedMarkers(harness.entries)).toEqual([expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 }, recovered: false })]);
       vi.useRealTimers();
     });
   });

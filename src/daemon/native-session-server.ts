@@ -12,7 +12,7 @@ import { NativeSemanticRuntime } from "../runtime/native-semantic-runtime.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
 import { openCheckoutConversationRules } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "../runtime/session-state.js";
+import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents, type RuleMutation } from "../runtime/session-state.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 
 export type NativeSessionRequest = z.infer<typeof requestSchema>;
@@ -48,7 +48,7 @@ const requestSchema = objectSchema.extend({
   workspaceRoot: z.string(),
   sessionId: z.string().min(1),
   host: z.union([z.literal("omp"), z.literal("pi")]),
-  operation: z.enum(["initialize", "ingest", "cosine", "semantic", "poll", "close", "record-steering-delivery"]),
+  operation: z.enum(["initialize", "ingest", "cosine", "semantic", "poll", "close", "record-steering-delivery", "record-gap"]),
   entries: z.unknown().optional(),
   entriesEncoding: z.literal("superjson").optional(),
   event: z.unknown().optional(),
@@ -58,6 +58,15 @@ const requestSchema = objectSchema.extend({
 
 const entriesSchema = z.array(z.object({ type: z.string(), id: z.string(), timestamp: z.string() }).passthrough());
 const steerReceiptSchema = z.object({ receiptId: z.string().min(1), ruleIds: z.array(z.string()) });
+const droppedEventsSchema = z.object({
+  id: z.string().min(1),
+  count: z.number().int().positive(),
+  kinds: z.record(z.string(), z.number().int().positive()),
+  firstEventId: z.string().nullable(),
+  lastEventId: z.string().nullable(),
+  firstDroppedAt: z.number().int().nonnegative(),
+  lastDroppedAt: z.number().int().nonnegative(),
+}) satisfies z.ZodType<DroppedEvents>;
 const conversationRulesInputSchema = objectSchema.extend({ action: z.string() });
 
 
@@ -85,6 +94,8 @@ export class NativeSessionServer {
   readonly #lanes = new SessionLanes();
   readonly #sweepTimer: NodeJS.Timeout;
   #sweepTask: Promise<void> | undefined;
+  /** Disposals of closed sessions still waiting for an evaluator that was opening; the server's own close waits for them. */
+  readonly #disposals = new Set<Promise<void>>();
 
   constructor(options: {
     workspaceRoot: string;
@@ -126,11 +137,17 @@ export class NativeSessionServer {
     await this.#sweepTask;
     await Promise.all([...this.#sessions.keys()].map(async sessionId =>
       this.#lanes.run(sessionId, () => this.#close(sessionId))));
+    await Promise.all(this.#disposals);
   }
 
   async #handle(input: NativeSessionRequest): Promise<NativeSessionResponse> {
     const session = this.#sessionForRequest(input);
-    if (input.operation === "initialize") return this.#initialize(input);
+    if (input.operation === "initialize") {
+      const startedAt = performance.now();
+      const reply = await this.#initialize(input);
+      process.stderr.write(`rerail: session ${input.sessionId} initialized in ${Math.round(performance.now() - startedAt)} ms\n`);
+      return reply;
+    }
     if (input.operation === "close") {
       await this.#close(input.sessionId);
       return session === undefined ? { deliveries: [], entries: [] } : this.#reply(session);
@@ -140,6 +157,10 @@ export class NativeSessionServer {
     if (input.operation === "record-steering-delivery") {
       const receipt = steerReceiptSchema.parse(input.input);
       session.runtime.recordSteer(input.sessionId, receipt.receiptId, receipt.ruleIds);
+      return { deliveries: [], entries: [] };
+    }
+    if (input.operation === "record-gap") {
+      session.runtime.recordDroppedEvents(input.sessionId, droppedEventsSchema.parse(input.input));
       return { deliveries: [], entries: [] };
     }
     if (input.operation === "poll") {
@@ -231,6 +252,8 @@ export class NativeSessionServer {
       runtime = new RerailRuntime({
         storageRoot, modelPath, databasePath, workspaceRoot: cwd,
         autostart: false, startGate: true,
+        // Resolved per line so the daemon's stderr (its log file) is whatever it is when the line is written.
+        timingLog: line => process.stderr.write(line),
         beforeSessionPublish: async () => {
           await this.#close(input.sessionId);
           if (existing !== undefined) {
@@ -364,12 +387,27 @@ export class NativeSessionServer {
     try {
       await session.runtime.ingest({ kind: "session-end", eventId: `session-end:${sessionId}:${randomUUID()}`, sessionId, session: session.session });
     } finally {
-      try {
-        await session.runtime.dispose();
-      } finally {
-        session.semantic.close();
-        session.ruleSync.close();
+      const opening = session.runtime.evaluatorOpening;
+      const disposal = this.#dispose(session);
+      if (opening) {
+        // An evaluator still opening releases itself, and disposal waits for that release before the stores close
+        // under it; the host does not wait for either.
+        const detached: Promise<void> = disposal.catch((error: unknown) => {
+          process.stderr.write(`Rerail native session ${sessionId} disposal failed: ${String(error)}\n`);
+        }).finally(() => { this.#disposals.delete(detached); });
+        this.#disposals.add(detached);
+      } else {
+        await disposal;
       }
+    }
+  }
+
+  async #dispose(session: NativeSession): Promise<void> {
+    try {
+      await session.runtime.dispose();
+    } finally {
+      session.semantic.close();
+      session.ruleSync.close();
     }
   }
 }

@@ -46,6 +46,9 @@ declare module "*/ui/sessions-model.js" {
   export function sessionTurns(events: readonly unknown[]): TurnView[];
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
   export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; how?: string };
+  export function droppedEvents(s: { sessionId: string }): number;
+  export function uncheckedBoundaries(s: { sessionId: string }): number;
+  export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
 }
 
 declare module "*/ui/poll.js" {
@@ -109,6 +112,7 @@ declare module "*/ui/state.js" {
     repository: { setUp: boolean } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
+    sessionDetail: Map<string, { events: unknown[]; nextAfter: number; loaded: boolean; loading: Promise<unknown> | null }>;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };

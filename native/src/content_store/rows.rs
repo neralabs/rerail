@@ -48,7 +48,22 @@ pub(super) fn intern_string(
     domain: i64,
     value: &str,
 ) -> StoreResult<i64> {
-    let hash_id = intern_hash(transaction, HashKey::sha256(value.as_bytes()))?;
+    intern_hashed_string(
+        transaction,
+        domain,
+        value,
+        HashKey::sha256(value.as_bytes()),
+    )
+}
+
+/// `intern_string` for a `value` whose SHA-256 `hash` the caller computed outside the transaction.
+pub(super) fn intern_hashed_string(
+    transaction: &Transaction<'_>,
+    domain: i64,
+    value: &str,
+    hash: HashKey,
+) -> StoreResult<i64> {
+    let hash_id = intern_hash(transaction, hash)?;
     let mut statement = transaction.prepare_cached(
         "SELECT string_id,collision_ordinal,value FROM strings WHERE domain_id=?1 AND content_hash_id=?2 ORDER BY collision_ordinal",
     )?;

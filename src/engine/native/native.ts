@@ -103,6 +103,10 @@ export interface NativeCodeRuleDslEditor {
 export interface NativeStorageAttachment {
   attached: boolean;
   reason?: string;
+  /** Wall time the attach spent discovering the Git checkout (0 if it did not get that far). */
+  discoveryMilliseconds: number;
+  /** Wall time the attach spent opening the store and publishing the checkout's snapshot (0 if that phase did not run). */
+  publicationMilliseconds: number;
 }
 
 /**
@@ -131,7 +135,6 @@ export interface NativeCodeRuleDslWorkspace {
   applyBufferAsync(request: Buffer): Promise<string>;
   /** One bounded chunk of a repository index over the attached Git worktree; call until `done`. */
   indexRepositoryAsync(options: NativeRepositoryIndexOptions): Promise<string>;
-  maintainStorage(): string;
   /** Records the current revision as reusable in the content store, off the JS thread. */
   completeStorageRevisionAsync(): Promise<void>;
   memoryProfile(): string;

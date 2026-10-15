@@ -7,6 +7,7 @@
 pub(crate) mod closure;
 pub(crate) mod names;
 pub(crate) mod php;
+pub(crate) mod rust;
 pub(crate) mod summary;
 
 #[cfg(test)]
@@ -1051,6 +1052,8 @@ pub(crate) enum FileTables {
     Python(Arc<ScopeTable>, Option<Arc<ModulePath>>),
     /// PHP's variable flow and name resolution (a Blade template's: its embedded program's).
     Php(Arc<ScopeTable>, Arc<PhpNames>),
+    /// Rust's scope table.
+    Rust(Arc<ScopeTable>),
 }
 
 /// The `calls` verdict at `node`; `tables` gives what `calls` reads in `node`'s file for its

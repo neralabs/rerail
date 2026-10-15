@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "phpcs-generic-php-no-silenced-errors",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator.",
+  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator. Divergence: not reported where the @ is part of an idiom that needs it, because removing it changes behaviour. These are a silenced mkdir(), rmdir() or unlink() of a path that the right operand of a `&&`, `||`, `and` or `or` re-checks with is_dir(), is_file() or file_exists(), where the @ call is that operator's left operand or reaches it only through `!`, parentheses and earlier operands of the same `&&`/`||`/`and`/`or` chain (the race-safe `!@mkdir($dir) && !is_dir($dir)`, where the re-check decides whether a warning was a failure), and a silenced trigger_error() or user_error() whose second argument, or argument named error_level, is E_USER_DEPRECATED (Symfony's deprecation convention, silenced so only error handlers that opt in log it) (NER-1811).",
   "scope": {
     "include": [
       "**/*.php"
@@ -19,14 +19,234 @@
         "ast": {
           "language": "php",
           "rule": {
-            "kind": "error_suppression_expression"
+            "kind": "error_suppression_expression",
+            "not": {
+              "any": [
+                {
+                  "matches": "deprecation-notice"
+                },
+                {
+                  "matches": "filesystem-call-with-an-argument"
+                }
+              ]
+            }
+          },
+          "utils": {
+            "deprecation-notice": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(trigger_error|user_error)$"
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "message",
+                        "error_level"
+                      ],
+                      "bind": {
+                        "LEVEL": "error_level"
+                      },
+                      "mode": "syntactic"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "pattern": "$LEVEL",
+                      "regex": "^\\\\?E_USER_DEPRECATED$"
+                    }
+                  }
+                ]
+              }
+            },
+            "filesystem-call-with-an-argument": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(mkdir|rmdir|unlink)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "kind": "argument"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.NoSilencedErrors",
-        "message": "Silencing errors is discouraged",
+        "message": "The @ operator hides every warning and notice this expression raises. Remove it and handle the failure explicitly (check the return value, or convert warnings with set_error_handler). If the failure is expected, keep @ only where a check right after it decides the outcome, as in `!@mkdir($dir) && !is_dir($dir)`.",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.NoSilencedErrors.Discouraged"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filesystem-call",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "error_suppression_expression",
+            "all": [
+              {
+                "matches": "filesystem-call-of-V"
+              },
+              {
+                "not": {
+                  "matches": "rechecked-in-a-condition"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "first-argument-is-V": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "kind": "argument",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "kind": "argument"
+                    }
+                  },
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "pattern": "$V"
+                  }
+                }
+              }
+            },
+            "recheck-of-V": {
+              "any": [
+                {
+                  "kind": "function_call_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "regex": "^\\\\?(is_dir|is_file|file_exists)$"
+                      }
+                    },
+                    {
+                      "matches": "first-argument-is-V"
+                    }
+                  ]
+                },
+                {
+                  "kind": "unary_op_expression",
+                  "has": {
+                    "kind": "function_call_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "regex": "^\\\\?(is_dir|is_file|file_exists)$"
+                        }
+                      },
+                      {
+                        "matches": "first-argument-is-V"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "rechecked-in-a-condition": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "unary_op_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^!$"
+                        }
+                      },
+                      {
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(&&|\\|\\||(?i:and|or))$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "field": "left",
+                "kind": "binary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(&&|\\|\\||(?i:and|or))$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "matches": "recheck-of-V"
+                    }
+                  }
+                ]
+              }
+            },
+            "filesystem-call-of-V": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(mkdir|rmdir|unlink)$"
+                    }
+                  },
+                  {
+                    "matches": "first-argument-is-V"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.NoSilencedErrors",
+        "message": "The @ operator hides every warning and notice this expression raises. Remove it and handle the failure explicitly (check the return value, or convert warnings with set_error_handler). If the failure is expected, keep @ only where a check right after it decides the outcome, as in `!@mkdir($dir) && !is_dir($dir)`.",
         "suppress": {
           "phpcs": {
             "sniffs": [

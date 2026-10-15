@@ -250,6 +250,7 @@ pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Optio
         LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),
+        LiteralHost::RustString => literal::parse_rust_string(node, grammar, &mut spend_steps),
     };
     let Some(parsed) = parsed else {
         // The budget fails the clause; a deadline leaves the parse unknown.

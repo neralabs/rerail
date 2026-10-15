@@ -1,8 +1,9 @@
 //! `formatArgs` (a Rerail extension): which arguments of a format call no field of its template
 //! consumes, and which fields no argument fills: for Python as Ruff 0.16.9's Pyflakes rules read
 //! them (`rules/pyflakes/rules/strings.rs`: F504, F505, F507, F522, F523, F524), for PHP's
-//! printf-family calls as PHP 8.5.11 and PHPStan 2.2.16 read them (`printf`), and for its `sscanf`
-//! and `fscanf` calls as PHP 8.5.11 validates them (`scanf`).
+//! printf-family calls as PHP 8.5.11 and PHPStan 2.2.16 read them (`printf`), for its `sscanf`
+//! and `fscanf` calls as PHP 8.5.11 validates them (`scanf`), and for Rust's `format_args!`
+//! family as rustc 1.99.0 binds them (`rust`).
 
 use super::AstMatcher;
 use super::each::{self, HostRanges};
@@ -12,7 +13,7 @@ use super::parse::parsed_tree;
 use super::util::{THREE_VALUED, UNKNOWN};
 use super::value::Reading;
 use crate::code_rule_dsl::identifier::python_identifier;
-use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, offsets};
+use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, offsets, rust_format};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -30,6 +31,8 @@ pub(crate) enum Style {
     Printf,
     /// PHP's `sscanf`/`fscanf` formats (`scanfFormat`).
     Scanf,
+    /// Rust's `format_args!`-family macro calls (`rustFormat`).
+    Rust,
 }
 
 impl Style {
@@ -39,6 +42,7 @@ impl Style {
             Self::Percent => Grammar::Percent,
             Self::Printf => Grammar::Printf,
             Self::Scanf => Grammar::Scanf,
+            Self::Rust => Grammar::RustFormat,
         }
     }
 }
@@ -134,6 +138,58 @@ impl FormatArgs {
             (Style::Printf | Style::Scanf, None) => {
                 unreachable!("PHP's styles compile with a reading")
             }
+            (Style::Rust, _) => self.prepare_rust(env),
+        }
+    }
+
+    /// A Rust format macro call (`rust::format_call`) whose template is the string capture: the
+    /// arguments no field, width or precision reads (rustc's "argument never used"), by their
+    /// first token, and the fields reading an index past the last argument (rustc's "invalid
+    /// reference to positional argument"). A capture (`{x}` with no argument `x`) reads a
+    /// variable, which `resolves` reads. A call rustc refuses otherwise (a positional argument
+    /// after a named one, a template it cannot parse) is unknown.
+    fn prepare_rust<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>) -> Prepared<'t, D> {
+        let Some(string) = env.get_match(&self.string) else {
+            return Prepared::NoMatch;
+        };
+        let Some(call) = string
+            .ancestors()
+            .find(|ancestor| ancestor.kind() == "macro_invocation")
+            .and_then(|invocation| rust::format_call(&invocation))
+            .filter(|call| call.template.range() == string.range())
+        else {
+            return Prepared::NoMatch;
+        };
+        if !call.well_ordered {
+            return Prepared::Unknown;
+        }
+        let tree = match parsed_tree(&call.template, Grammar::RustFormat) {
+            None | Some(Parsed::NotString) => return Prepared::NoMatch,
+            Some(Parsed::Unknown) => return Prepared::Unknown,
+            Some(Parsed::Tree(tree)) => tree,
+        };
+        let Ok(pieces) = rust_format::parse(&call.value) else {
+            return Prepared::Unknown;
+        };
+        let binding = rust_format::bind(&pieces, call.positional, &call.named);
+        let root = AstGrep::doc(SubDoc { tree: tree.clone() });
+        let parts: Vec<usize> = root.root().children().map(|part| part.node_id()).collect();
+        let unused = binding
+            .unused
+            .iter()
+            .filter_map(|index| call.arguments.get(*index))
+            .map(|argument| (argument.first.clone(), true))
+            .collect();
+        let missing = binding
+            .missing
+            .iter()
+            .filter_map(|piece| parts.get(*piece))
+            .map(|id| (*id, true))
+            .collect();
+        Prepared::Sides {
+            tree,
+            unused: Side::known(unused),
+            missing: Side::known(missing),
         }
     }
 
@@ -878,6 +934,7 @@ fn binary(operator: &str, left: Type, right: Type) -> Type {
 }
 
 mod printf;
+mod rust;
 mod scanf;
 
 #[cfg(test)]

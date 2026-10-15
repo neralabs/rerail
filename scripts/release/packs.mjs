@@ -74,6 +74,36 @@ export function listPacks(packsDirectory = PACKS) {
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+/** Every pending changeset in `directory`: `{ file, text }`, sorted by file name. */
+export function readChangesets(directory = join(ROOT, ".changeset")) {
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".md") && file !== "README.md")
+    .sort()
+    .map((file) => ({ file, text: readFileSync(join(directory, file), "utf8") }));
+}
+
+/**
+ * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
+ * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
+ * 0.1.x to 0.2.0 on a minor and to 1.0.0 on a major.
+ */
+export function changesetBumpFailures(changesets, packs) {
+  const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
+  const failures = [];
+  for (const { file, text } of changesets) {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
+    for (const line of front.split(/\r?\n/u)) {
+      const entry = /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line);
+      if (entry === null) continue;
+      const [, name, bump] = entry;
+      const version = versions.get(name);
+      if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
+      failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
+    }
+  }
+  return failures;
+}
+
 /**
  * Which packs a release run publishes, given the git tags that exist. A pack whose version has its tag is already
  * published. One with no tag for its package at all has never been published, and its first publish is made by hand

@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
   type RuleSteerDelivery,
+  CodeRuleBridge,
   openRerailDatabase,
+  SqliteAuditControlStore,
   setRuleSetting,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
@@ -60,13 +62,12 @@ describe("Rerail session startup", () => {
     }
   });
 
-  it("delivers observations queued during successful attachment but discards failed and retired attachments", async () => {
+  it("delivers what an evaluator observes while it opens, and discards a failed or retired evaluator's observations", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-session-observations-"));
     directories.push(root);
     const callbacks: RuleSteerDelivery[] = [];
     const deliveries: AdapterDelivery[] = [];
     const delivered = Promise.withResolvers<void>();
-    const failure = new Error("Workspace attachment failed");
     const runtime = new RerailRuntime({
       autostart: false,
       workspaceRoot: root,
@@ -91,7 +92,7 @@ describe("Rerail session startup", () => {
             await steerDelivery.requestSteer(sessionId, "steer", `Observation ${attempt}`, {
               revision: 0, scope: [], background: true,
             });
-            if (attempt === 1) throw failure;
+            if (attempt === 1) throw new Error("Workspace attachment failed");
           },
           acceptsPath: () => true,
           auditGeneratedEdits: async (_sessionId, batch) => ({
@@ -101,20 +102,201 @@ describe("Rerail session startup", () => {
         };
       },
     });
-    const session = { host: "omp" as const, sessionId: "retry-observation", cwd: root };
+    const failed = { host: "omp" as const, sessionId: "failed-observation", cwd: root };
+    const opened = { host: "omp" as const, sessionId: "opened-observation", cwd: root };
     try {
-      await expect(runtime.ingest({ kind: "session-start", eventId: "failed", session })).rejects.toBe(failure);
-      expect(deliveries).toEqual([]);
-      await runtime.ingest({ kind: "session-start", eventId: "retry", session });
+      await runtime.ingest({ kind: "session-start", eventId: "failed", session: failed });
+      // A turn boundary waits for the evaluator to have opened or failed.
+      expect(await runtime.ingest({ kind: "turn-end", eventId: "failed-turn", sessionId: failed.sessionId, text: "" })).toEqual([]);
+      expect(await callbacks[0]!.requestSteer(failed.sessionId, "steer", "Late observation", {
+        revision: 0, scope: [], background: true,
+      })).toBe("discarded");
+      await runtime.ingest({ kind: "session-start", eventId: "opened", session: opened });
       await delivered.promise;
-      expect(await callbacks[0]!.requestSteer(session.sessionId, "steer", "Retired observation", {
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: opened.sessionId });
+      expect(await callbacks[1]!.requestSteer(opened.sessionId, "steer", "Retired observation", {
         revision: 0, scope: [], background: true,
       })).toBe("discarded");
       expect(deliveries).toEqual([
-        expect.objectContaining({ sessionId: session.sessionId, content: "Observation 2" }),
+        expect.objectContaining({ sessionId: opened.sessionId, content: "Observation 2" }),
       ]);
     } finally {
       await runtime.dispose();
+    }
+  });
+
+  it("hands a polling host nothing an evaluator observed while opening until it has opened", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-session-opening-observation-"));
+    directories.push(root);
+    const opening = Promise.withResolvers<void>();
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ steerDelivery }) => ({
+        openWorkspace: async sessionId => {
+          await steerDelivery.requestSteer(sessionId, "steer", "Observed while opening", { revision: 0, scope: [] });
+          await opening.promise;
+          throw new Error("Workspace attachment failed");
+        },
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    const session = { host: "omp" as const, sessionId: "opening-observation", cwd: root };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      expect(await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, text: "go" })).toEqual([]);
+      expect(await runtime.collectDeliveries(session.sessionId)).toEqual([]);
+      opening.resolve();
+      expect(await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" })).toEqual([]);
+    } finally {
+      opening.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("closes a call left open by a previous runtime even when the evaluator cannot open, so it is not begun again later", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-session-unopened-call-"));
+    directories.push(root);
+    const session = { host: "omp" as const, sessionId: "unopened-call", cwd: root };
+    const begun = vi.spyOn(CodeRuleBridge.prototype, "begin");
+    const runtime = (opens: boolean) => new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: () => ({
+        openWorkspace: async () => { if (!opens) throw new Error("Workspace unavailable"); },
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    const call = { kind: "call" as const, eventId: "call", sessionId: session.sessionId, toolCallId: "write", toolName: "write", input: { path: "a.py" } };
+    try {
+      const first = runtime(true);
+      await first.ingest({ kind: "session-start", eventId: "start-1", session });
+      await first.ingest(call);
+      await first.dispose();
+
+      const unopened = runtime(false);
+      await unopened.ingest({ kind: "session-start", eventId: "start-2", session });
+      await unopened.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, toolCallId: "write", toolName: "write", output: "written" });
+      await unopened.dispose();
+
+      begun.mockClear();
+      const reopened = runtime(true);
+      await reopened.ingest({ kind: "session-start", eventId: "start-3", session });
+      await reopened.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" });
+      await reopened.dispose();
+      expect(begun).not.toHaveBeenCalled();
+    } finally {
+      begun.mockRestore();
+    }
+  });
+});
+
+describe("A scan requested while the session's evaluator is still opening", () => {
+  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested and claimed meanwhile. */
+  async function scanFixture() {
+    const root = await mkdtemp(join(tmpdir(), "rerail-scan-opening-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    const opening = Promise.withResolvers<void>();
+    const scans: string[] = [];
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath,
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ audits, workspaceRoot }) => ({
+        openWorkspace: async () => { await opening.promise; },
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        audit: async (sessionId, input) => {
+          // The repository audit the runtime starts itself once open is not the scan under test.
+          if (input.audit !== undefined) return [];
+          const auditId = audits.start({
+            sessionId, workspaceRoot, scope: input.scope, mode: input.mode,
+            revision: 0, catalogRevision: null, ruleRevisions: [], paths: [],
+          });
+          audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+          scans.push(auditId);
+          return [auditId];
+        },
+        close: async () => undefined,
+      }),
+    });
+    const session = { host: "omp" as const, sessionId: "scan-opening", cwd: root };
+    await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    const controls = new SqliteAuditControlStore(databasePath);
+    const request = controls.requestAudit(session.sessionId, { scope: "repository" });
+    // The control timer claims it within 250 ms, with the evaluator still held in its open.
+    const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
+    await vi.waitFor(() => expect(statusOf()).not.toBe("queued"), { timeout: 4_000 });
+    expect(statusOf()).toBe("running");
+    const settled = async () => {
+      await vi.waitFor(
+        () => expect(controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status).not.toBe("running"),
+        { timeout: 10_000 },
+      );
+      return controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)!;
+    };
+    const close = async () => {
+      opening.resolve();
+      await runtime.dispose();
+      controls.close();
+    };
+    return { opening, scans, settled, close };
+  }
+
+  it("completes with its audit once the evaluator has opened", async () => {
+    const test = await scanFixture();
+    try {
+      expect(test.scans).toEqual([]);
+      test.opening.resolve();
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
+      expect(test.scans).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("reports why the evaluator could not open when it fails, not that a run went unrecorded", async () => {
+    const test = await scanFixture();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      test.opening.reject(new Error("Workspace unavailable"));
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "failed", auditIds: [] });
+      expect(request.error).toContain("Workspace unavailable");
+      expect(request.error).not.toContain("without a recorded run");
+    } finally {
+      stderr.mockRestore();
+      await test.close();
     }
   });
 });

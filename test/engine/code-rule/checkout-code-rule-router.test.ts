@@ -123,6 +123,25 @@ async function edit(auditor: CheckoutCodeRuleRouter, sessionId: string, revision
 }
 
 describe("CheckoutCodeRuleRouter", () => {
+  it("interrupts the session's audits when it closes, unless it is told they belong to a session that replaced it", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    const { recorder, interrupts } = recordingAudits();
+    const closing = router(session, databasePath, recorder);
+    const replaced = router(session, databasePath, recorder);
+    await closing.openWorkspace("closing");
+    await replaced.openWorkspace("replaced");
+    // Each opening interrupted the session's earlier runs once.
+    expect(interrupts).toEqual(["closing", "replaced"]);
+
+    await replaced.close({ interruptAudits: false });
+    expect(interrupts).toEqual(["closing", "replaced"]);
+    await closing.close();
+    expect(interrupts).toEqual(["closing", "replaced", "closing"]);
+  });
+
   it("judges a submodule's file by the submodule's own rules", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");

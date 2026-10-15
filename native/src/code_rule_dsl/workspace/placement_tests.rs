@@ -73,9 +73,7 @@ fn names_code_rule() -> CompiledCodeRuleDsl {
 /// One apply of `files` (`{path, language, source}` objects); its evaluation.
 fn apply(workspace: &CodeRuleDslWorkspace, files: Vec<Value>) -> Value {
     // `compute` refuses to wait for the process-wide CPU slot; serialize with the other tests.
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),

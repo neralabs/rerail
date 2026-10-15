@@ -87,6 +87,38 @@ export function isUnreadFailure(failure: { code: string; message: string }): boo
   return failure.code === "source-incomplete" && failure.message.startsWith(`${UNREAD_FAILURE_HEAD}: `);
 }
 
+/** Why a file with a NUL byte was not evaluated; the native index reports the same text (`workspace/index.rs`). */
+export const BINARY_SOURCE_MESSAGE = "Binary source cannot be evaluated";
+
+/**
+ * Whether a failure only says one file was read in part: its rules ran around its syntax errors (`source-partial`),
+ * a rule that needs the whole file skipped it for them, the parser did not read it at all (`isUnreadFailure`), or it
+ * is binary. A repository audit lists these and still completes, and they never count towards the failure limit that
+ * stops a scan: a large checkout with a few files Rerail cannot fully parse still gets its baseline (NER-1828).
+ */
+export function isSourceGap(failure: AuditFailure): boolean {
+  if (failure.path === undefined) return false;
+  if (failure.code === "source-partial") return true;
+  return failure.code === "source-incomplete"
+    && (failure.message === BINARY_SOURCE_MESSAGE || failure.message.startsWith("file has syntax errors") || isUnreadFailure(failure));
+}
+
+/**
+ * The one failure an audit records, after the failures it kept, to say how many more it dropped at its cap. It is
+ * scan-level, names no file and stands for failures that are recorded beside it or are source gaps; it is not a cause
+ * and fails no audit.
+ */
+export function omittedFailuresSummary(count: number): AuditFailure {
+  return {
+    clauseId: "scan", code: "budget-exceeded", stage: "scan",
+    message: `${count} further ${count === 1 ? "failure" : "failures"} not recorded`,
+  };
+}
+
+export function isOmittedFailuresSummary(failure: Pick<AuditFailure, "stage" | "code" | "message">): boolean {
+  return failure.stage === "scan" && failure.code === "budget-exceeded" && /^\d+ further failures? not recorded$/u.test(failure.message);
+}
+
 export const AUDIT_COVERAGE_STATUSES = ["complete", "partial", "failed"] as const;
 
 /** One failure code against a clause: how many failures, and at most three example paths, the first in path order. */

@@ -34,7 +34,7 @@ export {
   type RepositoryStartState,
   type RepositoryStatus,
 } from "./catalog/repository-model.js";
-export { checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
+export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
 export {
   addAttachment,

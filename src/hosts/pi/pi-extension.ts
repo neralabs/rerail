@@ -162,9 +162,13 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
+    /** The session Pi is in: set when a session event delivers it, so a client of a session Pi left cannot write its closing gap marker into this one. */
+    let liveSessionId: string | undefined;
     const native = new PiNativeSession({
       entries: context => (context ?? currentContext)?.sessionManager.getBranch() ?? [],
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
+      liveSessionId: () => liveSessionId,
+      reportDropped: count => presentation.dropped(count),
       deliver: sendDeliveries,
       // Serialized through `attaching` and dropped once its context stopped being current, so a
       // probe that lost the race to a session switch cannot resurrect the old session.
@@ -304,7 +308,10 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       currentContext: () => native.context() ?? currentContext,
       owner: () => native.current() ?? runtime,
       semantic: activeSemantic,
-      initialize: (context, rebuild) => initialize(context, { rebuild }),
+      initialize: (context, rebuild) => {
+        liveSessionId = context.sessionManager.getSessionId();
+        return initialize(context, { rebuild });
+      },
       close: closeRuntime,
       shutdown: async () => {
         try {
@@ -341,6 +348,9 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
       sessionNoteRules: async session => sessionNoteRules(session.cwd, configuredDatabasePath(options, session.cwd)),
     });
+    // The old client's open gap gets its count while its session is still the one Pi appends to; a switch that follows closes that client into a session it no longer writes to.
+    pi.on("session_before_switch", (_event, ctx) => { native.markGapFinal(ctx.sessionManager.getSessionId()); });
+    pi.on("session_before_fork", (_event, ctx) => { native.markGapFinal(ctx.sessionManager.getSessionId()); });
   };
 }
 

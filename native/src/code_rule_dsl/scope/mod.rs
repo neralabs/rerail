@@ -14,6 +14,7 @@ pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
 pub(crate) mod python;
+pub(crate) mod rust;
 pub(crate) mod sql;
 pub(crate) mod usage;
 
@@ -283,7 +284,8 @@ pub(crate) struct Scope {
     pub(crate) bindings: HashMap<Box<str>, Vec<Binding>>,
     /// Python `nonlocal` declarations of this scope.
     pub(crate) nonlocals: BTreeSet<Box<str>>,
-    /// Python: where each `from m import *` of this scope takes effect, in order.
+    /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
+    /// glob import and each macro that may define items (`scope::rust::glob_visible`) stands.
     pub(crate) stars: Vec<usize>,
 }
 

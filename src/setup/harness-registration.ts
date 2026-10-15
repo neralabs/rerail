@@ -324,10 +324,12 @@ type PromptCommandHarness = "claude-code" | "cursor";
 
 /**
  * Command files and Codex skills earlier versions installed and this one no longer does; removed when they are ours.
- * The earlier `$rerail` skill sits where the `$rerail` command skill goes, so registering replaces it.
+ * The earlier `$rerail` skill sits where the `$rerail` command skill goes, so registering replaces it. `rerail-ui` and
+ * `rerail-rage-quit` were renamed `rerail-manage` and `rerail-uninstall`.
  */
-const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-disable", "rerail-enable"];
-const RETIRED_CODEX_SKILLS: readonly string[] = [];
+const RENAMED_COMMANDS: readonly string[] = ["rerail-ui", "rerail-rage-quit"];
+const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-disable", "rerail-enable", ...RENAMED_COMMANDS];
+const RETIRED_CODEX_SKILLS: readonly string[] = RENAMED_COMMANDS;
 
 function commandContext(context: Context): CommandFileContext {
   return { cli: directCommand(context, ENTRY_POINTS.cli), packageRoot: context.root, setupLauncher: setupLauncher(context) };

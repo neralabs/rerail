@@ -235,19 +235,24 @@ is not part of this contract.
 
 ## Versioning and release
 
-| Change | Version bump |
+Packs are pre-release until 1.0.0: below it, every change to a pack is a `patch`. From 1.0.0 the bump follows the
+table:
+
+| Change | Version bump from 1.0.0 |
 |---|---|
 | A false positive or false negative fixed; wording, examples or recordings changed | patch |
 | A rule added; the core range widened | minor |
 | A rule removed or renamed; a default mode made stricter; the core range narrowed | major |
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
-pack adds a changeset (`npx changeset`) naming the pack's package and the bump from the table above, with a one-line
-summary for users. Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the
-pending changesets, bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the
-packs: the core package at the repository root keeps its `v<version>` tag release and the root `CHANGELOG.md`, and a
-changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `minor` changeset
-for its initial rules.
+pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+`npm test` refuses a pending changeset that gives a pack below 1.0.0 a `minor` or `major` bump
+(`changesetBumpFailures` in `scripts/release/packs.mjs`), which `changeset version` would turn into 0.2.0 or 1.0.0.
+Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
+bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
+package at the repository root keeps its `v<version>` tag release and the root `CHANGELOG.md`, and a changeset naming
+`@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+rules, so its first release is `0.1.1`.
 
 ### Release
 
@@ -320,12 +325,9 @@ repository allowlist are accepted.
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
 | Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
 
-Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `sql`, each from `conformance/languages/<id>/`,
+Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` and `rust`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
 parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
-draft `rules.json` becoming `packs/vue/conformance.json`. Not moved yet: `rust`, which has upstream recordings but no
-rules: it stays in `fixtures/rust/upstream/` beside its draft manifest (`fixtures/rust/upstream/conformance.draft.json`)
-until its pack gains rules, when the draft becomes `packs/rust/conformance.json` and `upstream/` moves to
-`packs/rust/upstream/`.
+draft `rules.json` becoming `packs/vue/conformance.json`.

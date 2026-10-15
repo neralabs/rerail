@@ -13,8 +13,8 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
-import type { CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "../engine/code-rule/code-rule.js";
+import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
+import type { AuditorCloseOptions, CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "../engine/code-rule/code-rule.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -30,11 +30,11 @@ import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/regi
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { restorableRule, type RuleMutation } from "./session-state.js";
+import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { steerBlock } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
-import { SqliteSessionStore } from "./session-store.js";
+import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -113,6 +113,13 @@ function auditRequestVerdict(auditIds: readonly string[], audits: readonly (Audi
   }
   return { status: "completed", error: null };
 }
+
+/** The events whose code-rule work needs the session's evaluator open: a tool call, its result, and a turn's end. */
+const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call: true, result: true, "turn-end": true };
+
+/** A turn end that waited longer than this on its settle work is written to the daemon log. */
+const SLOW_TURN_END_WAIT_MS = 1_000;
+
 /** Code-rule calls recorded without a matching result, in ledger order. */
 function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
   const pending = new Map<string, Extract<LedgerEntry, { type: "policy-call" }>>();
@@ -313,6 +320,11 @@ interface StartingCheckout {
   cwd: string;
 }
 
+/** What the evaluator does for a boundary the session answered without it: begin a tool call, or finish one. */
+type DeferredCodeRuleBoundary =
+  | { kind: "call"; toolCallId: string; toolName: string; paths: string[] }
+  | { kind: "result"; toolCallId: string; failed: boolean };
+
 interface RuntimeSessionState {
   descriptor: AdapterSession;
   /** Decides the session's conversation rules, coverage and repository attribution. */
@@ -333,11 +345,22 @@ interface RuntimeSessionState {
   pendingSteers: PendingSteer[];
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
+  /** The session's evaluator, opening or open; unset for good once it could not open. */
   codeRuleBridge?: CodeRuleBridge;
+  /** Why the evaluator could not open, when it did not: a scan that waited for it reports this. */
+  codeRuleOffReason?: string;
+  /** Settles once the evaluator has opened (the bridge) or failed to (undefined); code-rule boundaries wait for it. */
+  codeRuleWorkspace: Promise<CodeRuleBridge | undefined>;
+  /** The evaluator has opened: what it observes may be delivered. */
+  codeRuleReady: boolean;
+  /** The evaluator is still opening and owns its own release: closing the session does not wait for it. */
+  codeRuleOpening: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
   pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
+  /** Boundaries answered without the evaluator because it was still opening; it begins and finishes them once open. */
+  deferredCodeRuleBoundaries: DeferredCodeRuleBoundary[];
   closed: boolean;
 }
 
@@ -455,7 +478,13 @@ export interface RerailRuntimeOptions {
     workspaceRoot: string;
     steerDelivery: RuleSteerDelivery;
     audits: AuditRecorder;
+    /** Where the evaluator writes its storage-attach and repository-audit timing lines; it writes none without it. */
+    timingLog?: (line: string) => void;
   } & AuditSettings) => CodeRuleAuditor;
+  /** How long a turn end or command result waits for the session's shell-write walk, and a code-rule boundary for the evaluator to open; the bridge's default otherwise. */
+  discoveryWaitMs?: number;
+  /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
+  timingLog?: (line: string) => void;
   nativeSession?: {
     registry: ConversationRuleRegistry;
     ruleSync?: LiveConversationRules;
@@ -472,6 +501,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
+  /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
+  readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
@@ -491,6 +522,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
+  readonly #discoveryWaitMs: number | undefined;
+  readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
 
   constructor(options: RerailRuntimeOptions) {
@@ -500,6 +533,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#deliverBackground = options.deliverBackground;
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
+    this.#discoveryWaitMs = options.discoveryWaitMs;
+    this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#trusted = options.trusted ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -584,10 +619,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#session(event.sessionId);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
-    state.codeRuleBridge?.refreshCodeRules();
+    // A code-rule boundary waits for the session's evaluator to open, within a bound; any other event goes on without it.
+    const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#awaitCodeRuleWorkspace(state, event) : state.codeRuleBridge;
+    bridge?.refreshCodeRules();
     if (event.kind === "call") {
       const id = event.toolCallId;
-      const preimages = await state.codeRuleBridge?.begin(id, event.toolName, event.input);
+      const preimages = await bridge?.begin(id, event.toolName, event.input);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
@@ -599,22 +636,77 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        await state.codeRuleBridge?.finish(call!.id, event.failed === true);
+        await bridge?.finish(call!.id, event.failed === true);
         await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-        const settled = state.codeRuleBridge?.settleGeneratedEdits();
+        const settled = bridge?.settleGeneratedEdits();
         if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") await settled;
         else if (settled !== undefined) await settledWithin(settled, HOOK_EDIT_CHECK_MS);
       }
     }
     if (event.kind === "turn-end") {
-      await state.codeRuleBridge?.checkpoint("turn");
-      await state.codeRuleBridge?.settle();
+      const walkStartedAt = performance.now();
+      await bridge?.checkpoint("turn");
+      this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
+      // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
+      // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
+      const settleStartedAt = performance.now();
+      await bridge?.settleGeneratedEdits();
+      this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
     }
     if (event.kind === "session-end") return [];
     const deliveries = await this.#collectPendingSteers(state);
     deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
     state.eventDeliveries.delete(event.eventId);
     return deliveries;
+  }
+
+  /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
+  #reportSlowTurnEndWait(sessionId: string, waitedOn: string, startedAt: number): void {
+    const milliseconds = performance.now() - startedAt;
+    if (milliseconds <= SLOW_TURN_END_WAIT_MS) return;
+    this.#timingLog?.(`rerail: turn end of session ${sessionId} waited ${Math.round(milliseconds)} ms for ${waitedOn}\n`);
+  }
+
+  /**
+   * The session's evaluator for a code-rule boundary, waited for at most `#discoveryWaitMs`: the host aborts a request
+   * after 30 s, so an open held up by Git discovery or a slow storage attach must not hold the session's first tool
+   * call. Past the wait the boundary is answered without code rules and recorded in the session's history; its begin
+   * or finish is queued for the evaluator to run once it has opened, so the edit is still audited and its steer
+   * delivered at a later boundary.
+   */
+  async #awaitCodeRuleWorkspace(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
+    if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
+    const budget = Promise.withResolvers<undefined>();
+    const timer = setTimeout(() => budget.resolve(undefined), this.#discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS);
+    try {
+      const opened = await Promise.race([state.codeRuleWorkspace.then(bridge => ({ bridge })), budget.promise]);
+      if (opened !== undefined) return opened.bridge;
+    } finally {
+      clearTimeout(timer);
+    }
+    // Opened since the wait ran out: nothing is pending.
+    if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
+    // Queued and recorded with no await in between: the evaluator's drain of the queue sees this boundary or the bridge does.
+    if (event.kind === "call") {
+      state.deferredCodeRuleBoundaries.push({
+        kind: "call", toolCallId: event.toolCallId, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
+      });
+    } else if (event.kind === "result") {
+      state.deferredCodeRuleBoundaries.push({ kind: "result", toolCallId: event.toolCallId, failed: event.failed === true });
+    }
+    if (event.kind === "call" || event.kind === "result" || event.kind === "turn-end") {
+      const boundary = event.kind;
+      try {
+        this.#recordSessionFact(
+          state.descriptor.sessionId,
+          (store, descriptor, attribution) => store.recordCodeRulesPending(descriptor, boundary, attribution),
+        );
+      } catch (error) {
+        // Recording a boundary that answered without code rules is best-effort: it never fails the boundary.
+        process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -627,6 +719,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    // An evaluator still opening may yet fail, and what it observed with it.
+    if (!state.codeRuleReady) return [];
     // Delivery removes entries from the list, so iterate a snapshot.
     const deliveries: AdapterDelivery[] = [];
     for (const pending of state.pendingSteers.slice()) {
@@ -727,14 +821,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
+    this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordSteer(descriptor, receiptId, ruleIds, attribution));
+  }
+
+  /** The host's record of session events it never delivered, so the session's history reads as incomplete. */
+  recordDroppedEvents(sessionId: string, dropped: DroppedEvents): void {
+    this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordDroppedEvents(descriptor, dropped, attribution));
+  }
+
+  #recordSessionFact(
+    sessionId: string,
+    record: (store: SqliteSessionStore, descriptor: AdapterSession, attribution: SessionAttribution) => void,
+  ): void {
     const state = this.#sessions.get(sessionId);
     const closed = this.#closedSessions.get(sessionId);
     const descriptor = state?.descriptor ?? closed?.descriptor;
     if (descriptor === undefined) throw new Error(`Unknown session: ${sessionId}`);
-    // An awaited native send may finish after switching/disposal; its receipt still belongs to this session.
+    // An awaited native send may finish after switching/disposal; what it reports still belongs to this session.
     const sessionStore = this.#sessionStoreClosed ? new SqliteSessionStore(this.#sessionStore.path) : this.#sessionStore;
     try {
-      sessionStore.recordSteer(descriptor, receiptId, ruleIds, {
+      record(sessionStore, descriptor, {
         startedAt: state?.startedAt ?? closed!.startedAt,
         endedAt: closed?.endedAt ?? null,
         repositoryKey: state === undefined ? closed!.repositoryKey : this.#repositoryKey(state.checkout),
@@ -772,9 +878,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#catalogs.checkout(checkout.root)?.repositoryKey ?? null;
   }
 
+  /** An evaluator is still opening: `dispose` waits for its release, which the caller may leave running behind it. */
+  get evaluatorOpening(): boolean {
+    return this.#evaluatorOpens.size > 0;
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
+    await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
     this.#controls.close();
     this.#audits.close();
@@ -827,17 +939,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       ownerClaim: undefined,
+      codeRuleWorkspace: Promise.resolve(undefined),
+      codeRuleReady: false,
+      codeRuleOpening: false,
       auditRequestWork: undefined,
       repositoryAudit: undefined,
-      pendingCodeRuleCalls: [],
+      // Restored whether or not the evaluator opens, so their results still close them in the ledger.
+      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
+      deferredCodeRuleBoundaries: [],
       closed: false,
     };
-    let ready = false;
+    // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
+    let retired = false;
     const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const steerDelivery: RuleSteerDelivery = {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
-        if (activeState !== opened || activeState.closed) return "discarded";
+        if (activeState !== opened || activeState.closed || retired) return "discarded";
         const revision = metadata?.revision ?? activeState.codeRuleRevision;
         const pending: PendingSteer = {
           delivery: {
@@ -852,7 +970,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         };
         if (!this.#isCurrentSteer(activeState, pending)) return "discarded";
         activeState.pendingSteers.push(pending);
-        if (ready && metadata?.background === true && this.#deliverBackground !== undefined) {
+        if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
           const inFlight = this.#deliverSteer(activeState, pending, true);
           const waitsForNativeBoundary = metadata.generatedEdit === true
             && ADAPTER_CAPABILITIES[activeState.descriptor.host].toolSurface === "native";
@@ -862,18 +980,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       },
     };
     let auditor: CodeRuleAuditor | undefined;
-    let workspaceOpened = false;
+    let bridge: CodeRuleBridge | undefined;
     this.#sessions.set(session.sessionId, opened);
     try {
       auditor = this.#createAuditor({
         workspaceRoot: checkout.cwd,
         steerDelivery,
         audits: this.#audits,
+        ...(this.#timingLog === undefined ? {} : { timingLog: this.#timingLog }),
         ...this.#auditSettings,
         ...auditSettings,
       });
-      opened.codeRuleBridge = new CodeRuleBridge(checkout.cwd, auditor, {
+      bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
+        // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
+        onDiscoveryPending: boundary => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
+        ),
         onRevision: (sessionId, revision, paths) => {
           const current = this.#sessions.get(sessionId);
           if (current !== opened || current.closed || paths.length === 0) return;
@@ -882,19 +1007,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           current.pendingSteers = current.pendingSteers.filter(pending => this.#isCurrentSteer(current, pending));
         },
       });
-      await opened.codeRuleBridge.openWorkspace(session.sessionId);
-      workspaceOpened = true;
-      for (const call of unresolvedCodeRuleCalls(ledger)) {
-        opened.pendingCodeRuleCalls.push({ id: call.toolCallId, toolName: call.toolName });
-        await opened.codeRuleBridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
-      }
+      opened.codeRuleBridge = bridge;
       await this.#beforeSessionPublish?.(session);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, completeTracking);
       opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
-      if (auditor.audit !== undefined) opened.repositoryAudit = this.#runRepositoryAudit(session.sessionId, opened);
-      ready = true;
+    } catch (error) {
+      await this.#abandonSession(session.sessionId, opened, auditor);
+      throw error;
+    }
+    const settings = { ...this.#auditSettings, ...auditSettings };
+    opened.codeRuleOpening = true;
+    opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger, settings).then(open => {
+      if (open === undefined) {
+        retired = true;
+        opened.pendingSteers = [];
+        return undefined;
+      }
+      opened.codeRuleReady = true;
       if (this.#deliverBackground !== undefined) {
         // Delivery removes entries from the list, so iterate a snapshot.
         const pendingSteerSnapshot = [...opened.pendingSteers];
@@ -902,20 +1033,104 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           void this.#deliverSteer(opened, pending, true);
         }
       }
-      return { processedEventIds: [...processed] };
+      return open;
+    }).catch((error: unknown) => {
+      // Nothing awaits this until a boundary or the close does: a fault here must not become an unhandled rejection.
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`rerail: code rules are off for session ${session.sessionId}: ${message}\n`);
+      retired = true;
+      opened.codeRuleOffReason = message;
+      opened.pendingSteers = [];
+      return undefined;
+    }).finally(() => {
+      opened.codeRuleOpening = false;
+    });
+    const workspace = opened.codeRuleWorkspace;
+    this.#evaluatorOpens.add(workspace);
+    const released = (): void => { this.#evaluatorOpens.delete(workspace); };
+    void workspace.then(released, released);
+    return { processedEventIds: [...processed] };
+  }
+
+  /**
+   * Opens a published session's evaluator behind its attach: Git discovery and the content-store snapshot of a large
+   * checkout take longer than a host waits for a session to start. The calls a previous runtime left unresolved are
+   * begun again before any new boundary sees the bridge, and the repository audit starts once it is open. An
+   * evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
+   */
+  async #openCodeRuleWorkspace(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge,
+    auditor: CodeRuleAuditor,
+    ledger: readonly LedgerEntry[],
+    settings: Required<AuditSettings>,
+  ): Promise<CodeRuleBridge | undefined> {
+    const { sessionId } = state.descriptor;
+    let opened = false;
+    try {
+      const openStartedAt = performance.now();
+      await bridge.openWorkspace(sessionId);
+      this.#timingLog?.(`rerail: code-rule evaluator of session ${sessionId} opened in ${Math.round(performance.now() - openStartedAt)} ms\n`);
+      opened = true;
+      for (const call of unresolvedCodeRuleCalls(ledger)) {
+        if (state.closed) break;
+        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      }
+      // Boundaries answered without the evaluator while it opened: their begins and finishes run now, in arrival
+      // order, until none is left. A begin has no preimage to restore: the edit it audits reads as uncaptured.
+      while (state.deferredCodeRuleBoundaries.length > 0 && !state.closed) {
+        const next = state.deferredCodeRuleBoundaries[0]!;
+        if (next.kind === "call") await bridge.begin(next.toolCallId, next.toolName, { paths: next.paths }, {});
+        else await bridge.finish(next.toolCallId, next.failed);
+        state.deferredCodeRuleBoundaries.shift();
+      }
     } catch (error) {
-      await this.#abandonSession(session.sessionId, opened, auditor, workspaceOpened);
-      throw error;
+      delete state.codeRuleBridge;
+      state.deferredCodeRuleBoundaries = [];
+      const release = this.#lateRelease();
+      await (opened ? bridge.close(release) : auditor.close(release)).catch(() => undefined);
+      state.codeRuleOffReason = error instanceof Error ? error.message : String(error);
+      if (!state.closed) this.#recordWorkspaceFailure(state, settings, error);
+      return undefined;
+    }
+    if (state.closed) {
+      // The session closed while the evaluator opened: close did not wait, so the evaluator is released here, unobserved.
+      delete state.codeRuleBridge;
+      await bridge.close(this.#lateRelease()).catch(() => undefined);
+      return undefined;
+    }
+    // No await from the drain's last check to here: a close from now on finds the bridge published and closes it
+    // itself, and a boundary that finds the evaluator still opening has queued for the drain, one that finds it open
+    // uses the bridge.
+    state.codeRuleOpening = false;
+    if (auditor.audit !== undefined) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
+    return bridge;
+  }
+
+  /** A late release of an evaluator must never end the session-wide audits: the id may belong to a replacement by now. */
+  #lateRelease(): AuditorCloseOptions {
+    return { interruptAudits: false };
+  }
+
+  #recordWorkspaceFailure(state: RuntimeSessionState, settings: Required<AuditSettings>, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`rerail: code rules are off for session ${state.descriptor.sessionId}: ${message}\n`);
+    try {
+      const auditId = this.#audits.start({
+        sessionId: state.descriptor.sessionId, workspaceRoot: state.checkout.cwd, scope: settings.scope, mode: settings.mode,
+        revision: 0, catalogRevision: null, ruleRevisions: [], paths: [],
+      });
+      this.#audits.finish(auditId, {
+        status: "failed",
+        failures: [{ clauseId: "catalog", code: "adapter-error", message, stage: "evaluate" }],
+      });
+    } catch (recordError) {
+      process.stderr.write(`rerail: policy execution recording failed: ${recordError instanceof Error ? recordError.message : String(recordError)}\n`);
     }
   }
 
-  /** Failed attachment cancels discovery and releases the evaluator without a final checkpoint. */
-  async #abandonSession(
-    sessionId: string,
-    opened: RuntimeSessionState,
-    auditor: CodeRuleAuditor | undefined,
-    workspaceOpened: boolean,
-  ): Promise<void> {
+  /** Failed attachment releases the evaluator, which never opened, and unpublishes whatever was published. */
+  async #abandonSession(sessionId: string, opened: RuntimeSessionState, auditor: CodeRuleAuditor | undefined): Promise<void> {
     opened.closed = true;
     opened.pendingSteers = [];
     this.#sessions.delete(sessionId);
@@ -926,8 +1141,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#sessionStore.closeSession(sessionId);
     }
     try {
-      if (workspaceOpened) await opened.codeRuleBridge!.close();
-      else await auditor?.close();
+      await auditor?.close();
     } catch {
       // Cleanup must not replace the initialization error.
     }
@@ -946,14 +1160,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#controls.interruptRepositoryAudit(sessionId);
         this.#controls.releaseOwner(sessionId, state.ownerClaim);
       }
-      state.codeRuleBridge?.interrupt();
     }
+    let bridge: CodeRuleBridge | undefined;
     try {
-      await state?.auditRequestWork;
+      // An evaluator still opening is not waited for: it finds the session closed once it has opened and releases itself,
+      // ending only its own audits. The session's other audits end now, while this runtime still owns the id.
+      if (state?.codeRuleOpening === true) this.#audits.interrupt(sessionId);
+      else {
+        bridge = await state?.codeRuleWorkspace;
+        bridge?.interrupt();
+        await state?.auditRequestWork;
+      }
     } finally {
       try {
         try {
-          await state?.codeRuleBridge?.close();
+          await bridge?.close();
         } finally {
           await state?.repositoryAudit;
         }
@@ -968,8 +1189,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     const claimed = new Set<string>();
     const audit: RepositoryAuditHooks = {
-      claim: checkoutRoot => {
-        const won = this.#controls.claimRepositoryAudit(sessionId, checkoutRoot);
+      claim: (checkoutRoot, catalogRevision) => {
+        const won = this.#controls.claimRepositoryAudit(sessionId, checkoutRoot, catalogRevision);
         if (won) claimed.add(checkoutRoot);
         return won;
       },
@@ -1085,16 +1306,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return;
     }
     try {
-      const auditIds = await state.codeRuleBridge?.audit({
+      const workspace = await state.codeRuleWorkspace;
+      if (workspace === undefined) {
+        // The evaluator never opened: the scan says why, not that a run went unrecorded.
+        if (state.closed) this.#controls.finish(request.id, "interrupted", [], "Session closed during scan");
+        else this.#controls.finish(request.id, "failed", [], `Code rules are off for this session: ${state.codeRuleOffReason ?? "the policy evaluator did not open"}`);
+        return;
+      }
+      const auditIds = await workspace.audit({
         scope: request.scope,
         mode: request.mode,
         ...(request.paths.length === 0 ? {} : { paths: request.paths }),
       });
       if (state.closed) {
-        this.#controls.finish(request.id, "interrupted", auditIds ?? [], "Session closed during scan");
+        this.#controls.finish(request.id, "interrupted", auditIds, "Session closed during scan");
         return;
       }
-      if (auditIds === undefined || auditIds.length === 0) {
+      if (auditIds.length === 0) {
         this.#controls.finish(request.id, "failed", [], "Policy evaluator completed scan without a recorded run");
         return;
       }

@@ -12,6 +12,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { languageFor, NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
+  AuditorCloseOptions,
   CodeRuleEdit,
   CodeRuleEditBatch,
   CodeRuleAuditor,
@@ -34,6 +35,8 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly audits: AuditRecorder;
   readonly scope?: Required<AuditSettings>["scope"];
   readonly mode?: AuditMode;
+  /** Where each lane's enforcer writes its timing lines; none are written without it. */
+  readonly timingLog?: (line: string) => void;
 }
 
 interface Lane {
@@ -173,19 +176,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return auditIds;
   }
 
-  interrupt(): void {
+  interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     this.#closing = true;
-    for (const lane of this.#lanes.values()) lane.enforcer.interrupt();
+    for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
 
-  async close(): Promise<void> {
-    this.interrupt();
+  async close(options?: AuditorCloseOptions): Promise<void> {
+    this.interrupt(options);
     const lanes = [...this.#lanes.values()];
     this.#lanes.clear();
     await Promise.all(lanes.map(async lane => {
       await lane.opening.catch(() => undefined);
-      await lane.enforcer.close();
+      await lane.enforcer.close(options);
     }));
   }
 
@@ -203,7 +206,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const lane = this.#lane(root);
     if (lane === undefined) return;
     await lane.opening;
-    if (audit !== undefined && !audit.claim(root)) return;
+    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return;
     const report = await lane.enforcer.auditRepository(sessionId, mode);
     audit?.finish(root, report.auditId);
     if (report.auditId !== undefined) auditIds.push(report.auditId);
@@ -282,6 +285,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         steerDelivery: this.#options.steerDelivery,
         audits: this.#options.audits,
         ...this.#settings,
+        ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),
       });

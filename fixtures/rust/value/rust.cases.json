@@ -1,0 +1,1387 @@
+{
+ "cases": [
+  {
+   "src": "-0",
+   "type": "i8"
+  },
+  {
+   "src": "--1",
+   "type": "i8"
+  },
+  {
+   "src": "-127",
+   "type": "i8"
+  },
+  {
+   "src": "-1",
+   "type": "i16"
+  },
+  {
+   "src": "-2",
+   "type": "i16"
+  },
+  {
+   "src": "-0",
+   "type": "i32"
+  },
+  {
+   "src": "--1",
+   "type": "i32"
+  },
+  {
+   "src": "-2147483647",
+   "type": "i32"
+  },
+  {
+   "src": "-1",
+   "type": "i64"
+  },
+  {
+   "src": "-2",
+   "type": "i64"
+  },
+  {
+   "src": "-0",
+   "type": "i128"
+  },
+  {
+   "src": "--1",
+   "type": "i128"
+  },
+  {
+   "src": "-9223372036854775807",
+   "type": "i128"
+  },
+  {
+   "src": "-1",
+   "type": "isize"
+  },
+  {
+   "src": "-2",
+   "type": "isize"
+  },
+  {
+   "src": "!0",
+   "type": "u8"
+  },
+  {
+   "src": "!2",
+   "type": "u8"
+  },
+  {
+   "src": "!0",
+   "type": "u16"
+  },
+  {
+   "src": "!2",
+   "type": "u16"
+  },
+  {
+   "src": "!0",
+   "type": "u32"
+  },
+  {
+   "src": "!2",
+   "type": "u32"
+  },
+  {
+   "src": "!0",
+   "type": "u64"
+  },
+  {
+   "src": "!2",
+   "type": "u64"
+  },
+  {
+   "src": "!0",
+   "type": "u128"
+  },
+  {
+   "src": "!2",
+   "type": "u128"
+  },
+  {
+   "src": "!0",
+   "type": "usize"
+  },
+  {
+   "src": "!2",
+   "type": "usize"
+  },
+  {
+   "src": "1+2",
+   "type": "u8"
+  },
+  {
+   "src": "0+0",
+   "type": "u8"
+  },
+  {
+   "src": "1-2",
+   "type": "u8"
+  },
+  {
+   "src": "0-0",
+   "type": "u8"
+  },
+  {
+   "src": "1*2",
+   "type": "u8"
+  },
+  {
+   "src": "0*0",
+   "type": "u8"
+  },
+  {
+   "src": "1/2",
+   "type": "u8"
+  },
+  {
+   "src": "0/0",
+   "type": "u8"
+  },
+  {
+   "src": "1%2",
+   "type": "u8"
+  },
+  {
+   "src": "0%0",
+   "type": "u8"
+  },
+  {
+   "src": "1+2",
+   "type": "u16"
+  },
+  {
+   "src": "0+0",
+   "type": "u16"
+  },
+  {
+   "src": "1-2",
+   "type": "u16"
+  },
+  {
+   "src": "0-0",
+   "type": "u16"
+  },
+  {
+   "src": "1*2",
+   "type": "u16"
+  },
+  {
+   "src": "0*0",
+   "type": "u16"
+  },
+  {
+   "src": "1/2",
+   "type": "u16"
+  },
+  {
+   "src": "0/0",
+   "type": "u16"
+  },
+  {
+   "src": "1%2",
+   "type": "u16"
+  },
+  {
+   "src": "0%0",
+   "type": "u16"
+  },
+  {
+   "src": "1+2",
+   "type": "u32"
+  },
+  {
+   "src": "0+0",
+   "type": "u32"
+  },
+  {
+   "src": "1-2",
+   "type": "u32"
+  },
+  {
+   "src": "0-0",
+   "type": "u32"
+  },
+  {
+   "src": "1*2",
+   "type": "u32"
+  },
+  {
+   "src": "0*0",
+   "type": "u32"
+  },
+  {
+   "src": "1/2",
+   "type": "u32"
+  },
+  {
+   "src": "0/0",
+   "type": "u32"
+  },
+  {
+   "src": "1%2",
+   "type": "u32"
+  },
+  {
+   "src": "0%0",
+   "type": "u32"
+  },
+  {
+   "src": "1+2",
+   "type": "u64"
+  },
+  {
+   "src": "0+0",
+   "type": "u64"
+  },
+  {
+   "src": "1-2",
+   "type": "u64"
+  },
+  {
+   "src": "0-0",
+   "type": "u64"
+  },
+  {
+   "src": "1*2",
+   "type": "u64"
+  },
+  {
+   "src": "0*0",
+   "type": "u64"
+  },
+  {
+   "src": "1/2",
+   "type": "u64"
+  },
+  {
+   "src": "0/0",
+   "type": "u64"
+  },
+  {
+   "src": "1%2",
+   "type": "u64"
+  },
+  {
+   "src": "0%0",
+   "type": "u64"
+  },
+  {
+   "src": "1+2",
+   "type": "i8"
+  },
+  {
+   "src": "0+0",
+   "type": "i8"
+  },
+  {
+   "src": "1-2",
+   "type": "i8"
+  },
+  {
+   "src": "0-0",
+   "type": "i8"
+  },
+  {
+   "src": "1*2",
+   "type": "i8"
+  },
+  {
+   "src": "0*0",
+   "type": "i8"
+  },
+  {
+   "src": "1/2",
+   "type": "i8"
+  },
+  {
+   "src": "0/0",
+   "type": "i8"
+  },
+  {
+   "src": "1%2",
+   "type": "i8"
+  },
+  {
+   "src": "0%0",
+   "type": "i8"
+  },
+  {
+   "src": "1+2",
+   "type": "i16"
+  },
+  {
+   "src": "0+0",
+   "type": "i16"
+  },
+  {
+   "src": "1-2",
+   "type": "i16"
+  },
+  {
+   "src": "0-0",
+   "type": "i16"
+  },
+  {
+   "src": "1*2",
+   "type": "i16"
+  },
+  {
+   "src": "0*0",
+   "type": "i16"
+  },
+  {
+   "src": "1/2",
+   "type": "i16"
+  },
+  {
+   "src": "0/0",
+   "type": "i16"
+  },
+  {
+   "src": "1%2",
+   "type": "i16"
+  },
+  {
+   "src": "0%0",
+   "type": "i16"
+  },
+  {
+   "src": "1+2",
+   "type": "i32"
+  },
+  {
+   "src": "0+0",
+   "type": "i32"
+  },
+  {
+   "src": "1-2",
+   "type": "i32"
+  },
+  {
+   "src": "0-0",
+   "type": "i32"
+  },
+  {
+   "src": "1*2",
+   "type": "i32"
+  },
+  {
+   "src": "0*0",
+   "type": "i32"
+  },
+  {
+   "src": "1/2",
+   "type": "i32"
+  },
+  {
+   "src": "0/0",
+   "type": "i32"
+  },
+  {
+   "src": "1%2",
+   "type": "i32"
+  },
+  {
+   "src": "0%0",
+   "type": "i32"
+  },
+  {
+   "src": "1+2",
+   "type": "i64"
+  },
+  {
+   "src": "0+0",
+   "type": "i64"
+  },
+  {
+   "src": "1-2",
+   "type": "i64"
+  },
+  {
+   "src": "0-0",
+   "type": "i64"
+  },
+  {
+   "src": "1*2",
+   "type": "i64"
+  },
+  {
+   "src": "0*0",
+   "type": "i64"
+  },
+  {
+   "src": "1/2",
+   "type": "i64"
+  },
+  {
+   "src": "0/0",
+   "type": "i64"
+  },
+  {
+   "src": "1%2",
+   "type": "i64"
+  },
+  {
+   "src": "0%0",
+   "type": "i64"
+  },
+  {
+   "src": "1<<0",
+   "type": "u8"
+  },
+  {
+   "src": "1<<2",
+   "type": "u8"
+  },
+  {
+   "src": "1<<8",
+   "type": "u8"
+  },
+  {
+   "src": "1>>0",
+   "type": "u8"
+  },
+  {
+   "src": "1>>2",
+   "type": "u8"
+  },
+  {
+   "src": "1>>8",
+   "type": "u8"
+  },
+  {
+   "src": "0&1",
+   "type": "u8"
+  },
+  {
+   "src": "255&15",
+   "type": "u8"
+  },
+  {
+   "src": "3|5",
+   "type": "u8"
+  },
+  {
+   "src": "0^1",
+   "type": "u8"
+  },
+  {
+   "src": "255^15",
+   "type": "u8"
+  },
+  {
+   "src": "1<<1",
+   "type": "u16"
+  },
+  {
+   "src": "1<<7",
+   "type": "u16"
+  },
+  {
+   "src": "1<<32",
+   "type": "u16"
+  },
+  {
+   "src": "1>>1",
+   "type": "u16"
+  },
+  {
+   "src": "1>>7",
+   "type": "u16"
+  },
+  {
+   "src": "1>>32",
+   "type": "u16"
+  },
+  {
+   "src": "3&5",
+   "type": "u16"
+  },
+  {
+   "src": "0|1",
+   "type": "u16"
+  },
+  {
+   "src": "255|15",
+   "type": "u16"
+  },
+  {
+   "src": "3^5",
+   "type": "u16"
+  },
+  {
+   "src": "1<<0",
+   "type": "u32"
+  },
+  {
+   "src": "1<<2",
+   "type": "u32"
+  },
+  {
+   "src": "1<<8",
+   "type": "u32"
+  },
+  {
+   "src": "1>>0",
+   "type": "u32"
+  },
+  {
+   "src": "1>>2",
+   "type": "u32"
+  },
+  {
+   "src": "1>>8",
+   "type": "u32"
+  },
+  {
+   "src": "0&1",
+   "type": "u32"
+  },
+  {
+   "src": "255&15",
+   "type": "u32"
+  },
+  {
+   "src": "3|5",
+   "type": "u32"
+  },
+  {
+   "src": "0^1",
+   "type": "u32"
+  },
+  {
+   "src": "255^15",
+   "type": "u32"
+  },
+  {
+   "src": "1<<1",
+   "type": "u64"
+  },
+  {
+   "src": "1<<7",
+   "type": "u64"
+  },
+  {
+   "src": "1<<32",
+   "type": "u64"
+  },
+  {
+   "src": "1>>1",
+   "type": "u64"
+  },
+  {
+   "src": "1>>7",
+   "type": "u64"
+  },
+  {
+   "src": "1>>32",
+   "type": "u64"
+  },
+  {
+   "src": "3&5",
+   "type": "u64"
+  },
+  {
+   "src": "0|1",
+   "type": "u64"
+  },
+  {
+   "src": "255|15",
+   "type": "u64"
+  },
+  {
+   "src": "3^5",
+   "type": "u64"
+  },
+  {
+   "src": "1<<0",
+   "type": "i8"
+  },
+  {
+   "src": "1<<2",
+   "type": "i8"
+  },
+  {
+   "src": "1<<8",
+   "type": "i8"
+  },
+  {
+   "src": "1>>0",
+   "type": "i8"
+  },
+  {
+   "src": "1>>2",
+   "type": "i8"
+  },
+  {
+   "src": "1>>8",
+   "type": "i8"
+  },
+  {
+   "src": "0&1",
+   "type": "i8"
+  },
+  {
+   "src": "255&15",
+   "type": "i8"
+  },
+  {
+   "src": "3|5",
+   "type": "i8"
+  },
+  {
+   "src": "0^1",
+   "type": "i8"
+  },
+  {
+   "src": "255^15",
+   "type": "i8"
+  },
+  {
+   "src": "1<<1",
+   "type": "i16"
+  },
+  {
+   "src": "1<<7",
+   "type": "i16"
+  },
+  {
+   "src": "1<<32",
+   "type": "i16"
+  },
+  {
+   "src": "1>>1",
+   "type": "i16"
+  },
+  {
+   "src": "1>>7",
+   "type": "i16"
+  },
+  {
+   "src": "1>>32",
+   "type": "i16"
+  },
+  {
+   "src": "3&5",
+   "type": "i16"
+  },
+  {
+   "src": "0|1",
+   "type": "i16"
+  },
+  {
+   "src": "255|15",
+   "type": "i16"
+  },
+  {
+   "src": "3^5",
+   "type": "i16"
+  },
+  {
+   "src": "1<<0",
+   "type": "i32"
+  },
+  {
+   "src": "1<<2",
+   "type": "i32"
+  },
+  {
+   "src": "1<<8",
+   "type": "i32"
+  },
+  {
+   "src": "1>>0",
+   "type": "i32"
+  },
+  {
+   "src": "1>>2",
+   "type": "i32"
+  },
+  {
+   "src": "1>>8",
+   "type": "i32"
+  },
+  {
+   "src": "0&1",
+   "type": "i32"
+  },
+  {
+   "src": "255&15",
+   "type": "i32"
+  },
+  {
+   "src": "3|5",
+   "type": "i32"
+  },
+  {
+   "src": "0^1",
+   "type": "i32"
+  },
+  {
+   "src": "255^15",
+   "type": "i32"
+  },
+  {
+   "src": "1<<1",
+   "type": "i64"
+  },
+  {
+   "src": "1<<7",
+   "type": "i64"
+  },
+  {
+   "src": "1<<32",
+   "type": "i64"
+  },
+  {
+   "src": "1>>1",
+   "type": "i64"
+  },
+  {
+   "src": "1>>7",
+   "type": "i64"
+  },
+  {
+   "src": "1>>32",
+   "type": "i64"
+  },
+  {
+   "src": "3&5",
+   "type": "i64"
+  },
+  {
+   "src": "0|1",
+   "type": "i64"
+  },
+  {
+   "src": "255|15",
+   "type": "i64"
+  },
+  {
+   "src": "3^5",
+   "type": "i64"
+  },
+  {
+   "src": "true && false",
+   "type": "bool"
+  },
+  {
+   "src": "true && true",
+   "type": "bool"
+  },
+  {
+   "src": "false && 1 == 0",
+   "type": "bool"
+  },
+  {
+   "src": "false || true",
+   "type": "bool"
+  },
+  {
+   "src": "false || false",
+   "type": "bool"
+  },
+  {
+   "src": "0.1 + 0.2",
+   "type": "f32"
+  },
+  {
+   "src": "0.0 / 0.0",
+   "type": "f32"
+  },
+  {
+   "src": "3.0 - 1.25",
+   "type": "f32"
+  },
+  {
+   "src": "0.1 + 0.2",
+   "type": "f64"
+  },
+  {
+   "src": "0.0 / 0.0",
+   "type": "f64"
+  },
+  {
+   "src": "3.0 - 1.25",
+   "type": "f64"
+  },
+  {
+   "src": "300 as u8",
+   "type": "u8"
+  },
+  {
+   "src": "-1i8 as u128",
+   "type": "u128"
+  },
+  {
+   "src": "f64::NAN as i32",
+   "type": "i32",
+   "unknown": "associated const"
+  },
+  {
+   "src": "255u8 as i16",
+   "type": "i16"
+  },
+  {
+   "src": "97u8 as char",
+   "type": "char"
+  },
+  {
+   "src": "true as i32",
+   "type": "i32"
+  },
+  {
+   "src": "1 < 2",
+   "type": "bool"
+  },
+  {
+   "src": "-1 < 0",
+   "type": "bool"
+  },
+  {
+   "src": "2 <= 2",
+   "type": "bool"
+  },
+  {
+   "src": "1 > 2",
+   "type": "bool"
+  },
+  {
+   "src": "-1 > 0",
+   "type": "bool"
+  },
+  {
+   "src": "2 >= 2",
+   "type": "bool"
+  },
+  {
+   "src": "1 == 2",
+   "type": "bool"
+  },
+  {
+   "src": "-1 == 0",
+   "type": "bool"
+  },
+  {
+   "src": "2 != 2",
+   "type": "bool"
+  },
+  {
+   "src": "0.1 < 0.2",
+   "type": "bool"
+  },
+  {
+   "src": "0.1 != 0.2",
+   "type": "bool"
+  },
+  {
+   "src": "1.0 < 2.0",
+   "type": "bool"
+  },
+  {
+   "src": "1.0 != 2.0",
+   "type": "bool"
+  },
+  {
+   "src": "f32::NAN < 1.0",
+   "type": "bool",
+   "unknown": "float comparison"
+  },
+  {
+   "src": "f32::NAN != 1.0",
+   "type": "bool",
+   "unknown": "float comparison"
+  },
+  {
+   "src": "f64::INFINITY < 0.0",
+   "type": "bool",
+   "unknown": "float comparison"
+  },
+  {
+   "src": "f64::INFINITY != 0.0",
+   "type": "bool",
+   "unknown": "float comparison"
+  },
+  {
+   "src": "'a' < 'b'",
+   "type": "bool"
+  },
+  {
+   "src": "'a' != 'b'",
+   "type": "bool"
+  },
+  {
+   "src": "'z' < 'a'",
+   "type": "bool"
+  },
+  {
+   "src": "'z' != 'a'",
+   "type": "bool"
+  },
+  {
+   "src": "true < false",
+   "type": "bool"
+  },
+  {
+   "src": "true != false",
+   "type": "bool"
+  },
+  {
+   "src": "if true { 1 } else { 2 }",
+   "type": "i32"
+  },
+  {
+   "src": "{ let x = 2; x + 3 }",
+   "type": "i32"
+  },
+  {
+   "src": "[1, 2][0]",
+   "type": "i32"
+  },
+  {
+   "src": "b\"abc\"",
+   "type": "&[u8; 3]"
+  },
+  {
+   "src": "\"hello\"",
+   "type": "&str"
+  },
+  {
+   "src": "\"a\" < \"b\"",
+   "type": "bool",
+   "unknown": "str comparison"
+  },
+  {
+   "src": "1 << 40",
+   "type": "u64"
+  },
+  {
+   "src": "1u8 + 2",
+   "type": "u8"
+  },
+  {
+   "src": "i32::MIN / -1",
+   "type": "i32"
+  },
+  {
+   "src": "-(128i8)",
+   "type": "i8"
+  },
+  {
+   "src": "u8::MAX",
+   "type": "u8",
+   "unknown": "associated const"
+  },
+  {
+   "src": "f64::EPSILON",
+   "type": "f64",
+   "unknown": "associated const"
+  },
+  {
+   "src": "(1 + 1) * 3",
+   "type": "i32"
+  },
+  {
+   "src": "(3 + 1) * 5",
+   "type": "i32"
+  },
+  {
+   "src": "(5 + 1) * 7",
+   "type": "i32"
+  },
+  {
+   "src": "(7 + 1) * 9",
+   "type": "i32"
+  },
+  {
+   "src": "(9 + 1) * 11",
+   "type": "i32"
+  },
+  {
+   "src": "(11 + 1) * 13",
+   "type": "i32"
+  },
+  {
+   "src": "(13 + 1) * 15",
+   "type": "i32"
+  },
+  {
+   "src": "(15 + 1) * 17",
+   "type": "i32"
+  },
+  {
+   "src": "(17 + 1) * 19",
+   "type": "i32"
+  },
+  {
+   "src": "(19 + 1) * 21",
+   "type": "i32"
+  },
+  {
+   "src": "(21 + 1) * 23",
+   "type": "i32"
+  },
+  {
+   "src": "(23 + 1) * 25",
+   "type": "i32"
+  },
+  {
+   "src": "0u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "2u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "4u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "6u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "8u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "10u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "12u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "14u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "16u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "18u8 as u16 + 1",
+   "type": "u16"
+  },
+  {
+   "src": "(0i32) << 0",
+   "type": "i32"
+  },
+  {
+   "src": "(2i32) << 2",
+   "type": "i32"
+  },
+  {
+   "src": "(4i32) << 4",
+   "type": "i32"
+  },
+  {
+   "src": "(6i32) << 0",
+   "type": "i32"
+  },
+  {
+   "src": "(8i32) << 2",
+   "type": "i32"
+  },
+  {
+   "src": "(10i32) << 4",
+   "type": "i32"
+  },
+  {
+   "src": "(12i32) << 0",
+   "type": "i32"
+  },
+  {
+   "src": "(14i32) << 2",
+   "type": "i32"
+  },
+  {
+   "src": "-1i32 as u32",
+   "type": "u32"
+  },
+  {
+   "src": "1e20 as i32",
+   "type": "i32"
+  },
+  {
+   "src": "-1.5 as u8",
+   "type": "u8"
+  },
+  {
+   "src": "u8::MAX as i32",
+   "type": "i32",
+   "unknown": "associated const"
+  },
+  {
+   "src": "(1, 2).0",
+   "type": "i32"
+  },
+  {
+   "src": "\"ab\".len()",
+   "type": "usize",
+   "unknown": "method call"
+  },
+  {
+   "src": "1u8 + 2u16",
+   "type": "u16"
+  },
+  {
+   "src": "255u8 + 1",
+   "type": "u8"
+  },
+  {
+   "src": "-1u32",
+   "type": "u32"
+  },
+  {
+   "src": "i64::MIN",
+   "type": "i64",
+   "unknown": "associated const"
+  },
+  {
+   "src": "-128i8",
+   "type": "i8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 50;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 55;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 56;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 200; const B: u8 = A + 100;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u32 = 7; const B: u32 = A * 2; const D: u32 = B + A;",
+   "src": "D",
+   "type": "u32"
+  },
+  {
+   "items": "const A: i8 = -128; const B: i8 = A; const D: i8 = B;",
+   "src": "D",
+   "type": "i8"
+  },
+  {
+   "items": "const B: u8 = A + 1; const A: u8 = 1;",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u16 = 300;",
+   "src": "A",
+   "type": "u16"
+  },
+  {
+   "items": "const A: u8 = 300;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: i64 = -5;",
+   "src": "A",
+   "type": "i64"
+  },
+  {
+   "items": "const A: u8 = 255;",
+   "src": "A as i8",
+   "type": "i8"
+  },
+  {
+   "items": "const A: u8 = 5;",
+   "src": "A as u32",
+   "type": "u32"
+  },
+  {
+   "items": "const A: u64 = 1 << 40;",
+   "src": "A",
+   "type": "u64"
+  },
+  {
+   "items": "const A: u32 = 1 << 32;",
+   "src": "A",
+   "type": "u32"
+  },
+  {
+   "items": "const A: u128 = 1 << 100;",
+   "src": "A",
+   "type": "u128"
+  },
+  {
+   "items": "const A: u8 = 200 + 100 - 100;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = !0;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: i32 = !0;",
+   "src": "A",
+   "type": "i32"
+  },
+  {
+   "items": "const A: i32 = 5;",
+   "src": "-A",
+   "type": "i32"
+  },
+  {
+   "items": "const A: i8 = -128;",
+   "src": "-A",
+   "type": "i8"
+  },
+  {
+   "items": "const A: i32 = 2147483647; const B: i32 = A + 1;",
+   "src": "B",
+   "type": "i32"
+  },
+  {
+   "items": "const A: f32 = 0.1 + 0.2;",
+   "src": "A",
+   "type": "f32"
+  },
+  {
+   "items": "const A: f64 = 0.1; const B: f64 = A * 3.0;",
+   "src": "B",
+   "type": "f64"
+  },
+  {
+   "items": "const A: bool = true; const B: bool = !A;",
+   "src": "B",
+   "type": "bool"
+  },
+  {
+   "items": "const A: u8 = 3; const B: bool = A < 5;",
+   "src": "B",
+   "type": "bool"
+  },
+  {
+   "items": "const A: u8 = 3; const B: u8 = if A > 2 { 10 } else { 20 };",
+   "src": "B",
+   "type": "u8"
+  },
+  {
+   "items": "const N: usize = 4; const M: usize = N * N;",
+   "src": "M",
+   "type": "usize"
+  },
+  {
+   "items": "const A: char = 'x';",
+   "src": "A",
+   "type": "char"
+  },
+  {
+   "items": "const A: &str = \"hi\";",
+   "src": "A",
+   "type": "&str"
+  },
+  {
+   "items": "const A: &[u8; 3] = b\"abc\";",
+   "src": "A",
+   "type": "&[u8; 3]"
+  },
+  {
+   "items": "const A: u8 = 5u16;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = true;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "mod m { const A: u8 = 1; }",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "mod m { pub const A: u8 = 1; }",
+   "src": "m::A",
+   "type": "u8",
+   "unknown": "a path past its first segment is not followed"
+  },
+  {
+   "items": "mod m { const A: u8 = 1; } const A: u8 = 2;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ const A: u8 = 9; A }",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ let A = 9; A }",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = 1;",
+   "src": "{ let x: u8 = A; x }",
+   "type": "u8",
+   "unknown": "a let binding is a run-time value"
+  },
+  {
+   "items": "static S: u8 = 3;",
+   "src": "S",
+   "type": "u8",
+   "unknown": "a static is not followed"
+  },
+  {
+   "items": "static mut S: u8 = 3;",
+   "src": "S",
+   "type": "u8"
+  },
+  {
+   "items": "const A: u8 = B; const B: u8 = A;",
+   "src": "A",
+   "type": "u8"
+  },
+  {
+   "items": "struct S; impl S { const C: u8 = 3; }",
+   "src": "S::C",
+   "type": "u8",
+   "unknown": "an associated const is reached through a path"
+  },
+  {
+   "items": "type T = u8; const A: T = 5;",
+   "src": "A",
+   "type": "u8",
+   "unknown": "a type alias is not resolved"
+  },
+  {
+   "items": "const K0: u32 = 1; const K1: u32 = K0 + 1; const K2: u32 = K1 + 1; const K3: u32 = K2 + 1; const K4: u32 = K3 + 1; const K5: u32 = K4 + 1; const K6: u32 = K5 + 1; const K7: u32 = K6 + 1; const K8: u32 = K7 + 1; const K9: u32 = K8 + 1; const K10: u32 = K9 + 1; const K11: u32 = K10 + 1; const K12: u32 = K11 + 1; const K13: u32 = K12 + 1; const K14: u32 = K13 + 1; const K15: u32 = K14 + 1; const K16: u32 = K15 + 1; const K17: u32 = K16 + 1; const K18: u32 = K17 + 1; const K19: u32 = K18 + 1;",
+   "src": "K19",
+   "type": "u32",
+   "unknown": "a chain of more than 16 names is not followed"
+  },
+  {
+   "items": "const K0: u32 = 1; const K1: u32 = K0 + 1; const K2: u32 = K1 + 1; const K3: u32 = K2 + 1; const K4: u32 = K3 + 1; const K5: u32 = K4 + 1; const K6: u32 = K5 + 1; const K7: u32 = K6 + 1; const K8: u32 = K7 + 1; const K9: u32 = K8 + 1; const K10: u32 = K9 + 1; const K11: u32 = K10 + 1; const K12: u32 = K11 + 1; const K13: u32 = K12 + 1; const K14: u32 = K13 + 1; const K15: u32 = K14 + 1; const K16: u32 = K15 + 1; const K17: u32 = K16 + 1; const K18: u32 = K17 + 1; const K19: u32 = K18 + 1;",
+   "src": "K10",
+   "type": "u32"
+  },
+  {
+   "items": "const Z: u8 = 0;",
+   "src": "{ const K: u8 = 4; K * K }",
+   "type": "u8"
+  }
+ ]
+}
