@@ -150,7 +150,8 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
         : `the words the person typed after ${sigil}rerail-create`;
       return {
         text: createRuleInstructions({ cli, packageRoot, request }),
-        allowed: [`${cli} rules evidence *`, `${cli} rules export *`, `${cli} rules test *`, `${cli} rules add *`],
+        // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
+        allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
       };
     }
     case "rerail-start":

@@ -33,7 +33,7 @@ decides; nothing is added until they say yes.
 
 - **The person said what the rule should check:** go to [Write](#write).
 - **No words, or "suggest", "what rules should we have":** go to [Suggest](#suggest), then Write each rule the person picks.
-- **A rule misfires** ("this rule is wrong", "stop telling me X", a `▲ Rerail` message the person disputes): go to [Tune](#tune).
+- **A rule misfires** ("this rule is wrong", "stop telling me X", a `◆ Rerail` message the person disputes): go to [Tune](#tune).
 
 ## Suggest
 
@@ -134,14 +134,14 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    when the Rerail daemon is running), and pass on its line saying the repo was set up with this rule, if it printed one.
 8. **Offer to show it working (code rules only).** Ask: "Want to see it fire? I'll write a throwaway file that breaks the rule,
    show you Rerail's message, then delete it."
-   - On yes, write the file under the rule's scope. Show the `▲ Rerail` message that follows, then delete the file. This file is
+   - On yes, write the file under the rule's scope. Show the `◆ Rerail` message that follows, then delete the file. This file is
      the one exception to not writing in the repository, and it must be gone before you reply.
    - If no message comes, say so. The repo may not be started; `/rerail-start` starts it.
    - Never run a command a command rule forbids to demonstrate it.
 
 ## Tune
 
-1. **Find the rule and the misfire.** A `▲ Rerail` message names the rule id and the `path:line`. Without one, ask for the code
+1. **Find the rule and the misfire.** A `◆ Rerail` message names the rule id and the `path:line`. Without one, ask for the code
    it fired on, or reproduce it: a probe draft with the rule and the suspect code as cases. If what the person describes does
    not reproduce, show what does fire and ask before changing anything.
 2. **Find out whose rule it is.**

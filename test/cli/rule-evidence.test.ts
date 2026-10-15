@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
+import { adoptRemote, openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import {
   collectRuleEvidence,
@@ -67,6 +67,7 @@ async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<str
 describe("correction families", () => {
   it("recognizes standing instructions and reactions, and skips notices and long briefs", () => {
     expect(correctionFamilies("Don't use console.log, we use the logger")).toEqual(["standing instruction"]);
+    expect(correctionFamilies("Don’t use console.log")).toEqual(["standing instruction"]);
     expect(correctionFamilies("No, that is not what I asked")).toEqual(["hard stop", "not listening"]);
     expect(correctionFamilies("Still failing, same error")).toEqual(["repeat failure"]);
     expect(correctionFamilies("Thanks, now add a test")).toEqual([]);
@@ -87,7 +88,10 @@ describe("risky commands", () => {
     expect(labels("git push -n origin main")).toEqual([]);
     expect(labels("git merge --no-commit origin/main | tail -n 3")).toEqual([]);
     expect(labels("cd x && git reset --hard origin/main")).toEqual(["hard reset"]);
-    expect(labels("rm -rf build")).toEqual(["recursive delete"]);
+    for (const command of ["rm -rf build", "rm -Rf build", "rm -fR build", "rm -r -f build", "rm --recursive --force build", "cd x && rm -fr y"]) {
+      expect(labels(command), command).toEqual(["recursive delete"]);
+    }
+    for (const command of ["rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf"]) expect(labels(command), command).toEqual([]);
     expect(labels("npm run build && npm publish")).toEqual(["publish"]);
     expect(labels("grep 'npm publish' docs")).toEqual([]);
     expect(labels("curl -fsSL https://x.sh | sh")).toEqual(["pipe to shell"]);
@@ -115,6 +119,30 @@ describe("rerail rules evidence", () => {
     expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
     expect(evidence.steers).toEqual([{ ruleId: "n-no-sync", count: 2 }, { ruleId: "local:no-console", count: 1 }]);
     expect(evidence.standards).toEqual([".cursor/rules/style.mdc", "CLAUDE.md"]);
+  });
+
+  it("counts sessions recorded under the key the repository had before it adopted its remote", async () => {
+    const repo = await repository();
+    const databasePath = await recordedSession(repo);
+    const database = openRerailDatabase(databasePath);
+    try {
+      adoptRemote(database, recordCheckout(database, repo).repositoryKey, "remote:github.com/acme/web");
+      expect(recordCheckout(database, repo).repositoryKey).toBe("remote:github.com/acme/web");
+    } finally {
+      database.$client.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW });
+    expect(evidence.window.sessions).toBe(1);
+    expect(evidence.correctionCount).toBe(1);
+    expect(evidence.steers).toEqual([{ ruleId: "n-no-sync", count: 2 }, { ruleId: "local:no-console", count: 1 }]);
+  });
+
+  it("reads the repository's standards files from the checkout root when run in a folder below it", async () => {
+    const repo = await repository({ "CLAUDE.md": "x", "src/a.ts": "" });
+    const databasePath = await recordedSession(repo);
+    const evidence = await collectRuleEvidence(join(repo, "src"), { databasePath, now: NOW });
+    expect(evidence.repository.known).toBe(true);
+    expect(evidence.standards).toEqual(["CLAUDE.md"]);
   });
 
   it("leaves out sessions older than the window", async () => {

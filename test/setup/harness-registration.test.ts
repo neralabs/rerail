@@ -729,7 +729,7 @@ describe("Claude Code commands", () => {
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
     const create = await read("rerail-create");
     expect(create).toContain(
-      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules export *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
     );
     expect(create).toContain("\"$ARGUMENTS\"");
     expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);

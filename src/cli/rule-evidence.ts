@@ -2,8 +2,8 @@ import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { and, asc, eq, gte, inArray } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
-import { repositoryName } from "../engine/catalog/repository-identity.js";
-import { lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
 
@@ -44,7 +44,11 @@ export const RISKY_COMMANDS: ReadonlyArray<{ label: string; pattern: RegExp }> =
   { label: "skip git hooks", pattern: /\bgit\s+commit\b[^\n;&|]*\s-[A-Za-z]*n[A-Za-z]*\b|\bgit\s+(?:commit|push|merge|rebase)\b[^\n;&|]*\s--no-verify(?:\s|=|$)/ },
   { label: "hard reset", pattern: /\bgit\s+reset\b[^\n;&|]*\s--hard\b/ },
   { label: "discard changes", pattern: /\bgit\s+(?:clean\b[^\n;&|]*\s-[A-Za-z]*f|checkout\s+--?\s|restore\s+(?:--worktree\s+)?\.(?:\s|$))/ },
-  { label: "recursive delete", pattern: /\brm\s+(?:-[A-Za-z]*r[A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*r)[A-Za-z]*\b/ },
+  // An rm that starts a command, with both flags in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
+  {
+    label: "recursive delete",
+    pattern: /(?:^|[;&|(]\s*|\b(?:sudo|xargs|exec)\s+)rm\s(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))/,
+  },
   { label: "publish", pattern: /(?:^|[;&|]\s*)(?:(?:npm|pnpm|yarn)\s+publish|cargo\s+publish|twine\s+upload)\b/ },
   { label: "pipe to shell", pattern: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/ },
   { label: "sudo", pattern: /(?:^|[;&|]\s*)sudo\s/ },
@@ -122,7 +126,8 @@ function clip(text: string, length: number): string {
 
 /** The families a follow-up prompt matches; none for prompts that are not corrections (tool notices, long briefs). */
 export function correctionFamilies(text: string): string[] {
-  const trimmed = text.trim();
+  // Typographic apostrophes (macOS, phones) read as plain ones: "Don’t" is "Don't".
+  const trimmed = text.trim().replace(/[‘’]/gu, "'");
   if (trimmed.length === 0 || trimmed.startsWith("<") || trimmed.startsWith("#") || trimmed.startsWith("---")) return [];
   if (trimmed.split(/\s+/).length > CORRECTION_MAX_WORDS) return [];
   return CORRECTION_FAMILIES.filter(family => family.pattern.test(trimmed)).map(family => family.name);
@@ -166,7 +171,8 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
   const days = options.days ?? DEFAULT_DAYS;
   const limit = options.limit ?? DEFAULT_LIMIT;
   const since = (options.now ?? Date.now()) - days * DAY_MS;
-  const root = resolve(repo);
+  // Standards files sit at the checkout root, wherever under it the command runs.
+  const root = repositoryIdentityLocation(resolve(repo)).workspaceRoot;
   const name = repositoryName(root);
   const standards = await standardsFiles(root);
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
@@ -175,21 +181,26 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
   try {
     const checkout = lookupCheckout(database, root);
     if (checkout === undefined) return emptyEvidence(name, days, standards);
-    const repositorySessions = database.select({ sessionId: sessions.sessionId, host: sessions.host }).from(sessions)
-      .where(and(eq(sessions.repositoryId, checkout.repositoryKey), gte(sessions.startedAt, since))).all();
+    // A session keeps the repository key it opened under: an alias the repository has since adopted, or a checkout's
+    // clone id from before the repository had a remote. Its history is all of them, as `rerail reset` reads it.
+    const repository = listRepositories(database).find(candidate => candidate.repositoryKey === checkout.repositoryKey);
+    const historyIds = [...new Set([checkout.repositoryKey, ...(repository?.aliases ?? []), ...(repository?.checkouts ?? []).map(row => row.cloneId)])];
+    const inWindow = and(inArray(sessions.repositoryId, historyIds), gte(sessions.startedAt, since));
+    const repositorySessions = database.select({ sessionId: sessions.sessionId, host: sessions.host }).from(sessions).where(inWindow).all();
     const hostOf = new Map(repositorySessions.map(session => [session.sessionId, session.host]));
     const hosts: Record<string, number> = {};
     for (const { host } of repositorySessions) hosts[host] = (hosts[host] ?? 0) + 1;
-    const checkouts = database.$client.prepare("SELECT count(*) FROM checkouts WHERE repository_key = ?").pluck()
-      .get(checkout.repositoryKey) as number;
-    const stored = hostOf.size === 0 ? [] : database.select({
+    const stored = database.select({
       sessionId: events.sessionId, kind: events.kind, observedAt: events.observedAt, payloadJson: events.payloadJson,
     }).from(events)
-      .where(and(inArray(events.sessionId, [...hostOf.keys()]), inArray(events.kind, ["user-prompt", "call", "steering-delivered"])))
+      .where(and(
+        inArray(events.sessionId, database.select({ sessionId: sessions.sessionId }).from(sessions).where(inWindow)),
+        inArray(events.kind, ["user-prompt", "call", "steering-delivered"]),
+      ))
       .orderBy(asc(events.sessionId), asc(events.sequence)).all();
     const evidence = readEvents(stored, hostOf, limit);
     return {
-      repository: { name, known: true, checkouts },
+      repository: { name, known: true, checkouts: repository?.checkouts.length ?? 1 },
       window: { days, sessions: hostOf.size, hosts, prompts: evidence.prompts },
       ...evidence.found,
       standards,

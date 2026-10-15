@@ -100,14 +100,14 @@ through the shell (`sed -i`) is not caught; the read-back said so.
       {
         "source": "tool:Edit",
         "boundary": "tool-call",
-        "text": "{\"file_path\": \"/Users/robin/orca/workspaces/rerail/ner-1834-node-callback-literal/packs/node/rules/n-prefer-promises-fs.json\", \"new_string\": \"  \\\"revision\\\": 2,\\n\", \"old_string\": \"  \\\"revision\\\": 1,\\n\"}",
-        "input": "{\"file_path\": \"/Users/robin/orca/workspaces/rerail/ner-1834-node-callback-literal/packs/node/rules/n-prefer-promises-fs.json\", \"new_string\": \"  \\\"revision\\\": 2,\\n\", \"old_string\": \"  \\\"revision\\\": 1,\\n\"}"
+        "text": "{\"file_path\": \"/home/dev/rerail/packs/node/rules/n-prefer-promises-fs.json\", \"new_string\": \"  \\\"revision\\\": 2,\\n\", \"old_string\": \"  \\\"revision\\\": 1,\\n\"}",
+        "input": "{\"file_path\": \"/home/dev/rerail/packs/node/rules/n-prefer-promises-fs.json\", \"new_string\": \"  \\\"revision\\\": 2,\\n\", \"old_string\": \"  \\\"revision\\\": 1,\\n\"}"
       },
       {
         "source": "tool:Edit",
         "boundary": "tool-call",
-        "text": "{\"file_path\": \"/Users/robin/orca/workspaces/rerail/x/src/engine/storage/schema-sql.generated.ts\", \"old_string\": \"a\", \"new_string\": \"b\"}",
-        "input": "{\"file_path\": \"/Users/robin/orca/workspaces/rerail/x/src/engine/storage/schema-sql.generated.ts\", \"old_string\": \"a\", \"new_string\": \"b\"}"
+        "text": "{\"file_path\": \"/home/dev/rerail/src/engine/storage/schema-sql.generated.ts\", \"old_string\": \"a\", \"new_string\": \"b\"}",
+        "input": "{\"file_path\": \"/home/dev/rerail/src/engine/storage/schema-sql.generated.ts\", \"old_string\": \"a\", \"new_string\": \"b\"}"
       },
       {
         "source": "tool:write",
