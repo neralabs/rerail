@@ -1,7 +1,7 @@
 /**
- * Rule configuration: which rules a repository runs where, and with which `on` / `mode`.
+ * Rule configuration: which rules a repository runs where, and with which `on` / `mode` / `suppressions` / `config`.
  * Attachments make packs, By Rerail rules and library rules present in a folder; settings owned by a checkout,
- * its parent checkouts or the repository change `on` / `mode`. See `repository-model.ts` for the precedence.
+ * its parent checkouts or the repository change them. See `repository-model.ts` for the precedence.
  */
 import { createHash } from "node:crypto";
 import { and, eq, inArray, or } from "drizzle-orm";
@@ -18,17 +18,21 @@ import {
   type RepositoryKey,
   type RepositoryStatus,
   type RuleAttachment,
+  type RuleConfig,
   type RuleSetting,
+  type RuleSuppressions,
   type RuleSourceKind,
   type UnavailableReference,
 } from "./repository-model.js";
 import { readLibraryRow } from "./rule-library.js";
+import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
 import type { RuleDocument } from "./rule-store.js";
 import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
 import { clearSetupReview } from "./setup-review.js";
-import { compareDeterministicStrings, ruleDocumentDigest } from "../stable-json.js";
+import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
+import { configureBundledCodeRule } from "./rule-config.js";
 
 type Queries = Pick<RerailDatabase, "insert" | "delete" | "select" | "update">;
 type AttachmentRow = typeof ruleAttachments.$inferSelect;
@@ -51,7 +55,9 @@ function insertAttachment(db: Queries, attachment: RuleAttachment, now: number):
 function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
   const { ownerKind, ownerId } = ownerColumns(setting.owner);
   const folder = normalizeFolder(setting.folder);
-  if (setting.on === null && setting.mode === null) {
+  const suppressions = setting.suppressions ?? null;
+  const config = setting.config === undefined || setting.config === null || Object.keys(setting.config).length === 0 ? null : setting.config;
+  if (setting.on === null && setting.mode === null && suppressions === null && config === null) {
     db.delete(ruleSettings).where(and(
       eq(ruleSettings.ownerKind, ownerKind),
       eq(ruleSettings.ownerId, ownerId),
@@ -61,11 +67,12 @@ function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
     )).run();
     return;
   }
+  const values = { on: setting.on, mode: setting.mode, suppressions, config };
   db.insert(ruleSettings)
-    .values({ ownerKind, ownerId, folder, targetKind: setting.targetKind, targetId: setting.targetId, on: setting.on, mode: setting.mode, updatedAt: now })
+    .values({ ownerKind, ownerId, folder, targetKind: setting.targetKind, targetId: setting.targetId, ...values, updatedAt: now })
     .onConflictDoUpdate({
       target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
-      set: { on: setting.on, mode: setting.mode, updatedAt: now },
+      set: { ...values, updatedAt: now },
     })
     .run();
 }
@@ -85,7 +92,7 @@ export function removeAttachment(db: Queries, attachment: RuleAttachment): boole
   )).returning({ id: ruleAttachments.sourceId }).get() !== undefined;
 }
 
-/** Store a setting; with both `on` and `mode` null the setting is removed. */
+/** Store a setting, replacing the row's fields; with every field null (or omitted) the setting is removed. */
 export function setRuleSetting(db: Queries, setting: RuleSetting, now: number = Date.now()): void {
   writeSetting(db, setting, now);
 }
@@ -152,7 +159,10 @@ function signatureOf(bundleDigest: string, ownerCheckoutPaths: readonly string[]
     `owners\0${ownerCheckoutPaths.join("\0")}`,
     ...rows.attachments.map(row => `attachment\0${row.folder}\0${row.sourceKind}\0${row.sourceId}`).sort(compareDeterministicStrings),
     ...rows.settings
-      .map(row => `setting\0${row.ownerKind}\0${row.ownerId}\0${row.folder}\0${row.targetKind}\0${row.targetId}\0${String(row.on)}\0${String(row.mode)}`)
+      .map(row => [
+        `setting\0${row.ownerKind}\0${row.ownerId}\0${row.folder}\0${row.targetKind}\0${row.targetId}`,
+        `${String(row.on)}\0${String(row.mode)}\0${String(row.suppressions)}\0${stableJsonText(row.config) ?? "null"}`,
+      ].join("\0"))
       .sort(compareDeterministicStrings),
     ...rows.library
       .map(row => `library\0${row.ruleId}\0${row.revision}\0${row.payloadHash}`)
@@ -310,13 +320,32 @@ class ConfigurationResolver {
         const targets = setting.targetKind === "rule" ? setting.targetId === id : packId !== null && setting.targetId === packId;
         const value = field(setting);
         if (!targets || value === null || !folderContains(setting.folder, path)) continue;
-        const decider: Decider = owner.kind === "checkout"
-          ? { by: "checkout", checkoutPath: owner.id, folder: setting.folder, target: setting.targetKind }
-          : { by: "repository", folder: setting.folder, target: setting.targetKind };
-        return { value, decider };
+        return { value, decider: deciderOf(owner, setting) };
       }
     }
     return undefined;
+  }
+
+  /**
+   * The option values settings give a code rule by Rerail, per option: the nearest owner's setting for the rule over
+   * the whole repository (folder `""`) that sets the option. A library rule takes none.
+   */
+  #config(presence: Presence): { config: RuleConfig | null; deciders: Record<string, Decider> } {
+    const config: Record<string, CodeRuleDslValue> = {};
+    const deciders: Record<string, Decider> = {};
+    if (presence.document.kind !== "code" || presence.source.kind === "library_rule") return { config: null, deciders };
+    const id = presence.document.rule.id;
+    for (const owner of this.#owners) {
+      for (const setting of this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []) {
+        if (setting.targetKind !== "rule" || setting.targetId !== id || setting.folder !== "" || setting.config === null) continue;
+        for (const [name, value] of Object.entries(setting.config)) {
+          if (Object.hasOwn(config, name)) continue;
+          config[name] = value;
+          deciders[name] = deciderOf(owner, setting);
+        }
+      }
+    }
+    return { config: Object.keys(config).length === 0 ? null : config, deciders };
   }
 
   #effective(presence: Presence, path: string): EffectiveRule {
@@ -328,18 +357,35 @@ class ConfigurationResolver {
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
     const mode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
-    const document = { kind: presence.document.kind, rule: { ...presence.document.rule, mode: mode.value } } as RuleDocument;
+    const pack = packId === null ? undefined : this.#bundle.packs.get(packId);
+    const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
+      ?? (start === undefined || pack === undefined
+        ? { value: "honour", decider: ruleDefault }
+        : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
+    const { config, deciders } = this.#config(presence);
+    const configured = config === null ? undefined : configureBundledCodeRule(this.#bundle, presence.document.rule.id, config);
+    const rule = configured?.ok === true ? configured.rule : presence.document.rule;
+    const document = { kind: presence.document.kind, rule: { ...rule, mode: mode.value } } as RuleDocument;
     return {
       document,
       source: presence.source,
       attachmentFolder: presence.folder,
       on: on.value,
       mode: mode.value,
-      decidedBy: { on: on.decider, mode: mode.decider },
+      suppressions: suppressions.value,
+      config,
+      configError: configured?.ok === false ? configured.reason : null,
+      decidedBy: { on: on.decider, mode: mode.decider, suppressions: suppressions.decider, config: deciders },
       revision: presence.revision,
       payloadHash: presence.payloadHash,
     };
   }
+}
+
+function deciderOf(owner: Owner, setting: SettingRow): Decider {
+  return owner.kind === "checkout"
+    ? { by: "checkout", checkoutPath: owner.id, folder: setting.folder, target: setting.targetKind }
+    : { by: "repository", folder: setting.folder, target: setting.targetKind };
 }
 
 function ownersOf(repositoryKey: RepositoryKey, checkoutPaths: readonly string[]): Owner[] {

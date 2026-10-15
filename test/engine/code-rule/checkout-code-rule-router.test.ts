@@ -13,6 +13,9 @@ import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/cod
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setCheckoutStarted, RerailRuntime } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
+import { readBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import type { BundledCatalog } from "../../../src/engine/catalog/repository-model.js";
+import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
@@ -92,9 +95,9 @@ function violations(audits: readonly RecordedRun[]) {
   })));
 }
 
-function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder): CheckoutCodeRuleRouter {
+function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder, bundle?: BundledCatalog): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
-  const catalogs = new CheckoutCatalogs(databasePath);
+  const catalogs = new CheckoutCatalogs(databasePath, bundle === undefined ? {} : { bundle });
   const auditor = new CheckoutCodeRuleRouter({
     sessionRoot,
     startingCheckout: startingCheckout(owners, sessionRoot).checkoutRoot,
@@ -335,6 +338,84 @@ describe("CheckoutCodeRuleRouter", () => {
     await edit(auditor, "symlinked-submodule", 1, "api/link.py");
 
     expect(violations(audits)).toEqual([]);
+  });
+});
+
+describe("repository settings that reach evaluation", () => {
+  const RULE = "typescript-eslint-consistent-type-definitions";
+  const CODE = "@typescript-eslint/consistent-type-definitions";
+  const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
+
+  async function editTypeScript(auditor: CheckoutCodeRuleRouter, sessionId: string, revision: number, files: Record<string, string>): Promise<void> {
+    await auditor.auditGeneratedEdits(sessionId, {
+      revision,
+      checkpoints: ["edit"],
+      edits: Object.entries(files).map(([path, generatedText]) => ({ path, language: "typescript" as const, generatedText })),
+    });
+    await auditor.settleGeneratedEdits();
+  }
+
+  async function sessionWithRule(): Promise<{ session: string; databasePath: string; repositoryKey: string }> {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    const repositoryKey = setUpTestRepository(session, { rerailRules: [RULE] }, databasePath);
+    return { session, databasePath, repositoryKey };
+  }
+
+  function setRepositorySetting(databasePath: string, repositoryKey: string, value: { suppressions?: "honour" | "ignore"; config?: Record<string, string> }): void {
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: RULE, on: null, mode: null, ...value });
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  it("lets an eslint-disable comment silence a ported rule until the repository ignores suppression comments", async () => {
+    const { session, databasePath, repositoryKey } = await sessionWithRule();
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, typescriptPack);
+    const disabled = `// eslint-disable-next-line ${CODE}\nexport type Hidden = { a: string };\n`;
+
+    await auditor.openWorkspace("suppressions");
+    await editTypeScript(auditor, "suppressions", 1, { "api/hidden.ts": disabled });
+    expect(violations(audits)).toEqual([]);
+
+    setRepositorySetting(databasePath, repositoryKey, { suppressions: "ignore" });
+    await editTypeScript(auditor, "suppressions", 2, { "api/hidden.ts": `${disabled}\n` });
+    expect(violations(audits)).toEqual([{ checkout: session, path: "api/hidden.ts", code: CODE, mode: "steer" }]);
+  });
+
+  it("runs a ported rule with the option values the repository sets", async () => {
+    const { session, databasePath, repositoryKey } = await sessionWithRule();
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, typescriptPack);
+    const files = { "api/kept.ts": "export interface Kept { a: string }\n", "api/alias.ts": "export type X = { a: string };\n" };
+
+    await auditor.openWorkspace("config");
+    await editTypeScript(auditor, "config", 1, files);
+    expect(violations(audits).map(violation => violation.path)).toEqual(["api/alias.ts"]);
+
+    setRepositorySetting(databasePath, repositoryKey, { config: { option: "type" } });
+    audits.length = 0;
+    await editTypeScript(auditor, "config", 2, Object.fromEntries(Object.entries(files).map(([path, text]) => [path, `${text}\n`])));
+    expect(violations(audits).map(violation => violation.path)).toEqual(["api/kept.ts"]);
+  });
+
+  it("runs a ported rule nowhere, quarantined, when the repository's stored config no longer applies to it", async () => {
+    const { session, databasePath, repositoryKey } = await sessionWithRule();
+    setRepositorySetting(databasePath, repositoryKey, { config: { nope: "x" } });
+    const catalogs = new CheckoutCatalogs(databasePath, { bundle: typescriptPack });
+    try {
+      const catalog = catalogs.catalog(session);
+      expect(catalog.snapshot().codeRules).toEqual([]);
+      expect(catalog.quarantined()).toEqual([
+        expect.objectContaining({ ruleId: RULE, reason: expect.stringMatching(/`nope` is not an option this document declares/u) }),
+      ]);
+    } finally {
+      catalogs.close();
+    }
   });
 });
 

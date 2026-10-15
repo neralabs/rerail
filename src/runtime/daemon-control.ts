@@ -360,6 +360,18 @@ export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<
   return daemon.state.kernelSocketPath;
 }
 
+/**
+ * The engine service socket for a hook after a session's start, or undefined when no daemon answers. A daemon that is
+ * down is not started: each tool call then costs one failed probe instead of an autostart that can outlast the coding
+ * agent's hook timeout (design N11). A healthy daemon from another package (an update installed mid-session) is
+ * replaced as `daemonEngineSocket(true)` replaces it, so steering carries on with this package's engine.
+ */
+export async function runningDaemonEngineSocket(): Promise<string | undefined> {
+  const daemon = await findRunningDaemon(defaultRerailHome());
+  if (daemon === undefined) return undefined;
+  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? daemon.state.kernelSocketPath : await daemonEngineSocket(true);
+}
+
 interface LaunchedDaemon {
   pid: number | undefined;
   /** Why the launched process is gone, or undefined while it runs. */

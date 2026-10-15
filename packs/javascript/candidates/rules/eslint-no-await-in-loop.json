@@ -42,7 +42,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop." }
+      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop.", "suppress": { "eslint": { "rules": ["no-await-in-loop"] }, "oxlint": { "rules": ["no-await-in-loop"] }, "biome": { "rules": ["lint/performance/noAwaitInLoops"] } } }
     }
   ]
 }

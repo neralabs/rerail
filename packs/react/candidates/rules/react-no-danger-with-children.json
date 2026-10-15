@@ -229,6 +229,16 @@
             "rules": [
               "react/no-danger-with-children"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
+            ]
           }
         }
       }
@@ -345,6 +355,16 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }
@@ -510,6 +530,16 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }

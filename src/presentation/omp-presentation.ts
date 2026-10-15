@@ -1,4 +1,4 @@
-import { formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
 
 const STATUS_KEY = "rerail";
 const REFRESH_MS = 5_000;
@@ -56,11 +56,11 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
       ctx.ui.setWidget(STATUS_KEY,
         presentation.presence === "silent" ? undefined : [formatTerminalStatus(presentation)],
         { placement: "belowEditor" });
-    } catch (error) {
+    } catch {
+      // The footer is one short line users stack with others, so the error's detail stays out of it; readPresentation
+      // already turns every daemon failure into a state, so reaching here is a Rerail bug, not something to explain inline.
       if (!isCurrent()) return;
-      const message = String(error instanceof Error ? error.message : error)
-        .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
-      ctx.ui.setWidget(STATUS_KEY, [`Rerail unavailable: ${message}`], { placement: "belowEditor" });
+      ctx.ui.setWidget(STATUS_KEY, [formatTerminalStatus(fallbackPresentation("unavailable"))], { placement: "belowEditor" });
     } finally {
       if (generation === startedGeneration) pending = false;
     }

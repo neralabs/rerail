@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-exports-assign",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/no-exports-assign: an assignment to the global `exports` (CommonJS scope), except `module.exports = exports = \u2026` and `exports = module.exports = \u2026`.",
   "scope": {
@@ -129,6 +129,11 @@
           "eslint": {
             "rules": [
               "n/no-exports-assign"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-exports-assign"
             ]
           }
         }

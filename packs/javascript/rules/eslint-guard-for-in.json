@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-guard-for-in",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `guard-for-in` rule (https://eslint.org/docs/latest/rules/guard-for-in). A for-in body must be empty, an if statement, or a block whose first statement is an if that is either the only statement or whose consequent is `continue` / `{ continue; }`.",
   "scope": {
@@ -120,7 +120,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "guard-for-in",
-        "message": "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype."
+        "message": "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "guard-for-in"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "guard-for-in"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useGuardForIn"
+            ]
+          }
+        }
       }
     }
   ]

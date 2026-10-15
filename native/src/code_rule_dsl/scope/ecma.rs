@@ -111,7 +111,8 @@ fn tag(name: &str) -> Tag {
         "class_declaration" | "abstract_class_declaration" => Tag::ClassDeclaration,
         "class" => Tag::ClassExpression,
         "class_static_block" => Tag::ClassStaticBlock,
-        "lexical_declaration" => Tag::LexicalDeclaration,
+        // `using` and `await using` bind as `const` does.
+        "lexical_declaration" | "using_declaration" => Tag::LexicalDeclaration,
         "variable_declaration" => Tag::VariableDeclaration,
         "variable_declarator" => Tag::VariableDeclarator,
         "for_statement" => Tag::ForStatement,

@@ -82,6 +82,16 @@
             "rules": [
               "unicorn/prefer-node-protocol"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-node-protocol"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useNodejsImportProtocol"
+            ]
           }
         }
       }

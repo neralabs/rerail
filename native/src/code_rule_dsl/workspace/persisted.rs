@@ -19,6 +19,7 @@ use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput};
 use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
+use crate::code_rule_dsl::soundness::UNREAD;
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
@@ -70,6 +71,7 @@ pub(super) fn restore_complete_results(
 }
 
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
+/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key.
 const LOCAL_RESULT_VERSION: u64 = 3;
 
 /// A stored local result as `encode_local_result` writes it, borrowing its witnesses. Fields are
@@ -87,6 +89,8 @@ struct LocalResultEncoding<'a> {
 struct WitnessEncoding<'a> {
     captures: &'a Captures,
     fix: &'a Option<Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ignored: bool,
     message: &'a Option<String>,
     span: &'a Span,
 }
@@ -98,6 +102,7 @@ fn serialize_witnesses<S: serde::Serializer>(
     serializer.collect_seq(witnesses.iter().map(|witness| WitnessEncoding {
         captures: &witness.captures,
         fix: &witness.fix,
+        ignored: witness.ignored,
         message: &witness.message,
         span: &witness.span,
     }))
@@ -121,12 +126,13 @@ pub(super) fn encode_local_result(
 /// each engine limit. Anything else (another build's vocabulary) is a cache miss, not an error.
 fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
     const CODES: [&str; 3] = ["budget-exceeded", "adapter-error", "source-incomplete"];
-    const MESSAGES: [&str; 11] = [
+    const MESSAGES: [&str; 12] = [
         "file input budget exceeded",
         "file match budget exceeded",
         "file line index could not be built",
         "file grammar cannot be taped",
         "file has syntax errors",
+        UNREAD,
         "file parsing time budget exceeded",
         "file tape encoding failed",
         "file tape revision mismatch",
@@ -183,6 +189,10 @@ pub(super) fn decode_local_result(
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 fix: witness.get("fix").filter(|fix| !fix.is_null()).cloned(),
+                ignored: witness
+                    .get("ignored")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
         })
         .collect::<Option<Vec<_>>>()?;

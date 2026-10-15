@@ -154,7 +154,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break;"
+        "fix": "break;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -302,7 +319,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break"
+        "fix": "break",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -448,7 +482,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue;"
+        "fix": "continue;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -596,7 +647,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue"
+        "fix": "continue",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -737,7 +805,24 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary."
+        "message": "This label '$L' is unnecessary.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     }
   ]

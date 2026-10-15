@@ -11,11 +11,13 @@ import {
   codeRuleSchema,
   SqliteAuditControlStore,
   auditRequestSchema,
+  defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
+  SqliteSessionStore,
   workspaceStartState,
 } from "../../src/runtime/index.js";
 import { runAuditCommand } from "../../src/cli/audit-cli.js";
@@ -81,6 +83,7 @@ describe("rerail scan and settings CLI", () => {
     registerHostCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
       packageRoot: resolve("."),
       cwd: () => root,
+      sessionId: () => "omp-s1",
       reattach: async () => { reattached += 1; },
     });
     const asked: string[] = [];
@@ -105,12 +108,23 @@ describe("rerail scan and settings CLI", () => {
     await startRerail(root, { lane: "agent", say: () => {} }, { answer: "start", environment: fakeSetupEnvironment() });
     expect(isRerailStarted(root)).toBe(true);
 
+    // `/rerail-stop` names this session to the launcher, so the reply names the rule that steered it.
+    const store = new SqliteSessionStore(defaultRerailDatabasePath());
+    const session = { host: "omp" as const, sessionId: "omp-s1", cwd: root };
+    try {
+      store.openSession(session);
+      store.recordSteer(session, "receipt-1", [NO_PRINT.id]);
+    } finally {
+      store.close();
+    }
     await commands.get("rerail-stop")!.handler("", { ui });
     expect(isRerailStarted(root)).toBe(false);
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
-      "  To turn off only one rule instead, say “turn that rule off”.",
+      "",
+      "  Rerail steered this session on one rule, test:no-print.",
+      "  To turn off only that rule, say “turn that rule off”.",
     ].join("\n"));
 
     await commands.get("rerail-start")!.handler("", { ui });

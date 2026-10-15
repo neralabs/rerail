@@ -231,6 +231,16 @@
             "rules": [
               "prefer-const"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-const"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useConst"
+            ]
           }
         }
       }

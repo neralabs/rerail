@@ -301,7 +301,7 @@ fn imported_reads_nothing_through_an_error_before_the_name() {
         let result = evaluate_file(&rule, "python", "a.py", source);
         assert_eq!(result["violations"], json!([]), "{source}: {result}");
     }
-    let source = "from os import x\nfrom os import y, $\n";
+    let source = "from os import x  # clean text keeps the error region under half the file\nfrom os import y, $\n";
     let result = evaluate_file(&rule, "python", "a.py", source);
     assert_eq!(matched_texts(&result, source), ["x"], "{result}");
 }

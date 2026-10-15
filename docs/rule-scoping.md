@@ -35,20 +35,31 @@ Rules come from two places:
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
-A **rule setting** changes the `on` and/or `mode` (Log, Steer or Block) of one rule or one whole pack in a folder. It belongs to the repository (the default for every checkout) or to one checkout (this worktree only). A null field leaves it to the next owner.
+A **rule setting** changes, for one rule or one whole pack in a folder, any of:
+
+- `on`;
+- `mode` (Log, Steer or Block);
+- `suppressions`: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it;
+- `config`: the option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. `config` is set on a rule (not a pack) for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Your library rules take no `config`: edit the rule instead. Each option must be one the document declares, with a value its declaration allows; anything else is refused with `400 invalid-setting`.
+
+A setting belongs to the repository (the default for every checkout) or to one checkout (this worktree only). A null field leaves it to the next owner.
+
+The `suppressions` setting governs only linters' comments. Rerail's own comment, `rerail-ignore`, is always honoured, whatever the setting: `// rerail-ignore complexity-cyclomatic-typescript -- generated` (or `#`, `/* */`, `{{-- --}}` per language) silences the code rules it names by id at the node it covers: the whole file when it comes before the file's first code, the next node when it stands on its own line, and the code it trails on its line otherwise. Every code rule answers to it, with nothing in its document; `docs/code-rule-dsl-reference.html#rerail-ignore` has the exact rules.
 
 **Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
 
 ## Precedence
 
-For a file at path `p`, the rules present are those attached in a folder that contains `p` (`web` contains `web/x`, not `web2/x`). Each field (`on`, `mode`) of each rule is then decided separately, first value wins:
+For a file at path `p`, the rules present are those attached in a folder that contains `p` (`web` contains `web/x`, not `web2/x`). Each field (`on`, `mode`, `suppressions`, and each option in `config`) of each rule is then decided separately, first value wins:
 
 1. by owner: this checkout, then the checkouts that contain it (nearest first), then the repository;
 2. within one owner, the deepest folder that contains `p`;
 3. within one folder, the rule's own setting before its pack's;
-4. without a setting, the value the pack starts the rule with, then the rule's own default (on, in its document's mode).
+4. without a setting, the value the pack starts the rule with, then the rule's own default (on, in its document's mode). For `suppressions` the pack's start is its `honourSuppressionComments` (`honour` unless the pack sets it to false); a rule outside a pack honours them. Without a `config` value, an option keeps its document's value.
 
-Every effective rule reports what decided each field: `repository_rules_get` returns it as `onSource` and `modeSource` (this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default).
+So `config` merges per option: a checkout that sets `{ "option": "type" }` keeps the other options the repository sets.
+
+Every effective rule reports what decided each field: `repository_rules_get` returns it as `onSource`, `modeSource`, `suppressionsSource`, and `configSource`, which names the setting that decided each option (this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default). If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why, and the rule runs nowhere: it is quarantined with that reason.
 
 Conversation rules are resolved the same way for the folder the session started in.
 
@@ -76,8 +87,8 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 |---|---|---|
 | `repositories_list` | `GET /api/repositories` | Every repository: key, name, aliases, set up, started, checkout count. |
 | `repository_context_get` | `GET /api/repository` | One repository with its clones and checkouts (own and effective state), and the caller's checkout and folder. |
-| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode and what decided each, and unavailable references. |
-| `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on` and `mode` (null clears). |
+| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions and config, what decided each, and unavailable references. |
+| `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on`, `mode`, `suppressions` and `config` (null clears; omitted keeps). |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs and rules per folder, with optional repository settings. The first addition, or `configure: true`, sets the repository up. |
 | `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
 | `repository_link` | `POST /api/repository/aliases` | Make another remote address resolve to this repository. People only. |
@@ -94,6 +105,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
 
-Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `onFrom` and `modeFrom` for each folder. Later edits don't rewrite past audits.
+Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

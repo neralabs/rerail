@@ -1,0 +1,22 @@
+{
+  "tool": "eslint",
+  "version": "10.11.0",
+  "source": {
+    "kind": "fixtures",
+    "origin": "https://github.com/eslint/eslint@v10.11.0",
+    "rules": [
+      "no-debugger"
+    ],
+    "files": [
+      "debugger.js"
+    ]
+  },
+  "findings": [
+    {
+      "rule": "no-debugger",
+      "path": "debugger.js",
+      "line": 1,
+      "column": 1
+    }
+  ]
+}

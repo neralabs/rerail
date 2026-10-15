@@ -75,6 +75,21 @@ fn local_result_round_trips_negative_results_and_failures() {
         assert_eq!(restored_failure, Some(failure));
         assert!(syntax.is_none());
     }
+
+    // A file the parser did not read keeps its static failure and the detail it reports.
+    let detail = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+    let encoded = encode_local_result(
+        &[],
+        Some(("source-incomplete", "file did not parse")),
+        Some(detail),
+    )
+    .unwrap();
+    let (_, restored_failure, syntax) = decode_local_result(&encoded, "src/a.js").unwrap();
+    assert_eq!(
+        restored_failure,
+        Some(("source-incomplete", "file did not parse"))
+    );
+    assert_eq!(syntax.as_deref(), Some(detail));
 }
 
 #[test]
@@ -1624,7 +1639,7 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
         ]
     };
     let files = json!([
-        { "language": "typescript", "path": "broken.ts", "source": "debugger;\nfunction f( {\n" },
+        { "language": "typescript", "path": "broken.ts", "source": "debugger; // clean text keeps the error region under half the file\nfunction f( {\n" },
         { "language": "typescript", "path": "danger.ts", "source": "danger();\n" },
     ]);
     let workspace = apply_clauses(clauses(), files.clone());
@@ -1637,8 +1652,101 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
 }
 
 #[test]
+fn an_unread_file_reports_its_detail_and_path_on_every_evaluation_path() {
+    // Review findings 2 and 3 on NER-1864: the stateless path reported `query source is
+    // incomplete` for a file the parser did not read, and a global `select_when` reported a
+    // pathless `A cross-file query source is incomplete`, so `rules test` could not name the file.
+    let clauses = || {
+        vec![
+            clause("debugger", json!({ "kind": "debugger_statement" })),
+            json!({
+                "id": "gated",
+                "forbid": { "select_when": {
+                    "exists": { "regex": { "source": "file.content", "pattern": "debugger" } },
+                    "select": { "ast": { "language": "typescript", "rule": { "kind": "debugger_statement" } } },
+                } },
+                "violation": { "anchor": "witness.span", "code": "GATE", "message": "gate" },
+            }),
+        ]
+    };
+    // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end.
+    let source = format!(
+        "debugger;\n{}",
+        "Install it: run the script, then open the page.\n".repeat(5)
+    );
+    let files = json!([{ "language": "typescript", "path": "notes.ts", "source": source }]);
+    let failures = |evaluation: &Value| {
+        let mut failures = evaluation["failures"]
+            .as_array()
+            .expect("failures")
+            .iter()
+            .map(|failure| {
+                [
+                    failure["clauseId"].clone(),
+                    failure["code"].clone(),
+                    failure["path"].clone(),
+                    failure["message"].clone(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        failures.sort_by_key(|failure| failure[0].to_string());
+        failures
+    };
+    let unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+    let expected = vec![
+        [
+            json!("debugger"),
+            json!("source-incomplete"),
+            json!("notes.ts"),
+            json!(unread),
+        ],
+        [
+            json!("gated"),
+            json!("source-incomplete"),
+            json!("notes.ts"),
+            json!(unread),
+        ],
+    ];
+    let workspace = apply_clauses(clauses(), files.clone());
+    assert_eq!(failures(&workspace), expected, "{workspace}");
+    let full = stateless(clauses(), files);
+    assert_eq!(failures(&full), expected, "{full}");
+}
+
+#[test]
+fn a_global_query_names_the_file_it_could_not_read() {
+    // A file a clause is unsound in (not unread) keeps the generic message, with its path.
+    let clauses = || {
+        vec![json!({
+            "id": "gated",
+            "forbid": { "select_when": {
+                "exists": { "regex": { "source": "file.content", "pattern": "debugger" } },
+                "select": { "ast": { "language": "typescript", "rule": {
+                    "kind": "debugger_statement",
+                    "not": { "follows": { "kind": "import_statement", "stopBy": "end" } },
+                } } },
+            } },
+            "violation": { "anchor": "witness.span", "code": "GATE", "message": "gate" },
+        })]
+    };
+    let files = json!([
+        { "language": "typescript", "path": "broken.ts", "source": "debugger; // clean text keeps the error region under half the file\nfunction f( {\n" },
+        { "language": "typescript", "path": "clean.ts", "source": "debugger;\n" },
+    ]);
+    let workspace = apply_clauses(clauses(), files);
+    let failures = workspace["failures"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1, "{workspace}");
+    assert_eq!(failures[0]["code"], "source-incomplete");
+    assert_eq!(failures[0]["path"], "broken.ts");
+    assert_eq!(
+        failures[0]["message"],
+        "A cross-file query source is incomplete"
+    );
+}
+
+#[test]
 fn broken_files_report_sound_witnesses_and_are_marked_partial() {
-    let source = "debugger;\nfunction f( {\n  debugger;\n";
+    let source = "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n";
     let evaluation = apply_clauses(
         vec![
             clause("debugger", json!({ "kind": "debugger_statement" })),
@@ -2173,6 +2281,78 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
         crate::code_rule_dsl::matcher::roots_matched() <= 3,
         "the workspace evaluator must stop once its witness budget is exceeded"
     );
+}
+
+/// A violation with `suppress` spends no allowance on suppressed witnesses, yet both evaluators
+/// stop building a regex capture's groups once the reported ones overflow the allowance: none of
+/// these 50,000 is suppressed, so the second ends the enumeration.
+#[test]
+fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    capabilities["limits"]["maxWitnesses"] = json!(1);
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "bounded-each", "revision": 1,
+        "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "comment-characters",
+            "violation": { "anchor": "capture.X", "code": "E", "message": "$X", "each": "X",
+                "suppress": { "eslint": { "rules": ["no-warning-comments"] } } },
+            "forbid": { "ast": { "language": "typescript",
+                "rule": { "kind": "comment", "regex": "(?<X>a)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let file = json!({
+        "path": "a.ts", "language": "typescript",
+        "source": format!("//{}\n", "a".repeat(50_000))
+    });
+    let snapshot = json!({
+        "format": "rerail.repository-snapshot/v1", "revision": 1, "facts": [],
+        "files": [file.clone()]
+    });
+
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let native: Value = serde_json::from_str(
+        &compiled
+            .evaluate(snapshot.to_string(), "report".into())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(native["failures"][0]["code"], "budget-exceeded", "{native}");
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the native evaluator must stop at the overflow"
+    );
+
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    assert_eq!(
+        result["evaluation"]["failures"][0]["code"], "budget-exceeded",
+        "{result}"
+    );
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the workspace evaluator must stop at the overflow"
+    );
+    workspace.close();
 }
 
 #[test]
