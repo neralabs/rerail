@@ -147,10 +147,10 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", engine: "e", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
   const rules = {
-    a: { document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
-    b: { document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
+    a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
+    b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
   };
 
   it("a changed document changes only its own key", () => {
@@ -166,12 +166,18 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("an engine, gate-code, dependency or recording change changes every key", () => {
-    for (const part of ["engine", "gateCode", "dependencies", "gatesJson", "gatesCorpus"] as const) {
+  it("a gate-code, dependency or recording change changes every key", () => {
+    for (const part of ["gateCode", "dependencies", "gatesJson", "gatesCorpus"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
     }
+  });
+
+  // The engine is each rule's own key input: it is only the part of the engine the rule's language family reads.
+  it("a changed engine key changes only the rules that share it", () => {
+    assert.notEqual(ruleKey(shared, { ...rules.a, engine: "changed" }), ruleKey(shared, rules.a));
+    assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 });
 

@@ -6,8 +6,10 @@ name: Rule gates
 # recordings (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code
 # corpora and upstream's pinned test files are fetched, and they are cached by their pins.
 #
-# Pull request runs only read the caches: what a pull request's code computes is never saved, so a commit that is
-# later reverted cannot leave verdicts behind for the final head. Pushes to main and the nightly save them.
+# Every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request, so
+# main never reads one: a push to main reads only what main's own pushes saved, and the nightly judges every rule
+# uncached. A pull request can therefore hand itself verdicts its own code computed, but it can edit the gate code
+# that decides them just as easily, so this opens no route it did not already have.
 
 on:
   workflow_call:
@@ -37,8 +39,9 @@ jobs:
         # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml. A tool-pack
         # too slow for one leg runs in `shards` legs, one per `shard` (1 to shards), each judging the rules whose
         # sha256(id) mod shards is shard - 1; the report job merges them (docs/rule-gates.md, "Sharding").
-        # Pull request runs never save results, so a change to the gate code or the engine judges every rule cold on each
-        # push: Ruff (31 min cold) and javascript/eslint (over an hour cold) are sharded to keep those runs short.
+        # A rule keys on the shared engine and its own language family's alone (conformance/gates/engine.ts), so a
+        # change to one language's support judges only that language's legs cold. Ruff (31 min cold) and
+        # javascript/eslint (over an hour cold) are sharded to keep even those runs short.
         include:
           - pack: python
             tool: ruff
@@ -166,8 +169,10 @@ jobs:
           key: rule-gates-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/gates/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
         continue-on-error: true
 
+      # Pull request runs save theirs too: GitHub keeps them in the pull request's own cache scope, which main and
+      # every other branch cannot read, so a second push reuses only the rules this pull request has not touched.
       - name: Save the rule results
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: ${{ always() }}
         uses: actions/cache/save@v6
         with:
           path: .rerail/gates/results
