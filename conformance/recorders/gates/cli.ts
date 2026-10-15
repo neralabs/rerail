@@ -13,8 +13,8 @@ import { parseArgs } from "node:util";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "../../gates/corpus.js";
 import { ProcessCommandRunner } from "../../gates/process.js";
-import { renderRecordingChanges } from "../../gates/recording-diff.js";
-import { RECORDING_LOCK } from "../../gates/recording-store.js";
+import { renderRecordingChanges } from "../../gates/recording/diff.js";
+import { RECORDING_LOCK } from "../../gates/recording/store.js";
 import { liftRecordings, migrateToolPacks } from "./migrate-v2.js";
 import { diffRecording, recordToolPack, writeRecording } from "./record.js";
 

@@ -1,6 +1,6 @@
 /**
  * The one-off rewrite of every committed recording from `rerail.gates-recording/v1` to `/v2`: name the independent
- * parsers once, in `parsers`, and leave `verdicts` off every entry none of them objected to (conformance/gates/recording.ts).
+ * parsers once, in `parsers`, and leave `verdicts` off every entry none of them objected to (conformance/gates/recording/schema.ts).
  *
  * It is a rewrite and not a re-recording because re-recording needs every upstream runtime installed — uv, nine pinned
  * linters, two TypeScript versions, Babel — and would also re-fetch three real-code corpora. The migration reads only
@@ -16,11 +16,11 @@ import { join } from "node:path";
 import {
   GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema,
   isCleanVerdict, recordedParsers, recordingText, type GatesCorpusRecording, type GatesRecording, type RecordedParser,
-} from "../../gates/recording.js";
+} from "../../gates/recording/schema.js";
 import { toolPackDirectory } from "../../gates/manifest.js";
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, RECORDING_LOCK, recordingLockText, writeCachedRecording, type RecordingLock,
-} from "../../gates/recording-store.js";
+} from "../../gates/recording/store.js";
 
 /** The repository version the lift ran from, as the recorder writes it. */
 function recorderVersion(root: string): string {

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/gates/corpus.js";
-import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/gates/recording.js";
-import { readCachedRecording, recordingLockSchema, recordingLockText } from "../../../conformance/gates/recording-store.js";
+import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/gates/recording/schema.js";
+import { readCachedRecording, recordingLockSchema, recordingLockText } from "../../../conformance/gates/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/gates/types.js";
 import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/gates/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/gates/runtimes.js";

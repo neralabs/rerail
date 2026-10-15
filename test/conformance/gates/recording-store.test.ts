@@ -11,13 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
-import { fetchToolPackRecordings } from "../../../conformance/gates/recording-fetch.js";
-import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/gates/recording-diff.js";
+import { fetchToolPackRecordings } from "../../../conformance/gates/recording/fetch.js";
+import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/gates/recording/diff.js";
 import {
   assetName, buildRecordingLock, gzipRecording, readCachedRecording, recordingFromAsset, recordingLockSchema,
   recordingLockText, writeCachedRecording, RECORDING_LOCK,
-} from "../../../conformance/gates/recording-store.js";
-import { gatesCorpusSchema, gatesRecordingSchema, GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT, recordingText } from "../../../conformance/gates/recording.js";
+} from "../../../conformance/gates/recording/store.js";
+import { gatesCorpusSchema, gatesRecordingSchema, GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT, recordingText } from "../../../conformance/gates/recording/schema.js";
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 

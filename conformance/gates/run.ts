@@ -17,7 +17,7 @@ import { byText, promote, readGoldens, serializeGoldens, type Golden, type Golde
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
-import { GATES_CORPUS, GATES_RECORDING } from "./recording.js";
+import { GATES_CORPUS, GATES_RECORDING } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type UpstreamCase, type UpstreamFile } from "./types.js";
 

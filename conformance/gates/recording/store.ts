@@ -24,8 +24,8 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import { z } from "zod";
 
-import { toolPackDirectory } from "./manifest.js";
-import { GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT } from "./recording.js";
+import { toolPackDirectory } from "../manifest.js";
+import { GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT } from "./schema.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 

@@ -1,6 +1,6 @@
 /**
  * The gates recorder: run a tool-pack's live adapter over every upstream rule the pack's conformance manifests name for
- * the tool, and write what the gates read (conformance/gates/recording.ts) into `packs/<pack>/upstream/<tool>/`:
+ * the tool, and write what the gates read (conformance/gates/recording/schema.ts) into `packs/<pack>/upstream/<tool>/`:
  * gates.json, gates-corpus.json, and every case source the recording names that the directory lacks.
  */
 import { createHash } from "node:crypto";
@@ -14,11 +14,11 @@ import type { CommandRunner } from "../../gates/process.js";
 import {
   GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
-} from "../../gates/recording.js";
-import { diffRecordings, type RecordedPair, type RecordingChanges } from "../../gates/recording-diff.js";
+} from "../../gates/recording/schema.js";
+import { diffRecordings, type RecordedPair, type RecordingChanges } from "../../gates/recording/diff.js";
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
-} from "../../gates/recording-store.js";
+} from "../../gates/recording/store.js";
 import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../gates/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../gates/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";

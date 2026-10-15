@@ -12,7 +12,7 @@ import { goldensPath } from "./goldens.js";
 import { toolPackDirectory } from "./manifest.js";
 import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
-import { fetchToolPackRecordings } from "./recording-fetch.js";
+import { fetchToolPackRecordings } from "./recording/fetch.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";

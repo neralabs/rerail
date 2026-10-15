@@ -33,8 +33,8 @@
  */
 import { z } from "zod";
 
-import { ADAPTERS } from "./manifest.js";
-import type { ParserVerdict, Span } from "./types.js";
+import { ADAPTERS } from "../manifest.js";
+import type { ParserVerdict, Span } from "../types.js";
 
 export const GATES_RECORDING_FORMAT = "rerail.gates-recording/v2";
 export const GATES_CORPUS_FORMAT = "rerail.gates-corpus/v2";

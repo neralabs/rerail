@@ -16,7 +16,7 @@ import { createRecordedAdapter } from "../../../conformance/gates/recorded-adapt
 import {
   cleanVerdicts, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText,
   GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT,
-} from "../../../conformance/gates/recording.js";
+} from "../../../conformance/gates/recording/schema.js";
 import { migrateToV2 } from "../../../conformance/recorders/gates/migrate-v2.js";
 
 const MANIFEST = `adapter: bandit

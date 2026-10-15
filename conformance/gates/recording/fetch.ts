@@ -10,8 +10,8 @@
  */
 import { existsSync } from "node:fs";
 
-import { GATES_CORPUS, GATES_RECORDING } from "./recording.js";
-import { readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./recording-store.js";
+import { GATES_CORPUS, GATES_RECORDING } from "./schema.js";
+import { readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./store.js";
 
 /** Where the recordings are published: this repository, unless a fork's CI says otherwise. */
 export const DEFAULT_REPOSITORY = "neralabs/rerail";

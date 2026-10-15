@@ -8,7 +8,7 @@
  * changed. A rule that is absent here did not move, and a change in it is a reason to look at the rule.
  */
 
-import type { GatesCorpusRecording, GatesRecording, RecordedSpan } from "./recording.js";
+import type { GatesCorpusRecording, GatesRecording, RecordedSpan } from "./schema.js";
 
 /** How one upstream rule's recorded answers moved. */
 export interface RuleChange {
