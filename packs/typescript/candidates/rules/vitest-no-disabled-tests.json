@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-no-disabled-tests",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
   "scope": {
@@ -34,36 +34,3786 @@
   },
   "clauses": [
     {
+      "id": "vitest-functions",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "vitest-it-test-extended": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "vitest-it-test-extend-call"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "vitest-it-test-extend-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-it-test-extend-member"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-it-test-extend-call"
+                }
+              }
+            ]
+          },
+          "vitest-it-test-extend-member": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-it-test-root"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-it-test-extend-member"
+                }
+              }
+            ]
+          },
+          "vitest-it-test-root": {
+            "any": [
+              {
+                "matches": "vitest-it-test-bound"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-it-test-root"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-it-test-root"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-it-test-root"
+                }
+              }
+            ]
+          },
+          "vitest-it-test-bound": {
+            "kind": "identifier",
+            "any": [
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:it|test)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:it|test)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:it|test)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:it|test)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:it|test)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:it|test)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:it|test)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:it|test)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-it-test-extended"
+              }
+            ]
+          },
+          "vitest-it-test-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "it",
+                    "test"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:it|test)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:it|test)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:it|test)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:it|test)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:it|test)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:it|test)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:it|test)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:it|test)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-it-test-extended"
+              }
+            ]
+          },
+          "vitest-it-test-callee": {
+            "any": [
+              {
+                "matches": "vitest-it-test-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-it-test-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-it-test-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-it-test-callee"
+                }
+              }
+            ]
+          },
+          "vitest-describe-suite-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "describe",
+                    "suite"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:describe|suite)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:describe|suite)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:describe|suite)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:describe|suite)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:describe|suite)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:describe|suite)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:describe|suite)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:describe|suite)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-describe-suite-callee": {
+            "any": [
+              {
+                "matches": "vitest-describe-suite-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-describe-suite-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-describe-suite-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-describe-suite-callee"
+                }
+              }
+            ]
+          },
+          "vitest-bench-extended": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "vitest-bench-extend-call"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "vitest-bench-extend-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-extend-member"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-extend-call"
+                }
+              }
+            ]
+          },
+          "vitest-bench-extend-member": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-bench-root"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-extend-member"
+                }
+              }
+            ]
+          },
+          "vitest-bench-root": {
+            "any": [
+              {
+                "matches": "vitest-bench-bound"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-bench-root"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-root"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-root"
+                }
+              }
+            ]
+          },
+          "vitest-bench-bound": {
+            "kind": "identifier",
+            "any": [
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:bench)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:bench)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:bench)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:bench)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:bench)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:bench)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:bench)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:bench)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-bench-extended"
+              }
+            ]
+          },
+          "vitest-bench-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "bench"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:bench)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:bench)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:bench)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:bench)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:bench)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:bench)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:bench)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:bench)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-bench-extended"
+              }
+            ]
+          },
+          "vitest-bench-callee": {
+            "any": [
+              {
+                "matches": "vitest-bench-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-bench-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-callee"
+                }
+              }
+            ]
+          },
+          "vitest-vi-vitest-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "vi",
+                    "vitest"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:vi|vitest)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:vi|vitest)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:vi|vitest)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:vi|vitest)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:vi|vitest)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:vi|vitest)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:vi|vitest)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:vi|vitest)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-vi-vitest-callee": {
+            "any": [
+              {
+                "matches": "vitest-vi-vitest-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-vi-vitest-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-vi-vitest-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-vi-vitest-callee"
+                }
+              }
+            ]
+          },
+          "vitest-expect-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "expect"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:expect)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:expect)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:expect)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:expect)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:expect)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:expect)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:expect)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:expect)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-expect-callee": {
+            "any": [
+              {
+                "matches": "vitest-expect-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-expect-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-expect-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-expect-callee"
+                }
+              }
+            ]
+          },
+          "vitest-expectTypeOf-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "expectTypeOf"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:expectTypeOf)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:expectTypeOf)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:expectTypeOf)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:expectTypeOf)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:expectTypeOf)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:expectTypeOf)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:expectTypeOf)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:expectTypeOf)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-expectTypeOf-callee": {
+            "any": [
+              {
+                "matches": "vitest-expectTypeOf-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-expectTypeOf-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-expectTypeOf-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-expectTypeOf-callee"
+                }
+              }
+            ]
+          },
+          "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context": {
+            "kind": "identifier",
+            "regex": "^(?:bench|describe|it|suite|test|expect|expectTypeOf|vi|vitest)$",
+            "matches": "vitest-test-context"
+          },
+          "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee": {
+            "any": [
+              {
+                "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
+                }
+              }
+            ]
+          },
+          "vitest-xit-xtest-extended": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "vitest-xit-xtest-extend-call"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "vitest-xit-xtest-extend-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-xit-xtest-extend-member"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xit-xtest-extend-call"
+                }
+              }
+            ]
+          },
+          "vitest-xit-xtest-extend-member": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-xit-xtest-root"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xit-xtest-extend-member"
+                }
+              }
+            ]
+          },
+          "vitest-xit-xtest-root": {
+            "any": [
+              {
+                "matches": "vitest-xit-xtest-bound"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-xit-xtest-root"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-xit-xtest-root"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xit-xtest-root"
+                }
+              }
+            ]
+          },
+          "vitest-xit-xtest-bound": {
+            "kind": "identifier",
+            "any": [
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:xit|xtest)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:xit|xtest)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:xit|xtest)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:xit|xtest)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:xit|xtest)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:xit|xtest)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:xit|xtest)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:xit|xtest)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-xit-xtest-extended"
+              }
+            ]
+          },
+          "vitest-xdescribe-xit-xtest-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "xit",
+                    "xtest",
+                    "xdescribe"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:xit|xtest|xdescribe)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:xit|xtest|xdescribe)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:xit|xtest|xdescribe)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:xit|xtest|xdescribe)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:xit|xtest|xdescribe)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:xit|xtest|xdescribe)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:xit|xtest|xdescribe)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:xit|xtest|xdescribe)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-xit-xtest-extended"
+              }
+            ]
+          },
+          "vitest-xdescribe-xit-xtest-callee": {
+            "any": [
+              {
+                "matches": "vitest-xdescribe-xit-xtest-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-xdescribe-xit-xtest-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-xdescribe-xit-xtest-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xdescribe-xit-xtest-callee"
+                }
+              }
+            ]
+          },
+          "vitest-xdescribe-xit-xtest-context": {
+            "kind": "identifier",
+            "regex": "^(?:xdescribe|xit|xtest)$",
+            "matches": "vitest-test-context"
+          },
+          "vitest-xdescribe-xit-xtest-context-callee": {
+            "any": [
+              {
+                "matches": "vitest-xdescribe-xit-xtest-context"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-xdescribe-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-xdescribe-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xdescribe-xit-xtest-context-callee"
+                }
+              }
+            ]
+          },
+          "vitest-describe-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "describe"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:describe)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:describe)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:describe)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:describe)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:describe)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:describe)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:describe)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:describe)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "vitest-describe-callee": {
+            "any": [
+              {
+                "matches": "vitest-describe-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-describe-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-describe-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-describe-callee"
+                }
+              }
+            ]
+          },
+          "vitest-fit-extended": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "vitest-fit-extend-call"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "vitest-fit-extend-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-fit-extend-member"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-fit-extend-call"
+                }
+              }
+            ]
+          },
+          "vitest-fit-extend-member": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "vitest-fit-root"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-fit-extend-member"
+                }
+              }
+            ]
+          },
+          "vitest-fit-root": {
+            "any": [
+              {
+                "matches": "vitest-fit-bound"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-fit-root"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-fit-root"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-fit-root"
+                }
+              }
+            ]
+          },
+          "vitest-fit-bound": {
+            "kind": "identifier",
+            "any": [
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:fit)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:fit)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:fit)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:fit)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:fit)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:fit)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:fit)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:fit)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-fit-extended"
+              }
+            ]
+          },
+          "vitest-fdescribe-fit-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "fit",
+                    "fdescribe"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:fit|fdescribe)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:fit|fdescribe)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:fit|fdescribe)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:fit|fdescribe)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:fit|fdescribe)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:fit|fdescribe)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:fit|fdescribe)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:fit|fdescribe)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-fit-extended"
+              }
+            ]
+          },
+          "vitest-fdescribe-fit-callee": {
+            "any": [
+              {
+                "matches": "vitest-fdescribe-fit-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-fdescribe-fit-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-fdescribe-fit-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-fdescribe-fit-callee"
+                }
+              }
+            ]
+          },
+          "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context": {
+            "kind": "identifier",
+            "regex": "^(?:describe|fdescribe|xdescribe|fit|it|test|xit|xtest|bench)$",
+            "matches": "vitest-test-context"
+          },
+          "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee": {
+            "any": [
+              {
+                "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
+                }
+              }
+            ]
+          },
+          "vitest-xit-xtest-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "xit",
+                    "xtest"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:xit|xtest)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:xit|xtest)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:xit|xtest)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:xit|xtest)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:xit|xtest)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:xit|xtest)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:xit|xtest)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:xit|xtest)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-xit-xtest-extended"
+              }
+            ]
+          },
+          "vitest-xit-xtest-callee": {
+            "any": [
+              {
+                "matches": "vitest-xit-xtest-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-xit-xtest-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-xit-xtest-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-xit-xtest-callee"
+                }
+              }
+            ]
+          },
+          "vitest-fit-named": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "fit"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "import_specifier",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:fit)$"
+                          },
+                          "inside": {
+                            "kind": "import_statement",
+                            "stopBy": "end",
+                            "not": {
+                              "regex": "^import\\s+type\\s*(?:[{*]|[\\w$]+\\s+from\\b)"
+                            },
+                            "has": {
+                              "field": "source",
+                              "matches": "vitest-source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "matches": "vitest-module"
+                          }
+                        },
+                        "occurrence": {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:fit)$",
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "kind": "variable_declarator",
+                                  "stopBy": "end",
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "vitest-module"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "identifier",
+                              "inside": {
+                                "kind": "pair_pattern",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^(?:fit)$"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "value": {
+                                            "regex": "^(?:fit)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "regex": "^`(?:fit)`$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "kind": "computed_property_name",
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "identifier",
+                                            "regex": "^(?:fit)$"
+                                          },
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "value": {
+                                                  "regex": "^(?:fit)$"
+                                                }
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^`(?:fit)`$"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "kind": "variable_declarator",
+                                    "stopBy": "end",
+                                    "has": {
+                                      "field": "value",
+                                      "matches": "vitest-module"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "vitest-fit-extended"
+              }
+            ]
+          },
+          "vitest-fit-callee": {
+            "any": [
+              {
+                "matches": "vitest-fit-named"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-fit-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-fit-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-fit-callee"
+                }
+              }
+            ]
+          },
+          "vitest-bench-fit-it-test-xit-xtest-context": {
+            "kind": "identifier",
+            "regex": "^(?:fit|it|test|xit|xtest|bench)$",
+            "matches": "vitest-test-context"
+          },
+          "vitest-bench-fit-it-test-xit-xtest-context-callee": {
+            "any": [
+              {
+                "matches": "vitest-bench-fit-it-test-xit-xtest-context"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
+                }
+              }
+            ]
+          },
+          "vitest-skip-modifier": {
+            "kind": "member_expression",
+            "any": [
+              {
+                "has": {
+                  "field": "object",
+                  "matches": "vitest-skip-modifier"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "regex": "^skip$",
+                  "pattern": "$MODIFIER"
+                }
+              }
+            ]
+          },
+          "vitest-skip-option": {
+            "kind": "arguments",
+            "has": {
+              "nthChild": {
+                "position": 2,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "kind": "object",
+              "has": {
+                "any": [
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^(?:skip)$"
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:skip)$"
+                              }
+                            },
+                            {
+                              "kind": "template_string",
+                              "regex": "^`(?:skip)`$"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "^(?:skip)$"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string",
+                                    "value": {
+                                      "regex": "^(?:skip)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "regex": "^`(?:skip)`$"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^skip$"
+                  },
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^(?:skip)$"
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:skip)$"
+                              }
+                            },
+                            {
+                              "kind": "template_string",
+                              "regex": "^`(?:skip)`$"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "^(?:skip)$"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string",
+                                    "value": {
+                                      "regex": "^(?:skip)$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "regex": "^`(?:skip)`$"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "reverse": true,
+                  "ofRule": {
+                    "any": [
+                      {
+                        "kind": "pair",
+                        "has": {
+                          "field": "key",
+                          "any": [
+                            {
+                              "kind": "property_identifier",
+                              "regex": "^(?:skip)$"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:skip)$"
+                                  }
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "regex": "^`(?:skip)`$"
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "computed_property_name",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:skip)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string",
+                                        "value": {
+                                          "regex": "^(?:skip)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "regex": "^`(?:skip)`$"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "shorthand_property_identifier",
+                        "regex": "^skip$"
+                      },
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "field": "name",
+                          "any": [
+                            {
+                              "kind": "property_identifier",
+                              "regex": "^(?:skip)$"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:skip)$"
+                                  }
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "regex": "^`(?:skip)`$"
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "computed_property_name",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:skip)$"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "string",
+                                        "value": {
+                                          "regex": "^(?:skip)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "regex": "^`(?:skip)`$"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "all": [
+                  {
+                    "kind": "pair"
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "kind": "true"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "key",
+                      "any": [
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "template_string"
+                              }
+                            ],
+                            "pattern": "$MODIFIER"
+                          }
+                        },
+                        {
+                          "not": {
+                            "kind": "computed_property_name"
+                          },
+                          "pattern": "$MODIFIER"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "vitest-context-pair": {
+            "kind": "pair_pattern",
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "any": [
+                  {
+                    "kind": "pair_pattern"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  },
+                  {
+                    "kind": "object_assignment_pattern"
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "kind": "object_pattern",
+              "inside": {
+                "any": [
+                  {
+                    "kind": "required_parameter"
+                  },
+                  {
+                    "kind": "optional_parameter"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "any": [
+                      {
+                        "kind": "required_parameter"
+                      },
+                      {
+                        "kind": "optional_parameter"
+                      }
+                    ],
+                    "has": {
+                      "field": "pattern",
+                      "kind": "object_pattern"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "has": {
+              "field": "key",
+              "kind": "property_identifier",
+              "pattern": "$CONTEXT_NAME"
+            }
+          },
+          "vitest-test-callback": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              }
+            ],
+            "all": [
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "parameter",
+                      "kind": "identifier"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "parameters",
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "required_parameter"
+                          },
+                          {
+                            "kind": "optional_parameter"
+                          }
+                        ],
+                        "has": {
+                          "field": "pattern",
+                          "kind": "identifier"
+                        },
+                        "not": {
+                          "has": {
+                            "field": "value",
+                            "regex": "[\\s\\S]"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^(?:fit|it|test|xit|xtest|bench)$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vitest-test-context": {
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "form": "parameter",
+                    "site": {
+                      "any": [
+                        {
+                          "inside": {
+                            "kind": "formal_parameters",
+                            "inside": {
+                              "matches": "vitest-test-callback"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "identifier",
+                          "inside": {
+                            "field": "parameter",
+                            "matches": "vitest-test-callback"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "form": "parameter",
+                    "occurrence": {
+                      "any": [
+                        {
+                          "kind": "shorthand_property_identifier_pattern",
+                          "any": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "ofRule": {
+                                  "any": [
+                                    {
+                                      "kind": "pair_pattern"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    },
+                                    {
+                                      "kind": "object_assignment_pattern"
+                                    }
+                                  ]
+                                }
+                              },
+                              "inside": {
+                                "kind": "object_pattern",
+                                "inside": {
+                                  "any": [
+                                    {
+                                      "kind": "required_parameter"
+                                    },
+                                    {
+                                      "kind": "optional_parameter"
+                                    }
+                                  ],
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "any": [
+                                        {
+                                          "kind": "required_parameter"
+                                        },
+                                        {
+                                          "kind": "optional_parameter"
+                                        }
+                                      ],
+                                      "has": {
+                                        "field": "pattern",
+                                        "kind": "object_pattern"
+                                      }
+                                    }
+                                  },
+                                  "inside": {
+                                    "kind": "formal_parameters",
+                                    "inside": {
+                                      "any": [
+                                        {
+                                          "kind": "arrow_function"
+                                        },
+                                        {
+                                          "kind": "function_expression"
+                                        },
+                                        {
+                                          "kind": "generator_function"
+                                        },
+                                        {
+                                          "kind": "method_definition"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "object_assignment_pattern",
+                                "field": "left",
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "any": [
+                                      {
+                                        "kind": "pair_pattern"
+                                      },
+                                      {
+                                        "kind": "shorthand_property_identifier_pattern"
+                                      },
+                                      {
+                                        "kind": "object_assignment_pattern"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "inside": {
+                                  "kind": "object_pattern",
+                                  "inside": {
+                                    "any": [
+                                      {
+                                        "kind": "required_parameter"
+                                      },
+                                      {
+                                        "kind": "optional_parameter"
+                                      }
+                                    ],
+                                    "nthChild": {
+                                      "position": 1,
+                                      "ofRule": {
+                                        "any": [
+                                          {
+                                            "kind": "required_parameter"
+                                          },
+                                          {
+                                            "kind": "optional_parameter"
+                                          }
+                                        ],
+                                        "has": {
+                                          "field": "pattern",
+                                          "kind": "object_pattern"
+                                        }
+                                      }
+                                    },
+                                    "inside": {
+                                      "kind": "formal_parameters",
+                                      "inside": {
+                                        "any": [
+                                          {
+                                            "kind": "arrow_function"
+                                          },
+                                          {
+                                            "kind": "function_expression"
+                                          },
+                                          {
+                                            "kind": "generator_function"
+                                          },
+                                          {
+                                            "kind": "method_definition"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "identifier",
+                          "pattern": "$CONTEXT_NAME",
+                          "any": [
+                            {
+                              "inside": {
+                                "field": "value",
+                                "matches": "vitest-context-pair"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "assignment_pattern",
+                                "field": "left",
+                                "inside": {
+                                  "field": "value",
+                                  "matches": "vitest-context-pair"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "scope": "functionName",
+                    "site": {
+                      "matches": "vitest-test-callback"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vitest-source": {
+            "any": [
+              {
+                "kind": "string",
+                "value": {
+                  "eq": "vitest"
+                }
+              },
+              {
+                "kind": "template_string",
+                "regex": "^`vitest`$"
+              }
+            ]
+          },
+          "vitest-module-argument": {
+            "kind": "arguments",
+            "has": {
+              "nthChild": {
+                "position": 1,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "matches": "vitest-source"
+            }
+          },
+          "vitest-module": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^require$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-module-argument"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "await_expression",
+                "has": {
+                  "matches": "vitest-dynamic-import"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-module"
+                }
+              }
+            ]
+          },
+          "vitest-dynamic-import": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-module-argument"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "vitest-dynamic-import"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "skip",
       "forbid": {
         "ast": {
           "language": "typescript",
           "rule": {
             "kind": "call_expression",
-            "has": {
-              "field": "function",
-              "any": [
-                {
-                  "kind": "member_expression",
-                  "regex": "^(?:describe|it|test|suite|bench)(?:\\.\\w+)*\\.skip\\b"
-                },
-                {
-                  "kind": "identifier",
-                  "regex": "^(?:xit|xtest|xdescribe|pending)$"
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "member_expression",
+                      "any": [
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential))?))))$",
+                          "matches": "vitest-it-test-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle))?))))$",
+                          "matches": "vitest-describe-suite-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))))|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only))?))))$",
+                          "matches": "vitest-bench-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*[\\w$]+)*(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*[\\w$]+)*$",
+                          "matches": "vitest-vi-vitest-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*assert)?(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*(?:|(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*not(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*|(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:resolves|rejects)(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*|(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*not(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:resolves|rejects)(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*|(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:resolves|rejects)(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*not(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:also|and|at|be|been|but|does|has|have|is|itself|of|same|still|that|to|which|with|all|any|deep|nested|ordered|own|a|an|contain|contains|include|includes|length|lengthOf|respondTo))*)(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*skip$",
+                          "matches": "vitest-expect-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:resolves|returns|branded|asserts|constructorParameters|parameters|thisParameter|guards|instance|items))*(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*not(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:resolves|returns|branded|asserts|constructorParameters|parameters|thisParameter|guards|instance|items))*)?(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*skip$",
+                          "matches": "vitest-expectTypeOf-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*[\\w$]+)*(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*[\\w$]+)*$",
+                          "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
+                        }
+                      ],
+                      "matches": "vitest-skip-modifier"
+                    },
+                    {
+                      "kind": "identifier",
+                      "pattern": "$MODIFIER",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "regex": "^[\\w$]+$",
+                              "matches": "vitest-xdescribe-xit-xtest-callee"
+                            },
+                            {
+                              "regex": "^[\\w$]+$",
+                              "matches": "vitest-xdescribe-xit-xtest-context-callee"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "^pending$",
+                          "resolves": {
+                            "global": [
+                              "pending"
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "kind": "member_expression",
+                        "any": [
+                          {
+                            "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each))$",
+                            "matches": "vitest-xdescribe-xit-xtest-callee"
+                          },
+                          {
+                            "regex": "^[\\w$]+(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*each$",
+                            "matches": "vitest-xdescribe-xit-xtest-context-callee"
+                          }
+                        ],
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "pattern": "$MODIFIER"
+                        }
+                      }
+                    }
+                  ]
                 }
-              ]
-            }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "any": [
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|skip|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|sequential|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|skip))?))?|each|extend|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|skip|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip))?))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|sequential|skip|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|skip|todo))?|for|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|skip))?))?|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|skip|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|skip))?))?|scoped|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|skip|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|skip|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|skip))?))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|skip|todo))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip|todo))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential|skip))?))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|fails|for|only|sequential|skip))?|each|fails(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip))?|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|sequential|skip))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|skip))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|fails|for|only|sequential))?))?))?$",
+                          "matches": "vitest-it-test-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|sequential|shuffle|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|shuffle|skip|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|skip))?))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|sequential|shuffle|skip|todo))?|each|for|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|shuffle|skip|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|skip))?))?|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|skip|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|skip|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|skip))?))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|shuffle|skip|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|shuffle|skip|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|skip))?))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|skip|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip))?))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|skip|todo))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|skip|todo))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|skip|todo))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle|skip))?))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each|for|only|sequential|shuffle|skip))?|each|for|only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|sequential|shuffle|skip))?|sequential(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|shuffle|skip))?|shuffle(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|skip))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:concurrent|each|for|only|sequential|shuffle))?))?))?$",
+                          "matches": "vitest-describe-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))?))?|runIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|skip))?))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only))?))?|skipIf(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip|todo))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|todo))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only|skip))?))?|todo(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))?|skip(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:only))?))?))?$",
+                          "matches": "vitest-bench-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:each))?$",
+                          "matches": "vitest-xdescribe-xit-xtest-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+$",
+                          "matches": "vitest-fdescribe-fit-callee"
+                        },
+                        {
+                          "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*[\\w$]+)*$",
+                          "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "matches": "vitest-skip-option"
+                    }
+                  }
+                ]
+              }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.MODIFIER",
         "code": "vitest/no-disabled-tests",
         "message": "This test is disabled. Fix it or delete it.",
         "suppress": {
           "eslint": {
             "rules": [
               "vitest/no-disabled-tests"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-disabled-tests"
             ]
           }
         }
@@ -80,8 +3830,28 @@
               {
                 "has": {
                   "field": "function",
-                  "kind": "identifier",
-                  "regex": "^(?:it|test)$"
+                  "any": [
+                    {
+                      "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))?$",
+                      "matches": "vitest-it-test-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*(?:skip))?$",
+                      "matches": "vitest-bench-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+$",
+                      "matches": "vitest-xit-xtest-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+$",
+                      "matches": "vitest-fit-callee"
+                    },
+                    {
+                      "regex": "^[\\w$]+(?:(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*\\.(?:\\s|/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/|//[^\\n]*)*skip)*$",
+                      "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
+                    }
+                  ]
                 }
               },
               {
@@ -107,6 +3877,11 @@
           "eslint": {
             "rules": [
               "vitest/no-disabled-tests"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-disabled-tests"
             ]
           }
         }

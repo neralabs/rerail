@@ -4,10 +4,11 @@
  * something. Nothing here rebuilds the list wholesale.
  */
 import { send } from "./api.js";
+import { settingWrites } from "./settings-writes.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
 import { data, ui, summary, panelRuleId, titleOf, packOfRule, rulesArray, readScope, setScope, repoName, stateHere, keptPacks, reviewing } from "./state.js";
-import { startPolling, refreshNow, loadSession, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope, captureScope, inScope } from "./poll.js";
+import { startPolling, refreshNow, loadSession, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope } from "./poll.js";
 import { attachmentWrites, packName } from "./attachments.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
@@ -194,46 +195,8 @@ function copyText(text, field, message) {
 const changeOwner = () => (ui.scope?.checkout === undefined ? "repository" : ui.owner);
 const ownerWords = () => (changeOwner() === "checkout" ? "in this worktree" : "for the repository");
 
-/**
- * Switch rules on or off: optimistic, one `PUT /api/repository/settings` per folder the rules are added at,
- * owned by this worktree or the repository; reverted on error. The poll that follows reads back the sources.
- */
-async function setEnabled(ids, enabled, label) {
-  if (ids.length === 0) return;
-  // The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-  const scope = captureScope();
-  const owner = changeOwner();
-  const before = new Map();
-  const byFolder = new Map();
-  for (const id of ids) {
-    const r = data.rules.get(id);
-    if (!r) continue;
-    before.set(r, r.enabled);
-    r.enabled = enabled;
-    for (const folder of r.folders) byFolder.set(folder, [...(byFolder.get(folder) ?? []), id]);
-  }
-  invalidate();
-  let failure = null;
-  try {
-    for (const [folder, folderIds] of byFolder) {
-      await send("PUT", "/api/repository/settings", {
-        ...scope.target, folder, owner, targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
-      });
-    }
-  } catch (error) {
-    failure = error;
-  }
-  // Another repository's page now: these rows and the outcome are not its.
-  if (!inScope(scope)) return;
-  if (failure === null) {
-    toast(label);
-  } else {
-    for (const [r, was] of before) r.enabled = was;
-    toast(`Could not save: ${failure.message}`);
-  }
-  invalidate();
-  refreshNow();
-}
+/** Rule settings: on or off, and suppression comments, for a rule or a pack; written as `changeOwner()`. */
+const { setEnabled, setSuppressions, setPackSuppressions } = settingWrites({ toast, invalidate, owner: changeOwner });
 
 function toggleRule(id) {
   const stored = data.rules.get(id);
@@ -242,6 +205,22 @@ function toggleRule(id) {
   setEnabled([id], enabled, enabled
     ? `On ${ownerWords()}. Rerail audits “${titleOf(stored)}” from the coding agent’s next turn.`
     : `Off ${ownerWords()}. Rerail stops auditing “${titleOf(stored)}”.`);
+}
+
+/** Honour or ignore linter suppression comments for one rule, from its panel. */
+function suppressRule(id, suppressions) {
+  const stored = data.rules.get(id);
+  if (!stored) return;
+  setSuppressions([id], suppressions, suppressions === "ignore"
+    ? `Suppression comments ignored ${ownerWords()}. “${titleOf(stored)}” reports a violation on a line a linter comment disables.`
+    : `Suppression comments honoured ${ownerWords()}. “${titleOf(stored)}” skips a line a linter comment disables.`);
+}
+
+/** Honour or ignore linter suppression comments for every rule of a pack, from its panel. */
+function suppressPack(id, suppressions) {
+  setPackSuppressions(id, suppressions, suppressions === "ignore"
+    ? `Suppression comments ignored ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`
+    : `Suppression comments honoured ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`);
 }
 
 const { addPacks, removePack, setUpRecommended, keepPack } = attachmentWrites({ toast, invalidate });
@@ -450,6 +429,8 @@ const ACTIONS = {
   panelback: () => { if (ui.backToPack) { ui.panel = { kind: "pack", id: ui.backToPack }; ui.backToPack = null; invalidate(); } else closePanel(); },
   close: () => closePanel(),
   toggle: id => toggleRule(id),
+  suppress: (id, b) => suppressRule(id, b.dataset.v),
+  packsuppress: (id, b) => suppressPack(id, b.dataset.v),
   gtoggle: key => {
     const all = groupRules(key), allOn = all.every(r => r.enabled), name = key.slice(key.indexOf("|") + 1);
     setEnabled(all.map(r => r.rule.id), !allOn, `${name}: ${all.length === 1 ? "its rule" : `all ${all.length} rules`} ${allOn ? "off" : "on"} ${ownerWords()}.`);

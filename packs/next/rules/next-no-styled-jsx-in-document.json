@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-styled-jsx-in-document",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-styled-jsx-in-document: a <style> opening element with a `jsx` attribute in a file whose path, between its first and second `pages`, names a document.",
   "scope": {
@@ -72,6 +72,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-styled-jsx-in-document"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-styled-jsx-in-document"
             ]
           }
         }

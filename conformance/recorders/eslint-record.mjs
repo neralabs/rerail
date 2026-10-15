@@ -81,6 +81,16 @@ export function assertPortableCase(path, code = "", directories = machineDirecto
   }
 }
 
+/**
+ * Throws when an authored case's expected findings (`reports`, rule name to count) name a rule the recording does not
+ * run: a misspelled rule would read as no finding and pass whatever the tool reports on the case.
+ */
+export function assertKnownReportRules(name, reports, rules) {
+  for (const rule of Object.keys(reports)) {
+    if (!rules.includes(rule)) throw new Error(`AUTHORED ${name}: reports names ${rule}, which is not a pack rule`);
+  }
+}
+
 /** `require` resolving from a tools directory (`.rerail/tools/<pack>`), after checking every pinned package's version. */
 export function pinnedRequire(tools, pins) {
   const require = createRequire(join(tools, "package.json"));

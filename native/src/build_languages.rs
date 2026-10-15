@@ -704,7 +704,7 @@ mod tests {
         let out = Registry::new("repository", &[]);
         generate(
             &root.join("../languages"),
-            &["python", "typescript", "tsx"],
+            &["python", "typescript", "tsx", "javascript"],
             &out.0.join("out"),
         );
         let generated =

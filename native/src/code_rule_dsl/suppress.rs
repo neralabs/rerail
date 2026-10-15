@@ -1,16 +1,20 @@
 //! `suppress` (a Rerail extension, opt-in per violation): another linter's suppression comments,
-//! honoured as that linter honours them. The engine never reads them otherwise.
+//! honoured as that linter honours them. The engine never reads them otherwise. Rerail's own
+//! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
 use super::json::{invalid, object, reject_unknown};
 use super::lines::LineTable;
 use super::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
+pub(crate) use biome::BiomeSuppressions;
 use napi::Result;
 pub(crate) use noqa::{NoqaIndex, parent_statement};
 pub(crate) use nosec::NosecIndex;
+pub(crate) use oxlint::OxlintDirectives;
 pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
 pub(crate) use phpstan::PhpstanIndex;
 pub(crate) use psalm::PsalmIndex;
+pub(crate) use rerail::RerailIgnores;
 use serde_json::Value;
 
 /// Names a `rules` or `codes` list may hold.
@@ -26,6 +30,12 @@ pub(super) struct Suppress {
     /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress
     /// the violation.
     pub(super) nosec: Option<Vec<String>>,
+    /// `oxlint.rules`: oxlint's names of the rule (without a plugin), which a disable directive
+    /// must name (after its last `/`, or name none) to suppress the violation.
+    pub(super) oxlint: Option<Vec<String>>,
+    /// `biome.rules`: the lint rules (`lint/<group>/<rule>`) a `biome-ignore` comment must name, or
+    /// their group, or `lint`, to suppress the violation.
+    pub(super) biome: Option<Vec<String>>,
     /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
     pub(super) phpstan: Option<Vec<String>>,
     pub(super) psalm: Option<Psalm>,
@@ -92,6 +102,12 @@ fn singular(what: &str) -> &str {
             "a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll)"
         }
         "Bandit test ids" => "a Bandit test id (B, then digits: B101)",
+        "oxlint rule names" => {
+            "an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+        }
+        "Biome lint rule names" => {
+            "a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+        }
         "PHP_CodeSniffer codes" => {
             "a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code)"
         }
@@ -102,6 +118,12 @@ fn singular(what: &str) -> &str {
 /// A rule name an `eslint-disable` list can name: ESLint splits the list on commas and trims.
 fn rule_name(name: &str) -> bool {
     !name.is_empty() && !name.contains(',') && name.trim() == name
+}
+
+/// A rule name oxlint asks its directives about: its own name, without the plugin (a directive's
+/// list splits on commas and white space).
+fn oxlint_rule_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains([',', '/']) && !name.contains(char::is_whitespace)
 }
 
 /// A Bandit test id a `# nosec` list can name: `B`, then digits.
@@ -142,7 +164,9 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
     let suppress = object(value, path)?;
     reject_unknown(
         suppress,
-        &["eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs"],
+        &[
+            "eslint", "noqa", "nosec", "oxlint", "biome", "phpstan", "psalm", "phpcs",
+        ],
         path,
     )?;
     let eslint = suppress
@@ -189,6 +213,32 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
                 &format!("{at}/codes"),
                 bandit_test,
                 "Bandit test ids",
+            )
+        })
+        .transpose()?;
+    let oxlint = suppress
+        .get("oxlint")
+        .map(|oxlint| {
+            let at = format!("{path}/oxlint");
+            reject_unknown(object(oxlint, &at)?, &["rules"], &at)?;
+            names(
+                oxlint.get("rules"),
+                &format!("{at}/rules"),
+                oxlint_rule_name,
+                "oxlint rule names",
+            )
+        })
+        .transpose()?;
+    let biome = suppress
+        .get("biome")
+        .map(|biome| {
+            let at = format!("{path}/biome");
+            reject_unknown(object(biome, &at)?, &["rules"], &at)?;
+            names(
+                biome.get("rules"),
+                &format!("{at}/rules"),
+                biome::is_lint_rule,
+                "Biome lint rule names",
             )
         })
         .transpose()?;
@@ -260,18 +310,22 @@ pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
     if eslint.is_none()
         && noqa.is_none()
         && nosec.is_none()
+        && oxlint.is_none()
+        && biome.is_none()
         && phpstan.is_none()
         && psalm.is_none()
         && phpcs.is_none()
     {
         return Err(invalid(format!(
-            "{path} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"
+            "{path} must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, or phpcs"
         )));
     }
     Ok(Suppress {
         eslint,
         noqa,
         nosec,
+        oxlint,
+        biome,
         phpstan,
         psalm,
         phpcs,
@@ -320,10 +374,14 @@ pub(crate) struct EslintDirectives {
 }
 
 impl EslintDirectives {
-    /// Reads every comment of the file `node` belongs to.
+    /// Reads every comment of the file `node` belongs to, HTML-like ones (`html_comment`, which
+    /// ESLint reads as line comments) included.
     pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut directives = Self::default();
-        for comment in root(node).dfs().filter(|node| node.kind() == "comment") {
+        for comment in root(node)
+            .dfs()
+            .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment"))
+        {
             let range = comment.range();
             let text = &source[range.clone()];
             let Some(directive) = Directive::parse(text).filter(Directive::disables) else {
@@ -371,15 +429,18 @@ impl EslintDirectives {
     }
 }
 
+mod biome;
 #[cfg(test)]
 mod eslint;
 mod noqa;
 mod nosec;
+mod oxlint;
 #[cfg(test)]
 mod php_corpus_tests;
 mod phpcs;
 mod phpstan;
 mod psalm;
+mod rerail;
 #[cfg(test)]
 mod ruff;
 
@@ -414,7 +475,9 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"),
+                format!(
+                    "{at} must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, or phpcs"
+                ),
             ),
             (
                 "typescript",
@@ -481,6 +544,83 @@ mod tests {
                 "php",
                 json!({ "nosec": { "codes": ["B101"] } }),
                 format!("{at}/nosec: nosec comments are Bandit's; a php query has none"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": [] } }),
+                format!("{at}/oxlint/rules must be a list of 1 to 256 oxlint rule names"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["react-hooks/rules-of-hooks"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no console"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no-console"], "plugins": ["eslint"] } }),
+                format!("unknown field `plugins` at {at}/oxlint"),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": [] } }),
+                format!("{at}/biome/rules must be a list of 1 to 256 Biome lint rule names"),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["correctness/useHookAtTopLevel"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/correctness"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/a11y/useGenericFontNames"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/correctness/useHookAtTopLevel"], "instance": "x" } }),
+                format!("unknown field `instance` at {at}/biome"),
+            ),
+            (
+                "python",
+                json!({ "biome": { "rules": ["lint/suspicious/noConsole"] } }),
+                format!("{at}/biome: biome-ignore comments are Biome's; a python query has none"),
+            ),
+            (
+                "php",
+                json!({ "biome": { "rules": ["lint/suspicious/noConsole"] } }),
+                format!("{at}/biome: biome-ignore comments are Biome's; a php query has none"),
+            ),
+            (
+                "python",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!(
+                    "{at}/oxlint: oxlint-disable comments are Oxlint's; a python query has none"
+                ),
+            ),
+            (
+                "php",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!("{at}/oxlint: oxlint-disable comments are Oxlint's; a php query has none"),
             ),
             (
                 "python",
@@ -579,6 +719,18 @@ mod tests {
             (
                 "typescript",
                 json!({ "eslint": { "rules": ["strict", "rule-to-test/strict"] } }),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["rules-of-hooks"] } }),
+            ),
+            (
+                "javascript",
+                json!({
+                    "eslint": { "rules": ["react-hooks/rules-of-hooks"] },
+                    "oxlint": { "rules": ["rules-of-hooks"] },
+                    "biome": { "rules": ["lint/correctness/useHookAtTopLevel"] }
+                }),
             ),
             (
                 "python",

@@ -5,7 +5,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, fmt, plural } from "../format.js";
-import { data, ui } from "../state.js";
+import { data, ui, runningCount } from "../state.js";
 
 const UNINSTALL_COMMAND = "rerail install --remove";
 
@@ -35,7 +35,7 @@ function general() {
 /** One repository (`GET /api/repositories`): set up or not, and a switch that starts or stops every checkout of it. */
 function repoRow(repo) {
   const current = repo.repositoryKey === data.repository?.repositoryKey;
-  const on = current ? [...data.rules.values()].filter(r => r.enabled).length : null;
+  const on = current ? runningCount() : null;
   const checkouts = `${fmt(repo.checkoutCount)} ${plural(repo.checkoutCount, "checkout")}`;
   const detail = !repo.setUp ? "not set up yet" : current ? `${fmt(on)} ${plural(on, "rule")} on` : "set up";
   const sub = [h("span.mono", null, repo.repositoryKey), ` · ${checkouts} · ${detail}`,
@@ -89,6 +89,6 @@ function uninstall() {
 
 export function renderSettings(root) {
   const sig = JSON.stringify([ui.theme, ui.wide, data.presence, data.health?.version, data.health?.database.path, data.loaded, data.disconnected,
-    data.repositories, data.repository?.repositoryKey, [...data.rules.values()].filter(r => r.enabled).length, data.agents, data.agentsError]);
+    data.repositories, data.repository?.repositoryKey, runningCount(), data.agents, data.agentsError]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }

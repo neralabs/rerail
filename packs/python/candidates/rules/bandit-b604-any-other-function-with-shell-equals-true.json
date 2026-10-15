@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b604-any-other-function-with-shell-equals-true",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Detect calls outside the configured subprocess set when the shell argument evaluates truthy",
+  "description": "Detect calls outside the configured subprocess set with a `shell=` keyword argument Bandit's has_shell reads as truthy: anything but a falsy constant (False, None, a zero number, an empty string or bytes), an empty list or an empty dict.",
   "scope": {
     "include": [
       "**/*.py"
@@ -21,12 +21,13 @@
             "pattern": "$F($$$ARGS)",
             "arguments": {
               "signature": [
-                "command",
+                "*",
                 "shell"
               ],
               "bind": {
                 "SHELL": "shell"
-              }
+              },
+              "mode": "syntactic"
             }
           },
           "constraints": {
@@ -44,8 +45,47 @@
               }
             },
             "SHELL": {
-              "value": {
-                "truthy": true
+              "not": {
+                "any": [
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "none"
+                  },
+                  {
+                    "kind": "integer",
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "float",
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "string",
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "interpolation"
+                      }
+                    },
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "list",
+                    "regex": "^\\[\\s*\\]$"
+                  },
+                  {
+                    "kind": "dictionary",
+                    "regex": "^\\{\\s*\\}$"
+                  }
+                ]
               }
             }
           }

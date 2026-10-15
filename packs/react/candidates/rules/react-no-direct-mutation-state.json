@@ -276,6 +276,11 @@
             "rules": [
               "react/no-direct-mutation-state"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-direct-mutation-state"
+            ]
           }
         }
       }

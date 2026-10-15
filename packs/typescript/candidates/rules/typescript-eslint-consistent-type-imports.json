@@ -132,6 +132,11 @@
             "rules": [
               "@typescript-eslint/consistent-type-imports"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "consistent-type-imports"
+            ]
           }
         }
       }

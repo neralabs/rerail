@@ -5,13 +5,14 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks } from "../state.js";
+import { isRunning } from "../derive.js";
+import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { packAction, packIcon, packKind, startModeText } from "./pack-panel.js";
 
 /** "3 groups · 8 rules", plus how many are on once Rerail is started here: before that, nothing is on. */
 function packMeta(pack) {
   const groups = packGroups(pack).length;
-  const on = pack.rules.filter(r => data.rules.get(r.id)?.enabled).length;
+  const on = pack.rules.map(r => data.rules.get(r.id)).filter(stored => stored !== undefined && isRunning(stored)).length;
   const counted = isAttached(pack) && stateHere() === "started";
   return `${fmt(groups)} ${plural(groups, "group")} · ${fmt(pack.rules.length)} ${plural(pack.rules.length, "rule")}${counted ? ` · ${fmt(on)} on` : ""}`;
 }
@@ -82,6 +83,6 @@ function review() {
 
 export function renderPacks(root, view) {
   const sig = JSON.stringify([view, data.packs.map(p => p.id), [...data.attachedPacks], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
-    repoName(), stateHere(), [...data.rules.values()].filter(r => r.enabled).length]);
+    repoName(), stateHere(), runningCount()]);
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
