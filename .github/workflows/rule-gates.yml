@@ -37,6 +37,10 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: react
+            tool: eslint-plugin-react
+          - pack: react
+            tool: eslint-plugin-react-hooks
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

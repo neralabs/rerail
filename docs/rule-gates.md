@@ -40,9 +40,9 @@ From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `c
 A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is gated when it has
 `packs/<id>/upstream/<tool>/gates.yaml`.
 
-- **Gated:** `python/ruff`, `python/bandit`.
-- **Pending:** the ESLint-family tool-packs (javascript, typescript, react, next), listed in
-  `conformance/gates/pending.json`. Their recorder is the next step; until then they are still validated in
+- **Gated:** `python/ruff`, `python/bandit`, `react/eslint-plugin-react`, `react/eslint-plugin-react-hooks`.
+- **Pending:** the other ESLint-family tool-packs (javascript, typescript, next), listed in
+  `conformance/gates/pending.json`. Their recordings are the next step; until then they are still validated in
   nera-rule-validation, and the gates report them as pending without blocking.
 - **Not gated:** packs with no upstream adapter (node, php, blade, complexity). Their current shipped rules are frozen in
   `conformance/gates/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the

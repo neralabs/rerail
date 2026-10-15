@@ -57,10 +57,9 @@ complete. The report's method text says so.
 
 ## Packs that are not gated
 
-`pending.json` lists the ESLint-family tool-packs (javascript/eslint, javascript/eslint-plugin-unicorn,
-typescript/typescript-eslint, typescript/eslint-plugin-vitest, react/eslint-plugin-react,
-react/eslint-plugin-react-hooks, next/eslint-plugin-next): they are still validated in nera-rule-validation until their
-recorder lands, are reported as pending and are not frozen.
+`pending.json` lists the ESLint-family tool-packs not yet recorded (javascript/eslint, javascript/eslint-plugin-unicorn,
+typescript/typescript-eslint, typescript/eslint-plugin-vitest, next/eslint-plugin-next): they are still validated in
+nera-rule-validation until they are recorded, are reported as pending and are not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (blade, complexity,
 node, php). It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted
