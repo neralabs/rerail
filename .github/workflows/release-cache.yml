@@ -1,13 +1,26 @@
 name: Release cache
 
-# Keeps release.yml's cargo cache warm. A tag's run can restore caches saved on main, never those another tag's
-# run saved, so without this every release compiled each native engine from scratch (40 minutes on Windows x64).
+# Builds and saves the cargo cache release.yml restores. A tag's run can restore caches saved on main, never those
+# another tag's run saved, so without this every release compiled each native engine from scratch (40 minutes on
+# Windows x64).
 #
-# Nightly on main, each target looks its key up and builds and saves only when no cache holds it, that is
-# after Cargo.lock or the toolchain changed, or once GitHub evicted it. Targets, build command, key, and paths
-# match release.yml's native job; change them together.
+# On main, after a change to what the key hashes and nightly (GitHub evicts caches unused for a week), each target
+# looks its key up and, only when no cache holds it, builds from scratch and saves. A cold build means a saved
+# cache holds only what that build compiled from main, never artifacts carried forward. Targets, build command,
+# key, and paths match release.yml's native job; change them together. After such a change, let this finish
+# before pushing a release tag, or that release builds cold.
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - native/Cargo.toml
+      - .cargo/config.toml
+      - rust-toolchain.toml
+      - .github/workflows/release-cache.yml
   schedule:
     - cron: "23 5 * * *"
   workflow_dispatch:
@@ -15,9 +28,10 @@ on:
 permissions:
   contents: read
 
+# Queued, not cancelled: a cancelled cold build loses its cache, and the queued run's lookup then hits cheaply.
 concurrency:
   group: release-cache
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   cargo:
@@ -65,21 +79,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
           lookup-only: true
-
-      # A miss restores the nearest older cache so this build compiles only what changed.
-      - name: Restore the nearest cargo cache
-        if: steps.lookup.outputs.cache-hit != 'true'
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-
 
       - if: steps.lookup.outputs.cache-hit != 'true'
         uses: ./.github/actions/lfs
@@ -113,4 +114,4 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
+          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}

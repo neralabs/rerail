@@ -8,8 +8,8 @@ name: Release
 # under the dist-tag derived from the tag: `v1.2.3` -> latest, `v1.2.3-beta.N` -> beta,
 # `v1.2.3-next.N` -> next. The tag must equal package.json's version.
 #
-# A run only restores caches: a tag's run can read caches saved on main but not those an earlier tag's run
-# saved, so saving here bought nothing and cost minutes. release-cache.yml saves the cargo caches on main.
+# The cargo cache is restored, never saved: a tag's run can read caches saved on main but not those an earlier
+# tag's run saved, so saving here bought nothing and cost minutes. release-cache.yml builds and saves it on main.
 
 on:
   workflow_dispatch:
@@ -106,7 +106,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # No npm cache: setup-node's key would never match one saved on main, and saving it on a tag is wasted.
+      # No npm cache: on a tag, setup-node's cache misses on every runner but macOS arm64, and it saves on a miss.
       - name: Set up Node.js v24
         uses: actions/setup-node@v7
         with:
@@ -125,7 +125,8 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
-      # release-cache.yml saves this key on main; keep the two keys and paths identical.
+      # Exactly the key release-cache.yml builds from scratch on main (same paths), with no prefix fallback, so a
+      # published engine never links artifacts carried forward from an older cache. A miss builds cold.
       - name: Restore cargo artifacts
         uses: actions/cache/restore@v6
         with:
@@ -133,9 +134,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-
+          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
