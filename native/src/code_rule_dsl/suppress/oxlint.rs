@@ -18,9 +18,31 @@
 //! Ported from oxc (MIT, VoidZero Inc. & Contributors, and Boshen; see THIRD_PARTY_NOTICES)
 //! without its unused-directive bookkeeping and fixes.
 
+use super::names;
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// `oxlint.rules`: oxlint's names of the rule (without a plugin), which a disable directive must
+/// name (after its last `/`, or name none) to suppress the violation.
+pub(super) fn spec(oxlint: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(oxlint, at)?, &["rules"], at)?;
+    names(
+        oxlint.get("rules"),
+        &format!("{at}/rules"),
+        rule_name,
+        "oxlint rule names",
+        "an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)",
+    )
+}
+
+/// A rule name oxlint asks its directives about: its own name, without the plugin (a directive's
+/// list splits on commas and white space).
+fn rule_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains([',', '/']) && !name.contains(char::is_whitespace)
+}
 
 /// Where a directive leaves a rule (or, `rule` none, every rule) off: `DisabledRule` over its
 /// interval.

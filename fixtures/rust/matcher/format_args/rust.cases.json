@@ -1,0 +1,646 @@
+{
+ "cases": [
+  {
+   "name": "auto_one",
+   "src": "println!(\"{}\", 11)"
+  },
+  {
+   "name": "auto_two",
+   "src": "println!(\"{} {}\", 11, 22)"
+  },
+  {
+   "name": "explicit_swapped",
+   "src": "println!(\"{1} {0}\", 11, 22)"
+  },
+  {
+   "name": "explicit_repeat_then_auto",
+   "src": "println!(\"{0} {0} {}\", 11, 22)"
+  },
+  {
+   "name": "auto_explicit_auto",
+   "src": "println!(\"{} {1} {}\", 11, 22)"
+  },
+  {
+   "name": "named_two",
+   "src": "println!(\"{a} {b}\", a = 11, b = 22)"
+  },
+  {
+   "name": "named_swapped",
+   "src": "println!(\"{b} {a}\", a = 11, b = 22)"
+  },
+  {
+   "name": "auto_and_named",
+   "src": "println!(\"{} {x}\", 11, x = 22)"
+  },
+  {
+   "name": "positional_after_named",
+   "src": "println!(\"{x} {}\", x = 22, 11)"
+  },
+  {
+   "name": "capture_one",
+   "src": "println!(\"{x}\")",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "capture_and_named",
+   "src": "println!(\"{x} {y}\", y = 22)",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "capture_unknown",
+   "src": "println!(\"{x}\")"
+  },
+  {
+   "name": "capture_and_auto",
+   "src": "println!(\"{x} {}\", 22)",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "capture_debug",
+   "src": "println!(\"{x:?}\")",
+   "items": "let x = \"s\";"
+  },
+  {
+   "name": "capture_aligned",
+   "src": "println!(\"{x:>5}|\")",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "capture_unknown_with_named",
+   "src": "println!(\"{x} {}\", 11, y = 3)"
+  },
+  {
+   "name": "named_positional_mixed",
+   "src": "println!(\"{0} {a}\", 11, a = 22)"
+  },
+  {
+   "name": "named_by_index",
+   "src": "println!(\"{0} {1}\", 11, a = 22)"
+  },
+  {
+   "name": "named_by_index_only",
+   "src": "println!(\"{1}\", 11, a = 22)"
+  },
+  {
+   "name": "named_then_index",
+   "src": "println!(\"{a} {0}\", 5, a = 2)"
+  },
+  {
+   "name": "auto_reaches_named",
+   "src": "println!(\"{} {}\", 11, a = 22)"
+  },
+  {
+   "name": "named_unused",
+   "src": "println!(\"{a}\", a = 11, b = 22)"
+  },
+  {
+   "name": "named_unused_among_captures",
+   "src": "println!(\"{x}\", y = 1)",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "named_unused_with_width",
+   "src": "println!(\"{:w$}\", 11, w = 5, v = 3)"
+  },
+  {
+   "name": "width_literal",
+   "src": "println!(\"{:5}|\", 11)"
+  },
+  {
+   "name": "width_named",
+   "src": "println!(\"{:w$}|\", 11, w = 6)"
+  },
+  {
+   "name": "width_index",
+   "src": "println!(\"{:1$}|\", 11, 6)"
+  },
+  {
+   "name": "width_index_value_index",
+   "src": "println!(\"{0:1$}|\", 11, 5)"
+  },
+  {
+   "name": "width_index_string",
+   "src": "println!(\"{:>1$}|\", \"a\", 4)"
+  },
+  {
+   "name": "width_precision_named",
+   "src": "println!(\"{:w$.p$}|\", \"abcdef\", w = 6, p = 2)"
+  },
+  {
+   "name": "width_capture",
+   "src": "println!(\"{:w$}|\", 11)",
+   "items": "let w = 6usize;"
+  },
+  {
+   "name": "width_capture_unknown",
+   "src": "println!(\"{:w$}|\", 11)"
+  },
+  {
+   "name": "width_index_unused_value",
+   "src": "println!(\"{1:1$}|\", 1, 2)"
+  },
+  {
+   "name": "width_index_extra",
+   "src": "println!(\"{:1$}\", 1, 2, 4)"
+  },
+  {
+   "name": "width_index_missing",
+   "src": "println!(\"{:5$}\", 11)"
+  },
+  {
+   "name": "width_zero_index",
+   "src": "println!(\"{:0$}|\", 4)"
+  },
+  {
+   "name": "precision_star",
+   "src": "println!(\"{:.*}|\", 2, \"abcdef\")"
+  },
+  {
+   "name": "precision_star_then_auto",
+   "src": "println!(\"{:.*} {}\", 1, \"xyz\", 33)"
+  },
+  {
+   "name": "precision_star_explicit_value",
+   "src": "println!(\"{1:.*}|\", 2, \"abcdef\")"
+  },
+  {
+   "name": "precision_star_value_zero",
+   "src": "println!(\"{0:.*}\", 2, \"abcdef\")"
+  },
+  {
+   "name": "precision_star_missing_value",
+   "src": "println!(\"{:.*}\", 2)"
+  },
+  {
+   "name": "precision_star_two_fields",
+   "src": "println!(\"{:.*} {}\", 1, 2)"
+  },
+  {
+   "name": "precision_star_extra",
+   "src": "println!(\"{:.*}\", 1, 2, 3)"
+  },
+  {
+   "name": "precision_named",
+   "src": "println!(\"{:.p$}|\", \"abcdef\", p = 3)"
+  },
+  {
+   "name": "precision_index",
+   "src": "println!(\"{:.1$}|\", \"abcdef\", 4)"
+  },
+  {
+   "name": "precision_literal_width_align",
+   "src": "println!(\"{:>8.3}|\", \"abcdef\")"
+  },
+  {
+   "name": "precision_literal_float",
+   "src": "println!(\"{:.2}\", 1.5)"
+  },
+  {
+   "name": "width_and_precision_star_width",
+   "src": "println!(\"{:2$.*}|\", 3, \"abcdefg\", 6)"
+  },
+  {
+   "name": "debug_string",
+   "src": "println!(\"{:?}\", \"a\")"
+  },
+  {
+   "name": "debug_twice",
+   "src": "println!(\"{0:?} {0}\", \"a\")"
+  },
+  {
+   "name": "pretty_debug",
+   "src": "println!(\"{:#?}\", 11)"
+  },
+  {
+   "name": "alternate_hex",
+   "src": "println!(\"{:#x} {:#b} {:o}\", 255, 5, 8)"
+  },
+  {
+   "name": "upper_hex_exp",
+   "src": "println!(\"{:X} {:e}\", 255, 1500.0)"
+  },
+  {
+   "name": "sign_plus",
+   "src": "println!(\"{:+}\", 11)"
+  },
+  {
+   "name": "zero_pad_width",
+   "src": "println!(\"{:05}|\", 11)"
+  },
+  {
+   "name": "left_align_int",
+   "src": "println!(\"{:<5}|\", 11)"
+  },
+  {
+   "name": "fill_center",
+   "src": "println!(\"{:*^9}|\", \"ab\")"
+  },
+  {
+   "name": "fill_unicode",
+   "src": "println!(\"{:é^7}|\", \"ab\")"
+  },
+  {
+   "name": "fill_space_align",
+   "src": "println!(\"{: >4}|\", \"ab\")"
+  },
+  {
+   "name": "debug_hex_flag",
+   "src": "println!(\"{:x?}\", 255)"
+  },
+  {
+   "name": "whitespace_in_field",
+   "src": "println!(\"{ }|{0 }|{ :?}\", 11)"
+  },
+  {
+   "name": "whitespace_before_name",
+   "src": "println!(\"{ 0}\", 11)"
+  },
+  {
+   "name": "unknown_trait",
+   "src": "println!(\"{:?} {:z}\", 1, 2)"
+  },
+  {
+   "name": "unknown_trait_word",
+   "src": "println!(\"{:w}\", 1)"
+  },
+  {
+   "name": "debug_then_hash",
+   "src": "println!(\"{:?#}\", 1)"
+  },
+  {
+   "name": "missing_colon",
+   "src": "println!(\"{0?}\", 1)"
+  },
+  {
+   "name": "dot_without_count",
+   "src": "println!(\"{:.}\", 1.5)"
+  },
+  {
+   "name": "width_overflow",
+   "src": "println!(\"{:99999}\", 1)"
+  },
+  {
+   "name": "width_param_overflow",
+   "src": "println!(\"{:70000$}\", 1)"
+  },
+  {
+   "name": "name_underscore",
+   "src": "println!(\"{_}\", 1)"
+  },
+  {
+   "name": "raw_ident_name",
+   "src": "println!(\"{r#x}\", x = 1)"
+  },
+  {
+   "name": "escape_braces",
+   "src": "println!(\"{{}}\")"
+  },
+  {
+   "name": "escape_around_field",
+   "src": "println!(\"{{{}}}\", 11)"
+  },
+  {
+   "name": "escape_close_open",
+   "src": "println!(\"}}{{ {}\", 11)"
+  },
+  {
+   "name": "unmatched_close",
+   "src": "println!(\"a } b\", 1)"
+  },
+  {
+   "name": "unmatched_open",
+   "src": "println!(\"a {\", 1)"
+  },
+  {
+   "name": "unterminated_field",
+   "src": "println!(\"{0\", 1)"
+  },
+  {
+   "name": "unterminated_spec",
+   "src": "println!(\"{:5\", 1)"
+  },
+  {
+   "name": "braces_via_hex_escape",
+   "src": "println!(\"\\x7b}\", 11)"
+  },
+  {
+   "name": "braces_via_unicode_escape",
+   "src": "println!(\"\\u{7b}{}\\u{7d}\", 11)"
+  },
+  {
+   "name": "string_escapes",
+   "src": "println!(\"a\\n{}\\t{}\", 11, 22)"
+  },
+  {
+   "name": "line_continuation",
+   "src": "println!(\"a \\\n      {}\", 11)"
+  },
+  {
+   "name": "unicode_text",
+   "src": "println!(\"é {} ü {}\", 11, 22)"
+  },
+  {
+   "name": "raw_string",
+   "src": "println!(r\"{}\\n\", 11)"
+  },
+  {
+   "name": "raw_string_hashes",
+   "src": "println!(r#\"{} \"q\" {}\"#, 11, 22)"
+  },
+  {
+   "name": "raw_string_unused",
+   "src": "println!(r\"hi\", 11)"
+  },
+  {
+   "name": "too_few_one",
+   "src": "println!(\"{} {}\", 11)"
+  },
+  {
+   "name": "too_few_none",
+   "src": "println!(\"{}\")"
+  },
+  {
+   "name": "too_few_three",
+   "src": "println!(\"{} {} {}\", 1)"
+  },
+  {
+   "name": "invalid_explicit",
+   "src": "println!(\"{3}\", 11, 22)"
+  },
+  {
+   "name": "invalid_among_valid",
+   "src": "println!(\"{} {3} {}\", 1, 2)"
+  },
+  {
+   "name": "invalid_mixed_implicit",
+   "src": "println!(\"{} {} {9}\", 1)"
+  },
+  {
+   "name": "invalid_two_explicit",
+   "src": "println!(\"{9} {7}\", 1)"
+  },
+  {
+   "name": "unused_no_fields",
+   "src": "println!(\"hello\", 11)"
+  },
+  {
+   "name": "unused_one",
+   "src": "println!(\"{}\", 11, 22)"
+  },
+  {
+   "name": "unused_explicit",
+   "src": "println!(\"{0}\", 11, 22)"
+  },
+  {
+   "name": "unused_two",
+   "src": "println!(\"{} {}\", 1, 2, 3, 4)"
+  },
+  {
+   "name": "unused_gap",
+   "src": "println!(\"{0} {2}\", 1, 2, 3, 4)"
+  },
+  {
+   "name": "unused_by_explicit_repeat",
+   "src": "println!(\"{0} {0} {}\", 11, 22)"
+  },
+  {
+   "name": "trailing_comma",
+   "src": "println!(\"{}\", 11,)"
+  },
+  {
+   "name": "empty_println",
+   "src": "println!()",
+   "calls": false
+  },
+  {
+   "name": "dynamic_template",
+   "src": "println!(concat!(\"{}\", \"x\"), 11)",
+   "calls": false
+  },
+  {
+   "name": "not_a_template",
+   "src": "println!(11)",
+   "calls": false
+  },
+  {
+   "name": "nested_commas",
+   "src": "println!(\"{} {}\", f(1, 2), [3, 4].len())",
+   "items": "fn f(a: i32, b: i32) -> i32 { a + b }"
+  },
+  {
+   "name": "turbofish_commas",
+   "src": "println!(\"{}\", std::collections::HashMap::<i32, i32>::new().len())"
+  },
+  {
+   "name": "nested_macro_argument",
+   "src": "println!(\"{} {}\", format!(\"{}-{}\", 1, 2), 3)"
+  },
+  {
+   "name": "print",
+   "src": "print!(\"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "eprint",
+   "src": "eprint!(\"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "eprintln",
+   "src": "eprintln!(\"{1}-{0}\", 11, 22)"
+  },
+  {
+   "name": "format",
+   "src": "format!(\"{}-{}\", \"a\", \"b\")",
+   "observe": "print!(\"{}\", @SRC@)"
+  },
+  {
+   "name": "format_named",
+   "src": "format!(\"{b}{a}\", a = \"x\", b = \"y\")",
+   "observe": "print!(\"{}\", @SRC@)"
+  },
+  {
+   "name": "format_unused",
+   "src": "format!(\"{}\", \"a\", \"b\")"
+  },
+  {
+   "name": "format_args",
+   "src": "format_args!(\"{1}{0}\", \"a\", \"b\")",
+   "observe": "print!(\"{}\", @SRC@)"
+  },
+  {
+   "name": "format_args_missing",
+   "src": "format_args!(\"{}{}\", \"a\")"
+  },
+  {
+   "name": "write",
+   "src": "write!(s, \"{}-{}\", 11, 22)",
+   "items": "use std::fmt::Write; let mut s = String::new();",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", s)"
+  },
+  {
+   "name": "write_swapped",
+   "src": "write!(s, \"{1}-{0}\", 11, 22)",
+   "items": "use std::fmt::Write; let mut s = String::new();",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", s)"
+  },
+  {
+   "name": "write_capture",
+   "src": "write!(s, \"{x}-{}\", 22)",
+   "items": "use std::fmt::Write; let mut s = String::new(); let x = 11;",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", s)"
+  },
+  {
+   "name": "write_unused",
+   "src": "write!(s, \"{}\", 1, 2)",
+   "items": "use std::fmt::Write; let mut s = String::new();"
+  },
+  {
+   "name": "write_missing",
+   "src": "write!(s, \"{}\")",
+   "items": "use std::fmt::Write; let mut s = String::new();"
+  },
+  {
+   "name": "write_commas_in_destination",
+   "src": "write!(v.get_mut(0).unwrap(), \"{}\", 11)",
+   "items": "use std::fmt::Write; let mut v = vec![String::new()];",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", v[0])"
+  },
+  {
+   "name": "writeln",
+   "src": "writeln!(s, \"{}-{}\", 11, 22)",
+   "items": "use std::fmt::Write; let mut s = String::new();",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", s)"
+  },
+  {
+   "name": "writeln_unused",
+   "src": "writeln!(s, \"{}\", 1, 2)",
+   "items": "use std::fmt::Write; let mut s = String::new();"
+  },
+  {
+   "name": "writeln_no_template",
+   "src": "writeln!(s)",
+   "items": "use std::fmt::Write; let mut s = String::new();",
+   "observe": "@SRC@.unwrap(); print!(\"{}\", s)",
+   "calls": false
+  },
+  {
+   "name": "panic",
+   "src": "panic!(\"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "panic_swapped",
+   "src": "panic!(\"{1}-{0}\", 11, 22)"
+  },
+  {
+   "name": "panic_unused",
+   "src": "panic!(\"{}\", 1, 2)"
+  },
+  {
+   "name": "panic_missing",
+   "src": "panic!(\"{}\")"
+  },
+  {
+   "name": "panic_braces_literal",
+   "src": "panic!(\"{{}}\")"
+  },
+  {
+   "name": "unreachable",
+   "src": "unreachable!(\"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "unreachable_unused",
+   "src": "unreachable!(\"{}\", 1, 2)"
+  },
+  {
+   "name": "todo",
+   "src": "todo!(\"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "todo_missing",
+   "src": "todo!(\"{}\")"
+  },
+  {
+   "name": "unimplemented",
+   "src": "unimplemented!(\"{1}-{0}\", 11, 22)"
+  },
+  {
+   "name": "unimplemented_unused",
+   "src": "unimplemented!(\"x\", 1)"
+  },
+  {
+   "name": "assert_message",
+   "src": "assert!(1 == 2, \"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "assert_named",
+   "src": "assert!(1 == 2, \"{b}-{a}\", a = 11, b = 22)"
+  },
+  {
+   "name": "assert_no_message",
+   "src": "assert!(1 == 2)",
+   "calls": false
+  },
+  {
+   "name": "assert_unused",
+   "src": "assert!(1 == 1, \"{}\", 1, 2)"
+  },
+  {
+   "name": "assert_missing",
+   "src": "assert!(1 == 1, \"{}\")"
+  },
+  {
+   "name": "assert_condition_commas",
+   "src": "assert!(f(1, 2) == 4, \"{}-{}\", 11, 22)",
+   "items": "fn f(a: i32, b: i32) -> i32 { a + b }"
+  },
+  {
+   "name": "assert_eq_message",
+   "src": "assert_eq!(1, 2, \"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "assert_eq_no_message",
+   "src": "assert_eq!(1, 2)",
+   "calls": false
+  },
+  {
+   "name": "assert_eq_missing",
+   "src": "assert_eq!(1, 1, \"{}\")"
+  },
+  {
+   "name": "assert_eq_unused",
+   "src": "assert_eq!(1, 1, \"x\", 5)"
+  },
+  {
+   "name": "assert_ne_message",
+   "src": "assert_ne!(1, 1, \"{1}-{0}\", 11, 22)"
+  },
+  {
+   "name": "assert_ne_capture",
+   "src": "assert_ne!(1, 1, \"{x}\")",
+   "items": "let x = 11;"
+  },
+  {
+   "name": "debug_assert_message",
+   "src": "debug_assert!(1 == 2, \"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "debug_assert_missing",
+   "src": "debug_assert!(1 == 1, \"{}\")"
+  },
+  {
+   "name": "debug_assert_eq_message",
+   "src": "debug_assert_eq!(1, 2, \"{}-{}\", 11, 22)"
+  },
+  {
+   "name": "debug_assert_eq_unused",
+   "src": "debug_assert_eq!(1, 1, \"x\", 5)"
+  },
+  {
+   "name": "debug_assert_ne_message",
+   "src": "debug_assert_ne!(1, 1, \"{1}-{0}\", 11, 22)"
+  },
+  {
+   "name": "debug_assert_ne_missing",
+   "src": "debug_assert_ne!(1, 2, \"{}\")"
+  }
+ ]
+}

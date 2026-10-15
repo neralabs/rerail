@@ -1,7 +1,7 @@
 """Writes corpus-<name>.expected.json: every site where clippy 0.1.99 (Rust 1.99.0) reports one of the Rust pack's
-ported lints (fixtures/rust/upstream/conformance.draft.json) in a pinned corpus, and whether the corpus suppresses
-it. Run offline, never in CI, with the toolchain upstream/common.py pins (it refuses any other; Python 3.9 standard
-library only):
+ported lints (packs/rust/conformance.json) in a pinned corpus, and whether the corpus suppresses
+it. Run offline, never in CI, with the toolchain packs/rust/upstream/common.py pins (it refuses any other; Python 3.9
+standard library only):
 
     python3 generate_corpus.py <cargo target root> <name>=<corpus checkout> [...]
 
@@ -25,7 +25,7 @@ import sys
 from collections import Counter
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "upstream"))
+sys.path.insert(0, str(HERE.parents[2] / "packs" / "rust" / "upstream"))
 import common  # noqa: E402
 
 

@@ -214,6 +214,8 @@ pub(super) enum Walk {
     /// A sibling an anchor selection's sibling walk around zero-width nodes steps over, or a child
     /// it reads while building a parent's run of siblings.
     AnchorSibling,
+    /// A node the Rust usage index visits to find the nodes its references span.
+    UsageNode,
 }
 
 thread_local! {

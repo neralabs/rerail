@@ -177,68 +177,86 @@ export const LANGUAGE_REGISTRY = /* registry */ [
   {
     "format": "rerail.language/v1",
     "id": "rust",
-    "status": "planned",
+    "status": "supported",
     "family": "rust",
     "dialects": [
       {
         "label": "rust",
+        "variant": "Rust",
         "suffixes": [
           ".rs"
-        ]
+        ],
+        "parser": "tree-sitter",
+        "grammar": "ast-grep:Rust",
+        "tapeTag": 9
       }
     ],
     "capabilities": {
-      "scope": "not-supported-yet",
-      "value": "not-supported-yet",
-      "arguments": "not-supported-yet",
-      "calls": "not-supported-yet",
-      "formatArgs": "not-supported-yet"
+      "scope": "supported",
+      "value": "supported",
+      "arguments": "supported",
+      "calls": "supported",
+      "formatArgs": "supported"
     },
-    "suppressions": []
+    "suppressions": [
+      "clippy"
+    ]
   },
   {
     "format": "rerail.language/v1",
     "id": "sql",
-    "status": "planned",
+    "status": "supported",
     "family": "sql",
     "dialects": [
       {
         "label": "sql",
+        "variant": "Sql",
         "suffixes": [
           ".sql"
-        ]
+        ],
+        "parser": "tree-sitter",
+        "grammar": "vendored:sql",
+        "tapeTag": 10
       }
     ],
     "capabilities": {
-      "scope": "not-supported-yet",
-      "value": "not-supported-yet",
-      "arguments": "not-supported-yet",
-      "calls": "not-supported-yet",
-      "formatArgs": "not-supported-yet"
+      "scope": "supported",
+      "value": "supported",
+      "arguments": "supported",
+      "calls": "refused",
+      "formatArgs": "refused"
     },
-    "suppressions": []
+    "suppressions": [
+      "sqlfluff"
+    ]
   },
   {
     "format": "rerail.language/v1",
     "id": "vue",
-    "status": "planned",
+    "status": "supported",
     "family": "vue",
     "dialects": [
       {
         "label": "vue",
+        "variant": "Vue",
         "suffixes": [
           ".vue"
-        ]
+        ],
+        "parser": "tree-sitter",
+        "grammar": "vendored:vue",
+        "tapeTag": 12
       }
     ],
     "capabilities": {
-      "scope": "not-supported-yet",
-      "value": "not-supported-yet",
-      "arguments": "not-supported-yet",
-      "calls": "not-supported-yet",
-      "formatArgs": "not-supported-yet"
+      "scope": "supported",
+      "value": "supported",
+      "arguments": "supported",
+      "calls": "refused",
+      "formatArgs": "refused"
     },
-    "suppressions": [],
+    "suppressions": [
+      "eslint"
+    ],
     "embeds": [
       {
         "language": "typescript",
@@ -255,12 +273,12 @@ export const LANGUAGE_REGISTRY = /* registry */ [
 /** Every language a rule may name: supported, then planned. */
 export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"] as const;
 /** The languages the engine reads. */
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade"] as const;
+export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"] as const;
 /** The languages a rule may name that the engine does not read yet. */
-export const CODE_RULE_PLANNED_LANGUAGES = ["rust", "sql", "vue"] as const;
+export const CODE_RULE_PLANNED_LANGUAGES = [] as const;
 /** The semantic families of the supported languages. */
-export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade"] as const;
+export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue"] as const;
 /** The capabilities every entry declares support for. */
 export const CODE_RULE_SEMANTIC_CAPABILITIES = ["scope", "value", "arguments", "calls", "formatArgs"] as const;
 /** The suppression comments the supported languages honour. */
-export const CODE_RULE_SUPPRESSIONS = ["noqa", "nosec", "eslint", "oxlint", "biome", "phpstan", "psalm", "phpcs"] as const;
+export const CODE_RULE_SUPPRESSIONS = ["noqa", "nosec", "eslint", "oxlint", "biome", "phpstan", "psalm", "phpcs", "clippy", "sqlfluff"] as const;

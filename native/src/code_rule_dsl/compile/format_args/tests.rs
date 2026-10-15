@@ -202,7 +202,7 @@ fn format_args_are_checked() {
         ),
         (
             json!({ "formatArgs": { "style": "c", "string": "S", "args": "A", "unused": { "kind": "identifier" } } }),
-            "/clauses/0/forbid/ast/rule/formatArgs/style: unknown value `c`; expected brace, percent, printf or scanf",
+            "/clauses/0/forbid/ast/rule/formatArgs/style: unknown value `c`; expected brace, percent, printf, scanf or rust",
         ),
         (
             json!({ "formatArgs": { "style": "brace", "args": "A", "unused": { "kind": "identifier" } } }),

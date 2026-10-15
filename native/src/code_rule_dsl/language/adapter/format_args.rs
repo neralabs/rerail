@@ -43,6 +43,9 @@ impl FormatArgRules for Python {
             FormatArgFeature::Style(Style::Scanf) => {
                 refused("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats")
             }
+            FormatArgFeature::Style(Style::Rust) => refused(
+                "`rust` reads Rust's format macros; Python's format calls are styles `brace` and `percent`",
+            ),
         }
     }
 }
@@ -60,6 +63,9 @@ impl FormatArgRules for Php {
             ),
             FormatArgFeature::Style(Style::Brace) => refused(
                 "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
+            ),
+            FormatArgFeature::Style(Style::Rust) => refused(
+                "`rust` reads Rust's format macros; PHP's printf-family calls are style `printf`",
             ),
         }
     }
@@ -82,6 +88,9 @@ impl FormatArgRules for Blade {
             FormatArgFeature::Style(Style::Brace) => refused(
                 "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
             ),
+            FormatArgFeature::Style(Style::Rust) => refused(
+                "`rust` reads Rust's format macros; blade embeds PHP, whose printf-family calls are style `printf`",
+            ),
         }
     }
 }
@@ -93,7 +102,9 @@ impl FormatArgRules for Refused {
 
     fn feature(feature: FormatArgFeature) -> Result<(), Refusal> {
         match feature {
-            FormatArgFeature::Style(_) => refused("formatArgs reads Python and PHP format calls"),
+            FormatArgFeature::Style(_) => {
+                refused("formatArgs reads Python, PHP and Rust format calls")
+            }
         }
     }
 }
@@ -109,8 +120,9 @@ pub(super) mod kit {
     /// What a family's `FormatArgRules` answer.
     pub(in super::super) struct Expect {
         pub(in super::super) follows_strings: bool,
-        /// The refusals of the styles `brace`, `percent`, `printf` and `scanf`; `None` where read.
-        pub(in super::super) styles: [Option<&'static str>; 4],
+        /// The refusals of the styles `brace`, `percent`, `printf`, `scanf` and `rust`; `None`
+        /// where read.
+        pub(in super::super) styles: [Option<&'static str>; 5],
     }
 
     pub(in super::super) fn check<A: Adapter>(expect: &Expect) {
@@ -118,7 +130,14 @@ pub(super) mod kit {
             <A::FormatArgs as FormatArgRules>::FOLLOWS_STRINGS,
             expect.follows_strings
         );
-        let styles = [Style::Brace, Style::Percent, Style::Printf, Style::Scanf].map(|style| {
+        let styles = [
+            Style::Brace,
+            Style::Percent,
+            Style::Printf,
+            Style::Scanf,
+            Style::Rust,
+        ]
+        .map(|style| {
             refusal(<A::FormatArgs as FormatArgRules>::feature(
                 FormatArgFeature::Style(style),
             ))

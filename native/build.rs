@@ -20,20 +20,28 @@ fn main() {
 }
 
 /// The language registry, `languages/` at the repository root: validated, and generated into
-/// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes.
+/// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes. The languages only
+/// tests see (`native/test-languages/`, absent from a copy that carries none) are validated
+/// against it and generated as `#[cfg(test)]` items; they are not returned, so they are no part of
+/// the engine's identity.
 fn generate_languages() -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let directory = manifest
-        .parent()
-        .expect("repository root")
-        .join("languages");
+    let root = manifest.parent().expect("repository root");
+    let directory = root.join("languages");
+    let test_directory = manifest.join("test-languages");
     println!("cargo:rerun-if-changed={}", directory.display());
+    println!("cargo:rerun-if-changed={}", test_directory.display());
     let vendored = GRAMMARS
         .iter()
         .map(|grammar| grammar.name)
         .collect::<Vec<_>>();
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
-    languages::generate(&directory, &vendored, &out)
+    languages::generate(
+        &directory,
+        test_directory.is_dir().then_some(test_directory.as_path()),
+        &vendored,
+        &out,
+    )
 }
 
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and
@@ -52,6 +60,22 @@ struct VendoredGrammar {
 }
 
 const GRAMMARS: &[VendoredGrammar] = &[
+    // tree-sitter-grammars/tree-sitter-vue, commit ce8011a414fdf8091f4e4071752efc376f4afb08 (no release;
+    // package.json 0.1.0).
+    VendoredGrammar {
+        name: "vue",
+        source: "grammars/tree-sitter-vue/src",
+        headers: "grammars/tree-sitter-vue/src",
+        version: (0, 1, 0),
+        inputs: &[
+            "grammars/tree-sitter-vue/src/grammar.json",
+            "grammars/tree-sitter-vue/src/scanner.c",
+            "grammars/tree-sitter-vue/src/tag.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/array.h",
+            "grammars/tree-sitter-vue/src/tree_sitter/parser.h",
+        ],
+    },
     // tree-sitter-python 0.25.0 with the patches in grammars/tree-sitter-python/PATCHES.md.
     VendoredGrammar {
         name: "python",
@@ -64,6 +88,21 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-python/src/tree_sitter/alloc.h",
             "grammars/tree-sitter-python/src/tree_sitter/array.h",
             "grammars/tree-sitter-python/src/tree_sitter/parser.h",
+        ],
+    },
+    // tree-sitter-sql (DerekStride) 0.3.11, commit 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8, with
+    // the patches in grammars/tree-sitter-sql/PATCHES.md.
+    VendoredGrammar {
+        name: "sql",
+        source: "grammars/tree-sitter-sql/src",
+        headers: "grammars/tree-sitter-sql/src",
+        version: (0, 3, 11),
+        inputs: &[
+            "grammars/tree-sitter-sql/src/grammar.json",
+            "grammars/tree-sitter-sql/src/scanner.c",
+            "grammars/tree-sitter-sql/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-sql/src/tree_sitter/array.h",
+            "grammars/tree-sitter-sql/src/tree_sitter/parser.h",
         ],
     },
     // tree-sitter-typescript 0.23.2 with the patch in grammars/tree-sitter-typescript/PATCHES.md.

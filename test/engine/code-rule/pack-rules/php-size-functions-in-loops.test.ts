@@ -1,5 +1,5 @@
 /**
- * phpcs-squiz-php-disallow-size-functions-in-loops (packs/php/) must not steer an agent into breaking a loop
+ * phpcs-squiz-php-disallow-size-functions-in-loops (packs/php/, candidate) must not steer an agent into breaking a loop
  * (NER-1812). PHP_CodeSniffer's sniff reports every count(), sizeof() or strlen() in a loop condition and advises
  * hoisting it before the loop. That is only correct when the loop leaves the measured value alone. When the loop
  * grows, shrinks or replaces it (a work queue drained with array_shift, a buffer filled with .=, a fixed-point loop
@@ -7,7 +7,7 @@
  * steer changes what the loop does. Of the sniff's 48 findings on the pack's pinned Symfony and Laravel corpora, 21 are
  * such loops; packs/php/divergences.json records each one the pack checks can score.
  *
- * Each case below is one loop; the test asserts exactly which lines the shipped rule reports.
+ * Each case below is one loop; the test asserts exactly which lines the rule reports.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,13 +15,14 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "phpcs-squiz-php-disallow-size-functions-in-loops";
+const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),
@@ -30,8 +31,7 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "php")]).find(candidate => candidate.rule.id === RULE_ID);
-  if (document === undefined) throw new Error(`${RULE_ID} is not in packs/php`);
+  const document = readRuleDocument(RULE_PATH);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

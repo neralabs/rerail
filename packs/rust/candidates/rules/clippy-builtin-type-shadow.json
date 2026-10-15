@@ -1,0 +1,13 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-builtin-type-shadow",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's builtin_type_shadow: reports generic type parameters that shadow primitive type names; semantic name resolution is not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "builtin-type-shadow",
+    "forbid": { "ast": { "language": "rust", "rule": { "kind": "type_identifier", "regex": "^(u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|f32|f64|bool|char|str)$", "inside": { "kind": "type_parameter", "stopBy": "end" } } } },
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::builtin_type_shadow", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "builtin_type_shadow", "message": "Clippy builtin_type_shadow: type parameter shadows a built-in type" }
+  }]
+}

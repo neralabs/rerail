@@ -1,0 +1,12 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-needless-arbitrary-self-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's needless_arbitrary_self_type: reports self parameters written with an explicit Self type; semantic receiver analysis is not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    { "id": "self-explicit-self", "forbid": { "ast": { "language": "rust", "rule": { "kind": "parameter", "regex": "^(mut )?self: ?Self$" } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_arbitrary_self_type", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "needless_arbitrary_self_type", "message": "Clippy needless_arbitrary_self_type: explicit self type can be simplified" } },
+    { "id": "self-explicit-reference", "forbid": { "ast": { "language": "rust", "rule": { "kind": "parameter", "regex": "^self: &[^&]*Self$" } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::needless_arbitrary_self_type", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "needless_arbitrary_self_type", "message": "Clippy needless_arbitrary_self_type: explicit self type can be simplified" } }
+  ]
+}

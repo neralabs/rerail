@@ -2,7 +2,7 @@ use super::closure::Graph;
 use super::names::Name;
 use super::php::{self, Reader};
 use super::summary::{Callee, Summary};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use ast_grep_language::LanguageExt;
@@ -111,7 +111,7 @@ fn answers(
                 None => Answer::NoEdge,
                 Some(Callee::Open) => Answer::Unknown,
                 Some(Callee::Name(name)) => {
-                    let (defs, open) = graph.link_of(&Name::new(&name));
+                    let (defs, open) = graph.link_of(&Name::new(Family::Php, &name));
                     if open {
                         Answer::Unknown
                     } else {
