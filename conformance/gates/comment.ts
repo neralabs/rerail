@@ -65,7 +65,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
   }
   const lines = [
     COMMENT_MARKER,
-    `## Rule gates: ${verdict}`,
+    `## Source pack validation: ${verdict}`,
     "",
     `Shipped rules (\`rules/\`) must pass every gate; candidates (\`candidates/\`) are only reported${commit}${run}.`,
     "",

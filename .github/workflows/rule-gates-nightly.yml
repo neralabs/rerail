@@ -1,4 +1,4 @@
-name: Rule gates (nightly)
+name: Source pack validation (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
 # no longer matches the pinned upstream (gates:record --check), then judges every rule again and saves the fresh
@@ -172,7 +172,7 @@ jobs:
         run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --check
 
   gates:
-    name: Rule gates, uncached
+    name: Source pack validation, uncached
     needs: build
     # The called report job asks for these to post on pull requests; a scheduled run posts nothing.
     permissions:

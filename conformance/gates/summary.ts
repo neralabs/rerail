@@ -130,7 +130,7 @@ function table(header: string[], rows: string[][], limit = TABLE_ROWS): string[]
 /** The summary as Markdown, under GitHub's step-summary limit. */
 export function renderSummary(summary: Summary): string {
   const lines = [
-    "# Rule gates",
+    "# Source pack validation",
     "",
     `**${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.promotable.length} candidate(s) ready to promote (${summary.candidates.pass} of ${summary.candidates.rules} pass every gate).**`,
     "",

@@ -1,4 +1,4 @@
-name: Rule gates
+name: Source pack validation
 
 # The rule gates (docs/rule-gates.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine), and by
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   gates:
-    name: Rule gates (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    name: Source pack validation (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
     runs-on: ubuntu-24.04
     # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
     # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
@@ -214,7 +214,7 @@ jobs:
         run: exit "$STATUS"
 
   report:
-    name: Rule gates report
+    name: Source pack validation report
     needs: gates
     if: always()
     runs-on: ubuntu-24.04
@@ -288,7 +288,7 @@ jobs:
           marker='<!-- rerail-rule-gates -->'
           body="$RUNNER_TEMP/gates/comment.md"
           if [ ! -s "$body" ]; then
-            printf '%s\n## Rule gates: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+            printf '%s\n## Source pack validation: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
           fi
           gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\") | select(.body | startswith(\"$marker\")) | .node_id" |
@@ -317,5 +317,5 @@ jobs:
           STATUS: ${{ steps.summary.outputs.status }}
           GATES: ${{ needs.gates.result }}
         run: |
-          echo "::error::Rule gates failed (summary exit ${STATUS}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
+          echo "::error::Source pack validation failed (summary exit ${STATUS}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
           exit 1

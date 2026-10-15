@@ -256,7 +256,7 @@ jobs:
   # Every rule a pack ships must pass the rule gates; candidates are only reported (docs/rule-gates.md). Pushes to main
   # run them always (the filter step is skipped and the output is empty).
   rule-gates:
-    name: Rule gates
+    name: Source pack validation
     needs: [changes, build]
     if: needs.changes.outputs.gates != 'false'
     # The report job posts the results as a pull request comment.
