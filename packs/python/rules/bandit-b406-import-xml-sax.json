@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b406-import-xml-sax",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Detect direct imports of xml.sax.",
+  "description": "Detect direct imports of xml.sax. Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml, which the steer points to, has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions (NER-1827).",
   "scope": {
     "include": [
       "**/*.py"
@@ -33,7 +33,26 @@
               {
                 "pattern": "from xml import sax as $ALIAS"
               }
-            ]
+            ],
+            "not": {
+              "any": [
+                {
+                  "pattern": "from xml.sax.saxutils import $$$NAMES"
+                },
+                {
+                  "pattern": "from xml.sax import saxutils"
+                },
+                {
+                  "pattern": "from xml.sax import saxutils as $ALIAS"
+                },
+                {
+                  "pattern": "from xml.sax import (saxutils)"
+                },
+                {
+                  "pattern": "from xml.sax import (saxutils as $ALIAS)"
+                }
+              ]
+            }
           }
         }
       },
