@@ -47,6 +47,7 @@ import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
+import { runShowMeCommand } from "./show-me.js";
 import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -126,6 +127,7 @@ function usage(): string {
     "  rerail rules import <rules.json>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
+    "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
     "  rerail [--profile <name>] events",
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
@@ -447,8 +449,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "ui", "seed", "rules", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
+  if (["setup", "install", "start", "stop", "state", "status", "session", "ui", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -521,6 +523,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
+  if (command === "show-me") return runShowMeCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;

@@ -238,7 +238,7 @@ describe("T6 / C6 summary", () => {
     expect(text).toContain("Your own       /rerail-create  create a rule in your own words, in a session");
     expect(text).toContain("Other repos    Rerail has not been started there  type /rerail-start there to set one up");
     expect(text).toContain("Connected      Claude Code and Cursor");
-    expect(text).toContain("Next           Open a new session when you’re ready.  Rerail starts there");
+    expect(text).toContain("Next           Open a new session and type /rerail-show-me.  see Rerail catch and fix a broken rule");
     expect(text).toContain("Manage rules   http://127.0.0.1:7777/#rules  opening in your browser");
     expect(text).not.toMatch(/close this/i);
   });
@@ -285,14 +285,14 @@ describe("T6 / C6 summary", () => {
 });
 
 describe("C6b tips", () => {
-  it.each(LANES)("explains Log, Steer and Block, says Block is not in this version, and lists three commands (%s)", lane => {
+  it.each(LANES)("explains Log, Steer and Block, says Block is not in this version, and lists four commands (%s)", lane => {
     const text = stripAnsi(renderTips(lane));
     expect(text).toContain("Three things can happen when a rule is broken.");
     expect(text).toContain("Log            Rerail records the violation for you. Your coding agent isn’t told.");
     expect(text).toContain("Steer          Your coding agent is told as it works, and fixes it. It isn’t stopped.");
     expect(text).toContain("Block          Your coding agent is stopped before it acts.  not in this version");
     expect(text).toContain("Each rule starts in Steer or Log, as its rule pack says. See each rule in the dashboard.");
-    expect(text.match(/^ {2}\/rerail\S*/gm)).toEqual(["  /rerail", "  /rerail-create", "  /rerail-stop"]);
+    expect(text.match(/^ {2}\/rerail\S*/gm)).toEqual(["  /rerail", "  /rerail-create", "  /rerail-show-me", "  /rerail-stop"]);
     expect(text).toContain("Rerail never edits your instruction files.");
   });
 
@@ -346,6 +346,7 @@ describe("E4 pick rule packs myself", () => {
     expect(text).toContain("Connected      Claude Code and Cursor");
     expect(text).toContain("Your own       /rerail-create  create a rule in your own words, in a session");
     expect(text).toContain("Next           Turn on the rule packs you want.  then open a new session");
+    expect(text).toContain("Try it         /rerail-show-me  in a new session: see Rerail catch and fix a broken rule");
     expect(text).toContain("Manage rules   http://127.0.0.1:7777/#rules  opening in your browser");
     expect(text).toContain("Rerail did not read this repo. Changed your mind? Ask it to recommend rule packs, in the dashboard.");
   });

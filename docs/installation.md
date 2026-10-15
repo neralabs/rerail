@@ -193,9 +193,10 @@ rerail install --remove  # take Rerail out of every coding agent, stop the daemo
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-ui`,
-`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update` and
-`/rerail-rage-quit` (`$rerail`, `$rerail-ui`, and so on in Codex). Settings,
-scans, status, update checks, rollback and reset are the CLI commands above.
+`/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
+`/rerail-rage-quit` and `/rerail-show-me` (`$rerail`, `$rerail-ui`, and so on
+in Codex). Settings, scans, status, update checks, rollback and reset are the
+CLI commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)

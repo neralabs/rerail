@@ -1,6 +1,7 @@
 import {
   createRuleInstructions,
   rageQuitInstructions,
+  showMeInstructions,
   RERAIL_COMMANDS,
   type RerailCommand,
   type RerailCommandName,
@@ -149,6 +150,12 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
     case "rerail-rage-quit":
       // The removal itself is left out of `allowed`, so Claude Code asks the person once more before running it.
       return { text: rageQuitInstructions(cli, sigil), allowed: [`${cli} install --remove --dry-run`, `${cli} stop`] };
+    case "rerail-show-me":
+      // The demo file's write and fix still go through the coding agent's own edit permission.
+      return {
+        text: showMeInstructions({ cli, sigil, write: agent === "codex" ? "shell" : "edit-tool" }),
+        allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
+      };
   }
 }
 
