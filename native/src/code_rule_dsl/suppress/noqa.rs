@@ -1,9 +1,46 @@
 //! Ruff 0.16.9's `# noqa` comments (`crates/ruff_linter/src/noqa.rs`, `checkers/noqa.rs`) and the
 //! line mapping they are read through (`directives.rs`'s `extract_noqa_line_for`).
 
+use super::names;
+use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::ops::Range;
+
+/// `noqa`: Ruff's `# noqa` and file-level `# ruff: noqa` comments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Noqa {
+    /// The codes a directive must name (or name none) to suppress the violation.
+    pub(crate) codes: Vec<String>,
+    /// `parent: "statement"`: a directive where the enclosing statement starts also suppresses
+    /// it (Ruff's `set_parent`).
+    pub(crate) parent: bool,
+}
+
+/// `suppress.noqa`.
+pub(super) fn spec(noqa: &Value, at: &str) -> napi::Result<Noqa> {
+    reject_unknown(object(noqa, at)?, &["codes", "parent"], at)?;
+    let codes = names(
+        noqa.get("codes"),
+        &format!("{at}/codes"),
+        rule_code,
+        "rule codes",
+        "a rule code (uppercase letters, then digits: F401)",
+    )?;
+    let parent = match noqa.get("parent") {
+        None => false,
+        Some(Value::String(parent)) if parent == "statement" => true,
+        Some(_) => return Err(invalid(format!("{at}/parent must be \"statement\""))),
+    };
+    Ok(Noqa { codes, parent })
+}
+
+/// A code a `# noqa` list can name: Ruff's lexer reads uppercase letters, then digits.
+fn rule_code(code: &str) -> bool {
+    let letters = code.trim_start_matches(|c: char| c.is_ascii_uppercase());
+    letters.len() < code.len() && !letters.is_empty() && letters.chars().all(|c| c.is_ascii_digit())
+}
 
 /// A directive: every rule, or the listed codes.
 #[derive(Clone, Debug, PartialEq, Eq)]

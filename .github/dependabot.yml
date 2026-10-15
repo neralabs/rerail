@@ -4,11 +4,27 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      # Listed first so vitest packages land here, not in npm-minor-patch:
+      # @vitest/* peer-pins vitest exactly, so they must move together.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+      npm-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,12 +1,13 @@
 /**
  * The side panel. A rule (W1b, W3): what it checks with a caught and a passing example, what Rerail
  * does on a violation (the rule's mode, Log / Steer / Block, read-only here), its numbers, where it came
- * from (with the folders it is added at and what decided its on and mode) and its recent activity.
+ * from (with the folders it is added at, what decided its on, mode and suppression comments, a switch for
+ * those comments, and its configured options) and its recent activity.
  * Create a rule (W2) and a rule pack's contents render here too.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
+import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, onText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { CREATE_COMMAND } from "./rules.js";
@@ -147,21 +148,25 @@ function renderOrigin(stored) {
   const id = stored.rule.id, pack = packOfRule(stored), group = packRuleOf(id)?.rule.group;
   const checkoutPath = data.checkout?.checkoutPath;
   const folders = stored.folders.map(folderText).join(", ");
-  // Folders that disagree each show their own on and mode; switching the rule then sets it in every folder.
-  const on = stored.mixed
-    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
-    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  // Folders that disagree each show their own on; switching the rule then sets it in every folder.
+  const on = onText(stored, checkoutPath);
   const mode = stored.mixed
     ? stored.folderStates.map(state => `${MODE_LABEL[state.mode] ?? state.mode} in ${folderText(state.folder)}`).join(", ")
     : `${modeLabel(stored)} · ${deciderText(stored.modeSource, checkoutPath)}`;
+  const suppressions = suppressionsText(stored, checkoutPath), next = nextSuppressions(stored);
+  const options = optionsText(stored, checkoutPath);
   const why = pack ? whyOn(stored, pack) : "";
-  setContent(p.from, JSON.stringify([id, pack?.id, why, folders, on, mode]), () => kv([
+  setContent(p.from, JSON.stringify([id, pack?.id, why, folders, on, mode, suppressions, next, options]), () => kv([
     ["Origin", originLabel(stored)],
     ...(pack ? [["Rule pack", group ? `${pack.name} · ${group}` : pack.name], ["Why it is on", why]] : []),
     ...(isByRerail(stored) && !pack ? [["Rule pack", "None: it is added to this repository on its own"]] : []),
     ["Added at", folders],
     ["On", on],
     ["Mode", mode],
+    // Linters' suppression comments are in code; a conversation rule has none to honour.
+    ...(stored.kind === "code" ? [["Suppression comments", [`${suppressions} `,
+      h("button.btn.sm.ghost.link", { "data-act": "suppress", "data-i": id, "data-v": next }, next === "ignore" ? "Ignore them" : "Honour them")]]] : []),
+    ...(options === null ? [] : [["Options", options]]),
     ["Rule id", id, "mono"],
   ]));
 }

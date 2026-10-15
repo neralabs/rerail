@@ -135,6 +135,18 @@ async function startFromCommand(options: HostCommandOptions, ctx: HostCommandCon
   return last !== undefined && last.step !== "error";
 }
 
+/**
+ * `rerail stop` for this session, named as `rerail session` takes it, so the reply names the rules that steered it;
+ * the runtime re-attaches only where Rerail is now stopped.
+ */
+async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandContext): Promise<void> {
+  const sessionId = options.sessionId?.();
+  const session = sessionId === undefined ? [] : [options.host ?? "omp", sessionId];
+  const result = await runLauncher(options, ["stop", ...session], databaseArgs(options));
+  if (result.code === 0) await options.reattach?.();
+  notifyResult(ctx, "rerail-stop", result);
+}
+
 /** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
 const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
 
@@ -205,11 +217,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   register("rerail-start", async ctx => {
     if (await startFromCommand(options, ctx)) await options.reattach?.();
   });
-  register("rerail-stop", async ctx => {
-    const result = await runLauncher(options, ["stop"], databaseArgs(options));
-    if (result.code === 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-stop", result);
-  });
+  register("rerail-stop", ctx => stopFromCommand(options, ctx));
 
   register("rerail-update", async ctx => {
     const result = await runLauncher(options, ["update"]);
@@ -227,9 +235,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       "Remove Rerail from this computer? You can install it again later and get your rules back.",
     ].join("\n"), [REMOVE, STOP_HERE, "Cancel"]);
     if (choice === STOP_HERE) {
-      const result = await runLauncher(options, ["stop"], databaseArgs(options));
-      if (result.code === 0) await options.reattach?.();
-      notifyResult(ctx, "rerail-stop", result);
+      await stopFromCommand(options, ctx);
       return;
     }
     if (choice !== REMOVE) return;

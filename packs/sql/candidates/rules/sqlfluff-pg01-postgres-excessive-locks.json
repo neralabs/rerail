@@ -1,0 +1,234 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-pg01-postgres-excessive-locks",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's PG01 (postgres.excessive_locks), force_enable=true. For PostgreSQL only, and it starts off: Rerail reads every .sql file in one dialect, and advice to use CONCURRENTLY is wrong for MySQL and SQLite files, where that syntax does not exist. Turn it on for a repository whose SQL is PostgreSQL. CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each statement is anchored at its start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "create-index-without-concurrently",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "create_index",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_unique"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "PG01",
+        "message": "CREATE INDEX should use CONCURRENTLY to avoid locking the table during the build.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG01",
+              "all",
+              "postgres",
+              "postgres.excessive_locks"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "drop-index-without-concurrently",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "drop_index",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "PG01",
+        "message": "DROP statement should use CONCURRENTLY to avoid locking the table.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG01",
+              "all",
+              "postgres",
+              "postgres.excessive_locks"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reindex-without-concurrently",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "reindex_statement",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "PG01",
+        "message": "REINDEX statement should use CONCURRENTLY to avoid locking the table.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG01",
+              "all",
+              "postgres",
+              "postgres.excessive_locks"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "refresh-without-concurrently",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "refresh_statement",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "keyword_concurrently"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_body"
+                      },
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "kind": "ERROR"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "PG01",
+        "message": "REFRESH statement should use CONCURRENTLY to avoid locking the table.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "PG01",
+              "all",
+              "postgres",
+              "postgres.excessive_locks"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

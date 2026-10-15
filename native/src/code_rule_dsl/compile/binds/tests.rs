@@ -247,7 +247,7 @@ fn binds_checks_its_filters() {
     for (rule, expected) in [
         (
             json!({ "kind": "identifier", "binds": { "form": "assign" } }),
-            "/clauses/0/forbid/ast/rule/binds/form: `\"assign\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static",
+            "/clauses/0/forbid/ast/rule/binds/form: `\"assign\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static, relation, cte, target",
         ),
         (
             json!({ "kind": "identifier", "binds": { "scope": [] } }),
@@ -480,7 +480,7 @@ fn typescript_binding_filters_read_forms_scopes_and_usedness() {
             "python",
             json!({ "rule": { "kind": "identifier", "resolves": { "binding": { "form": "let" } } } })
         )),
-        "/clauses/0/forbid/ast/rule/resolves/binding/form: `\"let\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static"
+        "/clauses/0/forbid/ast/rule/resolves/binding/form: `\"let\"` is not a binding form; expected one of assignment, annotated, annotation, augmented, named, for, with, except, import, definition, parameter, global, match, typeParameter, typeAlias, implicit, deletion, field, method, accessor, static, relation, cte, target"
     );
 }
 

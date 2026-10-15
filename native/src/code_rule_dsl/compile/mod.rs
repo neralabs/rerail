@@ -276,6 +276,7 @@ pub(super) fn compile_document(
         return Err(invalid("/format must equal rerail.policy/v1"));
     }
     let id = required_str(document, "id", "/")?.to_owned();
+    let ignored_by: std::sync::Arc<str> = std::sync::Arc::from(id.as_str());
     let rule_mode = document
         .get("mode")
         .and_then(Value::as_str)
@@ -302,7 +303,7 @@ pub(super) fn compile_document(
         let id = if is_define(clause) {
             required_str(clause, "id", &path)?.to_owned()
         } else {
-            let value = compile_clause(
+            let mut value = compile_clause(
                 clause,
                 &path,
                 capabilities,
@@ -311,6 +312,8 @@ pub(super) fn compile_document(
                 &mut requires_llm,
             )?;
             let id = value.id.clone();
+            // Every reported clause answers to a `rerail-ignore` naming its code rule.
+            value.violation.ignored_by = Some(std::sync::Arc::clone(&ignored_by));
             compiled.push(value);
             id
         };
@@ -1272,6 +1275,8 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
             .get("suppress")
             .map(|suppress| super::suppress::parse(suppress, &format!("{path}/suppress")))
             .transpose()?,
+        ignored_by: None,
+        ignore_marks: false,
     })
 }
 
@@ -1444,7 +1449,7 @@ mod tests {
     fn a_planned_language_or_capability_is_language_not_supported() {
         let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
         let forbid = |language: &str| json!({ "id": "c", "forbid": { "ast": { "language": language, "rule": { "kind": "identifier" } } }, "violation": violation() });
-        for language in ["vue", "sql", "rust"] {
+        for language in crate::code_rule_dsl::language::PLANNED_LANGUAGES {
             assert_eq!(
                 rejection(compile_document_with(
                     clause_document(forbid(language)),
@@ -1457,12 +1462,12 @@ mod tests {
         }
         let mut defined = clause_document(forbid("python"));
         defined["clauses"] = json!([
-            { "id": "d", "define": { "language": "vue", "utils": { "u": { "kind": "identifier" } } } },
+            { "id": "d", "define": { "language": "exemplar", "utils": { "u": { "kind": "identifier" } } } },
             forbid("python")
         ]);
         assert_eq!(
             rejection(compile_document_with(defined, &capabilities)),
-            "language-not-supported: /clauses/0/define/language: `vue` is not supported yet"
+            "language-not-supported: /clauses/0/define/language: `exemplar` is not supported yet"
         );
         assert_eq!(
             super::unsupported_semantic(

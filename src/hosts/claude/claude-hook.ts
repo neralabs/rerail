@@ -13,7 +13,7 @@ export async function runClaudeHook(input: HookInput, options: HookOptions = {})
   if (!supportsClaudeHook(input)) return {};
   const workspace = claudeWorkspace(input.cwd);
   if (!await hookRerailStarted("claude-code", workspace, options.databasePath)) return {};
-  return runHostHook("claude-code", workspace, requiredText(input, "session_id"), options, (runtime, storageRoot) =>
+  return runHostHook("claude-code", workspace, requiredText(input, "session_id"), requiredText(input, "hook_event_name") === "SessionStart", options, (runtime, storageRoot) =>
     handleClaudeEvent(input, runtime, storageRoot));
 }
 

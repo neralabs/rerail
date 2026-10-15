@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-rf01-references-from",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's RF01 (references.from) with default settings: flag the table qualifier of a column reference that names no table or alias in the FROM clause of its query or of an enclosing query.",
+  "scope": { "include": ["**/*.sql"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "qualifier-not-in-from",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "kind": "object_reference",
+              "stopBy": "neighbor",
+              "inside": { "kind": "field", "stopBy": "neighbor" }
+            },
+            "not": {
+              "any": [
+                { "precedes": { "kind": "identifier", "stopBy": "end" } },
+                {
+                  "inside": {
+                    "kind": "select_expression",
+                    "stopBy": "end",
+                    "follows": { "kind": "keyword_into", "stopBy": "neighbor" }
+                  }
+                }
+              ]
+            },
+            "resolves": { "unresolved": true }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "RF01",
+        "message": "Reference refers to table/view not found in the FROM clause or found in ancestor statement.", "suppress": { "sqlfluff": { "rules": ["RF01", "L026", "all", "core", "references", "references.from"] } }
+      }
+    }
+  ]
+}

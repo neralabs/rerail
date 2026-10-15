@@ -58,19 +58,21 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
 type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
 /**
- * Compiled executables shared by every checkout of the process: one per rule id and capabilities, for the source last
- * compiled. Editing a rule replaces its entry, so a long-running daemon keeps no earlier versions.
+ * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
+ * repository's option values), for the source last compiled. Editing a rule replaces its entries, so a long-running
+ * daemon keeps no earlier versions; two repositories configuring one rule differently each keep theirs.
  */
 export class CompiledRuleCache {
   readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: CompileOutcome }>();
 
-  /** Rules (per capabilities) with a compiled version held. */
+  /** Rules (per capabilities and config) with a compiled version held. */
   get size(): number {
     return this.#outcomes.size;
   }
 
-  compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string): CompileOutcome {
-    const key = `${capabilities.digest}\0${policyId}`;
+  /** `config` is the stable JSON of the rule's option values (`null` for none): it names the variant. */
+  compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string, config: string): CompileOutcome {
+    const key = `${capabilities.digest}\0${policyId}\0${config}`;
     const cached = this.#outcomes.get(key);
     let outcome = cached?.sourceDigest === sourceDigest ? cached.outcome : undefined;
     if (outcome === undefined) {
@@ -94,7 +96,7 @@ const compiledRules = new CompiledRuleCache();
 export interface CompiledCodeRuleDslEntry {
   readonly id: string;
   readonly executable: NativeCompiledCodeRuleDsl;
-  /** Where the code rule runs in the checkout, and at which mode; passed to the native workspace. */
+  /** Where the code rule runs in the checkout, at which mode, and where suppression comments are ignored; passed to the native workspace. */
   readonly placement: CodeRulePlacement;
 }
 
@@ -129,7 +131,7 @@ export interface CodeRuleDslCatalog {
 export interface LoadedCheckoutRules {
   /** The checkout's configuration; undefined when it may run nothing (unrecorded). */
   readonly ruleSet: CheckoutRuleSet | undefined;
-  /** Every folder where presence, `on` or `mode` can change: attachment and setting folders, and `""`. */
+  /** Every folder where presence, `on`, `mode` or `suppressions` can change: attachment and setting folders, and `""`. */
   readonly folders: readonly string[];
   /** Library rules this checkout adds that fail validation. */
   readonly quarantined: readonly QuarantinedRule[];
@@ -160,15 +162,19 @@ function placedRules(ruleSet: CheckoutRuleSet, folders: readonly string[]): Map<
         entry = { rule, decisions: [] };
         placed.set(id, entry);
       }
-      entry.decisions.push({ folder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode });
+      entry.decisions.push({
+        folder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
+        suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
+      });
     }
   }
   return placed;
 }
 
 /**
- * The native placement: per folder the mode (or null, off; a folder the rule is absent from is off), keeping only
- * folders that differ from the deepest kept folder containing them. A rule off everywhere has no entries.
+ * The native placement: per folder the mode (or null, off; a folder the rule is absent from is off) and whether
+ * suppression comments are ignored there, keeping only folders that differ from the deepest kept folder containing
+ * them. Where the rule is off, suppressions are left as the parent has them. A rule off everywhere has no entries.
  */
 function placementOf(decisions: readonly RulePlacementDecision[], folders: readonly string[]): CodeRulePlacement {
   const kept: CodeRulePlacementEntry[] = [];
@@ -179,7 +185,10 @@ function placementOf(decisions: readonly RulePlacementDecision[], folders: reado
     for (const entry of kept) {
       if (folderContains(entry.folder, folder) && (parent === undefined || entry.folder.length > parent.folder.length)) parent = entry;
     }
-    if (parent === undefined ? mode !== null : parent.mode !== mode) kept.push({ folder, mode });
+    const ignore = mode === null ? parent?.suppressions === "ignore" : decision?.suppressions === "ignore";
+    const entry: CodeRulePlacementEntry = ignore ? { folder, mode, suppressions: "ignore" } : { folder, mode };
+    const differs = parent === undefined ? mode !== null : parent.mode !== mode || parent.suppressions !== entry.suppressions;
+    if (differs) kept.push(entry);
   }
   return kept;
 }
@@ -241,10 +250,14 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       const { rule, decisions } = placed.get(id)!;
       const placement = placementOf(decisions, loaded.folders);
       if (placement.length === 0) continue;
+      if (rule.configError !== null) {
+        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
+        continue;
+      }
       const sourceText = stableJsonText(rule.document.rule);
       if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
       const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest);
+      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
       if (!outcome.ok) {
         // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
         const unsupported = languageNotSupportedOf(outcome.reason);

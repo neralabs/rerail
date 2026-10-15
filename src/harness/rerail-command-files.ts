@@ -72,21 +72,39 @@ function startBody(cli: string, setupLauncher: string): CommandBody {
   };
 }
 
+/**
+ * How each agent's command names its session to the launcher, as `rerail session` and `rerail stop` take it. Claude Code
+ * substitutes `${CLAUDE_SESSION_ID}` in command files (the quotes keep it one shell word); the launcher reads Codex's
+ * thread from `CODEX_THREAD_ID`; Cursor names only itself.
+ */
+const SESSION_ARGUMENTS: Record<CommandFileAgent, string> = {
+  "claude-code": " claude-code '${CLAUDE_SESSION_ID}'",
+  cursor: " cursor",
+  codex: "",
+};
+
+const CODEX_IDENTITY = "\n\nThe launcher reads this session's identity from `CODEX_THREAD_ID`; never pick another or the newest session.";
+
 /** `/rerail`: the L1 summary for this session (or this repo, where the agent cannot name its session). */
 function overviewBody(agent: CommandFileAgent, cli: string): CommandBody {
-  const sessionArguments: Record<CommandFileAgent, string> = {
-    // Claude Code substitutes `${CLAUDE_SESSION_ID}` in command files; the quotes keep it one shell word.
-    "claude-code": " claude-code '${CLAUDE_SESSION_ID}'",
-    cursor: " cursor",
-    codex: "",
-  };
-  const command = `${cli} session${sessionArguments[agent]}`;
-  const identity = agent === "codex"
-    ? "\n\nThe launcher reads this session's identity from `CODEX_THREAD_ID`; never pick another or the newest session."
-    : "";
+  const command = `${cli} session${SESSION_ARGUMENTS[agent]}`;
   return {
-    text: `${runOne(command, "Show what Rerail is doing here, and every Rerail command.")}${identity}`,
+    text: `${runOne(command, "Show what Rerail is doing here, and every Rerail command.")}${agent === "codex" ? CODEX_IDENTITY : ""}`,
     allowed: [`${cli} session claude-code *`],
+  };
+}
+
+/**
+ * `/rerail-stop`: the coding agent goes along so the reply uses its command sigil, with its session where it can name
+ * one, so the reply names the rules that steered it (design N9). Codex names its host and the launcher reads the thread
+ * from `CODEX_THREAD_ID`; Cursor cannot name its session, and its sigil is the default, so it stops without either.
+ */
+function stopBody(agent: CommandFileAgent, cli: string): CommandBody {
+  const command = `${cli} stop${agent === "cursor" ? "" : agent === "codex" ? " codex" : SESSION_ARGUMENTS[agent]}`;
+  const lead = "Stop Rerail in this checkout and the worktrees inside it. Rules and history are kept.";
+  return {
+    text: `${runOne(command, lead)}${agent === "codex" ? CODEX_IDENTITY : ""}`,
+    allowed: [`${cli} stop claude-code *`],
   };
 }
 
@@ -138,10 +156,7 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
     case "rerail-start":
       return startBody(cli, context.setupLauncher);
     case "rerail-stop":
-      return {
-        text: runOne(`${cli} stop`, "Stop Rerail in this checkout and the worktrees inside it. Rules and history are kept."),
-        allowed: [`${cli} stop`],
-      };
+      return stopBody(agent, cli);
     case "rerail-update":
       return {
         text: runOne(`${cli} update`, "Update Rerail to the newest version.") + "\n\nAfterwards, tell the person that new sessions use the new version.",

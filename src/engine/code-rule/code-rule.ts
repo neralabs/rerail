@@ -3,6 +3,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { steerBlock } from "./rerail-steer.js";
+import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -922,7 +923,9 @@ export interface CodeRuleDslResolves {
 
 /**
  * How a name is bound: the construct its binding site is. `field`, `method` and `accessor` are TypeScript's private
- * names (`#a`), bindings of their class body that `binds` matches at each declaration's name.
+ * names (`#a`), bindings of their class body that `binds` matches at each declaration's name. `relation` (a SQL
+ * `FROM`/`JOIN` relation: its alias, else its table name's last part), `cte` and `target` (an `UPDATE`, `DELETE` or
+ * `INSERT` table) are SQL's.
  */
 export type CodeRuleDslBindingForm =
   | "assignment"
@@ -944,13 +947,17 @@ export type CodeRuleDslBindingForm =
   | "deletion"
   | "field"
   | "method"
-  | "accessor";
+  | "accessor"
+  | "relation"
+  | "cte"
+  | "target";
 /**
  * The kind of scope a binding is held in. Python: `module`, `class`, `function`, `lambda`, `comprehension`,
  * `typeParameters`. TypeScript, as eslint-scope names them: `global` (a script's top level), `module` (a module's or
  * CommonJS file's top level), `function` (arrows and static blocks too), `class` (a class expression's own name),
  * `block` (blocks, loops, `switch`, `catch`, enum bodies), `namespace`, `typeParameters` (type declarations and
- * signatures) and `functionName` (a named function expression's own name).
+ * signatures) and `functionName` (a named function expression's own name). SQL: `query` (a query block, or the block
+ * around a `WITH` statement that binds its CTE names).
  */
 export type CodeRuleDslScopeKind =
   | "module"
@@ -962,7 +969,8 @@ export type CodeRuleDslScopeKind =
   | "global"
   | "block"
   | "namespace"
-  | "functionName";
+  | "functionName"
+  | "query";
 
 /**
  * Filters over a binding; each listed one must hold. `used`, `referenced`, `nestedUse` and `exported` are three-valued:
@@ -1308,16 +1316,24 @@ function suggestedFix(fix: CodeRuleViolationFix): string {
   return `  Suggested fix: replace ${range} with:\n${indented}`;
 }
 
-/** One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. */
-export function renderSteer(violations: readonly CodeRuleViolation[]): string {
-  const byRule = new Map<string, string[]>();
+/** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
+export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
+
+/**
+ * One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. The block
+ * names the rule's pack (or library) and its mode, from the first violation of that rule.
+ */
+export function renderSteer(violations: readonly CodeRuleViolation[], sourceOf: SteerSourceOf = () => undefined): string {
+  const byRule = new Map<string, { mode: RuleMode; lines: string[] }>();
   for (const violation of violations) {
     const line = `${violation.message}${violationLocation(violation)}`;
-    const lines = byRule.get(violation.ruleId) ?? [];
-    lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
-    byRule.set(violation.ruleId, lines);
+    const entry = byRule.get(violation.ruleId) ?? { mode: violation.mode, lines: [] };
+    entry.lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
+    byRule.set(violation.ruleId, entry);
   }
-  return [...byRule].map(([ruleId, lines]) => steerBlock(ruleId, lines.join("\n"))).join("\n\n");
+  return [...byRule]
+    .map(([ruleId, { mode, lines }]) => steerBlock(ruleId, lines.join("\n"), { mode, origin: steerOrigin(ruleId, sourceOf(ruleId)) }))
+    .join("\n\n");
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1328,9 +1344,10 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
 /** The rendered steer text with its contributing rule ids; the text is byte-identical to `renderSteer`. */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
+  sourceOf?: SteerSourceOf,
 ): { content: string; ruleIds: string[] } {
   return {
-    content: renderSteer(violations),
+    content: renderSteer(violations, sourceOf),
     ruleIds: steerRuleIds(violations),
   };
 }

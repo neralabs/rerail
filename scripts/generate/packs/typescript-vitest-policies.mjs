@@ -16,7 +16,13 @@
 //   plain identifier parameter, or the first property of a function's first object-pattern parameter.
 // Any other binding (`node:test`, `bun:test`, AVA, a local, a default or namespace import) is not Vitest's. Each port
 // asks which functions it reports: `no-focused-tests` only `describe`, `it` and `test`, for instance.
-import { writeFileSync } from "node:fs";
+//
+// Each violation names its rule under suppress.eslint and, as oxlint 1.88.0's `vitest` plugin implements all three
+// (OXLINT_VITEST_RULES), under suppress.oxlint. suppress.biome belongs to scripts/generate/packs/biome-suppression.mjs:
+// this script carries each violation's suppress.biome over from the committed document, and biome-suppression.mjs, run
+// after it, updates it. The documents are candidates, so each keeps its committed revision, as biome-suppression.mjs
+// leaves candidates' revisions alone; a document with no committed version starts at revision 1.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -483,7 +489,17 @@ function withDefine(build, modifiers = []) {
   return [{ id: "vitest-functions", define: { language: "typescript", utils } }, ...clauses];
 }
 
-const violation = (rule, message, anchor = "witness.span") => ({ anchor, code: `vitest/${rule}`, message, suppress: { eslint: { rules: [`vitest/${rule}`] } } });
+// The rules this script ports that oxlint 1.88.0's `vitest` plugin implements (`oxlint --rules --format json`, scope
+// `vitest`; oxc tag oxlint_v1.88.0, `rules::vitest::*` in crates/oxc_linter/src/generated/rules_enum.rs). Oxlint names
+// them without the plugin in its suppression comments: `vitest/no-focused-tests` is `no-focused-tests`.
+const OXLINT_VITEST_RULES = new Set(["expect-expect", "no-disabled-tests", "no-focused-tests"]);
+
+const violation = (rule, message, anchor = "witness.span") => ({
+  anchor,
+  code: `vitest/${rule}`,
+  message,
+  suppress: { eslint: { rules: [`vitest/${rule}`] }, ...(OXLINT_VITEST_RULES.has(rule) ? { oxlint: { rules: [rule] } } : {}) },
+});
 const ast = rule => ({ ast: { language: "typescript", rule } });
 
 /**
@@ -654,6 +670,10 @@ const DOCUMENTS = {
 
 // A rule's id is its document's file name (docs/pack-format.md, the pack contract's check 1).
 for (const [id, { mode, description, clauses }] of Object.entries(DOCUMENTS)) {
-  const document = { format: "rerail.policy/v1", id, revision: 2, mode, description, scope: SCOPE, clauses };
-  writeFileSync(join(RULES, `${id}.json`), `${JSON.stringify(document, null, 2)}\n`);
+  const path = join(RULES, `${id}.json`);
+  const committed = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
+  const biome = new Map((committed?.clauses ?? []).filter(clause => clause.violation?.suppress?.biome !== undefined).map(clause => [clause.id, clause.violation.suppress.biome]));
+  for (const clause of clauses) if (clause.violation?.suppress !== undefined && biome.has(clause.id)) clause.violation.suppress.biome = biome.get(clause.id);
+  const document = { format: "rerail.policy/v1", id, revision: committed?.revision ?? 1, mode, description, scope: SCOPE, clauses };
+  writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`);
 }

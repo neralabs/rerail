@@ -120,7 +120,9 @@ export interface NativeCodeRuleDslWorkspace {
   enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
-   * at the entry's mode (`null` is off there); omitted, the code rule runs wherever its scope matches at its own mode.
+   * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
+   * entry's `suppressions` is `"ignore"` (omitted is `"honour"`); omitted, the code rule runs wherever its scope matches at
+   * its own mode and honours suppression comments.
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   acceptsPath(path: string): boolean;

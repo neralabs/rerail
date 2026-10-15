@@ -1,0 +1,7447 @@
+{
+ "tool": "eslint-plugin-vue",
+ "version": "10.11.1",
+ "source": {
+  "kind": "fixtures",
+  "origin": "https://github.com/vuejs/eslint-plugin-vue@ec9c53a6fbed637d7b0fbcd6893b0206ae32839f",
+  "rules": [
+   "vue/require-v-for-key",
+   "vue/no-use-v-if-with-v-for",
+   "vue/no-duplicate-attributes",
+   "vue/no-v-html",
+   "vue/no-child-content",
+   "vue/no-deprecated-v-on-native-modifier",
+   "vue/valid-v-for",
+   "vue/no-v-text-v-html-on-component",
+   "vue/v-on-event-hyphenation",
+   "vue/attribute-hyphenation",
+   "vue/no-dupe-v-else-if",
+   "vue/no-unused-vars",
+   "vue/no-template-shadow",
+   "vue/no-unused-refs",
+   "vue/no-ref-as-operand",
+   "vue/no-mutating-props",
+   "vue/no-dupe-keys",
+   "vue/return-in-computed-property",
+   "vue/no-async-in-computed-properties",
+   "vue/no-side-effects-in-computed-properties",
+   "vue/no-export-in-script-setup",
+   "vue/no-setup-props-reactivity-loss",
+   "vue/no-watch-after-await",
+   "vue/require-valid-default-prop"
+  ],
+  "files": [
+   "require-v-for-key/valid-001.vue",
+   "require-v-for-key/valid-002.vue",
+   "require-v-for-key/valid-003.vue",
+   "require-v-for-key/valid-004.vue",
+   "require-v-for-key/valid-005.vue",
+   "require-v-for-key/valid-006.vue",
+   "require-v-for-key/valid-007.vue",
+   "require-v-for-key/valid-008.vue",
+   "require-v-for-key/valid-009.vue",
+   "require-v-for-key/valid-010.vue",
+   "require-v-for-key/valid-011.vue",
+   "require-v-for-key/valid-012.vue",
+   "require-v-for-key/valid-013.vue",
+   "require-v-for-key/valid-014.vue",
+   "require-v-for-key/valid-015.vue",
+   "require-v-for-key/valid-016.vue",
+   "require-v-for-key/invalid-000.vue",
+   "require-v-for-key/invalid-001.vue",
+   "require-v-for-key/invalid-002.vue",
+   "require-v-for-key/invalid-003.vue",
+   "no-use-v-if-with-v-for/valid-004.vue",
+   "no-use-v-if-with-v-for/valid-005.vue",
+   "no-use-v-if-with-v-for/valid-006.vue",
+   "no-use-v-if-with-v-for/valid-010.vue",
+   "no-use-v-if-with-v-for/valid-011.vue",
+   "no-use-v-if-with-v-for/valid-012.vue",
+   "no-use-v-if-with-v-for/invalid-000.vue",
+   "no-use-v-if-with-v-for/invalid-001.vue",
+   "no-use-v-if-with-v-for/invalid-002.vue",
+   "no-use-v-if-with-v-for/invalid-003.vue",
+   "no-use-v-if-with-v-for/invalid-004.vue",
+   "no-use-v-if-with-v-for/invalid-005.vue",
+   "no-use-v-if-with-v-for/invalid-006.vue",
+   "no-use-v-if-with-v-for/invalid-007.vue",
+   "no-use-v-if-with-v-for/invalid-008.vue",
+   "no-use-v-if-with-v-for/invalid-009.vue",
+   "no-duplicate-attributes/valid-001.vue",
+   "no-duplicate-attributes/valid-002.vue",
+   "no-duplicate-attributes/valid-003.vue",
+   "no-duplicate-attributes/valid-004.vue",
+   "no-duplicate-attributes/valid-005.vue",
+   "no-duplicate-attributes/valid-006.vue",
+   "no-duplicate-attributes/valid-007.vue",
+   "no-duplicate-attributes/valid-008.vue",
+   "no-duplicate-attributes/invalid-000.vue",
+   "no-duplicate-attributes/invalid-001.vue",
+   "no-v-html/valid-001.vue",
+   "no-v-html/valid-002.vue",
+   "no-v-html/valid-003.vue",
+   "no-v-html/invalid-000.vue",
+   "no-v-html/invalid-001.vue",
+   "no-v-html/invalid-002.vue",
+   "no-child-content/valid-000.vue",
+   "no-child-content/valid-001.vue",
+   "no-child-content/valid-002.vue",
+   "no-child-content/valid-003.vue",
+   "no-child-content/valid-004.vue",
+   "no-child-content/valid-005.vue",
+   "no-child-content/valid-006.vue",
+   "no-child-content/valid-008.vue",
+   "no-child-content/invalid-000.vue",
+   "no-child-content/invalid-001.vue",
+   "no-child-content/invalid-002.vue",
+   "no-child-content/invalid-003.vue",
+   "no-child-content/invalid-004.vue",
+   "no-child-content/invalid-005.vue",
+   "no-deprecated-v-on-native-modifier/valid-000.vue",
+   "no-deprecated-v-on-native-modifier/valid-001.vue",
+   "no-deprecated-v-on-native-modifier/valid-002.vue",
+   "no-deprecated-v-on-native-modifier/valid-003.vue",
+   "no-deprecated-v-on-native-modifier/valid-004.vue",
+   "no-deprecated-v-on-native-modifier/invalid-000.vue",
+   "no-deprecated-v-on-native-modifier/invalid-001.vue",
+   "valid-v-for/valid-001.vue",
+   "valid-v-for/valid-002.vue",
+   "valid-v-for/valid-003.vue",
+   "valid-v-for/valid-004.vue",
+   "valid-v-for/valid-005.vue",
+   "valid-v-for/valid-006.vue",
+   "valid-v-for/valid-007.vue",
+   "valid-v-for/valid-008.vue",
+   "valid-v-for/valid-009.vue",
+   "valid-v-for/valid-010.vue",
+   "valid-v-for/valid-011.vue",
+   "valid-v-for/valid-012.vue",
+   "valid-v-for/valid-013.vue",
+   "valid-v-for/valid-014.vue",
+   "valid-v-for/valid-015.vue",
+   "valid-v-for/valid-016.vue",
+   "valid-v-for/valid-017.vue",
+   "valid-v-for/valid-018.vue",
+   "valid-v-for/valid-019.vue",
+   "valid-v-for/valid-020.vue",
+   "valid-v-for/valid-021.vue",
+   "valid-v-for/valid-022.vue",
+   "valid-v-for/valid-023.vue",
+   "valid-v-for/valid-024.vue",
+   "valid-v-for/valid-025.vue",
+   "valid-v-for/valid-026.vue",
+   "valid-v-for/valid-027.vue",
+   "valid-v-for/valid-028.vue",
+   "valid-v-for/valid-029.vue",
+   "valid-v-for/valid-030.vue",
+   "valid-v-for/valid-031.vue",
+   "valid-v-for/invalid-000.vue",
+   "valid-v-for/invalid-001.vue",
+   "valid-v-for/invalid-002.vue",
+   "valid-v-for/invalid-003.vue",
+   "valid-v-for/invalid-004.vue",
+   "valid-v-for/invalid-005.vue",
+   "valid-v-for/invalid-006.vue",
+   "valid-v-for/invalid-007.vue",
+   "valid-v-for/invalid-008.vue",
+   "valid-v-for/invalid-009.vue",
+   "valid-v-for/invalid-010.vue",
+   "valid-v-for/invalid-011.vue",
+   "valid-v-for/invalid-012.vue",
+   "valid-v-for/invalid-013.vue",
+   "valid-v-for/invalid-014.vue",
+   "valid-v-for/invalid-015.vue",
+   "valid-v-for/invalid-016.vue",
+   "valid-v-for/invalid-017.vue",
+   "valid-v-for/invalid-018.vue",
+   "valid-v-for/invalid-019.vue",
+   "valid-v-for/invalid-020.vue",
+   "valid-v-for/invalid-021.vue",
+   "valid-v-for/invalid-022.vue",
+   "no-v-text-v-html-on-component/valid-000.vue",
+   "no-v-text-v-html-on-component/valid-001.vue",
+   "no-v-text-v-html-on-component/valid-002.vue",
+   "no-v-text-v-html-on-component/valid-005.vue",
+   "no-v-text-v-html-on-component/invalid-000.vue",
+   "no-v-text-v-html-on-component/invalid-001.vue",
+   "no-v-text-v-html-on-component/invalid-002.vue",
+   "no-v-text-v-html-on-component/invalid-003.vue",
+   "no-v-text-v-html-on-component/invalid-004.vue",
+   "no-v-text-v-html-on-component/invalid-005.vue",
+   "no-v-text-v-html-on-component/invalid-007.vue",
+   "v-on-event-hyphenation/valid-000.vue",
+   "v-on-event-hyphenation/valid-001.vue",
+   "v-on-event-hyphenation/valid-002.vue",
+   "v-on-event-hyphenation/valid-003.vue",
+   "v-on-event-hyphenation/invalid-000.vue",
+   "v-on-event-hyphenation/invalid-001.vue",
+   "v-on-event-hyphenation/invalid-003.vue",
+   "v-on-event-hyphenation/invalid-005.vue",
+   "attribute-hyphenation/valid-001.vue",
+   "attribute-hyphenation/valid-002.vue",
+   "attribute-hyphenation/valid-006.vue",
+   "attribute-hyphenation/valid-008.vue",
+   "attribute-hyphenation/valid-010.vue",
+   "attribute-hyphenation/valid-012.vue",
+   "attribute-hyphenation/invalid-001.vue",
+   "attribute-hyphenation/invalid-003.vue",
+   "attribute-hyphenation/invalid-005.vue",
+   "attribute-hyphenation/invalid-006.vue",
+   "attribute-hyphenation/invalid-011.vue",
+   "attribute-hyphenation/invalid-012.vue",
+   "attribute-hyphenation/invalid-016.vue",
+   "attribute-hyphenation/invalid-017.vue",
+   "attribute-hyphenation/invalid-018.vue",
+   "attribute-hyphenation/invalid-019.vue",
+   "attribute-hyphenation/invalid-020.vue",
+   "attribute-hyphenation/invalid-021.vue",
+   "attribute-hyphenation/invalid-023.vue",
+   "no-dupe-v-else-if/valid-000.vue",
+   "no-dupe-v-else-if/valid-001.vue",
+   "no-dupe-v-else-if/valid-002.vue",
+   "no-dupe-v-else-if/valid-003.vue",
+   "no-dupe-v-else-if/valid-004.vue",
+   "no-dupe-v-else-if/valid-005.vue",
+   "no-dupe-v-else-if/valid-006.vue",
+   "no-dupe-v-else-if/valid-007.vue",
+   "no-dupe-v-else-if/valid-008.vue",
+   "no-dupe-v-else-if/valid-009.vue",
+   "no-dupe-v-else-if/valid-010.vue",
+   "no-dupe-v-else-if/valid-011.vue",
+   "no-dupe-v-else-if/valid-012.vue",
+   "no-dupe-v-else-if/valid-013.vue",
+   "no-dupe-v-else-if/valid-014.vue",
+   "no-dupe-v-else-if/valid-015.vue",
+   "no-dupe-v-else-if/valid-016.vue",
+   "no-dupe-v-else-if/valid-017.vue",
+   "no-dupe-v-else-if/valid-018.vue",
+   "no-dupe-v-else-if/valid-019.vue",
+   "no-dupe-v-else-if/valid-020.vue",
+   "no-dupe-v-else-if/valid-021.vue",
+   "no-dupe-v-else-if/valid-022.vue",
+   "no-dupe-v-else-if/valid-023.vue",
+   "no-dupe-v-else-if/valid-024.vue",
+   "no-dupe-v-else-if/valid-025.vue",
+   "no-dupe-v-else-if/valid-026.vue",
+   "no-dupe-v-else-if/valid-027.vue",
+   "no-dupe-v-else-if/valid-028.vue",
+   "no-dupe-v-else-if/valid-029.vue",
+   "no-dupe-v-else-if/valid-030.vue",
+   "no-dupe-v-else-if/valid-031.vue",
+   "no-dupe-v-else-if/valid-032.vue",
+   "no-dupe-v-else-if/invalid-000.vue",
+   "no-dupe-v-else-if/invalid-001.vue",
+   "no-dupe-v-else-if/invalid-002.vue",
+   "no-dupe-v-else-if/invalid-003.vue",
+   "no-dupe-v-else-if/invalid-004.vue",
+   "no-dupe-v-else-if/invalid-005.vue",
+   "no-dupe-v-else-if/invalid-006.vue",
+   "no-dupe-v-else-if/invalid-007.vue",
+   "no-dupe-v-else-if/invalid-008.vue",
+   "no-dupe-v-else-if/invalid-009.vue",
+   "no-dupe-v-else-if/invalid-010.vue",
+   "no-dupe-v-else-if/invalid-011.vue",
+   "no-dupe-v-else-if/invalid-012.vue",
+   "no-dupe-v-else-if/invalid-013.vue",
+   "no-dupe-v-else-if/invalid-014.vue",
+   "no-dupe-v-else-if/invalid-015.vue",
+   "no-dupe-v-else-if/invalid-016.vue",
+   "no-dupe-v-else-if/invalid-017.vue",
+   "no-dupe-v-else-if/invalid-018.vue",
+   "no-dupe-v-else-if/invalid-019.vue",
+   "no-dupe-v-else-if/invalid-020.vue",
+   "no-dupe-v-else-if/invalid-021.vue",
+   "no-dupe-v-else-if/invalid-022.vue",
+   "no-dupe-v-else-if/invalid-023.vue",
+   "no-dupe-v-else-if/invalid-024.vue",
+   "no-dupe-v-else-if/invalid-025.vue",
+   "no-dupe-v-else-if/invalid-026.vue",
+   "no-dupe-v-else-if/invalid-027.vue",
+   "no-dupe-v-else-if/invalid-028.vue",
+   "no-dupe-v-else-if/invalid-029.vue",
+   "no-dupe-v-else-if/invalid-030.vue",
+   "no-dupe-v-else-if/invalid-031.vue",
+   "no-dupe-v-else-if/invalid-032.vue",
+   "no-dupe-v-else-if/invalid-033.vue",
+   "no-dupe-v-else-if/invalid-034.vue",
+   "no-dupe-v-else-if/invalid-035.vue",
+   "no-dupe-v-else-if/invalid-036.vue",
+   "no-dupe-v-else-if/invalid-037.vue",
+   "no-dupe-v-else-if/invalid-038.vue",
+   "no-dupe-v-else-if/invalid-039.vue",
+   "no-dupe-v-else-if/invalid-040.vue",
+   "no-dupe-v-else-if/invalid-041.vue",
+   "no-dupe-v-else-if/invalid-042.vue",
+   "no-dupe-v-else-if/invalid-043.vue",
+   "no-dupe-v-else-if/invalid-044.vue",
+   "no-dupe-v-else-if/invalid-045.vue",
+   "no-dupe-v-else-if/invalid-046.vue",
+   "no-dupe-v-else-if/invalid-047.vue",
+   "no-dupe-v-else-if/invalid-048.vue",
+   "no-dupe-v-else-if/invalid-049.vue",
+   "no-dupe-v-else-if/invalid-050.vue",
+   "no-dupe-v-else-if/invalid-051.vue",
+   "no-dupe-v-else-if/invalid-052.vue",
+   "no-dupe-v-else-if/invalid-053.vue",
+   "no-dupe-v-else-if/invalid-054.vue",
+   "no-dupe-v-else-if/invalid-055.vue",
+   "no-dupe-v-else-if/invalid-056.vue",
+   "no-dupe-v-else-if/invalid-057.vue",
+   "no-dupe-v-else-if/invalid-058.vue",
+   "no-dupe-v-else-if/invalid-059.vue",
+   "no-dupe-v-else-if/invalid-060.vue",
+   "no-dupe-v-else-if/invalid-061.vue",
+   "no-dupe-v-else-if/invalid-062.vue",
+   "no-dupe-v-else-if/invalid-063.vue",
+   "no-unused-vars/valid-000.vue",
+   "no-unused-vars/valid-001.vue",
+   "no-unused-vars/valid-002.vue",
+   "no-unused-vars/valid-003.vue",
+   "no-unused-vars/valid-004.vue",
+   "no-unused-vars/valid-005.vue",
+   "no-unused-vars/valid-006.vue",
+   "no-unused-vars/valid-007.vue",
+   "no-unused-vars/valid-008.vue",
+   "no-unused-vars/valid-009.vue",
+   "no-unused-vars/valid-013.vue",
+   "no-unused-vars/valid-014.vue",
+   "no-unused-vars/valid-015.vue",
+   "no-unused-vars/valid-016.vue",
+   "no-unused-vars/valid-017.vue",
+   "no-unused-vars/valid-018.vue",
+   "no-unused-vars/valid-019.vue",
+   "no-unused-vars/valid-020.vue",
+   "no-unused-vars/invalid-000.vue",
+   "no-unused-vars/invalid-001.vue",
+   "no-unused-vars/invalid-002.vue",
+   "no-unused-vars/invalid-003.vue",
+   "no-unused-vars/invalid-004.vue",
+   "no-unused-vars/invalid-005.vue",
+   "no-unused-vars/invalid-006.vue",
+   "no-unused-vars/invalid-007.vue",
+   "no-unused-vars/invalid-008.vue",
+   "no-unused-vars/invalid-009.vue",
+   "no-unused-vars/invalid-014.vue",
+   "no-unused-vars/invalid-016.vue",
+   "no-unused-vars/invalid-017.vue",
+   "no-unused-vars/invalid-018.vue",
+   "no-unused-vars/invalid-019.vue",
+   "no-unused-vars/invalid-020.vue",
+   "no-unused-vars/invalid-021.vue",
+   "no-unused-vars/invalid-022.vue",
+   "no-unused-vars/invalid-023.vue",
+   "no-unused-vars/invalid-024.vue",
+   "no-template-shadow/valid-001.vue",
+   "no-template-shadow/valid-002.vue",
+   "no-template-shadow/valid-003.vue",
+   "no-template-shadow/valid-004.vue",
+   "no-template-shadow/valid-005.vue",
+   "no-template-shadow/valid-006.vue",
+   "no-template-shadow/valid-007.vue",
+   "no-template-shadow/valid-008.vue",
+   "no-template-shadow/valid-009.vue",
+   "no-template-shadow/valid-010.vue",
+   "no-template-shadow/valid-011.vue",
+   "no-template-shadow/valid-012.vue",
+   "no-template-shadow/invalid-000.vue",
+   "no-template-shadow/invalid-001.vue",
+   "no-template-shadow/invalid-002.vue",
+   "no-template-shadow/invalid-003.vue",
+   "no-template-shadow/invalid-004.vue",
+   "no-template-shadow/invalid-005.vue",
+   "no-template-shadow/invalid-006.vue",
+   "no-template-shadow/invalid-007.vue",
+   "no-template-shadow/invalid-008.vue",
+   "no-template-shadow/invalid-009.vue",
+   "no-template-shadow/invalid-010.vue",
+   "no-template-shadow/invalid-011.vue",
+   "no-unused-refs/valid-000.vue",
+   "no-unused-refs/valid-001.vue",
+   "no-unused-refs/valid-002.vue",
+   "no-unused-refs/valid-003.vue",
+   "no-unused-refs/valid-004.vue",
+   "no-unused-refs/valid-005.vue",
+   "no-unused-refs/valid-006.vue",
+   "no-unused-refs/valid-007.vue",
+   "no-unused-refs/valid-008.vue",
+   "no-unused-refs/valid-009.vue",
+   "no-unused-refs/valid-010.vue",
+   "no-unused-refs/valid-011.vue",
+   "no-unused-refs/valid-012.vue",
+   "no-unused-refs/valid-013.vue",
+   "no-unused-refs/valid-014.vue",
+   "no-unused-refs/valid-015.vue",
+   "no-unused-refs/valid-016.vue",
+   "no-unused-refs/valid-017.vue",
+   "no-unused-refs/valid-018.vue",
+   "no-unused-refs/valid-019.vue",
+   "no-unused-refs/valid-020.vue",
+   "no-unused-refs/invalid-000.vue",
+   "no-unused-refs/invalid-001.vue",
+   "no-unused-refs/invalid-002.vue",
+   "no-unused-refs/invalid-003.vue",
+   "no-unused-refs/invalid-004.vue",
+   "no-ref-as-operand/valid-000.vue",
+   "no-ref-as-operand/valid-001.vue",
+   "no-ref-as-operand/valid-002.vue",
+   "no-ref-as-operand/valid-003.vue",
+   "no-ref-as-operand/valid-004.vue",
+   "no-ref-as-operand/valid-005.vue",
+   "no-ref-as-operand/valid-006.vue",
+   "no-ref-as-operand/valid-007.vue",
+   "no-ref-as-operand/valid-008.vue",
+   "no-ref-as-operand/valid-009.vue",
+   "no-ref-as-operand/valid-010.vue",
+   "no-ref-as-operand/valid-011.vue",
+   "no-ref-as-operand/valid-012.vue",
+   "no-ref-as-operand/valid-013.vue",
+   "no-ref-as-operand/valid-014.vue",
+   "no-ref-as-operand/valid-015.vue",
+   "no-ref-as-operand/valid-016.vue",
+   "no-ref-as-operand/valid-017.vue",
+   "no-ref-as-operand/valid-018.vue",
+   "no-ref-as-operand/valid-019.vue",
+   "no-ref-as-operand/valid-020.vue",
+   "no-ref-as-operand/valid-021.vue",
+   "no-ref-as-operand/valid-022.vue",
+   "no-ref-as-operand/valid-023.vue",
+   "no-ref-as-operand/valid-024.vue",
+   "no-ref-as-operand/valid-025.vue",
+   "no-ref-as-operand/valid-026.vue",
+   "no-ref-as-operand/valid-027.vue",
+   "no-ref-as-operand/invalid-000.vue",
+   "no-ref-as-operand/invalid-001.vue",
+   "no-ref-as-operand/invalid-002.vue",
+   "no-ref-as-operand/invalid-003.vue",
+   "no-ref-as-operand/invalid-004.vue",
+   "no-ref-as-operand/invalid-005.vue",
+   "no-ref-as-operand/invalid-006.vue",
+   "no-ref-as-operand/invalid-007.vue",
+   "no-ref-as-operand/invalid-008.vue",
+   "no-ref-as-operand/invalid-009.vue",
+   "no-ref-as-operand/invalid-010.vue",
+   "no-ref-as-operand/invalid-011.vue",
+   "no-ref-as-operand/invalid-012.vue",
+   "no-ref-as-operand/invalid-013.vue",
+   "no-ref-as-operand/invalid-014.vue",
+   "no-ref-as-operand/invalid-015.vue",
+   "no-ref-as-operand/invalid-016.vue",
+   "no-ref-as-operand/invalid-017.vue",
+   "no-ref-as-operand/invalid-018.vue",
+   "no-ref-as-operand/invalid-019.vue",
+   "no-mutating-props/valid-000.vue",
+   "no-mutating-props/valid-001.vue",
+   "no-mutating-props/valid-002.vue",
+   "no-mutating-props/valid-003.vue",
+   "no-mutating-props/valid-004.vue",
+   "no-mutating-props/valid-005.vue",
+   "no-mutating-props/valid-006.vue",
+   "no-mutating-props/valid-008.vue",
+   "no-mutating-props/valid-009.vue",
+   "no-mutating-props/valid-010.vue",
+   "no-mutating-props/valid-011.vue",
+   "no-mutating-props/valid-012.vue",
+   "no-mutating-props/valid-013.vue",
+   "no-mutating-props/valid-014.vue",
+   "no-mutating-props/valid-015.vue",
+   "no-mutating-props/valid-016.vue",
+   "no-mutating-props/valid-017.vue",
+   "no-mutating-props/valid-018.vue",
+   "no-mutating-props/valid-021.vue",
+   "no-mutating-props/valid-022.vue",
+   "no-mutating-props/invalid-000.vue",
+   "no-mutating-props/invalid-001.vue",
+   "no-mutating-props/invalid-002.vue",
+   "no-mutating-props/invalid-003.vue",
+   "no-mutating-props/invalid-004.vue",
+   "no-mutating-props/invalid-005.vue",
+   "no-mutating-props/invalid-006.vue",
+   "no-mutating-props/invalid-007.vue",
+   "no-mutating-props/invalid-008.vue",
+   "no-mutating-props/invalid-010.vue",
+   "no-mutating-props/invalid-011.vue",
+   "no-mutating-props/invalid-012.vue",
+   "no-mutating-props/invalid-013.vue",
+   "no-mutating-props/invalid-014.vue",
+   "no-mutating-props/invalid-015.vue",
+   "no-mutating-props/invalid-016.vue",
+   "no-mutating-props/invalid-017.vue",
+   "no-mutating-props/invalid-018.vue",
+   "no-mutating-props/invalid-019.vue",
+   "no-mutating-props/invalid-020.vue",
+   "no-mutating-props/invalid-022.vue",
+   "no-mutating-props/invalid-024.vue",
+   "no-dupe-keys/valid-000.vue",
+   "no-dupe-keys/valid-001.vue",
+   "no-dupe-keys/valid-002.vue",
+   "no-dupe-keys/valid-003.vue",
+   "no-dupe-keys/valid-004.vue",
+   "no-dupe-keys/valid-005.vue",
+   "no-dupe-keys/valid-006.vue",
+   "no-dupe-keys/valid-007.vue",
+   "no-dupe-keys/valid-008.vue",
+   "no-dupe-keys/valid-009.vue",
+   "no-dupe-keys/valid-010.vue",
+   "no-dupe-keys/valid-011.vue",
+   "no-dupe-keys/valid-012.vue",
+   "no-dupe-keys/valid-013.vue",
+   "no-dupe-keys/valid-014.vue",
+   "no-dupe-keys/valid-015.vue",
+   "no-dupe-keys/valid-016.vue",
+   "no-dupe-keys/valid-017.vue",
+   "no-dupe-keys/valid-018.vue",
+   "no-dupe-keys/valid-019.vue",
+   "no-dupe-keys/valid-020.vue",
+   "no-dupe-keys/valid-021.vue",
+   "no-dupe-keys/valid-022.vue",
+   "no-dupe-keys/valid-023.vue",
+   "no-dupe-keys/invalid-000.vue",
+   "no-dupe-keys/invalid-001.vue",
+   "no-dupe-keys/invalid-002.vue",
+   "no-dupe-keys/invalid-003.vue",
+   "no-dupe-keys/invalid-005.vue",
+   "no-dupe-keys/invalid-006.vue",
+   "no-dupe-keys/invalid-007.vue",
+   "no-dupe-keys/invalid-008.vue",
+   "no-dupe-keys/invalid-009.vue",
+   "no-dupe-keys/invalid-010.vue",
+   "no-dupe-keys/invalid-013.vue",
+   "no-dupe-keys/invalid-014.vue",
+   "no-dupe-keys/invalid-015.vue",
+   "no-dupe-keys/invalid-016.vue",
+   "no-dupe-keys/invalid-017.vue",
+   "no-dupe-keys/invalid-018.vue",
+   "no-dupe-keys/invalid-019.vue",
+   "no-dupe-keys/invalid-020.vue",
+   "no-dupe-keys/invalid-021.vue",
+   "no-dupe-keys/invalid-022.vue",
+   "return-in-computed-property/valid-000.vue",
+   "return-in-computed-property/valid-001.vue",
+   "return-in-computed-property/valid-002.vue",
+   "return-in-computed-property/valid-004.vue",
+   "return-in-computed-property/valid-006.vue",
+   "return-in-computed-property/invalid-000.vue",
+   "return-in-computed-property/invalid-001.vue",
+   "return-in-computed-property/invalid-002.vue",
+   "return-in-computed-property/invalid-003.vue",
+   "return-in-computed-property/invalid-004.vue",
+   "return-in-computed-property/invalid-006.vue",
+   "return-in-computed-property/invalid-007.vue",
+   "return-in-computed-property/invalid-008.vue",
+   "return-in-computed-property/invalid-010.vue",
+   "return-in-computed-property/invalid-011.vue",
+   "return-in-computed-property/invalid-012.vue",
+   "return-in-computed-property/invalid-029.vue",
+   "return-in-computed-property/invalid-030.vue",
+   "return-in-computed-property/invalid-031.vue",
+   "return-in-computed-property/invalid-032.vue",
+   "return-in-computed-property/invalid-033.vue",
+   "return-in-computed-property/invalid-034.vue",
+   "return-in-computed-property/invalid-035.vue",
+   "return-in-computed-property/invalid-036.vue",
+   "no-async-in-computed-properties/valid-000.vue",
+   "no-async-in-computed-properties/valid-001.vue",
+   "no-async-in-computed-properties/valid-002.vue",
+   "no-async-in-computed-properties/valid-003.vue",
+   "no-async-in-computed-properties/valid-004.vue",
+   "no-async-in-computed-properties/valid-005.vue",
+   "no-async-in-computed-properties/valid-006.vue",
+   "no-async-in-computed-properties/valid-007.vue",
+   "no-async-in-computed-properties/valid-008.vue",
+   "no-async-in-computed-properties/valid-009.vue",
+   "no-async-in-computed-properties/valid-010.vue",
+   "no-async-in-computed-properties/valid-011.vue",
+   "no-async-in-computed-properties/valid-012.vue",
+   "no-async-in-computed-properties/valid-013.vue",
+   "no-async-in-computed-properties/valid-014.vue",
+   "no-async-in-computed-properties/invalid-000.vue",
+   "no-async-in-computed-properties/invalid-001.vue",
+   "no-async-in-computed-properties/invalid-002.vue",
+   "no-async-in-computed-properties/invalid-003.vue",
+   "no-async-in-computed-properties/invalid-004.vue",
+   "no-async-in-computed-properties/invalid-005.vue",
+   "no-async-in-computed-properties/invalid-006.vue",
+   "no-async-in-computed-properties/invalid-007.vue",
+   "no-async-in-computed-properties/invalid-008.vue",
+   "no-async-in-computed-properties/invalid-009.vue",
+   "no-async-in-computed-properties/invalid-010.vue",
+   "no-async-in-computed-properties/invalid-011.vue",
+   "no-async-in-computed-properties/invalid-012.vue",
+   "no-async-in-computed-properties/invalid-013.vue",
+   "no-async-in-computed-properties/invalid-014.vue",
+   "no-async-in-computed-properties/invalid-015.vue",
+   "no-async-in-computed-properties/invalid-016.vue",
+   "no-async-in-computed-properties/invalid-017.vue",
+   "no-async-in-computed-properties/invalid-018.vue",
+   "no-async-in-computed-properties/invalid-019.vue",
+   "no-async-in-computed-properties/invalid-020.vue",
+   "no-async-in-computed-properties/invalid-021.vue",
+   "no-async-in-computed-properties/invalid-022.vue",
+   "no-async-in-computed-properties/invalid-023.vue",
+   "no-async-in-computed-properties/invalid-024.vue",
+   "no-async-in-computed-properties/invalid-025.vue",
+   "no-async-in-computed-properties/invalid-026.vue",
+   "no-async-in-computed-properties/invalid-027.vue",
+   "no-async-in-computed-properties/invalid-028.vue",
+   "no-async-in-computed-properties/invalid-029.vue",
+   "no-async-in-computed-properties/invalid-030.vue",
+   "no-async-in-computed-properties/invalid-031.vue",
+   "no-async-in-computed-properties/invalid-032.vue",
+   "no-async-in-computed-properties/invalid-033.vue",
+   "no-async-in-computed-properties/invalid-036.vue",
+   "no-async-in-computed-properties/invalid-037.vue",
+   "no-async-in-computed-properties/invalid-038.vue",
+   "no-async-in-computed-properties/invalid-039.vue",
+   "no-side-effects-in-computed-properties/valid-000.vue",
+   "no-side-effects-in-computed-properties/valid-001.vue",
+   "no-side-effects-in-computed-properties/valid-002.vue",
+   "no-side-effects-in-computed-properties/valid-003.vue",
+   "no-side-effects-in-computed-properties/valid-004.vue",
+   "no-side-effects-in-computed-properties/valid-005.vue",
+   "no-side-effects-in-computed-properties/valid-006.vue",
+   "no-side-effects-in-computed-properties/valid-007.vue",
+   "no-side-effects-in-computed-properties/valid-008.vue",
+   "no-side-effects-in-computed-properties/invalid-000.vue",
+   "no-side-effects-in-computed-properties/invalid-001.vue",
+   "no-side-effects-in-computed-properties/invalid-002.vue",
+   "no-side-effects-in-computed-properties/invalid-003.vue",
+   "no-side-effects-in-computed-properties/invalid-004.vue",
+   "no-side-effects-in-computed-properties/invalid-005.vue",
+   "no-side-effects-in-computed-properties/invalid-006.vue",
+   "no-side-effects-in-computed-properties/invalid-007.vue",
+   "no-side-effects-in-computed-properties/invalid-008.vue",
+   "no-side-effects-in-computed-properties/invalid-009.vue",
+   "no-side-effects-in-computed-properties/invalid-010.vue",
+   "no-side-effects-in-computed-properties/invalid-011.vue",
+   "no-side-effects-in-computed-properties/invalid-012.vue",
+   "no-export-in-script-setup/valid-000.vue",
+   "no-export-in-script-setup/valid-001.vue",
+   "no-export-in-script-setup/valid-002.vue",
+   "no-export-in-script-setup/invalid-000.vue",
+   "no-export-in-script-setup/invalid-001.vue",
+   "no-export-in-script-setup/invalid-002.vue",
+   "no-setup-props-reactivity-loss/valid-000.vue",
+   "no-setup-props-reactivity-loss/valid-001.vue",
+   "no-setup-props-reactivity-loss/valid-002.vue",
+   "no-setup-props-reactivity-loss/valid-003.vue",
+   "no-setup-props-reactivity-loss/valid-004.vue",
+   "no-setup-props-reactivity-loss/valid-005.vue",
+   "no-setup-props-reactivity-loss/valid-006.vue",
+   "no-setup-props-reactivity-loss/valid-007.vue",
+   "no-setup-props-reactivity-loss/valid-008.vue",
+   "no-setup-props-reactivity-loss/valid-009.vue",
+   "no-setup-props-reactivity-loss/valid-010.vue",
+   "no-setup-props-reactivity-loss/valid-011.vue",
+   "no-setup-props-reactivity-loss/valid-012.vue",
+   "no-setup-props-reactivity-loss/valid-013.vue",
+   "no-setup-props-reactivity-loss/valid-014.vue",
+   "no-setup-props-reactivity-loss/valid-015.vue",
+   "no-setup-props-reactivity-loss/valid-016.vue",
+   "no-setup-props-reactivity-loss/valid-017.vue",
+   "no-setup-props-reactivity-loss/valid-018.vue",
+   "no-setup-props-reactivity-loss/invalid-000.vue",
+   "no-setup-props-reactivity-loss/invalid-001.vue",
+   "no-setup-props-reactivity-loss/invalid-002.vue",
+   "no-setup-props-reactivity-loss/invalid-003.vue",
+   "no-setup-props-reactivity-loss/invalid-004.vue",
+   "no-setup-props-reactivity-loss/invalid-005.vue",
+   "no-setup-props-reactivity-loss/invalid-006.vue",
+   "no-setup-props-reactivity-loss/invalid-007.vue",
+   "no-setup-props-reactivity-loss/invalid-008.vue",
+   "no-setup-props-reactivity-loss/invalid-009.vue",
+   "no-setup-props-reactivity-loss/invalid-010.vue",
+   "no-setup-props-reactivity-loss/invalid-011.vue",
+   "no-setup-props-reactivity-loss/invalid-012.vue",
+   "no-setup-props-reactivity-loss/invalid-013.vue",
+   "no-setup-props-reactivity-loss/invalid-014.vue",
+   "no-setup-props-reactivity-loss/invalid-015.vue",
+   "no-setup-props-reactivity-loss/invalid-016.vue",
+   "no-setup-props-reactivity-loss/invalid-017.vue",
+   "no-setup-props-reactivity-loss/invalid-018.vue",
+   "no-setup-props-reactivity-loss/invalid-019.vue",
+   "no-setup-props-reactivity-loss/invalid-020.vue",
+   "no-setup-props-reactivity-loss/invalid-021.vue",
+   "no-setup-props-reactivity-loss/invalid-022.vue",
+   "no-setup-props-reactivity-loss/invalid-023.vue",
+   "no-setup-props-reactivity-loss/invalid-024.vue",
+   "no-watch-after-await/valid-000.vue",
+   "no-watch-after-await/valid-001.vue",
+   "no-watch-after-await/valid-002.vue",
+   "no-watch-after-await/valid-003.vue",
+   "no-watch-after-await/valid-004.vue",
+   "no-watch-after-await/valid-005.vue",
+   "no-watch-after-await/valid-006.vue",
+   "no-watch-after-await/valid-007.vue",
+   "no-watch-after-await/valid-008.vue",
+   "no-watch-after-await/valid-009.vue",
+   "no-watch-after-await/valid-010.vue",
+   "no-watch-after-await/invalid-000.vue",
+   "no-watch-after-await/invalid-001.vue",
+   "no-watch-after-await/invalid-002.vue",
+   "require-valid-default-prop/valid-000.vue",
+   "require-valid-default-prop/valid-001.vue",
+   "require-valid-default-prop/valid-002.vue",
+   "require-valid-default-prop/valid-003.vue",
+   "require-valid-default-prop/valid-004.vue",
+   "require-valid-default-prop/valid-005.vue",
+   "require-valid-default-prop/valid-006.vue",
+   "require-valid-default-prop/valid-007.vue",
+   "require-valid-default-prop/valid-008.vue",
+   "require-valid-default-prop/valid-009.vue",
+   "require-valid-default-prop/valid-010.vue",
+   "require-valid-default-prop/valid-011.vue",
+   "require-valid-default-prop/valid-012.vue",
+   "require-valid-default-prop/valid-013.vue",
+   "require-valid-default-prop/valid-014.vue",
+   "require-valid-default-prop/valid-015.vue",
+   "require-valid-default-prop/valid-017.vue",
+   "require-valid-default-prop/valid-018.vue",
+   "require-valid-default-prop/valid-020.vue",
+   "require-valid-default-prop/valid-021.vue",
+   "require-valid-default-prop/valid-022.vue",
+   "require-valid-default-prop/valid-023.vue",
+   "require-valid-default-prop/valid-024.vue",
+   "require-valid-default-prop/valid-025.vue",
+   "require-valid-default-prop/valid-026.vue",
+   "require-valid-default-prop/invalid-000.vue",
+   "require-valid-default-prop/invalid-001.vue",
+   "require-valid-default-prop/invalid-002.vue",
+   "require-valid-default-prop/invalid-003.vue",
+   "require-valid-default-prop/invalid-004.vue",
+   "require-valid-default-prop/invalid-005.vue",
+   "require-valid-default-prop/invalid-006.vue",
+   "require-valid-default-prop/invalid-007.vue",
+   "require-valid-default-prop/invalid-008.vue",
+   "require-valid-default-prop/invalid-009.vue",
+   "require-valid-default-prop/invalid-010.vue",
+   "require-valid-default-prop/invalid-011.vue",
+   "require-valid-default-prop/invalid-012.vue",
+   "require-valid-default-prop/invalid-013.vue",
+   "require-valid-default-prop/invalid-014.vue",
+   "require-valid-default-prop/invalid-015.vue",
+   "require-valid-default-prop/invalid-016.vue",
+   "require-valid-default-prop/invalid-017.vue",
+   "require-valid-default-prop/invalid-018.vue",
+   "require-valid-default-prop/invalid-019.vue",
+   "require-valid-default-prop/invalid-020.vue",
+   "require-valid-default-prop/invalid-021.vue",
+   "require-valid-default-prop/invalid-022.vue",
+   "require-valid-default-prop/invalid-023.vue",
+   "require-valid-default-prop/invalid-024.vue",
+   "require-valid-default-prop/invalid-025.vue",
+   "require-valid-default-prop/invalid-026.vue",
+   "require-valid-default-prop/invalid-027.vue",
+   "require-valid-default-prop/invalid-028.vue",
+   "require-valid-default-prop/invalid-029.vue",
+   "require-valid-default-prop/invalid-030.vue",
+   "require-valid-default-prop/invalid-031.vue",
+   "require-valid-default-prop/invalid-032.vue",
+   "require-valid-default-prop/invalid-033.vue",
+   "require-valid-default-prop/invalid-034.vue",
+   "require-valid-default-prop/invalid-035.vue",
+   "require-valid-default-prop/invalid-036.vue",
+   "require-valid-default-prop/invalid-037.vue",
+   "require-valid-default-prop/invalid-038.vue",
+   "require-valid-default-prop/invalid-039.vue",
+   "require-valid-default-prop/invalid-040.vue",
+   "require-valid-default-prop/invalid-041.vue",
+   "require-valid-default-prop/invalid-042.vue",
+   "require-valid-default-prop/invalid-045.vue",
+   "require-valid-default-prop/invalid-046.vue",
+   "require-valid-default-prop/invalid-047.vue",
+   "require-valid-default-prop/invalid-048.vue",
+   "require-valid-default-prop/invalid-049.vue",
+   "require-valid-default-prop/invalid-050.vue",
+   "require-valid-default-prop/invalid-052.vue",
+   "require-valid-default-prop/invalid-053.vue",
+   "require-valid-default-prop/invalid-054.vue",
+   "require-valid-default-prop/invalid-055.vue",
+   "require-valid-default-prop/invalid-056.vue",
+   "no-ref-as-operand/rerail-torefs-container.vue",
+   "no-export-in-script-setup/rerail-setup-in-attribute-value.vue",
+   "no-export-in-script-setup/rerail-setup-after-quoted-value.vue",
+   "no-export-in-script-setup/rerail-setup-attribute-with-value.vue",
+   "no-mutating-props/rerail-local-define-component.vue",
+   "no-mutating-props/rerail-other-package-define-component.vue",
+   "no-mutating-props/rerail-vue-define-component.vue",
+   "no-mutating-props/rerail-global-define-component.vue",
+   "no-mutating-props/rerail-required-define-component.vue",
+   "no-mutating-props/rerail-setup-arrow-bare-parameter.vue",
+   "no-child-content/rerail-whitespace-character-references.vue",
+   "require-valid-default-prop/rerail-local-define-component.vue",
+   "require-valid-default-prop/rerail-other-package-define-component.vue",
+   "require-valid-default-prop/rerail-vue-define-component.vue",
+   "require-valid-default-prop/rerail-global-define-component.vue",
+   "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "no-unused-vars/rerail-component-tag-names.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-method-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-pair-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-template-key.vue",
+   "no-setup-props-reactivity-loss/rerail-computed-setup-dynamic-key.vue",
+   "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "require-valid-default-prop/rerail-comment-before-define-props-argument.vue",
+   "require-valid-default-prop/rerail-comment-in-with-defaults.vue",
+   "require-valid-default-prop/rerail-comment-before-define-model-options.vue",
+   "require-valid-default-prop/rerail-comment-around-define-component-argument.vue",
+   "require-valid-default-prop/rerail-comment-before-new-vue-argument.vue",
+   "require-valid-default-prop/rerail-export-default-as-const.vue",
+   "require-valid-default-prop/rerail-define-component-as-argument.vue",
+   "require-valid-default-prop/rerail-export-default-parenthesized.vue",
+   "no-unused-vars/rerail-native-tag-descendant.vue",
+   "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "no-template-shadow/rerail-local-define-component.vue",
+   "no-template-shadow/rerail-other-define-component.vue",
+   "no-template-shadow/rerail-vue-define-component.vue",
+   "no-dupe-keys/rerail-local-define-component.vue",
+   "no-dupe-keys/rerail-other-define-component.vue",
+   "no-dupe-keys/rerail-vue-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-local-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-other-define-component.vue",
+   "no-setup-props-reactivity-loss/rerail-vue-define-component.vue",
+   "no-unused-refs/rerail-local-define-component.vue",
+   "no-unused-refs/rerail-other-define-component.vue",
+   "no-unused-refs/rerail-vue-define-component.vue"
+  ]
+ },
+ "findings": [
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-001.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-003.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-005.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-006.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-011.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-012.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-016.vue",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-017.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-018.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-019.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-020.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-021.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/invalid-023.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "attribute-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "attribute-hyphenation/valid-001.vue",
+   "line": 1,
+   "column": 68
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-000.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-000.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-001.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-001.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-002.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-003.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-004.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-005.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-006.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-007.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-008.vue",
+   "line": 6,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-009.vue",
+   "line": 6,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-010.vue",
+   "line": 6,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-011.vue",
+   "line": 6,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-012.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-013.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-014.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-015.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-015.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-016.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-016.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-016.vue",
+   "line": 6,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-016.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-016.vue",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-017.vue",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-018.vue",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 7,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 9,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 11,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-019.vue",
+   "line": 13,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 6,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 9,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 9,
+   "column": 46
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 10,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-020.vue",
+   "line": 11,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-021.vue",
+   "line": 6,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-021.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-022.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-022.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-023.vue",
+   "line": 8,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-023.vue",
+   "line": 13,
+   "column": 22
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 6,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-024.vue",
+   "line": 14,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-025.vue",
+   "line": 6,
+   "column": 33
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-025.vue",
+   "line": 6,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 4,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 7,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 7,
+   "column": 42
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 8,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-026.vue",
+   "line": 9,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-027.vue",
+   "line": 4,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-027.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-028.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-028.vue",
+   "line": 8,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-029.vue",
+   "line": 6,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-029.vue",
+   "line": 11,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 4,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 8,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 9,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 10,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 11,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-030.vue",
+   "line": 12,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-031.vue",
+   "line": 4,
+   "column": 29
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/invalid-031.vue",
+   "line": 4,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-032.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-033.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-036.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-037.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-038.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-async-in-computed-properties",
+   "path": "no-async-in-computed-properties/invalid-039.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/valid-000.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/valid-013.vue",
+   "line": 6,
+   "column": 36
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-async-in-computed-properties/valid-013.vue",
+   "line": 68,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/invalid-000.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-000.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/invalid-001.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-001.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/invalid-002.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-002.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/invalid-003.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-003.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/invalid-004.vue",
+   "line": 3,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-004.vue",
+   "line": 3,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/invalid-005.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 2,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 3,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 4,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 5,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 5,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 6,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 6,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 7,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 8,
+   "column": 8
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 10,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 11,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-child-content",
+   "path": "no-child-content/rerail-whitespace-character-references.vue",
+   "line": 13,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/valid-002.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/valid-004.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/valid-005.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/valid-006.vue",
+   "line": 3,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-child-content/valid-008.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-deprecated-v-on-native-modifier",
+   "path": "no-deprecated-v-on-native-modifier/invalid-000.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-deprecated-v-on-native-modifier",
+   "path": "no-deprecated-v-on-native-modifier/invalid-001.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-000.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/invalid-000.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-000.vue",
+   "line": 11,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-000.vue",
+   "line": 15,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-000.vue",
+   "line": 22,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-001.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/invalid-001.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-001.vue",
+   "line": 11,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-001.vue",
+   "line": 15,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-001.vue",
+   "line": 22,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-002.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/invalid-002.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-002.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-002.vue",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-003.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/invalid-003.vue",
+   "line": 9,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-003.vue",
+   "line": 14,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-003.vue",
+   "line": 17,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-003.vue",
+   "line": 24,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-005.vue",
+   "line": 13,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-006.vue",
+   "line": 11,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-007.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-008.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-009.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-010.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-013.vue",
+   "line": 7,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-014.vue",
+   "line": 8,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-015.vue",
+   "line": 7,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-016.vue",
+   "line": 8,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-017.vue",
+   "line": 8,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-018.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-019.vue",
+   "line": 4,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-019.vue",
+   "line": 12,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-019.vue",
+   "line": 15,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-020.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-020.vue",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-dupe-keys/invalid-021.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-021.vue",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/invalid-022.vue",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-dupe-keys/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-000.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-002.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-003.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-004.vue",
+   "line": 14,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-005.vue",
+   "line": 14,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-006.vue",
+   "line": 14,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-dupe-keys/valid-007.vue",
+   "line": 14,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-dupe-keys/valid-016.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-dupe-keys/valid-017.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-dupe-keys/valid-017.vue",
+   "line": 5,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-dupe-keys/valid-022.vue",
+   "line": 11,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-000.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-001.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-002.vue",
+   "line": 6,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-003.vue",
+   "line": 6,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-004.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-005.vue",
+   "line": 5,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-006.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-007.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-008.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-009.vue",
+   "line": 5,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-010.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-010.vue",
+   "line": 5,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-011.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-011.vue",
+   "line": 5,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-012.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-012.vue",
+   "line": 5,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-013.vue",
+   "line": 4,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-013.vue",
+   "line": 5,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-014.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-015.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-016.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-017.vue",
+   "line": 1,
+   "column": 85
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-018.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-019.vue",
+   "line": 1,
+   "column": 85
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-020.vue",
+   "line": 1,
+   "column": 85
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-021.vue",
+   "line": 1,
+   "column": 106
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-022.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-022.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-023.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-023.vue",
+   "line": 1,
+   "column": 85
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-023.vue",
+   "line": 1,
+   "column": 106
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-024.vue",
+   "line": 1,
+   "column": 63
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-025.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-026.vue",
+   "line": 1,
+   "column": 47
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-027.vue",
+   "line": 1,
+   "column": 46
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-028.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-029.vue",
+   "line": 1,
+   "column": 53
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-030.vue",
+   "line": 1,
+   "column": 46
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-031.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-032.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-033.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-034.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-034.vue",
+   "line": 1,
+   "column": 69
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-035.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-036.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-037.vue",
+   "line": 1,
+   "column": 74
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-038.vue",
+   "line": 1,
+   "column": 65
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-039.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-040.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-041.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-042.vue",
+   "line": 1,
+   "column": 64
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-043.vue",
+   "line": 1,
+   "column": 70
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-044.vue",
+   "line": 1,
+   "column": 75
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-045.vue",
+   "line": 1,
+   "column": 53
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-046.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-047.vue",
+   "line": 1,
+   "column": 65
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-048.vue",
+   "line": 1,
+   "column": 62
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-049.vue",
+   "line": 1,
+   "column": 58
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-050.vue",
+   "line": 1,
+   "column": 75
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-051.vue",
+   "line": 1,
+   "column": 62
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-052.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-053.vue",
+   "line": 1,
+   "column": 90
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-054.vue",
+   "line": 1,
+   "column": 53
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-055.vue",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-056.vue",
+   "line": 1,
+   "column": 91
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-057.vue",
+   "line": 1,
+   "column": 70
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-058.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-059.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-060.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-061.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-062.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-dupe-v-else-if",
+   "path": "no-dupe-v-else-if/invalid-063.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/no-duplicate-attributes",
+   "path": "no-duplicate-attributes/invalid-000.vue",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-duplicate-attributes",
+   "path": "no-duplicate-attributes/invalid-001.vue",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-000.vue",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-001.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-001.vue",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-001.vue",
+   "line": 8,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-002.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-002.vue",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/invalid-002.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/rerail-setup-after-quoted-value.vue",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-export-in-script-setup",
+   "path": "no-export-in-script-setup/rerail-setup-attribute-with-value.vue",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 4,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 5,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 6,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 8,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 9,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 10,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-000.vue",
+   "line": 12,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-001.vue",
+   "line": 4,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-001.vue",
+   "line": 8,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-002.vue",
+   "line": 4,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-002.vue",
+   "line": 5,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-002.vue",
+   "line": 6,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-003.vue",
+   "line": 4,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-003.vue",
+   "line": 5,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-003.vue",
+   "line": 6,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-003.vue",
+   "line": 7,
+   "column": 29
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "no-mutating-props/invalid-004.vue",
+   "line": 11,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-004.vue",
+   "line": 16,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-004.vue",
+   "line": 17,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-004.vue",
+   "line": 18,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-004.vue",
+   "line": 19,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-005.vue",
+   "line": 7,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-005.vue",
+   "line": 8,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-005.vue",
+   "line": 9,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 4,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 4,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 5,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 5,
+   "column": 39
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 5,
+   "column": 39
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-006.vue",
+   "line": 8,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 4,
+   "column": 30
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 5,
+   "column": 31
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-007.vue",
+   "line": 7,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 4,
+   "column": 38
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 5,
+   "column": 38
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 8,
+   "column": 30
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 9,
+   "column": 15
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 10,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-008.vue",
+   "line": 10,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-010.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-010.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-010.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/invalid-010.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-010.vue",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 9,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 10,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 11,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-011.vue",
+   "line": 12,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/invalid-012.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-012.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-012.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-012.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-012.vue",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/invalid-013.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-013.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-013.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-013.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-013.vue",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-014.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/invalid-015.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-015.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-016.vue",
+   "line": 7,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-017.vue",
+   "line": 3,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-017.vue",
+   "line": 4,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-018.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-019.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-020.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-022.vue",
+   "line": 4,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-022.vue",
+   "line": 5,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-022.vue",
+   "line": 6,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-mutating-props/invalid-022.vue",
+   "line": 17,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-022.vue",
+   "line": 18,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/invalid-024.vue",
+   "line": 7,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-global-define-component.vue",
+   "line": 4,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-setup-arrow-bare-parameter.vue",
+   "line": 5,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-mutating-props",
+   "path": "no-mutating-props/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 20
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 9,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 9,
+   "column": 25
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 12,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 12,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 15,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 15,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 16,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 16,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 16,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 17,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 17,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 18,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-001.vue",
+   "line": 18,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-003.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-003.vue",
+   "line": 4,
+   "column": 27
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-003.vue",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-mutating-props/valid-003.vue",
+   "line": 5,
+   "column": 27
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "no-mutating-props/valid-004.vue",
+   "line": 11,
+   "column": 26
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-mutating-props/valid-005.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-mutating-props/valid-005.vue",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-008.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-009.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-010.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-012.vue",
+   "line": 5,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-015.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-mutating-props/valid-018.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-mutating-props/valid-021.vue",
+   "line": 9,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "no-mutating-props/valid-021.vue",
+   "line": 15,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-000.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-000.vue",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-000.vue",
+   "line": 8,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-001.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-001.vue",
+   "line": 9,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-001.vue",
+   "line": 10,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-002.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-002.vue",
+   "line": 9,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-002.vue",
+   "line": 10,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-003.vue",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-004.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-005.vue",
+   "line": 5,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-005.vue",
+   "line": 6,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-005.vue",
+   "line": 7,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-005.vue",
+   "line": 8,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-006.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-006.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-006.vue",
+   "line": 7,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-006.vue",
+   "line": 8,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-007.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-007.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-008.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-009.vue",
+   "line": 7,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-009.vue",
+   "line": 8,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-009.vue",
+   "line": 9,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-010.vue",
+   "line": 33,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-010.vue",
+   "line": 34,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-010.vue",
+   "line": 36,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-010.vue",
+   "line": 36,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-010.vue",
+   "line": 38,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-011.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-012.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-013.vue",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-014.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-014.vue",
+   "line": 9,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-015.vue",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-015.vue",
+   "line": 9,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-016.vue",
+   "line": 8,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-017.vue",
+   "line": 10,
+   "column": 35
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-018.vue",
+   "line": 10,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/invalid-019.vue",
+   "line": 10,
+   "column": 38
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/rerail-torefs-container.vue",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "no-ref-as-operand/rerail-torefs-container.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-000.vue",
+   "line": 4,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-001.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-002.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-003.vue",
+   "line": 5,
+   "column": 12
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-004.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-004.vue",
+   "line": 11,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-005.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-006.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-006.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-007.vue",
+   "line": 5,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 9,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 10,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-008.vue",
+   "line": 11,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-009.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-010.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-011.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-012.vue",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-013.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-013.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-014.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-014.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-015.vue",
+   "line": 5,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-015.vue",
+   "line": 6,
+   "column": 19
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-016.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-016.vue",
+   "line": 5,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-017.vue",
+   "line": 4,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-018.vue",
+   "line": 4,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-019.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-020.vue",
+   "line": 4,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-021.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-022.vue",
+   "line": 4,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-023.vue",
+   "line": 5,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/invalid-024.vue",
+   "line": 5,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-method-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-pair-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-computed-setup-template-key.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props-in-with-defaults.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-parenthesized-define-props.vue",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-setup-props-reactivity-loss",
+   "path": "no-setup-props-reactivity-loss/rerail-vue-define-component.vue",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 10,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 15,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 18,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 22,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-000.vue",
+   "line": 26,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-001.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-001.vue",
+   "line": 12,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-001.vue",
+   "line": 13,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-001.vue",
+   "line": 19,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-001.vue",
+   "line": 24,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-002.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-003.vue",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-004.vue",
+   "line": 5,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-004.vue",
+   "line": 8,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-004.vue",
+   "line": 11,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-005.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-005.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 12,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 13,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 17,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 18,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 21,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 23,
+   "column": 26
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 27,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 30,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 33,
+   "column": 22
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 36,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 37,
+   "column": 13
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 39,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 40,
+   "column": 13
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 42,
+   "column": 42
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-006.vue",
+   "line": 44,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-007.vue",
+   "line": 8,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-008.vue",
+   "line": 8,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 10,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 11,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 15,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 19,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 21,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 25,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 28,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 31,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 34,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 35,
+   "column": 9
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 37,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 38,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 40,
+   "column": 38
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/invalid-009.vue",
+   "line": 42,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-010.vue",
+   "line": 6,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-011.vue",
+   "line": 6,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-012.vue",
+   "line": 8,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-012.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "no-side-effects-in-computed-properties/invalid-012.vue",
+   "line": 14,
+   "column": 15
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/valid-000.vue",
+   "line": 76,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/valid-008.vue",
+   "line": 65,
+   "column": 35
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/valid-008.vue",
+   "line": 70,
+   "column": 35
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-side-effects-in-computed-properties/valid-008.vue",
+   "line": 74,
+   "column": 35
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-000.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-000.vue",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-000.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-000.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-000.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-001.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-001.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-001.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-002.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-003.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-004.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-004.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-004.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-template-shadow/invalid-005.vue",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-006.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-007.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 7,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-008.vue",
+   "line": 7,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-009.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-009.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-009.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-009.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-009.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-010.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-010.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-010.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-010.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-010.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-011.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-011.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/invalid-011.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/invalid-011.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/invalid-011.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-template-shadow",
+   "path": "no-template-shadow/rerail-vue-define-component.vue",
+   "line": 7,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-002.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-002.vue",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-003.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-003.vue",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-003.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-003.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-004.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-004.vue",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-004.vue",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-004.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-005.vue",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-005.vue",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "no-template-shadow/valid-006.vue",
+   "line": 9,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-007.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-008.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 2,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-009.vue",
+   "line": 4,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-010.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-010.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-010.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-010.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-011.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-011.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-011.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-011.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-012.vue",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-012.vue",
+   "line": 3,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-template-shadow/valid-012.vue",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-template-shadow/valid-012.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/invalid-000.vue",
+   "line": 3,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/invalid-001.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/invalid-002.vue",
+   "line": 3,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/invalid-003.vue",
+   "line": 4,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/invalid-004.vue",
+   "line": 3,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/rerail-local-define-component.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-unused-refs",
+   "path": "no-unused-refs/rerail-other-define-component.vue",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-000.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-000.vue",
+   "line": 1,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-001.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-002.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-003.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-004.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-004.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-004.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-005.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-005.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-005.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-006.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-006.vue",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-006.vue",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-006.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-007.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-007.vue",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-007.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-008.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-008.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-009.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-014.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-014.vue",
+   "line": 1,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-016.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-017.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-017.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-018.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-018.vue",
+   "line": 1,
+   "column": 50
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-019.vue",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-020.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-020.vue",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-020.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-020.vue",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-020.vue",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-021.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-021.vue",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-021.vue",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 37
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-022.vue",
+   "line": 1,
+   "column": 45
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-023.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/invalid-024.vue",
+   "line": 1,
+   "column": 68
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 2,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 3,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 4,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 5,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 6,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 7,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 8,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 12,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 12,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 13,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 13,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 14,
+   "column": 3
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 15,
+   "column": 3
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 15,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 16,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 17,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-component-tag-names.vue",
+   "line": 18,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/rerail-native-tag-descendant.vue",
+   "line": 2,
+   "column": 3
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-000.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-001.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "no-unused-vars/valid-002.vue",
+   "line": 1,
+   "column": 26
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-003.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-003.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-007.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-008.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-unused-vars/valid-009.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-002.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-002.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-003.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-004.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 45
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-006.vue",
+   "line": 5,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-006.vue",
+   "line": 5,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-006.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-007.vue",
+   "line": 5,
+   "column": 23
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/invalid-007.vue",
+   "line": 5,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-007.vue",
+   "line": 6,
+   "column": 15
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-008.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-008.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/invalid-009.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-use-v-if-with-v-for",
+   "path": "no-use-v-if-with-v-for/invalid-009.vue",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/valid-004.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-004.vue",
+   "line": 1,
+   "column": 42
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-004.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "no-use-v-if-with-v-for/valid-010.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-010.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-010.vue",
+   "line": 1,
+   "column": 45
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-010.vue",
+   "line": 1,
+   "column": 47
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "no-use-v-if-with-v-for/valid-010.vue",
+   "line": 1,
+   "column": 50
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-html/invalid-000.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-html/invalid-001.vue",
+   "line": 1,
+   "column": 15
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-html/invalid-002.vue",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-000.vue",
+   "line": 3,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-text-v-html-on-component/invalid-001.vue",
+   "line": 3,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-001.vue",
+   "line": 3,
+   "column": 22
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-002.vue",
+   "line": 3,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-text-v-html-on-component/invalid-003.vue",
+   "line": 3,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-003.vue",
+   "line": 3,
+   "column": 36
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-004.vue",
+   "line": 3,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-text-v-html-on-component/invalid-005.vue",
+   "line": 3,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-005.vue",
+   "line": 3,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-007.vue",
+   "line": 3,
+   "column": 12
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/invalid-007.vue",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "no-v-text-v-html-on-component/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
+  },
+  {
+   "rule": "vue/no-v-html",
+   "path": "no-v-text-v-html-on-component/valid-001.vue",
+   "line": 3,
+   "column": 14
+  },
+  {
+   "rule": "vue/no-watch-after-await",
+   "path": "no-watch-after-await/invalid-000.vue",
+   "line": 8,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-watch-after-await",
+   "path": "no-watch-after-await/invalid-001.vue",
+   "line": 8,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-watch-after-await",
+   "path": "no-watch-after-await/invalid-001.vue",
+   "line": 9,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-watch-after-await",
+   "path": "no-watch-after-await/invalid-002.vue",
+   "line": 8,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-watch-after-await",
+   "path": "no-watch-after-await/invalid-002.vue",
+   "line": 12,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/invalid-000.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/invalid-000.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/invalid-001.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/invalid-001.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/invalid-002.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/invalid-002.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/invalid-003.vue",
+   "line": 1,
+   "column": 50
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 4,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 6,
+   "column": 17
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 9,
+   "column": 18
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 10,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 20
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 21
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 16,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 19,
+   "column": 9
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 19,
+   "column": 21
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "require-v-for-key/valid-003.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "require-v-for-key/valid-003.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-000.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-001.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-002.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-003.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-004.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-005.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-006.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-007.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-008.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-009.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-010.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-011.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-012.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-013.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-014.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-015.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-016.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-017.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-018.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-019.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-020.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-021.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-022.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-023.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-024.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-025.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-025.vue",
+   "line": 10,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-025.vue",
+   "line": 14,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-026.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-027.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-028.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-029.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-030.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-031.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-032.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-033.vue",
+   "line": 6,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-034.vue",
+   "line": 6,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-035.vue",
+   "line": 6,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-036.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-037.vue",
+   "line": 8,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-037.vue",
+   "line": 10,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-037.vue",
+   "line": 12,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-038.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-039.vue",
+   "line": 6,
+   "column": 24
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-040.vue",
+   "line": 6,
+   "column": 24
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-041.vue",
+   "line": 6,
+   "column": 24
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-042.vue",
+   "line": 6,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-045.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-046.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-046.vue",
+   "line": 6,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-047.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-048.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-049.vue",
+   "line": 7,
+   "column": 22
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-050.vue",
+   "line": 3,
+   "column": 24
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-052.vue",
+   "line": 3,
+   "column": 47
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-053.vue",
+   "line": 3,
+   "column": 55
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-054.vue",
+   "line": 3,
+   "column": 45
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-055.vue",
+   "line": 3,
+   "column": 46
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/invalid-056.vue",
+   "line": 3,
+   "column": 52
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-around-define-component-argument.vue",
+   "line": 4,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-define-model-options.vue",
+   "line": 2,
+   "column": 59
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-define-props-argument.vue",
+   "line": 2,
+   "column": 59
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-before-new-vue-argument.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-comment-in-with-defaults.vue",
+   "line": 2,
+   "column": 64
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-define-component-as-argument.vue",
+   "line": 4,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-export-default-parenthesized.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-global-define-component.vue",
+   "line": 3,
+   "column": 40
+  },
+  {
+   "rule": "vue/require-valid-default-prop",
+   "path": "require-valid-default-prop/rerail-vue-define-component.vue",
+   "line": 4,
+   "column": 40
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 6,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 7,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 8,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 9,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 10,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 11,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 12,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 13,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 14,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 15,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 16,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 17,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 18,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 19,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 20,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 21,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 22,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 23,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 24,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 25,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 26,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 27,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 28,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 29,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 30,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 31,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 32,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 33,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 34,
+   "column": 11
+  },
+  {
+   "rule": "vue/no-dupe-keys",
+   "path": "require-valid-default-prop/valid-004.vue",
+   "line": 35,
+   "column": 11
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-000.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-001.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-002.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-003.vue",
+   "line": 8,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-004.vue",
+   "line": 5,
+   "column": 18
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-006.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-007.vue",
+   "line": 6,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-side-effects-in-computed-properties",
+   "path": "return-in-computed-property/invalid-007.vue",
+   "line": 8,
+   "column": 19
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-008.vue",
+   "line": 6,
+   "column": 34
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-008.vue",
+   "line": 7,
+   "column": 35
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-008.vue",
+   "line": 8,
+   "column": 35
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-008.vue",
+   "line": 15,
+   "column": 20
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-008.vue",
+   "line": 17,
+   "column": 35
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-010.vue",
+   "line": 5,
+   "column": 14
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-011.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-012.vue",
+   "line": 6,
+   "column": 34
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-029.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-030.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-031.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-032.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-033.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-034.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-035.vue",
+   "line": 5,
+   "column": 17
+  },
+  {
+   "rule": "vue/return-in-computed-property",
+   "path": "return-in-computed-property/invalid-036.vue",
+   "line": 6,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-ref-as-operand",
+   "path": "return-in-computed-property/valid-004.vue",
+   "line": 15,
+   "column": 19
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-000.vue",
+   "line": 3,
+   "column": 25
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-001.vue",
+   "line": 3,
+   "column": 25
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-003.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-005.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-005.vue",
+   "line": 4,
+   "column": 23
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/invalid-005.vue",
+   "line": 5,
+   "column": 23
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 13
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 24
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 11,
+   "column": 36
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 14
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 25
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 12,
+   "column": 37
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 32
+  },
+  {
+   "rule": "vue/v-on-event-hyphenation",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 43
+  },
+  {
+   "rule": "vue/no-v-text-v-html-on-component",
+   "path": "v-on-event-hyphenation/rerail-self-closing-in-foreign-namespace.vue",
+   "line": 13,
+   "column": 55
+  },
+  {
+   "rule": "vue/attribute-hyphenation",
+   "path": "v-on-event-hyphenation/valid-001.vue",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-000.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 27
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-001.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-002.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-002.vue",
+   "line": 1,
+   "column": 21
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-003.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-003.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-003.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-003.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-004.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-004.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-004.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-004.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-005.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-006.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-006.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-006.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-006.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-006.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-007.vue",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-008.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-008.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-009.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-009.vue",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-010.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-010.vue",
+   "line": 1,
+   "column": 49
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-011.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-011.vue",
+   "line": 1,
+   "column": 55
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-012.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-012.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-013.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-013.vue",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-014.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-014.vue",
+   "line": 1,
+   "column": 39
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-015.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-015.vue",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-016.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-016.vue",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-016.vue",
+   "line": 1,
+   "column": 58
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-017.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-017.vue",
+   "line": 1,
+   "column": 66
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-018.vue",
+   "line": 3,
+   "column": 28
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-018.vue",
+   "line": 5,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-019.vue",
+   "line": 4,
+   "column": 30
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-019.vue",
+   "line": 5,
+   "column": 37
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-020.vue",
+   "line": 4,
+   "column": 30
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-020.vue",
+   "line": 5,
+   "column": 37
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-021.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-021.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/invalid-022.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/valid-v-for",
+   "path": "valid-v-for/invalid-022.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/invalid-022.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-001.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-001.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-002.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-002.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-003.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-003.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-003.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-003.vue",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-004.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-004.vue",
+   "line": 1,
+   "column": 29
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-004.vue",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-004.vue",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-005.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-005.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-005.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-005.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-005.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-006.vue",
+   "line": 1,
+   "column": 16
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-006.vue",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-006.vue",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-006.vue",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-006.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-012.vue",
+   "line": 1,
+   "column": 33
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-012.vue",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-013.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/no-unused-vars",
+   "path": "valid-v-for/valid-014.vue",
+   "line": 1,
+   "column": 28
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-014.vue",
+   "line": 1,
+   "column": 42
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-029.vue",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-030.vue",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "vue/require-v-for-key",
+   "path": "valid-v-for/valid-031.vue",
+   "line": 1,
+   "column": 11
+  }
+ ]
+}

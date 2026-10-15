@@ -25,11 +25,13 @@ import { nodeExecutable } from "../../runtime/daemon-control.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
+import { contained } from "../../harness/contained-hook.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "../../presentation/session-presentation.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { registerConversationRulesTool } from "./tool.js";
+import { registerOmpSteerRenderer } from "./steer-renderer.js";
 
 export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
@@ -128,6 +130,7 @@ export function deliverOmpGuidance(pi: Pick<ExtensionAPI, "sendMessage">, delive
 export function createConversationRulesExtension(options: ConversationRulesOptions = {}): ExtensionFactory {
   return function conversationRulesExtension(pi: ExtensionAPI): void {
     pi.setLabel("Cosine Rules");
+    registerOmpSteerRenderer(pi);
 
     let currentContext: ExtensionContext | undefined;
     let activeSession: AdapterSession | undefined;
@@ -264,6 +267,15 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
      */
     const sessionFor = async (): Promise<AdapterSession | undefined> => {
       while (attaching !== undefined) await attaching;
+      return activeSession;
+    };
+    /**
+     * `sessionFor`, for the tool hooks, which must never fail: an attach that fails while they wait has already
+     * reported itself (to `session_start`, or as the daemon client's one outage line), so the tool runs as it would
+     * with no session attached.
+     */
+    const toolSessionFor = async (): Promise<AdapterSession | undefined> => {
+      while (attaching !== undefined) await attaching.catch(() => undefined);
       return activeSession;
     };
 
@@ -411,8 +423,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     // Awaited hooks bracket the actual tool; execution notifications can arrive after the write.
     pi.on("tool_call", (event) => {
       codeRuleTools.set(event.toolCallId, event.toolName);
-      return sequenceCodeRuleEvent(async () => {
-        const session = await sessionFor();
+      return contained("tool_call", sequenceCodeRuleEvent(async () => {
+        const session = await toolSessionFor();
         if (session === undefined) return;
         await ingest(callEvent(
           session.sessionId,
@@ -421,12 +433,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           event.toolName,
           event.input,
         ));
-      });
+      }));
     });
     pi.on("tool_result", (event) => {
       codeRuleTools.delete(event.toolCallId);
-      return sequenceCodeRuleEvent(async () => {
-        const session = await sessionFor();
+      return contained("tool_result", sequenceCodeRuleEvent(async () => {
+        const session = await toolSessionFor();
         if (session === undefined) return;
         await ingest(resultEvent(
           session.sessionId,
@@ -436,18 +448,41 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           { content: event.content, details: event.details },
           event.isError,
         ));
-      });
+      }));
     });
 
-    pi.on("turn_end", async (event) => {
-      const session = await sessionFor();
-      if (session === undefined) return;
-      await ingest(turnEndEvent(
-        session.sessionId,
-        `turn-end:${streamId(event.message)}`,
-        messageText(event.message),
-      ));
+    /** The latest turn's end, still being checked: the daemon settles the turn's code rules before it answers. */
+    let turnEnding: Promise<void> = Promise.resolve();
+    pi.on("turn_end", (event) => {
+      const ending = (async () => {
+        const session = await sessionFor();
+        if (session === undefined) return;
+        await ingest(turnEndEvent(
+          session.sessionId,
+          `turn-end:${streamId(event.message)}`,
+          messageText(event.message),
+        ));
+      })();
+      turnEnding = ending;
+      return ending;
     });
+
+    // The late steer (plan §4.4). OMP runs extension `turn_end` handlers alongside the run's end, not before it
+    // (`AgentSession.#emitSessionEvent`), so the steers the turn-end check returns can arrive once the session is
+    // idle, and an idle `sendMessage` only appends: the model would not see them until the person's next message
+    // (`AgentSession.sendCustomMessage`). `session_stop` runs inside the prompt it ends (the prompt waits for its
+    // post-prompt work), so holding it until the check answers sends those steers while the session is still
+    // streaming; OMP queues them and, once the prompt unwinds, continues the run with them
+    // (`#endInFlight` → `#drainStrandedQueuedMessages`). This is Codex's Stop hold, with the steer kept as a
+    // `rerail.rule` message rather than a hidden continuation.
+    // A failed turn-end check has already reported itself through its own `turn_end` handler. Escape ends the hold.
+    pi.on("session_stop", event => contained("session_stop", Promise.race([
+      turnEnding.catch(() => undefined),
+      new Promise<void>(resolve_ => {
+        if (event.signal.aborted) resolve_();
+        else event.signal.addEventListener("abort", () => resolve_(), { once: true });
+      }),
+    ])));
 
     pi.on("session_shutdown", async (_event) => {
       clearTimeout(attachTimer);

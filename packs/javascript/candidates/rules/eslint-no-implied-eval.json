@@ -229,6 +229,16 @@
             "rules": [
               "no-implied-eval"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noImpliedEval"
+            ]
           }
         }
       }
@@ -442,6 +452,16 @@
           "eslint": {
             "rules": [
               "no-implied-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noImpliedEval"
             ]
           }
         }

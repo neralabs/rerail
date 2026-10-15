@@ -1,0 +1,190 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-if-always-false",
+  "revision": 2,
+  "mode": "steer",
+  "description": "PHPStan 2.2.16 if.alwaysFalse (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always falsy; not the comparisons, negations, ternaries, isset and empty PHPStan leaves to other rules, a condition in a trait, or an if an inline @var doc comment precedes (PHPStan reads the variable as the PHPDoc type). Diverges from PHPStan on a declaration stub: an if whose block holds only class, interface, trait, enum or function declarations and class_alias calls (with comments), such as Symfony's `if (false) { class Router {} }` deprecation stubs, which Composer's class map and IDEs read and which must not be deleted, is not reported (NER-1810).",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "field": "condition",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "kind": "comment",
+                        "parse": {
+                          "grammar": "phpDoc",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "var_tag_value"
+                          }
+                        }
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "field": "body",
+                            "kind": "compound_statement",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "class_declaration"
+                                    },
+                                    {
+                                      "kind": "interface_declaration"
+                                    },
+                                    {
+                                      "kind": "trait_declaration"
+                                    },
+                                    {
+                                      "kind": "enum_declaration"
+                                    },
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "expression_statement",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "regex": "^\\\\?(?i:class_alias)$"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "class_declaration"
+                                        },
+                                        {
+                                          "kind": "interface_declaration"
+                                        },
+                                        {
+                                          "kind": "trait_declaration"
+                                        },
+                                        {
+                                          "kind": "enum_declaration"
+                                        },
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "kind": "expression_statement",
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "kind": "function_call_expression",
+                                            "has": {
+                                              "field": "function",
+                                              "regex": "^\\\\?(?i:class_alias)$"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "comment"
+                                        },
+                                        {
+                                          "regex": "^[{}]$"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "value": {
+                  "truthy": false,
+                  "follow": true
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(==|!=|<>|===|!==|\\&\\&|\\|\\||<|>|<=|>=|instanceof)$"
+                      }
+                    },
+                    {
+                      "kind": "unary_op_expression",
+                      "regex": "^!"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "function_call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?i:isset|empty)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "trait_declaration"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "if.alwaysFalse",
+        "message": "If condition is always false.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "if.alwaysFalse"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

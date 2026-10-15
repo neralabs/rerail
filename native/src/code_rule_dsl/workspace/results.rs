@@ -13,6 +13,7 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Evaluation, Metrics, Query};
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
+use crate::code_rule_dsl::soundness::UNREAD;
 use napi::Result;
 use rayon::prelude::*;
 use serde_json::{Value, json};
@@ -38,6 +39,15 @@ thread_local! {
 #[cfg(test)]
 fn count(counter: &'static std::thread::LocalKey<Cell<usize>>, amount: usize) {
     counter.set(counter.get() + amount);
+}
+
+/// A file failure's reported message: the static one, but for a file the parser did not read the
+/// detail `file.syntax` holds (`SyntaxReading::Unread`: how much the regions cover, and where).
+fn failure_message<'a>(file: &'a FileState, message: &'a str) -> &'a str {
+    match &file.syntax {
+        Some(detail) if message == UNREAD => detail,
+        _ => message,
+    }
 }
 
 /// A serialized result, and whether it is all ASCII: the host then copies it into a string as
@@ -339,7 +349,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             let mut item = failure(
                 &state.code_rules[id.0].clauses[id.1].id,
                 code,
-                message,
+                failure_message(file, message),
                 Some(&file.input.path),
             );
             item.as_object_mut()
@@ -666,7 +676,7 @@ pub(super) fn serialize_result(
             let mut item = failure(
                 &state.code_rules[id.0].clauses[id.1].id,
                 code,
-                message,
+                failure_message(file, message),
                 Some(&file.input.path),
             );
             item.as_object_mut()

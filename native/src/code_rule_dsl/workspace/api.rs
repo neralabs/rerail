@@ -21,6 +21,7 @@ use super::storage::{attach_storage, unix_seconds};
 use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
+use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
@@ -100,8 +101,10 @@ impl CodeRuleDslWorkspace {
     }
 
     /// Registers `compiled` with this workspace. `placement`, when given, is the JSON array of
-    /// `{"folder", "mode"}` entries that places this workspace's copy of the code rule per folder
-    /// of the checkout (`mode: null` is off there); the compiled code rule itself is never changed.
+    /// `{"folder", "mode", "suppressions"?}` entries that places this workspace's copy of the code
+    /// rule per folder of the checkout (`mode: null` is off there; `suppressions: "ignore"` reports
+    /// violations a linter's suppression comment would silence, `"honour"` or no `suppressions`
+    /// lets the comment silence them); the compiled code rule itself is never changed.
     #[napi]
     pub fn add_code_rule(
         &mut self,
@@ -155,15 +158,32 @@ impl CodeRuleDslWorkspace {
                         state.query_plans.insert((index, clause.id.clone()), plan);
                     }
                     ClauseKind::RequireEach { subject, evidence } => {
-                        let subject = compile_relation_producer(subject, clause, index, code_rule);
-                        let evidence =
-                            compile_relation_producer(evidence, clause, index, code_rule);
+                        let subject = compile_relation_producer(
+                            subject,
+                            Side::Subject,
+                            clause,
+                            index,
+                            code_rule,
+                        );
+                        let evidence = compile_relation_producer(
+                            evidence,
+                            Side::Evidence,
+                            clause,
+                            index,
+                            code_rule,
+                        );
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![subject, evidence]);
                     }
                     ClauseKind::Budget { query, .. } => {
-                        let id = compile_relation_producer(query, clause, index, code_rule);
+                        let id = compile_relation_producer(
+                            query,
+                            Side::Counted,
+                            clause,
+                            index,
+                            code_rule,
+                        );
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);

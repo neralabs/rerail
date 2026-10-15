@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type AdapterDelivery, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
 import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/codex-hook-adapter.js";
 import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import type { HookOptions } from "../../../src/harness/index.js";
@@ -75,22 +75,39 @@ describe("Codex one-shot hook", () => {
   });
 
 
-  it("answers {} on stdout and exits cleanly when stdin is malformed or the runtime fails", async () => {
+  it("answers {} on stdout and exits cleanly when stdin is malformed or a hook after the session's start fails", async () => {
     const root = await temporaryDirectory();
-    // The runtime failure below reads the default database, so the repository is started there too.
+    // The runtime failures below read the default database, so the repository is started there too.
     startTestRepository(root);
     const serve = (stdin: string, options: HookOptions) => serveText(input => runCodexHook(input, options), stdin);
+    const unreachable = { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-engine.sock") };
 
     const malformed = await serve("[]", hookOptions(root));
     expect(JSON.parse(malformed.stdout)).toEqual({});
     expect(malformed.stderr).toMatch(/^rerail hook: /);
 
-    const runtimeFailure = await serve(
-      JSON.stringify({ hook_event_name: "SessionStart", session_id: "s", cwd: root, source: "startup" }),
-      { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-engine.sock") },
-    );
-    expect(JSON.parse(runtimeFailure.stdout)).toEqual({});
-    expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
+    const toolFailure = await serve(JSON.stringify({
+      hook_event_name: "PostToolUse", session_id: "s", cwd: root, turn_id: "t", tool_name: "Bash", tool_use_id: "c", tool_response: "ok",
+    }), unreachable);
+    expect(JSON.parse(toolFailure.stdout)).toEqual({});
+    expect(toolFailure.stderr).toMatch(/^rerail hook: /);
+  });
+
+  it("tells the person once, when the session starts, that Rerail is not running, since Codex has no footer", async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    const start = await serveText(input => runCodexHook(input, { storageRoot: join(root, "sessions"), kernelSocketPath: join(root, "missing-engine.sock") }),
+      JSON.stringify({ hook_event_name: "SessionStart", session_id: "s", cwd: root, source: "startup" }));
+    expect(JSON.parse(start.stdout)).toEqual({ systemMessage: "Rerail ✕ not running · start it with: rerail daemon start" });
+  });
+
+  it("shows one plain line per steered rule with the link printed, and holds Stop on the block alone", () => {
+    const linked = (id: string) => steerBlock(id, `Fix ${id}.`, { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
+    const steers = [delivery("steer", linked("a"), ["a"]), delivery("steer", linked("b"), ["b"])];
+    expect(codexHookOutput("PostToolUse", steers)).toMatchObject({
+      systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
+    });
+    expect(codexHookOutput("Stop", steers)).toEqual({ decision: "block", reason: `${linked("a")}\n\n${linked("b")}` });
   });
 
   it("routes steer and block deliveries through additionalContext, Stop continuation, or the pending file", async () => {

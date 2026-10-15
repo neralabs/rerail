@@ -27,6 +27,7 @@ import {
   workspaceStartState,
   type RepositorySetupIo,
 } from "../../src/runtime/repository-start.js";
+import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
@@ -418,6 +419,51 @@ describe("repository start state", () => {
     const io = recorder("terminal");
     expect(stopRerail(checkout, io, { databasePath: join(root, "rerail.sqlite") })).toBe("stopped");
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
+  });
+
+  it("names the rules that steered the coding agent's session, each once, in the order they first steered", async () => {
+    const root = await temporary("rerail-stop-steered-");
+    const checkout = gitRepository(join(root, "acme-web"));
+    const databasePath = join(root, "rerail.sqlite");
+    await startRerail(checkout, recorder(), answered(databasePath, "pick-myself"));
+    const store = new SqliteSessionStore(databasePath);
+    const session = { host: "claude-code" as const, sessionId: "s1", cwd: checkout };
+    const stopped = (options: Parameters<typeof stopRerail>[2]): string => {
+      const io = recorder();
+      stopRerail(checkout, io, { databasePath, ...options });
+      return io.lines.join("\n");
+    };
+    const HEAD = "○ Rerail is stopped in acme-web. No rules run here, and nothing is logged.";
+    try {
+      store.openSession(session);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+
+      store.recordSteer(session, "r1", ["ts:no-any"]);
+      store.recordSteer(session, "r2", ["ts:no-any"]);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  Rerail steered this session on one rule, ts:no-any.",
+        "  To turn off only that rule, say “turn that rule off”.",
+      ].join("\n"));
+
+      store.recordSteer(session, "r3", ["acme:no-print", "ts:no-any", "ts:no-unused"]);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  Rerail steered this session on ts:no-any, acme:no-print and ts:no-unused.",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+
+      // The same id under another coding agent is not this session; Codex names its own commands with `$`.
+      expect(stopped({ session: { host: "codex", sessionId: "s1" } })).toBe([
+        HEAD, "  Start it again with $rerail-start.", "",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+    } finally {
+      store.close();
+    }
   });
 
   it("reads a database whose creator has not committed its schema yet as stopped, without failing", async () => {

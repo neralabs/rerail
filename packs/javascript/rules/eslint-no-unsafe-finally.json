@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-unsafe-finally",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-unsafe-finally` rule (https://eslint.org/docs/latest/rules/no-unsafe-finally). Flags return/throw/break/continue inside a finally block that would transfer control out of it: the nearest finally before a function/class boundary (and, for unlabeled break/continue, before an enclosing loop or switch; for a labeled jump, before the labeled statement it targets).",
   "scope": {
@@ -58,7 +58,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ReturnStatement."
+        "message": "Unsafe usage of ReturnStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     },
     {
@@ -108,7 +125,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ThrowStatement."
+        "message": "Unsafe usage of ThrowStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     },
     {
@@ -179,7 +213,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of BreakStatement."
+        "message": "Unsafe usage of BreakStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     },
     {
@@ -247,7 +298,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ContinueStatement."
+        "message": "Unsafe usage of ContinueStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     },
     {
@@ -354,7 +422,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of BreakStatement."
+        "message": "Unsafe usage of BreakStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     },
     {
@@ -461,7 +546,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ContinueStatement."
+        "message": "Unsafe usage of ContinueStatement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe-finally"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noUnsafeFinally"
+            ]
+          }
+        }
       }
     }
   ]

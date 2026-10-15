@@ -10,7 +10,7 @@ import {
   type HookInput,
   type HookOutput,
 } from "../../harness/hook-adapter.js";
-import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 
 const CODEX_EVENTS: EventTable = {
@@ -44,15 +44,19 @@ export function supportsCodexHook(input: HookInput): boolean {
  */
 export function codexHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): HookOutput {
   const content = deliveryText(deliveries);
-  const headlines = content === undefined ? [] : steerHeadlines(content);
-  const visible = headlines.length === 0 ? {} : { systemMessage: headlines.join("\n") };
   const ruleIds = deliveryRuleIds(deliveries);
+  // Codex prints the reason of a Stop hold under its own "Blocked by hook", so the person's lines would only repeat it.
   if (hook === "Stop") {
-    return content === undefined ? {} : prepareGuidanceOutput({ ...visible, decision: "block", reason: content }, ruleIds);
+    return content === undefined ? {} : prepareGuidanceOutput({ decision: "block", reason: content }, ruleIds);
   }
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
-  const output = { ...visible, hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
+  // Codex draws hook text as plain text with no links, so each line prints its `why?` link after it.
+  const lines = content === undefined ? [] : steerHeadlines(content).map(headline => headlineText(headline, "plain"));
+  const output = {
+    ...(lines.length === 0 ? {} : { systemMessage: lines.join("\n") }),
+    hookSpecificOutput: { hookEventName: hook, additionalContext: context },
+  };
   return content === undefined ? output : prepareGuidanceOutput(output, ruleIds);
 }
 

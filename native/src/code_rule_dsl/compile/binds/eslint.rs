@@ -594,20 +594,9 @@ fn private_class_member_ports_report_where_eslint_does() {
             }
         }
     }
-    // tree-sitter-typescript reads `#unused\n    instanceof() {}` as a binary expression (no ASI
-    // before `instanceof`), an error region, so the clause is source-incomplete there.
-    // tree-sitter-javascript has an error region there too, and recovers `#unused` before a line
-    // starting `[` with a missing `;`, a syntax error as well.
-    assert_eq!(
-        report,
-        [
-            "a.ts \"invalid/33\": \"source-incomplete\"",
-            "a.js \"invalid/33\": \"source-incomplete\"",
-            "a.js \"invalid/34\": \"source-incomplete\"",
-            "a.js \"invalid/35\": \"source-incomplete\"",
-        ],
-        "{}",
-        report.join("\n")
-    );
+    // Both grammars end the field before a member named `instanceof` or a line starting `[`, as
+    // ESLint does (Patch 8 in grammars/tree-sitter-javascript/PATCHES.md, Patch 12 in
+    // grammars/tree-sitter-typescript/PATCHES.md), so every case reports where ESLint does.
+    assert!(report.is_empty(), "{}", report.join("\n"));
     assert_eq!(expected["cases"].as_array().map(Vec::len), Some(83));
 }

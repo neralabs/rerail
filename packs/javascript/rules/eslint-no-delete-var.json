@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-delete-var",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of ESLint's `no-delete-var` rule (https://eslint.org/docs/latest/rules/no-delete-var). Reports `delete` applied to a bare identifier (through parentheses).",
   "scope": {
@@ -44,7 +44,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-delete-var",
-        "message": "Variables should not be deleted."
+        "message": "Variables should not be deleted.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-delete-var"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-delete-var"
+            ]
+          }
+        }
       }
     }
   ]

@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
-import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/schema.js";
+import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
+import { exportRulesDump, importRulesDump, type RulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { testBundle } from "../../support/rule-configuration-builders.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -129,4 +131,37 @@ describe("database schema", () => {
       created.close();
     }
   }, 60_000);
+});
+
+describe("rules dump", () => {
+  // Self-review round 5: a later Rerail may store a setting that sets only fields this one does not know; exporting it
+  // with on and mode both null made this version's own import refuse the dump.
+  it("leaves out a setting that sets neither on nor mode, so the dump imports", async () => {
+    const path = await temporaryDatabase();
+    const source = openRerailDatabase(path);
+    let dump: unknown;
+    try {
+      source.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0)");
+      const insert = source.$client.prepare(
+        "INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, \"on\", mode, updated_at) VALUES ('repository', 'repo', ?, 'pack', 'lint', ?, NULL, 0)",
+      );
+      insert.run("", 0);
+      // The later version's table allows it; this one's CHECK does not.
+      source.$client.pragma("ignore_check_constraints = ON");
+      insert.run("web", null);
+      source.$client.pragma("ignore_check_constraints = OFF");
+      dump = JSON.parse(JSON.stringify(exportRulesDump(source)));
+    } finally {
+      source.$client.close();
+    }
+    expect((dump as RulesDump).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
+
+    const target = openRerailDatabase(await temporaryDatabase());
+    try {
+      expect(importRulesDump(target, testBundle(), dump)).toEqual({ library: 0, repositories: 1 });
+      expect(exportRulesDump(target).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
+    } finally {
+      target.$client.close();
+    }
+  });
 });

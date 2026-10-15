@@ -26,32 +26,35 @@ In addition to the team-wide blockers:
 
 ## High-risk areas
 
-- `native/src/`: the engine. Parsing, scope and value resolution, and the content store. Check behaviour against the base, not just the new tests.
-- `native/grammars/`: vendored tree-sitter grammars, patched by hand.
-- `src/hosts/` and `hooks/`: run inside each coding agent's session. Check failure handling: a host must not break the agent's session when rerail fails.
-- `src/engine/storage/` and `src/runtime/`: the Rerail database and its repair. Check that existing databases still open and nothing is lost.
+- Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
+- CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
+- Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points.
 - `src/setup/`: installs rerail into users' agents.
-- `packs/*/package.json` and the release workflows: what gets published.
-- `languages/`, `LICENSES/`, `REUSE.toml`, `scripts/check/licence-allowlist.json`.
+- `LICENSES/` and `scripts/check/licence-allowlist.json`: licensing.
 
 ## Reviewer settings
 
-Machine-readable. Size limits can only be tightened below the defaults (400 changed lines, 20 files), so they are left at the defaults here. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. Generated paths don't count toward the size limits or the 3,000-line threshold for a summary-only review; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
+Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-ci review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream recordings, and the regenerated grammar tables.
 
 ```json reviewer
 {
   "highRiskPaths": [
-    "native/src/",
-    "native/grammars/",
-    "src/hosts/",
-    "hooks/",
     "src/engine/storage/",
-    "src/runtime/",
-    "src/setup/",
+    "native/src/content_store/schema.rs",
+    "scripts/release/",
+    ".changeset/config.json",
+    "/package.json",
+    "/Cargo.toml",
+    "native/Cargo.toml",
+    "native/build.rs",
+    "scripts/build/",
+    "tsconfig.build.json",
     "packs/*/package.json",
-    "languages/",
+    ".claude-plugin/",
+    ".codex-plugin/",
+    ".cursor-plugin/",
+    "src/setup/",
     "LICENSES/",
-    "REUSE.toml",
     "scripts/check/licence-allowlist.json"
   ],
   "generatedPaths": [

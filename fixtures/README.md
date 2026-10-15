@@ -43,12 +43,14 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `{python,php,rust}/literal/` | `literal` | format strings, doc comments and literals |
 | `{ecma,python,php,rust,sql}/suppress/` | `suppress` | suppression comments |
 | `{ecma,python}/matcher/ast-grep/` | `matcher` | relational rules, `field`, `nthChild`, `stopBy`, `utils` against ast-grep (`test/code-rule-dsl-upstream-differential.test.ts`) |
-| `php/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`) |
+| `{php,sql}/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`; SQL's, PostgreSQL's binding, `matcher/arguments_sql.rs`) |
 | `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
 | `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
+| `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
+| `host/session-enforcement/` | — | golden output of each coding agent in the session enforcement design's scenes: hook JSON, session notes, the OMP steer renderer and the footer (`test/hosts/*/session-enforcement.golden.test.ts`, `test/hosts/omp/steer-renderer.test.ts`, `test/presentation/footer-golden.test.ts`); review a change with design |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
 | `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |
 
@@ -62,13 +64,12 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `rust/` | rustc, clippy and rust-analyzer 1.99.0, tree-sitter-rust 0.24.2, syn 2 |
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
 
-`ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next,
-complexity) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream tools'
-copied tests and recordings, their candidates and their licence records. `vue/`, `rust/` and `sql/` have upstream
-recordings but no rules yet, so they have no pack directory: `<id>/upstream/` holds the upstream linters' recorders,
-their copied tests (`<tool>/fixtures/`) and recordings on those tests and on pinned public corpora
-(`<tool>/corpus-<name>.expected.json`), laid out as a pack's `upstream/`, beside the planned rule list
-(`rust/upstream/conformance.draft.json`, `sql/upstream/conformance.draft.json`, `vue/upstream/rules.json`). When a
+`ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next, vue,
+complexity, sql) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their upstream
+tools' copied tests and recordings, their candidates and their licence records. `rust/` has upstream recordings but no
+rules yet, so it has no pack directory: `rust/upstream/` holds the upstream linters' recorders, their copied tests
+(`<tool>/fixtures/`) and recordings on those tests and on pinned public corpora (`<tool>/corpus-<name>.expected.json`),
+laid out as a pack's `upstream/`, beside the planned rule list (`rust/upstream/conformance.draft.json`). When a
 language's pack gains its first rules, its draft becomes `packs/<id>/conformance.json` and `<id>/upstream/` moves to
 `packs/<id>/upstream/`. `../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
 
@@ -98,7 +99,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `blade/licenses/forte/` | fortephp/forte 1.1.0 (its test suite's templates in `blade/blade/forte/suite.expected.json`) | MIT |
 | `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
 | `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
-| `sql/licenses/sqlfluff/` | SQLFluff 4.4.0 | MIT |
 
 Verbatim copies keep the upstream licence alone; derived files and excerpts are under the upstream licence and
 Apache-2.0 together.

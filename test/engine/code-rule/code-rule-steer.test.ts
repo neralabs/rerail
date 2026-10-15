@@ -13,26 +13,32 @@ function violation(overrides: Partial<CodeRuleViolation> = {}): CodeRuleViolatio
   };
 }
 
+const BLOCK_SENTENCE = "Set to Block, which steers until blocking ships: fix it, or tell the person in one line why you won't.";
+
 describe("renderSteer", () => {
-  it("renders one rule's violation as a Rerail steer with its location and Why link", () => {
+  it("renders one rule's violation as a Rerail steer with its mode, location and Why link", () => {
     expect(renderSteer([violation()])).toBe([
-      "▲ Rerail · p  Steered.",
+      "◆ Rerail · p  steered",
+      BLOCK_SENTENCE,
       "log of user (src/a.ts:3:15)",
       "Why? → #rule/p",
     ].join("\n"));
   });
 
-  it("groups violations under their rule, in first-seen order, with each fix under its violation", () => {
+  it("groups violations under their rule, in first-seen order, with each fix under its violation and each rule's source", () => {
     const fixed = violation({ fix: { span: span(2, 2, 2, 19), text: "logger.info(user)" } });
-    const other = violation({ ruleId: "acme:no-print", message: "print call", span: span(5, 0, 5, 5) });
-    expect(renderSteer([fixed, other, violation({ span: span(7, 1, 7, 2) })])).toBe([
-      "▲ Rerail · p  Steered.",
+    const other = violation({ ruleId: "acme:no-print", mode: "steer", message: "print call", span: span(5, 0, 5, 5) });
+    const sourceOf = (ruleId: string) => ruleId === "acme:no-print" ? { kind: "library_rule" as const, packId: null } : undefined;
+    expect(renderSteer([fixed, other, violation({ span: span(7, 1, 7, 2) })], sourceOf)).toBe([
+      "◆ Rerail · p  steered",
+      BLOCK_SENTENCE,
       "log of user (src/a.ts:3:15)",
       "  Suggested fix: replace 3:3-3:20 with `logger.info(user)`",
       "log of user (src/a.ts:8:2)",
       "Why? → #rule/p",
       "",
-      "▲ Rerail · acme:no-print  Steered.",
+      "◆ Rerail · acme:no-print  steered",
+      "From your rule library. Set to Steer: fix it, or tell the person in one line why you won't.",
       "print call (src/a.ts:6:1)",
       "Why? → #rule/acme%3Ano-print",
     ].join("\n"));

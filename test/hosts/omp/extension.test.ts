@@ -21,7 +21,10 @@ import {
   resetRepositoryHistory,
   linkSteers,
   steerBlock,
+  steerOrigin,
   type ConversationRule,
+  type RuleMode,
+  type AdapterDelivery,
   openRerailDatabase,
   setRuleSetting,
 } from "../../../src/engine/index.js";
@@ -32,9 +35,9 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/nat
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 
-/** The steer block a rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
-async function deliveredSteer(cwd: string, ruleId: string, guidance: string): Promise<string> {
-  return linkSteers(steerBlock(ruleId, guidance), await steerDashboard(cwd));
+/** The steer block a `mode` rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
+async function deliveredSteer(cwd: string, ruleId: string, guidance: string, mode: RuleMode = "steer"): Promise<string> {
+  return linkSteers(steerBlock(ruleId, guidance, { mode, origin: steerOrigin(ruleId) }), await steerDashboard(cwd));
 }
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
@@ -163,7 +166,7 @@ describe("OMP conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+          content: await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements.", mode),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session" },
         },
@@ -518,32 +521,39 @@ describe("OMP conversation-rules extension", () => {
     }
   });
 
+  /**
+   * A running daemon whose native sessions can be refused by name, whose next initialize can be held mid-flight, and
+   * whose ingests `state.ingest` can hold or answer with deliveries.
+   */
+  function flakyDaemon(cwd: string) {
+    daemonRoute.start = async () => ({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: cwd } },
+    });
+    const fetchNative = globalThis.fetch;
+    const state = {
+      down: new Set<string>(),
+      hold: undefined as PromiseWithResolvers<void> | undefined,
+      ingest: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
+    };
+    const requests: Array<{ operation: string; sessionId: string }> = [];
+    vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+      if (url.port !== "4737") return fetchNative(url, init);
+      const request = z.object({ operation: z.string(), sessionId: z.string() }).parse(JSON.parse(String(init.body)));
+      requests.push(request);
+      if (request.operation === "initialize" && state.hold !== undefined) {
+        const { promise } = state.hold;
+        state.hold = undefined;
+        await promise;
+      }
+      if (state.down.has(request.sessionId)) throw new TypeError("fetch failed");
+      const deliveries = request.operation === "ingest" && state.ingest !== undefined ? await state.ingest() : [];
+      return Response.json({ result: null, deliveries, entries: [] });
+    });
+    return { state, requests, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
+  }
 
   describe("attach retry", () => {
-    /** A running daemon whose native sessions can be refused by name, and whose next initialize can be held mid-flight. */
-    function flakyDaemon(cwd: string) {
-      daemonRoute.start = async () => ({
-        started: false,
-        daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: cwd } },
-      });
-      const fetchNative = globalThis.fetch;
-      const state = { down: new Set<string>(), hold: undefined as PromiseWithResolvers<void> | undefined };
-      const requests: Array<{ operation: string; sessionId: string }> = [];
-      vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
-        if (url.port !== "4737") return fetchNative(url, init);
-        const request = z.object({ operation: z.string(), sessionId: z.string() }).parse(JSON.parse(String(init.body)));
-        requests.push(request);
-        if (request.operation === "initialize" && state.hold !== undefined) {
-          const { promise } = state.hold;
-          state.hold = undefined;
-          await promise;
-        }
-        if (state.down.has(request.sessionId)) throw new TypeError("fetch failed");
-        return Response.json({ result: null, deliveries: [], entries: [] });
-      });
-      return { state, requests, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
-    }
-
     it("surfaces the first failure, retries quietly with backoff, and reports once when it attaches", async () => {
       const harness = await createHarness();
       const daemon = flakyDaemon(harness.context.cwd);
@@ -652,6 +662,105 @@ describe("OMP conversation-rules extension", () => {
       await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, next);
       expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
       vi.useRealTimers();
+    });
+  });
+
+  describe("daemon faults", () => {
+    const toolCall = (toolCallId: string) => ({ type: "tool_call", toolCallId, toolName: "write", input: { path: "a.ts", content: "x" } });
+    const toolResult = (toolCallId: string) => ({ type: "tool_result", toolCallId, toolName: "write", content: [], details: undefined, isError: false });
+    const hookFailures = (stderr: { mock: { calls: unknown[][] } }) => stderr.mock.calls.filter(([line]) => String(line).includes("hook failed"));
+
+    it("never fails a tool call while the daemon is down", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      daemon.state.down.add("omp-test-session");
+      for (const id of ["call-1", "call-2", "call-3", "call-4"]) {
+        await expect(harness.handlers.get("tool_call")!(toolCall(id), harness.context)).resolves.toBeUndefined();
+        await expect(harness.handlers.get("tool_result")!(toolResult(id), harness.context)).resolves.toBeUndefined();
+      }
+      expect(hookFailures(stderr)).toEqual([]);
+    });
+
+    it("lets a tool call through when the attach it waited for fails", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      daemon.state.down.add("omp-test-session");
+      await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
+
+      // The retry's initialize is held open, so the tool call waits on an attach that is about to fail again.
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(daemon.initializes("omp-test-session")).toBe(2));
+      const call = harness.handlers.get("tool_call")!(toolCall("call-1"), harness.context);
+      held.resolve();
+      await expect(call).resolves.toBeUndefined();
+      expect(hookFailures(stderr)).toEqual([]);
+      vi.useRealTimers();
+    });
+
+    it("releases a tool call that a wedged daemon never answers before OMP's own deadline blocks it", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      vi.useFakeTimers();
+      const wedged = Promise.withResolvers<readonly AdapterDelivery[]>();
+      daemon.state.ingest = () => wedged.promise;
+
+      let released = false;
+      void (harness.handlers.get("tool_call")!(toolCall("call-1"), harness.context) as Promise<void>).then(() => { released = true; });
+      await vi.advanceTimersByTimeAsync(24_000);
+      expect(released).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(released).toBe(true);
+      // Shutdown closes through the same request queue, so the wedge has to clear for the test to end.
+      wedged.resolve([]);
+      vi.useRealTimers();
+    });
+
+    it("holds the end of the run until the turn-end check answers, so its steer is sent while OMP still streams", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const checked = Promise.withResolvers<void>();
+      daemon.state.ingest = async () => {
+        await checked.promise;
+        return [{
+          sessionId: "omp-test-session",
+          requested: "steer",
+          mechanism: "native-queue",
+          content: steerBlock("checkout", "Check checkout requirements.", { mode: "steer", origin: steerOrigin("checkout") }),
+          ruleIds: [],
+        }];
+      };
+
+      const ended = harness.handlers.get("turn_end")!({
+        type: "turn_end",
+        message: { role: "assistant", timestamp: 100, responseId: "response-1", content: [{ type: "text", text: "Done." }] },
+      }, harness.context);
+      let stopped = false;
+      const stop = (harness.handlers.get("session_stop")!({ type: "session_stop", signal: new AbortController().signal }, harness.context) as Promise<unknown>)
+        .then(result => { stopped = true; return result; });
+      await settleIo();
+      expect(stopped).toBe(false);
+      expect(harness.messages).toEqual([]);
+
+      checked.resolve();
+      // Nothing is returned: the steer itself is queued, and OMP continues the run with it once the prompt unwinds.
+      await expect(stop).resolves.toBeUndefined();
+      expect(harness.messages.map(sent => sent.message.content)).toEqual([
+        await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+      ]);
+      await ended;
     });
   });
 });
