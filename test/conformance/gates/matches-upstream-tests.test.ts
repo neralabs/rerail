@@ -57,6 +57,20 @@ test("findings compare as multisets", () => {
   assert.equal(result.cases[0]!.status, "mismatch");
 });
 
+test("a rule compared without an end, because upstream reports none for it, says so", () => {
+  const full = matchesUpstreamTestsGate(engine, adapter, "r", compiled({ "r/a.ts": { spans: [[2, 5]] } }), [upstreamCase("r/a.ts", [span(2, 5)])], new Map());
+  assert.deepEqual(full.compared, { endLine: true, endCol: true });
+  assert.equal(full.checks[0]!.detail, "identical on 1 scored file(s)");
+
+  // An ESLint rule some of whose findings on upstream's tests have no end: toSpan keeps only the start.
+  const startOnly = { toSpan: (_name: string, _source: string, startByte: number) => ({ startLine: 0, startCol: startByte, endLine: null, endCol: null }) } as unknown as PackAdapter;
+  const start = (column: number): Span => ({ startLine: 0, startCol: column, endLine: null, endCol: null });
+  const result = matchesUpstreamTestsGate(engine, startOnly, "r", compiled({ "r/a.ts": { spans: [[2, 6]] }, "r/b.ts": { spans: [[3, 4]] } }),
+    [upstreamCase("r/a.ts", [start(2)]), upstreamCase("r/b.ts", [start(1)])], new Map());
+  assert.deepEqual(result.compared, { endLine: false, endCol: false });
+  assert.equal(result.checks[0]!.detail, "1 upstream test file(s) differ, e.g. test/rules/r/b.ts.lint: missing 1:2, extra 1:4; compared on start only, the positions upstream reports for the rule");
+});
+
 test("an engine parse failure is a mismatch, never excused on its own, and is handed on for independent parsers", () => {
   const result = matchesUpstreamTestsGate(engine, adapter, "r", compiled({ "r/a.ts": { failures: [incomplete] } }), [upstreamCase("r/a.ts", [span(1, 2)])], new Map());
   assert.equal(result.cases[0]!.status, "mismatch");

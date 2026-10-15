@@ -9,6 +9,7 @@ import { CACHE_FORMAT, readCached, resultPath, ruleKey, writeCached, type Shared
 import { engineReadsGoldensCheck } from "../../../conformance/gates/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/gates/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/gates/process.js";
+import { renderMarkdown } from "../../../conformance/gates/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import { summarize } from "../../../conformance/gates/summary.js";
 import { ungatedChecks } from "../../../conformance/gates/ungated.js";
@@ -132,6 +133,29 @@ describe("location-based blocking", () => {
       { path: "packs/p/candidates/rules/b.json", location: "candidate" },
       { path: "packs/p/rules/a.json", location: "shipped" },
     ]);
+  });
+});
+
+describe("the report", () => {
+  it("lists every rule matches-upstream-tests compared without an end part, by the positions compared", () => {
+    const compared = (id: string, location: RuleReport["location"], parts: { endLine: boolean; endCol: boolean } | undefined): RuleReport => {
+      const base = rule(id, location);
+      return { ...base, gates: { ...base.gates, "matches-upstream-tests": { ...base.gates["matches-upstream-tests"], ...(parts === undefined ? {} : { compared: parts }) } } };
+    };
+    const markdown = renderMarkdown(report([
+      compared("full", "shipped", { endLine: true, endCol: true }),
+      compared("filename-case", "shipped", { endLine: false, endCol: false }),
+      compared("not-run", "shipped", undefined),
+      compared("b101", "candidate", { endLine: false, endCol: true }),
+      compared("entities", "candidate", { endLine: false, endCol: false }),
+    ]));
+    assert.ok(markdown.includes([
+      "Rules compared without an end part, because upstream reports none for them:",
+      "",
+      "- start only: `filename-case` (shipped), `entities` (candidate)",
+      "- start and end column: `b101` (candidate)",
+    ].join("\n")));
+    assert.ok(!renderMarkdown(report([compared("full", "shipped", { endLine: true, endCol: true })])).includes("without an end part"));
   });
 });
 

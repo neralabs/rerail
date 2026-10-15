@@ -78,7 +78,7 @@ export interface RuleReport {
     loads: GateReport;
     "not-overfit": GateReport & { flagged: Pick<ClassifiedLiteral, "token" | "pointer" | "text">[]; words: Record<string, number>; uncheckedRegexes: string[] };
     compact: GateReport & { metrics: SizeMetrics | null };
-    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; cases: Record<string, number>; differences: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
+    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; differences: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
     "matches-real-code": { checks: Check[]; eligible: number; positives: number; cases: RealCodeCase[]; disagreementsElsewhere: Sample<MatchesRealCodeResult["disagreementsElsewhere"][number]> };
     /** Judged when the tool-pack's report is assembled, from the pack's conformance check; never cached. */
     "passes-conformance": GateReport;
@@ -408,6 +408,7 @@ async function evaluateRule(
     upstreamTests = {
       ...gate([...result.checks, onGoldens.check, onGoldens.engineCheck, staysSilentCheck(result.cases, onGoldens.results, realCode.cases)]),
       totals: result.totals,
+      compared: result.compared,
       cases: countBy(result.cases, (testCase) => testCase.status),
       differences: result.cases.filter((testCase) => testCase.status === "mismatch" || testCase.status === "excused"),
       goldens: {

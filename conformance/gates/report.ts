@@ -1,3 +1,4 @@
+import { comparedPositions } from "./checks/matches-upstream-tests.js";
 import type { GatesReport, RuleReport } from "./run.js";
 import { formatSpan } from "./spans.js";
 import { BLOCKING_GATES, GATES, type BlockingGateId, type Check, type GateId, type ParserVerdict, type Span } from "./types.js";
@@ -70,6 +71,22 @@ function failuresFor(report: GatesReport, gate: BlockingGateId): string[] {
     }
   }
   return lines;
+}
+
+/**
+ * The rules matches-upstream-tests compared without an end part, because upstream reports none for them, by the
+ * positions compared: an ESLint rule any of whose findings on its own tests has no end is compared on starts alone.
+ */
+function partialPositions(report: GatesReport): string[] {
+  const byPositions = new Map<string, string[]>();
+  for (const rule of report.rules) {
+    const compared = rule.gates["matches-upstream-tests"].compared;
+    if (compared === undefined || (compared.endLine && compared.endCol)) continue;
+    const positions = comparedPositions(compared);
+    byPositions.set(positions, [...(byPositions.get(positions) ?? []), `\`${rule.id}\` (${rule.location})`]);
+  }
+  if (byPositions.size === 0) return [];
+  return ["", "Rules compared without an end part, because upstream reports none for them:", "", ...[...byPositions].map(([positions, rules]) => `- ${positions}: ${rules.join(", ")}`)];
 }
 
 function list(items: string[], empty: string): string[] {
@@ -172,7 +189,7 @@ export function renderMarkdown(report: GatesReport): string {
     "",
     ...matrix(report),
     "",
-    ...BLOCKING_GATES.flatMap((gate) => [`## ${gate.title}`, "", ...failuresFor(report, gate.id), ""]),
+    ...BLOCKING_GATES.flatMap((gate) => [`## ${gate.title}`, "", ...failuresFor(report, gate.id), ...(gate.id === "matches-upstream-tests" ? partialPositions(report) : []), ""]),
     `## ${gateTitle("upstream-status")}`,
     "",
     ...list(report.rules.filter((rule) => !rule.defaultOn).map((rule) => `\`${rule.id}\` (${rule.location}): ${cell(rule.defaultOnReason)}`), "Every rule exists upstream, is stable and is recommended."),

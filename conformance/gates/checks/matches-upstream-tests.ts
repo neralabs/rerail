@@ -4,13 +4,14 @@ import type { CompiledPolicy, Engine, EngineEvaluation } from "../engine.js";
 import { formatSpan, spanKey, startKey, unmatched } from "../spans.js";
 import type { CorpusFile } from "../corpus.js";
 import type { Golden } from "../goldens.js";
-import type { Check, KnownGap, PackAdapter, ParserVerdict, Span, UpstreamCase } from "../types.js";
+import type { Check, KnownGap, PackAdapter, ParserVerdict, Span, SpanParts, UpstreamCase } from "../types.js";
 
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
 export const MATCHES_UPSTREAM_TESTS_METHOD = {
   expected: "the upstream source linter's own output on each of its own test files, configured as upstream recommends (the rule on for the languages the document covers, with the options of the first approved configuration that turns it on)",
   unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences",
-  identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports (start and end, in upstream's coordinates); messages are not compared",
+  identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports for the rule (start and end, in upstream's coordinates); messages are not compared",
+  positions: "an end part upstream does not report for the rule is compared on neither side, and the report lists every rule compared without one; when any finding of an ESLint rule on its own tests has no end, all of the rule's findings are compared on their starts alone",
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
@@ -84,6 +85,8 @@ export interface CaseResult {
 
 export interface MatchesUpstreamTestsResult {
   checks: Check[];
+  /** The end parts the rule's findings were compared on: those upstream reports for the rule, which toSpan keeps; the start always. */
+  compared: SpanParts;
   cases: CaseResult[];
   totals: { scoredCases: number; expected: number; matched: number; missing: number; extra: number; startsMatched: number };
   /** Excuses each known gap granted, by gap id. */
@@ -92,6 +95,12 @@ export interface MatchesUpstreamTestsResult {
   markupDisagreements: string[];
   /** Upstream test files the engine could not fully parse that no listed gap covers; run.ts asks independent parsers. */
   unparsed: UnparsedFile[];
+}
+
+/** The positions a rule is compared on, for people: its start, and each end part upstream reports for the rule. */
+export function comparedPositions(parts: SpanParts): string {
+  if (parts.endLine && parts.endCol) return "start and end";
+  return parts.endLine ? "start and end line" : parts.endCol ? "start and end column" : "start only";
 }
 
 /** A file the engine could not fully parse, before independent parsers read it. */
@@ -218,6 +227,10 @@ export function matchesUpstreamTestsGate(
   const unparsed: UnparsedFile[] = [];
   const totals = { scoredCases: 0, expected: 0, matched: 0, missing: 0, extra: 0, startsMatched: 0 };
   let evidence = 0;
+  // The end parts toSpan keeps for the rule, as the recorder reads them (record.ts): those upstream reports for it.
+  const probe = adapter.toSpan(name, "a\nb", 0, 3);
+  const compared: SpanParts = { endLine: probe.endLine !== null, endCol: probe.endCol !== null };
+  const positionsNote = compared.endLine && compared.endCol ? "" : `; compared on ${comparedPositions(compared)}, the positions upstream reports for the rule`;
 
   for (const testCase of cases) {
     const base = { fixture: testCase.fixture, variant: testCase.variant, path: testCase.path, expected: testCase.expected.length };
@@ -295,8 +308,8 @@ export function matchesUpstreamTestsGate(
         id: "identical-results",
         ok: mismatches.length === 0,
         detail: mismatches.length === 0
-          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}`
-          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}`,
+          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}${positionsNote}`
+          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}${positionsNote}`,
       },
       {
         id: "fires",
@@ -304,6 +317,7 @@ export function matchesUpstreamTestsGate(
         detail: `${evidence} upstream finding(s) reproduced in agreeing files`,
       },
     ],
+    compared,
     cases: results,
     totals,
     gapUses,
