@@ -769,6 +769,34 @@ describe("source-scoped steers", () => {
         ])));
       } finally { await test.close(); }
     });
+
+    it("keeps the stores open under the evaluator's late release when the runtime is disposed meanwhile", async () => {
+      const test = await drainFixture();
+      const closeSpy = vi.spyOn(CodeRuleBridge.prototype, "close");
+      try {
+        await test.openAndHold();
+        await test.runtime.closeSession(test.session.sessionId);
+        let disposed = false;
+        const disposing = test.runtime.dispose().then(() => { disposed = true; });
+        // The evaluator's drain is still running behind the closed session: disposal waits for its release. One
+        // macrotask lets every microtask of a disposal that did not wait run to its end.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(disposed).toBe(false);
+        test.drain.resolve();
+        // The evaluator's close joins the replacement workspace's attach, still gated.
+        for (const workspace of test.attachments.workspaces) workspace.release();
+        await disposing;
+        await expect(closeSpy.mock.results[0]!.value).resolves.toBeUndefined();
+        const recorded = test.audits.list({ sessionId: test.session.sessionId }).audits;
+        expect(recorded).toEqual(expect.arrayContaining([
+          expect.objectContaining({ scope: "touched-files", status: "interrupted", paths: ["edited.py"] }),
+        ]));
+        expect(recorded.filter(audit => audit.status === "running")).toEqual([]);
+      } finally {
+        closeSpy.mockRestore();
+        await test.close();
+      }
+    });
   });
 
   it("keeps a session whose evaluator cannot open, and records why its code rules are off", async () => {

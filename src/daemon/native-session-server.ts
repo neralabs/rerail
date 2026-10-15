@@ -94,6 +94,8 @@ export class NativeSessionServer {
   readonly #lanes = new SessionLanes();
   readonly #sweepTimer: NodeJS.Timeout;
   #sweepTask: Promise<void> | undefined;
+  /** Disposals of closed sessions still waiting for an evaluator that was opening; the server's own close waits for them. */
+  readonly #disposals = new Set<Promise<void>>();
 
   constructor(options: {
     workspaceRoot: string;
@@ -135,6 +137,7 @@ export class NativeSessionServer {
     await this.#sweepTask;
     await Promise.all([...this.#sessions.keys()].map(async sessionId =>
       this.#lanes.run(sessionId, () => this.#close(sessionId))));
+    await Promise.all(this.#disposals);
   }
 
   async #handle(input: NativeSessionRequest): Promise<NativeSessionResponse> {
@@ -384,12 +387,27 @@ export class NativeSessionServer {
     try {
       await session.runtime.ingest({ kind: "session-end", eventId: `session-end:${sessionId}:${randomUUID()}`, sessionId, session: session.session });
     } finally {
-      try {
-        await session.runtime.dispose();
-      } finally {
-        session.semantic.close();
-        session.ruleSync.close();
+      const opening = session.runtime.evaluatorOpening;
+      const disposal = this.#dispose(session);
+      if (opening) {
+        // An evaluator still opening releases itself, and disposal waits for that release before the stores close
+        // under it; the host does not wait for either.
+        const detached: Promise<void> = disposal.catch((error: unknown) => {
+          process.stderr.write(`Rerail native session ${sessionId} disposal failed: ${String(error)}\n`);
+        }).finally(() => { this.#disposals.delete(detached); });
+        this.#disposals.add(detached);
+      } else {
+        await disposal;
       }
+    }
+  }
+
+  async #dispose(session: NativeSession): Promise<void> {
+    try {
+      await session.runtime.dispose();
+    } finally {
+      session.semantic.close();
+      session.ruleSync.close();
     }
   }
 }

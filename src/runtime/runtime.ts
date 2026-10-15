@@ -347,6 +347,8 @@ interface RuntimeSessionState {
   codeRuleSourceVersions: Map<string, number>;
   /** The session's evaluator, opening or open; unset for good once it could not open. */
   codeRuleBridge?: CodeRuleBridge;
+  /** Why the evaluator could not open, when it did not: a scan that waited for it reports this. */
+  codeRuleOffReason?: string;
   /** Settles once the evaluator has opened (the bridge) or failed to (undefined); code-rule boundaries wait for it. */
   codeRuleWorkspace: Promise<CodeRuleBridge | undefined>;
   /** The evaluator has opened: what it observes may be delivered. */
@@ -499,6 +501,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
+  /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
+  readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
@@ -874,9 +878,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#catalogs.checkout(checkout.root)?.repositoryKey ?? null;
   }
 
+  /** An evaluator is still opening: `dispose` waits for its release, which the caller may leave running behind it. */
+  get evaluatorOpening(): boolean {
+    return this.#evaluatorOpens.size > 0;
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
+    await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
     this.#controls.close();
     this.#audits.close();
@@ -1026,13 +1036,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return open;
     }).catch((error: unknown) => {
       // Nothing awaits this until a boundary or the close does: a fault here must not become an unhandled rejection.
-      process.stderr.write(`rerail: code rules are off for session ${session.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`rerail: code rules are off for session ${session.sessionId}: ${message}\n`);
       retired = true;
+      opened.codeRuleOffReason = message;
       opened.pendingSteers = [];
       return undefined;
     }).finally(() => {
       opened.codeRuleOpening = false;
     });
+    const workspace = opened.codeRuleWorkspace;
+    this.#evaluatorOpens.add(workspace);
+    const released = (): void => { this.#evaluatorOpens.delete(workspace); };
+    void workspace.then(released, released);
     return { processedEventIds: [...processed] };
   }
 
@@ -1073,6 +1089,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.deferredCodeRuleBoundaries = [];
       const release = this.#releaseOptions(state);
       await (opened ? bridge.close(release) : auditor.close(release)).catch(() => undefined);
+      state.codeRuleOffReason = error instanceof Error ? error.message : String(error);
       if (!state.closed) this.#recordWorkspaceFailure(state, settings, error);
       return undefined;
     }
@@ -1292,16 +1309,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return;
     }
     try {
-      const auditIds = await (await state.codeRuleWorkspace)?.audit({
+      const workspace = await state.codeRuleWorkspace;
+      if (workspace === undefined) {
+        // The evaluator never opened: the scan says why, not that a run went unrecorded.
+        if (state.closed) this.#controls.finish(request.id, "interrupted", [], "Session closed during scan");
+        else this.#controls.finish(request.id, "failed", [], `Code rules are off for this session: ${state.codeRuleOffReason ?? "the policy evaluator did not open"}`);
+        return;
+      }
+      const auditIds = await workspace.audit({
         scope: request.scope,
         mode: request.mode,
         ...(request.paths.length === 0 ? {} : { paths: request.paths }),
       });
       if (state.closed) {
-        this.#controls.finish(request.id, "interrupted", auditIds ?? [], "Session closed during scan");
+        this.#controls.finish(request.id, "interrupted", auditIds, "Session closed during scan");
         return;
       }
-      if (auditIds === undefined || auditIds.length === 0) {
+      if (auditIds.length === 0) {
         this.#controls.finish(request.id, "failed", [], "Policy evaluator completed scan without a recorded run");
         return;
       }
