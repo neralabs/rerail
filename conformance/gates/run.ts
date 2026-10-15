@@ -98,6 +98,8 @@ interface CachedPack {
   integrity: string[];
   knownGaps: GatesReport["knownGaps"];
   corpus: GatesReport["corpus"];
+  /** The passing corpus-complete check of the run that cached it, replayed as is so a cached shard and a judged one agree. */
+  corpusComplete: Check;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -112,7 +114,8 @@ export function isCachedRule(value: unknown): value is CachedRule {
 
 /** Whether a cached value has the shape of a tool-pack's shared result. */
 export function isCachedPack(value: unknown): value is CachedPack {
-  return isRecord(value) && Array.isArray(value.integrity) && Array.isArray(value.knownGaps) && isRecord(value.corpus) && Array.isArray(value.corpus.tasks);
+  return isRecord(value) && Array.isArray(value.integrity) && Array.isArray(value.knownGaps) && isRecord(value.corpus) && Array.isArray(value.corpus.tasks)
+    && isRecord(value.corpusComplete) && value.corpusComplete.id === "corpus-complete" && value.corpusComplete.ok === true && typeof value.corpusComplete.detail === "string";
 }
 
 export interface GatesReport {
@@ -543,7 +546,8 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       const result = cached.get(entry.key)!;
       promote(goldens, result.report.id, result.promoted);
     }
-    pinChecks.push({ id: "corpus-complete", ok: true, detail: "not fetched on this run: every result is cached from a run that fetched every recorded corpus file" });
+    // The caching run's check word for word: a shard that judges writes the same one, and merge compares them.
+    pinChecks.push(packCached.corpusComplete);
   } else {
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
@@ -588,6 +592,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       integrity,
       knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
+      corpusComplete: complete,
     };
     if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }

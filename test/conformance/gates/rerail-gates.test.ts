@@ -9,7 +9,7 @@ import { CACHE_FORMAT, readCached, resultPath, ruleKey, writeCached, type Shared
 import { engineReadsGoldensCheck } from "../../../conformance/gates/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/gates/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/gates/process.js";
-import { blockingFailures, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
+import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import { summarize } from "../../../conformance/gates/summary.js";
 import { ungatedChecks } from "../../../conformance/gates/ungated.js";
 
@@ -204,6 +204,15 @@ describe("cached results", () => {
       writeFileSync(path, text);
       assert.equal(await readCached(cache, "p", "t", "k", isCachedRule), undefined, text);
     }
+  });
+
+  it("a tool-pack entry replays the passing corpus-complete check it was cached with; one without it is a miss", () => {
+    const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
+    const pack = { integrity: [], knownGaps: [], corpus: { tasks: [], files: 3, excluded: 0 }, corpusComplete: complete };
+    assert.ok(isCachedPack(pack));
+    const { corpusComplete: _complete, ...older } = pack;
+    assert.equal(isCachedPack(older), false);
+    assert.equal(isCachedPack({ ...pack, corpusComplete: { ...complete, ok: false } }), false);
   });
 });
 
