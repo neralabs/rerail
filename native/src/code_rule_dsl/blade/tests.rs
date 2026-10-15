@@ -540,3 +540,55 @@ fn a_paren_on_the_next_line_is_not_arguments() {
         assert_eq!(run(rule.clone(), source), expected, "{source:?}");
     }
 }
+
+/// Lines (1-based) a shipped Blade pack rule reports on `source`, which must evaluate without a
+/// failure.
+fn pack_rule_lines(document: &str, source: &str) -> Vec<u64> {
+    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+        document.to_owned(),
+        "json".to_owned(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "blade", "resources/views/view.blade.php", source);
+    assert_eq!(result["failures"], json!([]), "{result}");
+    result["violations"]
+        .as_array()
+        .expect("violations")
+        .iter()
+        .map(|violation| violation["span"]["startLine"].as_u64().expect("line") + 1)
+        .collect()
+}
+
+/// The templates tree-sitter-blade read as one error region (NER-1793, NER-1794) or as text
+/// (NER-1795): a directive inside an element, in a start tag or an attribute value, and an echo
+/// in `<script>`. Forte reads each as Blade.
+#[test]
+fn directives_in_elements_tags_and_scripts_are_reported() {
+    let debug = include_str!("../../../../packs/blade/rules/blade-parser-debug-directive.json");
+    let dump = include_str!("../../../../packs/blade/rules/tlint-no-dump-directives.json");
+    let ray = include_str!("../../../../packs/blade/rules/tlint-no-ray-directive.json");
+    for (source, line) in [
+        ("<div>\n@dump($x)\n</div>\n", 2),
+        (
+            "<div>\n    @if ($d)\n        @dump($f)\n    @endif\n</div>\n",
+            3,
+        ),
+        ("@if($a)\n<div>\n@dump($x)\n</div>\n@endif\n", 3),
+        ("<div @if($a) class=\"x\" @endif>\n@dump($x)\n</div>\n", 2),
+        ("<p>y</p>\n@dump($x)\n", 2),
+        ("@if($w)\n<br>\n@dump($x)\n@endif\n", 3),
+    ] {
+        assert_eq!(pack_rule_lines(debug, source), [line], "{source:?}");
+        assert_eq!(pack_rule_lines(dump, source), [line], "{source:?}");
+    }
+    let ray_source = "<div>\n    @if ($d)\n        @ray($f)\n    @endif\n</div>\n";
+    assert_eq!(pack_rule_lines(ray, ray_source), [3]);
+    let spacing = "<input @if($a == 1) checked @endif>\n<div class=\"x @if($a) y @endif\">z</div>\n@if($b)\nx\n@endif\n<script>\nvar n = '{{$prefix}}';\n</script>\n<p>{{$prefix}}</p>\n";
+    let space_after =
+        include_str!("../../../../packs/blade/rules/tlint-space-after-blade-directives.json");
+    let render_content =
+        include_str!("../../../../packs/blade/rules/tlint-spaces-around-blade-render-content.json");
+    assert_eq!(pack_rule_lines(space_after, spacing), [1, 2, 3]);
+    assert_eq!(pack_rule_lines(render_content, spacing), [7, 9]);
+}

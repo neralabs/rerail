@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-assign-module-variable",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-assign-module-variable: a variable declaration with a declarator whose identifier is `module`.",
   "scope": {
@@ -51,6 +51,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-assign-module-variable"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-assign-module-variable"
             ]
           }
         }

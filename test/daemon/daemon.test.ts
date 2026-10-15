@@ -5,15 +5,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { publicHostSet, operations, presentationResponseSchema } from "../../src/api/index.js";
 import {
   assertHostBindable,
   DEFAULT_DAEMON_PORT,
+  defaultEngineSocketPath,
   parsePublicHosts,
   RerailDaemon,
   type RerailDaemonOptions,
 } from "../../src/daemon/daemon.js";
+import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
   ingestEngineEvent,
@@ -21,7 +23,7 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
@@ -671,6 +673,35 @@ describe("Rerail daemon", () => {
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
+  });
+
+  it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const restoring = `${databasePath}.restoring`;
+    openRerailDatabase(databasePath).$client.close();
+    await writeFile(restoring, "");
+    await expect(start()).rejects.toThrow(/putting back a copy/u);
+    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
+    await rm(restoring);
+    const daemon = await start();
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  // Review of #49 (N1): a resource that fails to close does not keep the next one open.
+  it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const stateFile = join(root, "daemon.json");
+    await mkdir(stateFile);
+    const close = vi.spyOn(NativeSessionServer.prototype, "close").mockRejectedValueOnce(new Error("close failed"));
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await expect(start({ stateFile })).rejects.toThrow(/EISDIR|illegal operation on a directory/u);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
+    // Review of #49 (N5): the failed close is on record.
+    expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
+    stderr.mockRestore();
   });
 
   it("publishes every operation in the OpenAPI document", async () => {

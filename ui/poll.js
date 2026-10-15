@@ -37,6 +37,12 @@ async function fetchFresh(path, slot = path) {
   return body;
 }
 
+/**
+ * Fetch slot `slot` in full on the next poll, not conditionally: after a write failed, what the page shows was
+ * changed by hand and may differ from what the daemon holds although the daemon's body did not change.
+ */
+export const refetch = slot => { etags.delete(slot); };
+
 /** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
 export function scopeTarget() {
   const target = {};
@@ -139,11 +145,13 @@ async function loadContext() {
 }
 
 /**
- * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
- * the first folder's mode on the rule, and each folder's own on and mode (`folderStates`; `mixed` when they differ).
- * A change from the row is written at every folder.
+ * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
+ * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
+ * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
+ * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
+ * written at every folder.
  */
-function toStoredRules(entries) {
+export function toStoredRules(entries) {
   const rules = new Map();
   for (const entry of entries) {
     const id = entry.rule.id;
@@ -151,8 +159,9 @@ function toStoredRules(entries) {
     if (known !== undefined) {
       if (!known.folders.includes(entry.folder)) {
         known.folders.push(entry.folder);
-        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode });
+        known.folderStates.push(folderState(entry));
         known.enabled = known.enabled && entry.on;
+        known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
       }
       continue;
@@ -164,15 +173,26 @@ function toStoredRules(entries) {
       origin: entry.source.kind === "library_rule" ? "user" : "rerail",
       source: entry.source,
       folders: [entry.folder],
-      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode }],
+      folderStates: [folderState(entry)],
       mixed: false,
       onSource: entry.onSource,
       modeSource: entry.modeSource,
+      suppressions: entry.suppressions,
+      suppressionsSource: entry.suppressionsSource,
+      config: entry.config,
+      configSource: entry.configSource,
+      configError: entry.configError ?? null,
       revision: entry.revision,
     });
   }
   return rules;
 }
+
+/** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
+const folderState = entry => ({
+  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+  source: entry.source,
+});
 
 /**
  * The packs added to the repository: pack id → every folder it is attached at, from the rules present

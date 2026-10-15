@@ -21,9 +21,10 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
 } from "../src/engine/index.js";
-import { CONFORMANCE_FILE, defaultCorpusRoot, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
+import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
 export const PACK_CHECKS = [
   { number: 1, name: "rules" },
@@ -203,6 +204,84 @@ function compileCodeRule(text: string): Compiled {
     const notSupported = languageNotSupportedOf(message(error));
     return notSupported === undefined ? { kind: "failed", message: `does not compile: ${message(error)}` } : { kind: "not-supported-yet", reason: notSupported.reason };
   }
+}
+
+/** The `violation.suppress` key and list that name an upstream rule (code-rule DSL reference, `suppress`). */
+interface Suppression {
+  key: string;
+  list: string;
+}
+const SUPPRESSION_BY_TOOL: Record<string, Suppression> = {
+  ruff: { key: "noqa", list: "codes" },
+  bandit: { key: "nosec", list: "codes" },
+  phpstan: { key: "phpstan", list: "identifiers" },
+  psalm: { key: "psalm", list: "issues" },
+  phpcs: { key: "phpcs", list: "sniffs" },
+};
+
+/**
+ * The suppression a tool's own inline comments give its findings (`// eslint-disable-line <rule>`, `# noqa: <code>`,
+ * `# nosec <id>`, `@phpstan-ignore <identifier>`, `@psalm-suppress <issue>`, `phpcs:ignore <sniff>`), which a port of
+ * its rule must honour as the tool does. Other tools (Bladestan, tlint, blade-parser, lizard) read none Rerail models.
+ */
+function suppressionOf(tool: string): Suppression | undefined {
+  if (tool === "eslint" || tool === "typescript-eslint" || tool.startsWith("eslint-plugin-")) return { key: "eslint", list: "rules" };
+  return SUPPRESSION_BY_TOOL[tool];
+}
+
+const suppressingDocumentSchema = z.object({
+  clauses: z.array(z.looseObject({ id: z.string(), violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional() })),
+});
+
+/** The string items of a suppression's list (`suppress.eslint.rules`), or none. */
+function listed(suppression: Record<string, unknown> | undefined, list: string): string[] {
+  const names = suppression?.[list];
+  return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string") : [];
+}
+
+/**
+ * In a port's document, the ids of the clauses whose violation does not name the upstream `rule` under `suppression`
+ * (`unsuppressed`); once any violation carries `suppress.oxlint`, of those that carry only one of `suppress.eslint`
+ * and `suppress.oxlint` (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a rule Oxlint
+ * implements honours both on the same violations; of those whose `suppress.eslint` names a rule Biome has a rule the
+ * same as, without that Biome rule under `suppress.biome` (`biomeMissing`, with the missing rules), and of those that
+ * carry `suppress.biome` without `suppress.eslint` (`biomeAlone`). `undefined` when the document cannot be read (check
+ * 1 reports that). A PHP_CodeSniffer port names its sniff's message codes, `<sniff>.<code>`, as `phpcs:ignore` does.
+ */
+function suppressionGaps(
+  text: string,
+  suppression: Suppression,
+  tool: string,
+  rule: string,
+): { unsuppressed: string[]; oxlintApart: string[]; biomeMissing: { clauses: string[]; rules: string[] }; biomeAlone: string[] } | undefined {
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const parsed = suppressingDocumentSchema.safeParse(document);
+  if (!parsed.success) return undefined;
+  const violations = parsed.data.clauses.flatMap(clause => (clause.violation === undefined ? [] : [{ id: clause.id, suppress: clause.violation.suppress ?? {} }]));
+  const unsuppressed = violations
+    .filter(({ suppress }) => {
+      const names = suppress[suppression.key]?.[suppression.list];
+      return !(Array.isArray(names) && names.some(name => name === rule || (tool === "phpcs" && typeof name === "string" && name.startsWith(`${rule}.`))));
+    })
+    .map(violation => violation.id);
+  const eslintFamily = suppression.key === "eslint";
+  const oxlint = eslintFamily && violations.some(({ suppress }) => suppress.oxlint !== undefined);
+  const oxlintApart = oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [];
+  const biomeMissing = { clauses: [] as string[], rules: [] as string[] };
+  for (const { id, suppress } of eslintFamily ? violations : []) {
+    const carried = new Set(listed(suppress.biome, "rules"));
+    const missing = listed(suppress.eslint, "rules").flatMap(name => BIOME_SAME_SOURCES[name] ?? []).filter(name => !carried.has(name));
+    if (missing.length === 0) continue;
+    biomeMissing.clauses.push(id);
+    for (const name of missing) if (!biomeMissing.rules.includes(name)) biomeMissing.rules.push(name);
+  }
+  const biomeAlone = violations.filter(({ suppress }) => suppress.biome !== undefined && suppress.eslint === undefined).map(violation => violation.id);
+  return { unsuppressed, oxlintApart, biomeMissing, biomeAlone };
 }
 
 /** Every file under `directory`, as posix paths relative to `root`, sorted. */
@@ -418,7 +497,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   }
 
   // Check 4: ports. The fixture tier (and corpora) of the conformance runner, with rules not supported yet skipped,
-  // plus capability coverage.
+  // plus capability coverage and each port's suppression comments.
   const notSupported = new Map<string, string>();
   if (loaded !== undefined) {
     const ruleOfPort = new Map<string, string>();
@@ -448,6 +527,44 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       fail("ports", failure, port === undefined ? undefined : ruleOfPort.get(port.id));
     }
     for (const capability of report.coverage.uncovered) fail("ports", `capability ${capability}: no ported rule exercises it and it has no exemption`);
+    // A port of a tool that honours its own suppression comments names the upstream rule in that suppression on every
+    // violation, unless conformance.json exempts it with a reason; an exemption the port does not need is stale. A
+    // port that also honours Oxlint's comments does so on the same violations as ESLint's, and one whose ESLint rule
+    // Biome has a rule the same as names that rule under suppress.biome where it names the ESLint rule.
+    const exempt = new Set(loaded.pack.suppressionExemptions.map(exemption => exemption.rule));
+    for (const port of loaded.pack.rules) {
+      const path = join(directory, port.policy);
+      if (!existsSync(path)) continue;
+      const { tool, rule } = port.upstream;
+      const suppression = suppressionOf(tool);
+      const gaps =
+        suppression === undefined
+          ? { unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] }
+          : suppressionGaps(readFileSync(path, "utf8"), suppression, tool, rule);
+      if (gaps === undefined) continue;
+      const document = documentPath(port.policy);
+      const owner = ruleOfPort.get(port.id);
+      if (exempt.has(port.id)) {
+        if (suppression === undefined) fail("ports", `${port.id}: stale suppression exemption: ${tool} has no suppression comment a port must honour`, owner);
+        else if (gaps.unsuppressed.length === 0) fail("ports", `${port.id}: stale suppression exemption: every violation of ${document} names ${rule} in suppress.${suppression.key}.${suppression.list}`, owner);
+      } else if (suppression !== undefined && gaps.unsuppressed.length > 0) {
+        fail(
+          "ports",
+          `${port.id}: ${document} reports ${tool}'s ${rule} without suppress.${suppression.key}.${suppression.list} naming it (clause ${gaps.unsuppressed.join(", ")}), so the comments that silence ${rule} are ignored; add it, or exempt the port in suppressionExemptions with a reason`,
+          owner,
+        );
+      }
+      if (gaps.oxlintApart.length > 0)
+        fail("ports", `${port.id}: ${document} carries suppress.eslint and suppress.oxlint on different violations (clause ${gaps.oxlintApart.join(", ")}); Oxlint reads eslint-disable comments too, so both go on the same violations`, owner);
+      if (gaps.biomeMissing.clauses.length > 0)
+        fail(
+          "ports",
+          `${port.id}: ${document} carries suppress.eslint without suppress.biome naming ${gaps.biomeMissing.rules.join(", ")} (clause ${gaps.biomeMissing.clauses.join(", ")}), the Biome 2.5.15 rule${gaps.biomeMissing.rules.length === 1 ? "" : "s"} the same as the ESLint rule it names, so the biome-ignore comments that silence it are ignored; run scripts/generate/packs/biome-suppression.mjs`,
+          owner,
+        );
+      if (gaps.biomeAlone.length > 0)
+        fail("ports", `${port.id}: ${document} carries suppress.biome without suppress.eslint (clause ${gaps.biomeAlone.join(", ")}); a port names the Biome rules the same as the ESLint rule it names`, owner);
+    }
   }
 
   // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no

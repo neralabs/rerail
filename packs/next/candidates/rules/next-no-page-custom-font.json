@@ -94,6 +94,11 @@
             "rules": [
               "@next/next/no-page-custom-font"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-page-custom-font"
+            ]
           }
         }
       }
@@ -171,7 +176,14 @@
                     "stopBy": "end",
                     "any": [
                       {
-                        "kind": "function_declaration",
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          }
+                        ],
                         "inside": {
                           "kind": "export_statement",
                           "regex": "^export\\s+default\\s"
@@ -315,6 +327,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-page-custom-font"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-page-custom-font"
             ]
           }
         }

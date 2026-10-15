@@ -70,6 +70,16 @@
             "rules": [
               "react/void-dom-elements-no-children"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
+            ]
           }
         }
       }
@@ -126,6 +136,16 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }
@@ -294,6 +314,16 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }
@@ -484,6 +514,16 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }

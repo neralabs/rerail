@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-sync",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/no-sync (default options): upstream's selectors `CallExpression > MemberExpression.callee Identifier[name=/Sync$/]` and `CallExpression > Identifier[name=/Sync$/]`, reported at the identifier's ESTree parent: a call with a /Sync$/ identifier as callee or argument, or a node inside (or being) a call's member callee with a /Sync$/ identifier child (tree-sitter's arguments node is no ESTree parent: its identifiers belong to the call).",
   "scope": {
@@ -75,6 +75,11 @@
           "eslint": {
             "rules": [
               "n/no-sync"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync"
             ]
           }
         }
@@ -188,6 +193,11 @@
           "eslint": {
             "rules": [
               "n/no-sync"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync"
             ]
           }
         }
