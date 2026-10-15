@@ -2674,13 +2674,14 @@ mod tests {
 
     /// `global { … }` without `declare` is a global augmentation, an `internal_module` named
     /// `global`; `declare global { … }` stays an `ambient_declaration`, and `global` stays a name
-    /// elsewhere (Patch 26 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    /// elsewhere, member names included (Patch 26 in `grammars/tree-sitter-typescript/PATCHES.md`).
     #[test]
     fn a_typescript_global_augmentation_needs_no_declare() {
         for root in typescript_and_tsx(
             "declare module 'x' { global { interface String {} } }\nglobal { interface Array<T> {} }\n\
              declare global { interface Window {} }\nglobal.process = 1;\nconst g = global;\n\
-             function f(global: number) {}\nglobal: for (;;) { break global; }\n",
+             function f(global: number) {}\nglobal: for (;;) { break global; }\n\
+             o.global;\nx = { global: 1 };\nclass K { global() {} }\n",
         ) {
             let modules = root
                 .root()
@@ -2717,8 +2718,34 @@ mod tests {
                     "identifier<required_parameter",
                     "statement_identifier<labeled_statement",
                     "statement_identifier<break_statement",
+                    "property_identifier<member_expression",
+                    "property_identifier<pair",
+                    "property_identifier<method_definition",
                 ]
             );
+        }
+        // `global` followed by `{` on the next line is an expression statement and a block, not an
+        // augmentation: TypeScript reads one there, but the grammar would need an external scanner.
+        for root in typescript_and_tsx("declare module 'x' { global\n{ } }\n") {
+            assert!(!root.root().get_inner_node().has_error());
+            assert!(
+                !root
+                    .root()
+                    .dfs()
+                    .any(|node| node.kind() == "internal_module")
+            );
+            let body = root
+                .root()
+                .dfs()
+                .find(|node| node.kind() == "module")
+                .and_then(|module| module.field("body"))
+                .expect("the module has a body");
+            let statements = body
+                .children()
+                .filter(|node| node.is_named())
+                .map(|node| node.kind().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(statements, ["expression_statement", "statement_block"]);
         }
     }
 }
