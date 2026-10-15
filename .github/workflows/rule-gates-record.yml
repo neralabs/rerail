@@ -425,7 +425,8 @@ jobs:
           set -euo pipefail
           fail() { echo "::error::$*"; exit 1; }
           if [ -n "$PR" ]; then
-            git fetch --no-tags origin "$HEAD_SHA"
+            git fetch --no-tags origin "$HEAD_SHA" ||
+              fail "pull request #$PR no longer has $HEAD_SHA, the commit that was recorded: review it and record again"
             parent="$HEAD_SHA"
           else
             parent="$BASE_SHA"

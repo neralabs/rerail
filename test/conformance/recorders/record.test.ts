@@ -80,7 +80,7 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const written = await writeRecording(root, "demo", "bandit", recorded, { cacheRoot: join(root, "cache") });
     assert.equal(written.changes.first, true);
 
-    // Only the lock is committed; the recording itself went into the cache, by its own digest.
+    // The lock names the recording; the recording itself is not in the tree but in the cache, by its own digest.
     const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
     assert.deepEqual(lock.pins, recorded.recording.pins);
     assert.match(lock.files["gates.json"].asset, /^demo-bandit-gates-[0-9a-f]{64}\.json\.gz$/u);
