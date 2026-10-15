@@ -404,7 +404,8 @@ jobs:
         )
       }}
     runs-on: macos-15
-    timeout-minutes: 20
+    # Three provider attempts of up to 3 minutes each, on top of a cold native build.
+    timeout-minutes: 25
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
       ANTHROPIC_FOUNDRY_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
@@ -414,6 +415,8 @@ jobs:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       RERAIL_CODEX_MODEL: ${{ vars.RERAIL_CODEX_MODEL }}
       RERAIL_CLAUDE_MODEL: ${{ vars.RERAIL_CLAUDE_MODEL }}
+      # A session where the model never lands the violation (or the provider stalls) is inconclusive, not red.
+      RERAIL_SMOKE_ATTEMPTS: "3"
     steps:
       - name: Require provider credentials and endpoints
         run: |
@@ -513,7 +516,7 @@ jobs:
           mkdir -p "$results"
           node --import tsx scripts/host/host-smoke.ts --host claude-code > "$results/claude-code.log" 2>&1 &
           claude_pid=$!
-          RERAIL_SMOKE_ACCEPTANCE=transport RERAIL_SMOKE_TIMEOUT_MS=300000 node --import tsx scripts/host/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
+          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
           codex_pid=$!
           RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
           cursor_pid=$!

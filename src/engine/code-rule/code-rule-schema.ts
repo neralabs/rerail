@@ -498,7 +498,7 @@ const resolveDottedName = z
   });
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");
-/** Every binding form a binding filter names: the engine's `FORMS`, and PHP's `static`. */
+/** Every binding form a binding filter names: the engine's `FORMS`, PHP's `static` and SQL's `relation`, `cte` and `target`. */
 export const CODE_RULE_BINDING_FORMS = [
   "assignment",
   "annotated",
@@ -521,9 +521,12 @@ export const CODE_RULE_BINDING_FORMS = [
   "method",
   "accessor",
   "static",
+  "relation",
+  "cte",
+  "target",
 ] as const;
-/** Every scope kind a binding filter names: Python's, then TypeScript's and PHP's others (the engine's order). */
-export const CODE_RULE_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters", "global", "block", "namespace", "functionName", "closure"] as const;
+/** Every scope kind a binding filter names: Python's, then TypeScript's, PHP's and SQL's others (the engine's order). */
+export const CODE_RULE_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters", "global", "block", "namespace", "functionName", "closure", "query"] as const;
 const bindingFilterShape = {
   form: z.union([z.enum(CODE_RULE_BINDING_FORMS), z.array(z.enum(CODE_RULE_BINDING_FORMS)).min(1)]).optional(),
   scope: z.union([z.enum(CODE_RULE_SCOPE_KINDS), z.array(z.enum(CODE_RULE_SCOPE_KINDS)).min(1)]).optional(),

@@ -61,7 +61,7 @@ impl TextRegex {
 fn has_backreference(expr: &fancy_regex::Expr) -> bool {
     use fancy_regex::Expr;
     match expr {
-        Expr::Backref(_) => true,
+        Expr::Backref { .. } => true,
         Expr::Concat(items) | Expr::Alt(items) => items.iter().any(has_backreference),
         Expr::Group(inner) => has_backreference(inner),
         Expr::Repeat { child, .. } => has_backreference(child),
@@ -78,7 +78,7 @@ fn backreferences_only(expr: &fancy_regex::Expr) -> bool {
         | Expr::Assertion(_)
         | Expr::Literal { .. }
         | Expr::Delegate { .. }
-        | Expr::Backref(_) => true,
+        | Expr::Backref { .. } => true,
         Expr::Concat(items) | Expr::Alt(items) => items.iter().all(backreferences_only),
         Expr::Group(inner) => backreferences_only(inner),
         Expr::Repeat { child, .. } => backreferences_only(child),
@@ -87,7 +87,10 @@ fn backreferences_only(expr: &fancy_regex::Expr) -> bool {
         | Expr::KeepOut
         | Expr::ContinueFromPreviousMatchEnd
         | Expr::BackrefExistsCondition(_)
-        | Expr::Conditional { .. } => false,
+        | Expr::Conditional { .. }
+        | Expr::BackrefWithRelativeRecursionLevel { .. }
+        | Expr::SubroutineCall(_)
+        | Expr::UnresolvedNamedSubroutineCall { .. } => false,
     }
 }
 

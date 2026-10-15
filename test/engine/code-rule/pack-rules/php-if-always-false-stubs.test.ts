@@ -1,12 +1,12 @@
 /**
- * phpstan-if-always-false (packs/php/) must not steer an agent into deleting a declaration stub (NER-1810).
+ * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub (NER-1810).
  * `if (false) { class Router {} }` is a deliberate idiom: the class never exists at runtime (a class_alias call
  * declares the name), but Composer's class map, IDEs and static analysers see a declaration for it. Symfony ships it
  * for every deprecated alias (src/Symfony/Bundle/FrameworkBundle/Routing/Router.php:20 and 23 more on the pack's
  * pinned corpus) and monolog for DateTimeImmutable; removing such a block broke Symfony before (symfony#66188).
  * PHPStan's if.alwaysFalse reports these too; the port does not, and packs/php/divergences.json records each one.
  *
- * Each case below is one file; the test asserts exactly which lines the shipped rule reports.
+ * Each case below is one file; the test asserts exactly which lines the rule reports.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,13 +14,14 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "phpstan-if-always-false";
+const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),
@@ -29,8 +30,7 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "php")]).find(candidate => candidate.rule.id === RULE_ID);
-  if (document === undefined) throw new Error(`${RULE_ID} is not in packs/php`);
+  const document = readRuleDocument(RULE_PATH);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

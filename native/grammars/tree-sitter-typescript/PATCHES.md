@@ -1758,3 +1758,108 @@ With Patches 23 and 24, upstream's corpus parses as before (136 of 137 with two 
 `foo++!`). Over the 26,252 TypeScript and TSX files above and hono 4.6.3's 271 (`src/`), in the C locale, the six hono
 files above that had syntax errors parse (TypeScript reports no syntax error in any of them), none gains an error, and
 every other tree is unchanged; every hono file parses.
+
+## Patch 25: a class declares a static index signature
+
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
+
+Why: TypeScript 4.3 allows `static [k: string]: number;` in a class, and upstream's `index_signature` has no
+`static`. An interface or an object type may not declare one, so only the class body accepts it.
+typescript-eslint's `member-ordering` invalid\[44\] failed on it.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -633,6 +633,7 @@ module.exports = function defineGrammar(dialect) {
+             choice(
+               $.abstract_method_signature,
+               $.index_signature,
++              alias($._class_index_signature, $.index_signature),
+               $.method_signature,
+               $.public_field_definition,
+             ),
+@@ -1242,6 +1243,17 @@ module.exports = function defineGrammar(dialect) {
+             'readonly',
+           ),
+         ),
++        $._index_signature_body,
++      ),
++
++      // A class may declare a static index signature (TypeScript 4.3); an object type or an interface may not.
++      _class_index_signature: $ => seq(
++        'static',
++        optional('readonly'),
++        $._index_signature_body,
++      ),
++
++      _index_signature_body: $ => seq(
+         '[',
+         choice(
+           seq(
+```
+
+`interface I { static [k: string]: number; }` stays a parse error.
+
+Node kinds and field names are unchanged: the node is an `index_signature` with the same fields (`name`,
+`index_type`, `type`, `sign`), and `static` is an anonymous token in it. `_index_signature_body` is hidden, so its
+fields stay on the `index_signature`.
+
+## Patch 26: `global { … }` without `declare` is a global augmentation
+
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
+WillBooster/tree-sitter-typescript reads it as an `internal_module` named `global`, the shape used here.
+
+Why: inside `declare module 'x' { … }`, TypeScript accepts `global { interface String {} }` without `declare`,
+as a `ModuleDeclaration` named `global`. Upstream accepts `global` only after `declare`. typescript-eslint's
+`consistent-type-definitions` invalid\[12\] failed on it.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -663,6 +663,7 @@ module.exports = function defineGrammar(dialect) {
+         $.abstract_class_declaration,
+         $.module,
+         prec('declaration', $.internal_module),
++        prec('declaration', alias($._global_module, $.internal_module)),
+         $.type_alias_declaration,
+         $.enum_declaration,
+         $.interface_declaration,
+@@ -769,6 +770,13 @@ module.exports = function defineGrammar(dialect) {
+         $._module,
+       ),
+ 
++      // A global augmentation without `declare`, as inside `declare module 'x' { global { … } }`.
++      // `declare global { … }` stays an ambient_declaration, as before.
++      _global_module: $ => prec(-1, seq(
++        field('name', alias('global', $.identifier)),
++        field('body', $.statement_block),
++      )),
++
+       _module: $ => prec.right(seq(
+         field('name', choice($.string, $.identifier, $.nested_identifier)),
+         // On .d.ts files "declare module foo" desugars to "declare module foo {}",
+@@ -1305,6 +1313,7 @@ module.exports = function defineGrammar(dialect) {
+         'override',
+         'readonly',
+         'module',
++        'global',
+         'any',
+         'number',
+         'boolean',
+```
+
+`declare global { … }` stays an `ambient_declaration`; the lower precedence keeps that reading where both apply.
+`global` joins the reserved identifiers, so `global.process`, `const g = global`, a parameter, a label, a member
+(`o.global`, `{ global: 1 }`, `class K { global() {} }`) and a namespace (`namespace global {}`) named `global` stay
+identifiers or property identifiers. One difference from TypeScript remains: `global` followed by `{` on the next line
+reads as an expression statement and a block here, an augmentation in TypeScript. The fork reads it with its external
+scanner.
+
+Node kinds and field names are unchanged: the augmentation is an `internal_module` with `name` (an `identifier`,
+`global`) and `body`, and with no `namespace` keyword, which is how a rule or the scope model tells it from
+`namespace global {}`. The scope model reads it as it reads `declare global { … }`: it binds no name, nor do its
+declarations. Each generated parser has fewer states (5,900 for TypeScript and 6,187 for TSX, from 5,905 and 6,191).
+
+With Patches 25 and 26, upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's
+`foo++!`). Over 20,235 TypeScript and TSX files (vscode's, nera-landing's and this repository's, packs' upstream
+sources and fixtures included), in the C locale, every tree is unchanged, so no file gains an error.

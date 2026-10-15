@@ -1,0 +1,162 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al09-aliasing-self-alias-column",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0 AL09 (aliasing.self_alias.column): in a SELECT list, report a column reference aliased to its own last name part, either written identically (quotes and case included) or, both unquoted, differing in case only. Anchored at the select element's start.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "exact-self-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "inside": {
+              "kind": "select_expression",
+              "stopBy": "neighbor"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "kind": "field",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "pattern": "$C"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "alias",
+                  "kind": "identifier",
+                  "pattern": "$A"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C",
+                  "op": "eq",
+                  "right": "A",
+                  "text": "source"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AL09",
+        "message": "Column should not be self-aliased.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AL09",
+              "aliasing",
+              "aliasing.self_alias.column",
+              "all",
+              "core"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "ambiguous-unquoted-self-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "inside": {
+              "kind": "select_expression",
+              "stopBy": "neighbor"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "kind": "field",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "pattern": "$C"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "alias",
+                  "kind": "identifier",
+                  "pattern": "$A"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C",
+                  "op": "ne",
+                  "right": "A",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C",
+                  "op": "eq",
+                  "right": "A",
+                  "text": "source",
+                  "collation": "fold-upper"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "value",
+                    "kind": "field",
+                    "has": {
+                      "field": "name",
+                      "regex": "^[\"`\\[]"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "alias",
+                    "regex": "^[\"`\\[]"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AL09",
+        "message": "Ambiguous self alias. Either remove unnecessary alias, or quote alias/reference to make case change explicit.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AL09",
+              "aliasing",
+              "aliasing.self_alias.column",
+              "all",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

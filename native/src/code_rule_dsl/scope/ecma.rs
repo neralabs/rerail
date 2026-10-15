@@ -6,9 +6,11 @@ use super::{
     Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::regions;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{LazyLock, OnceLock};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Tag {
@@ -213,26 +215,34 @@ fn fields_of(grammar: &Grammar<Tag>) -> Fields {
     }
 }
 
-/// A dialect's grammar, as the visit reads it: each ECMAScript dialect parses with its own.
-fn script(language: GrammarDialect) -> &'static Script {
-    static TYPESCRIPT: OnceLock<Script> = OnceLock::new();
-    static TSX: OnceLock<Script> = OnceLock::new();
-    static JAVASCRIPT: OnceLock<Script> = OnceLock::new();
-    let slot = match language {
-        GrammarDialect::TypeScript => &TYPESCRIPT,
-        GrammarDialect::Tsx => &TSX,
-        GrammarDialect::JavaScript => &JAVASCRIPT,
-        GrammarDialect::Python | GrammarDialect::Php | GrammarDialect::Blade => {
-            unreachable!("only ECMAScript dialects build ECMAScript scopes")
-        }
-        #[cfg(test)]
-        _ => unreachable!("only policy dialects build ECMAScript scopes"),
-    };
-    slot.get_or_init(|| {
-        let grammar = Grammar::new(language, tag);
-        let fields = fields_of(&grammar);
-        Script { grammar, fields }
-    })
+/// The grammar the visit reads a region in `dialect` with, in a tape of `host`: `dialect`'s kinds
+/// and fields at the codes `host`'s tapes number them (`Grammar::new`). Each ECMAScript dialect
+/// parses with its own grammar, and a dialect that embeds one numbers its kinds after its own.
+fn script(host: GrammarDialect, dialect: GrammarDialect) -> &'static Script {
+    type Scripts = HashMap<(GrammarDialect, GrammarDialect), OnceLock<Script>>;
+    static SCRIPTS: LazyLock<Scripts> = LazyLock::new(|| {
+        GrammarDialect::all()
+            .iter()
+            .flat_map(|&host| {
+                std::iter::once(host)
+                    .chain(
+                        host.kinds()
+                            .embeddings()
+                            .iter()
+                            .map(|embedded| embedded.dialect),
+                    )
+                    .map(move |dialect| ((host, dialect), OnceLock::new()))
+            })
+            .collect()
+    });
+    SCRIPTS
+        .get(&(host, dialect))
+        .expect("a region is in its tape's dialect or one the dialect embeds")
+        .get_or_init(|| {
+            let grammar = Grammar::new(host, dialect, tag);
+            let fields = fields_of(&grammar);
+            Script { grammar, fields }
+        })
 }
 
 type Visit = Result<(), BuildError>;
@@ -253,8 +263,21 @@ fn same<D: Doc>(left: &Node<'_, D>, right: Option<&Node<'_, D>>) -> bool {
     right.is_some_and(|right| right.node_id() == left.node_id())
 }
 
-pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit {
-    let script = script(builder.table.language);
+/// Visits each region of the document rooted at `root` (`adapter::regions`): a TypeScript file's
+/// root, or the program an embedding file's tape holds, each read as its dialect.
+pub(crate) fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit {
+    for region in regions(root, builder.table.language) {
+        visit_program(builder, &region.root, region.dialect)?;
+    }
+    Ok(())
+}
+
+fn visit_program<D: Doc>(
+    builder: &mut Builder,
+    root: &Node<'_, D>,
+    dialect: GrammarDialect,
+) -> Visit {
+    let script = script(builder.table.language, dialect);
     let mut visitor = Visitor {
         builder,
         script,
@@ -1011,8 +1034,22 @@ impl Visitor<'_, '_> {
     }
 
     /// `namespace A.B { }` binds `A`; `declare module "m" { }` binds nothing. The body is a scope.
+    /// `global { }` with no `namespace` or `module` keyword, as inside `declare module "m" { }`, is a
+    /// global augmentation like `declare global { }`: it binds no name, nor do its declarations.
     fn module<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
+        let keyword = node.children().any(|child| {
+            !child.is_named() && matches!(child.kind().as_ref(), "namespace" | "module")
+        });
+        if !keyword {
+            self.builder
+                .push(ScopeKind::GlobalAugmentation, node.range());
+            if let Some(body) = field(node, fields.body) {
+                self.children(&body)?;
+            }
+            self.builder.pop();
+            return Ok(());
+        }
         let name = field(node, fields.name);
         if let Some(name) = &name {
             let mut head = name.clone();

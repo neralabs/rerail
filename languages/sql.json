@@ -1,20 +1,24 @@
 {
   "format": "rerail.language/v1",
   "id": "sql",
-  "status": "planned",
+  "status": "supported",
   "family": "sql",
   "dialects": [
     {
       "label": "sql",
-      "suffixes": [".sql"]
+      "variant": "Sql",
+      "suffixes": [".sql"],
+      "parser": "tree-sitter",
+      "grammar": "vendored:sql",
+      "tapeTag": 10
     }
   ],
   "capabilities": {
-    "scope": "not-supported-yet",
-    "value": "not-supported-yet",
-    "arguments": "not-supported-yet",
-    "calls": "not-supported-yet",
-    "formatArgs": "not-supported-yet"
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "refused",
+    "formatArgs": "refused"
   },
-  "suppressions": []
+  "suppressions": ["sqlfluff"]
 }

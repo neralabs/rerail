@@ -40,8 +40,24 @@
 //! comment Biome's analyzer panics on (`/* BIOME-IGNORE lint: x, biome-ignore */`, whose reason
 //! range runs past the comment) is read as its parser reads it.
 
+use super::names;
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::ops::Range;
+
+/// `biome.rules`: the lint rules (`lint/<group>/<rule>`) a `biome-ignore` comment must name, or
+/// their group, or `lint`, to suppress the violation.
+pub(super) fn spec(biome: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(biome, at)?, &["rules"], at)?;
+    names(
+        biome.get("rules"),
+        &format!("{at}/rules"),
+        is_lint_rule,
+        "Biome lint rule names",
+        "a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)",
+    )
+}
 
 #[rustfmt::skip]
 #[path = "biome_registry.generated.rs"]

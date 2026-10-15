@@ -11,6 +11,7 @@ use super::super::{
     ScopeTable, stack_address,
 };
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
+use crate::code_rule_dsl::language::adapter::regions;
 use crate::code_rule_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -158,6 +159,9 @@ struct Walk<'t, 'r, 'a, 'd, D: Doc> {
     table: &'t ScopeTable,
     text: &'a str,
     base: usize,
+    /// The start of the node the walk visited last (comments aside), where the cursors below
+    /// stand.
+    at: usize,
     next_reference: usize,
     names: Vec<NameEntry<'t>>,
     next_name: usize,
@@ -186,6 +190,17 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             self.comment(&node);
             return Ok(());
         }
+        // A tree's nodes start in walk order, but an embedded program's need not (`embed`): a
+        // handler the program reads after a script may stand before it in the file. The cursors
+        // then seek back to the node's start.
+        if range.start < self.at {
+            self.next_reference = self
+                .table
+                .references
+                .partition_point(|reference| reference.start < range.start);
+            self.next_name = self.names.partition_point(|name| name.start < range.start);
+        }
+        self.at = range.start;
         while self
             .table
             .references
@@ -438,18 +453,16 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
     }
 
     fn reference(&mut self, reference: super::super::Reference, node: &Node<'r, D>) {
-        let Some(name) = self
-            .text
-            .get(reference.start - self.base..reference.end - self.base)
-        else {
+        // The name as the family compares names (`Adapter::name`).
+        let Some(name) = self.table.reference_name(&reference, self.text, self.base) else {
             return;
         };
-        let Some((scope, _)) = self.table.resolve_lexical_index(&reference, name) else {
+        let Some((scope, _)) = self.table.resolve_lexical_index(&reference, &name) else {
             return;
         };
         let Some((key, _)) = self.table.scopes[scope as usize]
             .bindings
-            .get_key_value(name)
+            .get_key_value(name.as_ref())
         else {
             return;
         };
@@ -1132,7 +1145,8 @@ fn anchor<D: Doc>(
         })
 }
 
-/// Builds the TypeScript facts of `table`, whose file's root is `root`.
+/// Builds the TypeScript facts of `table`, whose file's root is `root`: of each region the table
+/// read (`adapter::regions`).
 pub(super) fn build<'r, D: Doc>(
     table: &ScopeTable,
     root: &Node<'r, D>,
@@ -1161,6 +1175,7 @@ pub(super) fn build<'r, D: Doc>(
         table,
         text: text.as_ref(),
         base: root.range().start,
+        at: root.range().start,
         next_reference: 0,
         names,
         next_name: 0,
@@ -1178,7 +1193,9 @@ pub(super) fn build<'r, D: Doc>(
         classes: Vec::new(),
         privates: Vec::new(),
     };
-    walk.visit(root.clone())?;
+    for region in regions(root, table.language) {
+        walk.visit(region.root)?;
+    }
     let Walk {
         mut variables,
         comment_exports,
