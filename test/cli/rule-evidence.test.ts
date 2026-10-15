@@ -99,7 +99,7 @@ describe("risky commands", () => {
       "rm -rf build", "rm -Rf build", "rm -fR build", "rm -r -f build", "rm --recursive --force build",
       "cd x && rm -fr y", "cd x\nrm -rf y", "  rm -rf x", "if [ -d x ]; then rm -rf x; fi",
       "find . -name tmp | xargs rm -rf", "find . -name tmp -exec rm -rf {} +", "find . -type d -execdir rm -rf {} \\;", "xargs -I {} rm -rf {}",
-      "sudo -u root rm -rf /x", "nice -n 10 rm -rf x", "time -p rm -rf x", "nohup sudo rm -rf x", "CI=1 rm -rf x",
+      "sudo -u root rm -rf /x", "sudo --user root rm -rf /x", "sudo --user=root rm -rf /x", "nice --adjustment 5 rm -rf x", "env --unset HOME rm -rf x", "nice -n 10 rm -rf x", "time -p rm -rf x", "nohup sudo rm -rf x", "CI=1 rm -rf x",
     ]);
     ignored("recursive delete", [
       "rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf", "git rm -rf x", "echo 'rm -rf x'",

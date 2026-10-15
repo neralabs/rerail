@@ -42,17 +42,17 @@ const SHELL_KEYWORDS = new Set(["then", "do", "else", "if", "while", "until", "!
 
 /**
  * Wrappers that run the command after them (`sudo rm`, `nohup nice -n 10 rm`), each with the options that take the next
- * word as their value (`sudo -u root`). Any other option stands alone, so `sudo -E foo rm` is `foo`'s, not a wrapped rm.
+ * word as their value, short and long (`sudo -u root`, `sudo --user root`); `--user=root` is one word. Any other option stands alone, so `sudo -E foo rm` is `foo`'s, not a wrapped rm.
  * `command` is left out: `command -v sudo` looks a name up rather than running it.
  */
 const WRAPPER_VALUE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["sudo", new Set(["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"])],
-  ["xargs", new Set(["-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a"])],
+  ["sudo", new Set(["-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-h", "--host", "-p", "--prompt", "-r", "--role", "-t", "--type", "-T", "--command-timeout", "-U", "--other-user"])],
+  ["xargs", new Set(["-I", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines", "-d", "--delimiter", "-s", "--max-chars", "-E", "-a", "--arg-file"])],
   ["exec", new Set(["-a"])],
-  ["time", new Set(["-o", "-f"])],
-  ["nice", new Set(["-n"])],
+  ["time", new Set(["-o", "--output", "-f", "--format"])],
+  ["nice", new Set(["-n", "--adjustment"])],
   ["nohup", new Set<string>()],
-  ["env", new Set(["-u", "-C", "-S"])],
+  ["env", new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"])],
 ]);
 
 /**
@@ -78,13 +78,18 @@ interface PrefixState {
   valueNext: boolean;
 }
 
+/** A shell keyword (`then`, `!`) or an env assignment (`CI=1`), which may stand before any command. */
+function standsBeforeAnyCommand(word: string): boolean {
+  return SHELL_KEYWORDS.has(word) || /^\w+=/u.test(word);
+}
+
 /** The state after one more word, or undefined when the word cannot lead up to a command (`echo`, `git`). */
 function prefixStep(state: PrefixState, word: string): PrefixState | undefined {
   if (state.valueNext) return { ...state, valueNext: false };
   const wrapper = WRAPPER_VALUE_OPTIONS.get(word);
   if (wrapper !== undefined) return { valueOptions: wrapper, valueNext: false };
   if (state.valueOptions !== undefined && word.startsWith("-")) return { ...state, valueNext: state.valueOptions.has(word) };
-  return SHELL_KEYWORDS.has(word) || /^\w+=/u.test(word) ? state : undefined;
+  return standsBeforeAnyCommand(word) ? state : undefined;
 }
 
 /**
