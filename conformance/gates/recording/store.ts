@@ -35,9 +35,11 @@ export const RECORDING_LOCK = "recording.lock";
 export const RECORDING_LOCK_FORMAT = "rerail.gates-recording-lock/v1";
 
 /**
- * The prerelease the recorder uploads to by default. It is a prerelease so it never shows as the repository's current
- * release, and the recorder rolls to `gate-recordings-2`, `-3` and so on before a release reaches GitHub's cap of
- * 1,000 assets; a lock names the release that holds its asset, so an older commit keeps fetching from the older one.
+ * The prerelease a lock names when `gates:record` is given no `--release`. It is a prerelease so it never shows as the
+ * repository's current release. GitHub caps a release at 1,000 assets, so rule-gates-record.yml, the only job that
+ * uploads, passes `--release` itself: the newest of `gate-recordings`, `gate-recordings-2`, `-3` and so on, or the next
+ * once the newest holds 900, and it refuses an upload that would pass the cap. A lock names the release that holds its
+ * assets, so an older commit keeps fetching from the older one.
  */
 export const DEFAULT_RELEASE = "gate-recordings";
 

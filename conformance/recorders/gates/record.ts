@@ -543,8 +543,9 @@ export interface WrittenRecording extends RecordingDiff {
  * Write the recording into the local cache, the `recording.lock` that names it, the gzipped assets a trusted job
  * uploads, and the missing case sources; list the copies in UPSTREAM.md.
  *
- * Only the lock is committed. The recordings go to the cache the gates read, so iterating locally needs no release
- * and no network: record, then run the gates, and they read what was just recorded because the lock names it.
+ * The lock, the copied case sources and UPSTREAM.md are committed; the recordings are not. They go to the cache the
+ * gates read, so iterating locally needs no release and no network: record, then run the gates, and they read what was
+ * just recorded because the lock names it.
  */
 export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; release?: string }): Promise<WrittenRecording> {
   const directory = toolPackDirectory(root, pack, tool);

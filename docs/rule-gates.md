@@ -170,8 +170,10 @@ one the lock names fails the leg — which is how a pull request that points its
 
 ### Recording
 
-`gates:record` writes the recording into the local cache, the `recording.lock` beside it, and the gzipped assets to
-upload under `.rerail/gates/recordings/upload/`. Only the lock is committed. Record again after adding a port,
+`gates:record` writes the recording into the local cache, the `recording.lock` beside it, the gzipped assets to
+upload under `.rerail/gates/recordings/upload/`, and any case source the recording names that the tool-pack's
+`fixtures/` lacks, with its row in `UPSTREAM.md`. The lock, the case sources and `UPSTREAM.md` are committed; the
+recordings are not. Record again after adding a port,
 changing a tool's pins or adding a corpus; it needs `uv`, the network, and the pinned upstream runtimes
 (`conformance/recorders/gates/runtimes/`):
 
@@ -180,13 +182,35 @@ npm run gates:record -- --pack python --tool ruff
 ```
 
 Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
-port needs no release and no network. In CI only `rule-gates-record.yml` records, and it is the only job that
+port needs no release and no network. In CI only `rule-gates-record.yml` records, and it is the only workflow that
 uploads. Pull request CI never runs an upstream linter, so it cannot tell a recording that is what upstream says from
 one written to make a rule pass; in a public repository that would be a way past the gates. A maintainer starts a
-recording with the `record-gates` label or by hand, and the job runs the recorder and the runtimes **from the base
-branch**, reading only the pull request's pins and rule list. For a branch in this repository it pushes the manifest
-commit to that branch; for a fork, whose branch the default token cannot write to, it pushes
-`gate-recordings/pr-<n>` here and comments to say so.
+recording with the `record-gates` label, or by hand with a pull request and the head `sha` they reviewed, and the run
+records **only that commit**: if the pull request has moved on since, it fails rather than record the newer push. The
+recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list from its
+head; a fork may not change the upstream its `gates.yaml` pins (repository, commit, runtime, tests), only
+`popularity` and `known_gaps`.
+
+The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
+it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder
+and uploads what it wrote as an artifact. `publish`, the only job with a write token, runs no recorder, node or npm: it
+checks every path and digest in those artifacts, uploads the recordings, and commits every leg's lock, case sources and
+`UPSTREAM.md` rows as one commit on the recorded head, pushed once:
+
+- a pull request from a branch here gets the commit on its branch, as a fast-forward;
+- a fork's goes to `gate-recordings/pr-<n>` here, since the default token cannot write to a fork, and a comment says
+  to merge it;
+- a run started by hand with no pull request records the branch it was started on, pushes
+  `gate-recordings/run-<id>`, and opens a pull request into that branch: a recording never reaches a protected branch
+  without review. (GitHub must let Actions create pull requests, under Settings → Actions → General.)
+
+A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
+someone pushes to the branch or closes and reopens the pull request.
+
+GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `gate-recordings`,
+`gate-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an upload that
+would pass 1,000. A lock names the release that holds its recordings, so an older commit keeps fetching from the older
+one.
 
 `rule-gates-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
 committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
@@ -194,7 +218,7 @@ committed recording no longer matches the pinned upstream and uploads nothing, t
 
 Because the recordings are no longer in the diff, `gates:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
-(`--changes <file>`, `conformance/gates/recording/diff.ts`) — and the recording job posts it on the pull request.
+(`--changes <file>`, `conformance/gates/recording/diff.ts`) — and the publish job posts it on the pull request.
 When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
 fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 
