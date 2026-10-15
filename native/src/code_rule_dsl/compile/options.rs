@@ -376,6 +376,15 @@ pub(crate) fn compile_ecma_when(
     Ok(applies && within)
 }
 
+/// The `when` of an ast query whose language has no versions or settings (SQL): the document's
+/// options alone, `{ "option": ... }`. Whether the query applies.
+pub(crate) fn compile_option_when(value: &Value, path: &str, document: &Options) -> Result<bool> {
+    let path = format!("{path}/when");
+    let when = object(value, &path)?;
+    reject_unknown(when, &["option"], &path)?;
+    document_holds(when, &path, document)
+}
+
 /// A `when`'s `option`, the document's options (a Rerail extension): whether each named option
 /// meets its condition.
 fn document_holds(when: &Map<String, Value>, path: &str, document: &Options) -> Result<bool> {

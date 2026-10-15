@@ -10,13 +10,27 @@
 //! of the token after it. Then, as `LocalIgnoresProcessor::process`, each identifier listed for a
 //! line ignores one error there: the first error with that identifier spends it.
 
-use super::php_comment_end;
 use super::psalm::{doc_comment, pcre_space};
+use super::{names, php_comment_end};
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
+pub(super) fn spec(phpstan: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(phpstan, at)?, &["identifiers"], at)?;
+    names(
+        phpstan.get("identifiers"),
+        &format!("{at}/identifiers"),
+        phpstan_identifier,
+        "PHPStan identifiers",
+        "a PHPStan identifier (letters or digits, with internal dots)",
+    )
+}
 
 const IGNORE: &str = "@phpstan-ignore";
 const IGNORE_LINE: &str = "@phpstan-ignore-line";

@@ -1,158 +1,114 @@
-//! ESLint's directive matrix: a rule reporting every identifier, with `suppress.eslint`, against
-//! the reports ESLint 10.11.0 keeps after applying the fixtures' directive comments
-//! (`fixtures/ecma/suppress/generate_eslint.mjs`).
+//! ESLint's `eslint-disable` comments: `suppress.eslint`, and the file's directives that honour it.
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
-use serde_json::{Value, json};
+use super::{names, root};
+use crate::code_rule_dsl::json::{object, reject_unknown};
+use crate::code_rule_dsl::lines::LineTable;
+use crate::code_rule_dsl::literal::eslint_directive::Directive;
+use ast_grep_core::{Doc, Node};
+use napi::Result;
+use serde_json::Value;
 
-const ORACLE: &str = oracle!("ecma/suppress/eslint.expected.json");
-
-/// ESLint's `Identifier`: JSX tag names are `JSXIdentifier`s.
-fn every_name() -> Value {
-    json!({ "kind": "identifier", "not": { "inside": { "stopBy": "neighbor",
-        "any": [{ "kind": "jsx_opening_element" }, { "kind": "jsx_closing_element" }] } } })
-}
-
-fn starts(fixture: &str, source: &str, suppress: Option<Value>) -> Vec<u64> {
-    let mut violation = json!({ "anchor": "witness.span", "code": "NAME", "message": "name" });
-    if let Some(suppress) = suppress {
-        violation["suppress"] = suppress;
-    }
-    let document = clause_document(json!({ "id": "every-name", "violation": violation,
-        "forbid": { "ast": { "language": "typescript", "rule": every_name() } } }));
-    let compiled = compile_document_with(
-        document,
-        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+/// `eslint.rules`: the rule names an `eslint-disable` comment must name (or name none) to
+/// suppress the violation.
+pub(super) fn spec(eslint: &Value, at: &str) -> Result<Vec<String>> {
+    reject_unknown(object(eslint, at)?, &["rules"], at)?;
+    names(
+        eslint.get("rules"),
+        &format!("{at}/rules"),
+        rule_name,
+        "rule names",
+        "a rule name (non-empty, without commas or surrounding white space)",
     )
-    .unwrap_or_else(|error| panic!("{}", error.reason));
-    let language = if fixture.ends_with(".tsx") {
-        "tsx"
-    } else {
-        "typescript"
-    };
-    let result = evaluate_file(&compiled, language, fixture, source);
-    assert_eq!(result["failures"], json!([]), "{result}");
-    let mut starts = result["violations"]
-        .as_array()
-        .expect("findings")
-        .iter()
-        .map(|violation| violation["span"]["startByte"].as_u64().expect("start"))
-        .collect::<Vec<_>>();
-    starts.sort_unstable();
-    starts
 }
 
-#[test]
-fn eslint_directives_suppress_as_eslint_applies_them() {
-    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
-    assert_eq!(oracle["versions"]["eslint"], "10.11.0");
-    let fixtures = [
-        ("blocks.ts", oracle!("ecma/suppress/eslint/blocks.ts")),
-        ("lines.ts", oracle!("ecma/suppress/eslint/lines.ts")),
-        (
-            "not-directives.ts",
-            oracle!("ecma/suppress/eslint/not-directives.ts"),
-        ),
-        ("jsx.tsx", oracle!("ecma/suppress/eslint/jsx.tsx")),
-        (
-            "terminators.ts",
-            oracle!("ecma/suppress/eslint/terminators.ts"),
-        ),
-    ];
-    let suppress = json!({ "eslint": { "rules": ["test/every-name"] } });
-    let mut report = Vec::new();
-    for (fixture, source) in fixtures {
-        let expected = oracle[fixture]
-            .as_array()
-            .unwrap_or_else(|| panic!("{fixture} in the oracle"))
-            .iter()
-            .map(|start| start.as_u64().expect("start"))
-            .collect::<Vec<_>>();
-        let every = starts(fixture, source, None);
-        assert!(
-            expected.iter().all(|start| every.contains(start)),
-            "{fixture}: the port reports every name ESLint keeps"
-        );
-        let ours = starts(fixture, source, Some(suppress.clone()));
-        if ours != expected {
-            report.push(format!("{fixture}: ours {ours:?}, ESLint's {expected:?}"));
-        }
+/// A rule name an `eslint-disable` list can name: ESLint splits the list on commas and trims.
+fn rule_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(',') && name.trim() == name
+}
+
+/// A block directive: `eslint-disable` or `eslint-enable` where its comment starts.
+#[derive(Debug)]
+struct Block {
+    start: usize,
+    disable: bool,
+    /// The rule ids it names; none names every rule.
+    rules: Vec<String>,
+}
+
+/// A file's ESLint directives that disable or enable rules, as ESLint 10.11.0's
+/// `getDisableDirectives` and `applyDisableDirectives` read them.
+#[derive(Debug, Default)]
+pub(crate) struct EslintDirectives {
+    /// Block directives, in source order.
+    blocks: Vec<Block>,
+    /// Line directives: the line each applies to, and the rule ids it names.
+    lines: Vec<(usize, Vec<String>)>,
+}
+
+impl EslintDirectives {
+    /// Reads every comment of the file `node` belongs to, HTML-like ones (`html_comment`, which
+    /// ESLint reads as line comments) included.
+    pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+        Self::from_comments(
+            root(node)
+                .dfs()
+                .filter(|node| matches!(node.kind().as_ref(), "comment" | "html_comment")),
+            source,
+            lines,
+        )
     }
-    assert_eq!(report, Vec::<String>::new(), "\n{}", report.join("\n"));
-    // A directive for another name of the rule suppresses nothing.
-    let other = json!({ "eslint": { "rules": ["other/rule"] } });
-    let source = oracle!("ecma/suppress/eslint/lines.ts");
-    let every = starts("lines.ts", source, None);
-    let named = starts("lines.ts", source, Some(other));
-    assert!(named.len() < every.len() && named.len() > 10, "{named:?}");
-}
 
-/// HTML-like comments are line comments: cases checked against ESLint 9.39.1 and 10.11.0
-/// (`no-debugger`, as `.cjs` files, which espree parses as `commonjs` scripts), in every
-/// ECMAScript dialect: the 0-based lines of the `debugger` statements each keeps.
-#[test]
-fn html_like_comments_are_line_comments() {
-    let violation = json!({ "anchor": "witness.span", "code": "DEBUGGER", "message": "debugger",
-        "suppress": { "eslint": { "rules": ["no-debugger"] } } });
-    let document = clause_document(json!({ "id": "debugger", "violation": violation,
-        "forbid": { "ast": { "language": "typescript", "rule": { "kind": "debugger_statement" } } } }));
-    let compiled = compile_document_with(
-        document,
-        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-    )
-    .unwrap_or_else(|error| panic!("{}", error.reason));
-    for (source, expected) in [
-        (
-            "<!-- eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
-            &[2][..],
-        ),
-        (
-            "--> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
-            &[2],
-        ),
-        (
-            "  --> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
-            &[2],
-        ),
-        (
-            "/*\n*/ --> eslint-disable-next-line no-debugger\ndebugger;\ndebugger;\n",
-            &[3],
-        ),
-        (
-            "debugger; <!-- eslint-disable-line no-debugger\ndebugger;\n",
-            &[1],
-        ),
-        ("debugger; <!-- eslint-disable-line\ndebugger;\n", &[1]),
-        (
-            "debugger; /* a */ <!-- eslint-disable-line no-debugger\ndebugger;\n",
-            &[1],
-        ),
-        // `eslint-disable` in a line comment is no directive.
-        (
-            "<!-- eslint-disable no-debugger\ndebugger;\n--> eslint-enable no-debugger\ndebugger;\n",
-            &[1, 3],
-        ),
-        // Without ` -- `, `-->` is part of the rule list: the rule `no-debugger -->`.
-        (
-            "<!-- eslint-disable-next-line no-debugger -->\ndebugger;\ndebugger;\n",
-            &[1, 2],
-        ),
-    ] {
-        for (language, path) in [
-            ("javascript", "a.cjs"),
-            ("typescript", "a.cts"),
-            ("tsx", "a.tsx"),
-        ] {
-            let result = evaluate_file(&compiled, language, path, source);
-            assert_eq!(result["failures"], json!([]), "{result}");
-            let lines = result["violations"]
-                .as_array()
-                .expect("violations")
-                .iter()
-                .map(|violation| violation["span"]["startLine"].as_u64().expect("line"))
+    /// Reads `comments`: the comment nodes ESLint's source code holds.
+    pub(crate) fn from_comments<'r, D: Doc + 'r>(
+        comments: impl Iterator<Item = Node<'r, D>>,
+        source: &str,
+        lines: &LineTable,
+    ) -> Self {
+        let mut directives = Self::default();
+        for comment in comments {
+            let range = comment.range();
+            let text = &source[range.clone()];
+            let Some(directive) = Directive::parse(text).filter(Directive::disables) else {
+                continue;
+            };
+            let rules = directive
+                .items(text)
+                .into_iter()
+                .map(|item| item.name)
                 .collect::<Vec<_>>();
-            assert_eq!(lines, expected, "{language} {source:?}");
+            let (first, last) = (lines.line(range.start), lines.line(range.end));
+            match directive.label.as_str() {
+                "eslint-disable" | "eslint-enable" => directives.blocks.push(Block {
+                    start: range.start,
+                    disable: directive.label == "eslint-disable",
+                    rules,
+                }),
+                // A `-line` directive over several lines is a problem, not a directive.
+                "eslint-disable-line" if first == last => directives.lines.push((first, rules)),
+                "eslint-disable-next-line" => directives.lines.push((last + 1, rules)),
+                _ => {}
+            }
         }
+        directives
+    }
+
+    /// Whether a problem of a rule named `rules` (any of its names) starting at byte `at` is
+    /// suppressed: the last block directive at or before it that names the rule (or none) is a
+    /// disable, or a line directive naming it applies to its line.
+    pub(crate) fn suppresses(&self, rules: &[String], at: usize, lines: &LineTable) -> bool {
+        let names = |ids: &[String]| ids.is_empty() || ids.iter().any(|id| rules.contains(id));
+        if self
+            .blocks
+            .iter()
+            .rev()
+            .find(|block| block.start <= at && names(&block.rules))
+            .is_some_and(|block| block.disable)
+        {
+            return true;
+        }
+        let line = lines.line(at);
+        self.lines
+            .iter()
+            .any(|(target, ids)| *target == line && names(ids))
     }
 }

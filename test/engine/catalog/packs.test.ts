@@ -5,18 +5,25 @@
  * corpus, a missing checkout failing; 0: none).
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
- * breaks one check of a copy of it, `vue`, for a language core plans, passes with its rule not supported yet, and
- * `empty`, whose ports are all candidates, passes with no rules.
+ * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
+ * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, test } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
 import { PACK_CHECKS, packedFileFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+
+// The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
+vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
+  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
+vi.mock("../../../src/engine/native/native.js", async importOriginal =>
+  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
@@ -137,10 +144,10 @@ describe("validatePack", () => {
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
-    const validation = await validatePack(join(FIXTURES, "vue"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "exemplar"), { corpora: false });
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
-      { id: "no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
+      { id: "no-identifier", document: "rules/no-identifier.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `exemplar` is not supported yet" },
     ]);
   });
 
@@ -456,6 +463,30 @@ describe("validatePack", () => {
         'no-debugger (fixtures): 2 unexplained FP, first {"path":"debugger.js","line":2,"column":1}',
         "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
         "no-debugger: rules/no-debugger.json carries suppress.biome without suppress.eslint (clause debugger-statement); a port names the Biome rules the same as the ESLint rule it names",
+      ],
+    });
+  });
+
+  it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
+    // Vue's registry entry honours eslint alone: a Vue query refuses suppress.biome.
+    const vue = (directory: string) =>
+      editJson(join(directory, "rules", "no-debugger.json"), document => ({
+        ...document,
+        clauses: z
+          .array(z.looseObject({ forbid: z.looseObject({ ast: z.looseObject({}) }), violation: z.record(z.string(), z.unknown()) }))
+          .parse(document.clauses)
+          .map(clause => ({
+            ...clause,
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue" } },
+            violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
+          })),
+      }));
+    const validation = await validatePack(changed("eslint-port", vue), { corpora: false });
+    // The fixtures are .js files, which a Vue query does not read; nothing asks for suppress.biome.
+    expect(failing(validation)).toEqual({
+      ports: [
+        'no-debugger (fixtures): 1 unexplained FN, first {"path":"debugger.js","line":1,"column":1}',
+        "no-debugger (fixtures): 0 TP and no examples in pack.json; nothing shows it catches anything",
       ],
     });
   });

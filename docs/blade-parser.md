@@ -339,8 +339,9 @@ built; its peak is 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
   build id hashes every non-test source under `native/src/code_rule_dsl/blade/` (the port, its
   directive JSON, the view), so no tape parsed by tree-sitter-blade, or by another revision of
   the port or the view, is reused.
-- **Rules.** The Blade pack's rules name Forte's kinds: `directive_name` (`@dd`, `@ray`),
-  `directive_block` with its `start` field (`@forelse`), `echo`/`raw_echo`,
+- **Rules.** The Blade pack's candidate rules (`packs/blade/candidates/rules/`; the pack ships
+  none until they pass the V1 rule validation gates) name Forte's kinds: `directive_name` (`@dd`,
+  `@ray`), `directive_block` with its `start` field (`@forelse`), `echo`/`raw_echo`,
   `component`/`slot`/`element_name`/`attribute_value`.
 
 ### Results

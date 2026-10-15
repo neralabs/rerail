@@ -1,5 +1,5 @@
 /**
- * psalm-forbidden-code (packs/php/) must not steer an agent into removing a var_dump() whose output is the point
+ * psalm-forbidden-code (packs/php/, candidate) must not steer an agent into removing a var_dump() whose output is the point
  * (NER-1809). Psalm's ForbiddenCode reports every var_dump() call, and the steer reads as "remove this debugging
  * code". Two idioms use var_dump() on purpose:
  * - output buffering captures it: `ob_start(); var_dump($x); $s = ob_get_clean();` builds a string from the dump
@@ -8,7 +8,7 @@
  * Removing the call in either case changes behaviour, so the rule stays silent there. packs/php/divergences.json
  * records each upstream finding on the pinned corpora that this drops.
  *
- * Each case asserts exactly which lines the shipped rule reports.
+ * Each case asserts exactly which lines the rule reports.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,13 +16,14 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "psalm-forbidden-code";
+const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),
@@ -31,8 +32,7 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "php")]).find(candidate => candidate.rule.id === RULE_ID);
-  if (document === undefined) throw new Error(`${RULE_ID} is not in packs/php`);
+  const document = readRuleDocument(RULE_PATH);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

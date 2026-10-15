@@ -956,18 +956,23 @@ pub(crate) fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    // A template's calls are its embedded program's; a template without one calls nothing.
-    let mut summary = with_adapter!(Family::of(language), A => A::regions(&root)
-    .next()
-    .map_or_else(Summary::default, |region| {
-        <<A as Adapter>::Calls as CallRules>::summary(
-            &region.root,
-            path,
-            module,
-            table,
-            has_errors,
-        )
-    }));
+    // A document's calls are its region's, read as the region's dialect: a template's are its
+    // embedded program's, PHP's (a template without one calls nothing). Summaries name ids local
+    // to one region, so a family whose documents hold several regions does not read calls (Vue's
+    // are refused).
+    let mut summary = crate::code_rule_dsl::language::adapter::regions(&root, language)
+        .next()
+        .map_or_else(Summary::default, |region| {
+            with_adapter!(Family::of(region.dialect), A => {
+                <<A as Adapter>::Calls as CallRules>::summary(
+                    &region.root,
+                    path,
+                    module,
+                    table,
+                    has_errors,
+                )
+            })
+        });
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
 }
@@ -1086,9 +1091,12 @@ pub(crate) fn holds<'t, D: Doc>(
             )) else {
                 return Reach::Unknown;
             };
+            // A callee's name is in the namespace of the family's summaries (Blade's are PHP's).
+            let names =
+                with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::NAMES);
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
-                Callee::Name(name) => Some(Name::new(&name)),
+                Callee::Name(name) => names.map(|family| Name::new(family, &name)),
             });
             FILE_CALLS.with_borrow_mut(|slot| {
                 if let Some(slot) = slot {
