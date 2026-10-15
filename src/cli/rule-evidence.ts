@@ -47,7 +47,7 @@ const SHELL_KEYWORDS = new Set(["then", "do", "else", "if", "while", "until", "!
  */
 const WRAPPER_VALUE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["sudo", new Set(["-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-h", "--host", "-p", "--prompt", "-r", "--role", "-t", "--type", "-T", "--command-timeout", "-U", "--other-user"])],
-  ["xargs", new Set(["-I", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines", "-d", "--delimiter", "-s", "--max-chars", "-E", "-a", "--arg-file"])],
+  ["xargs", new Set(["-I", "-n", "--max-args", "-P", "--max-procs", "-L", "-d", "--delimiter", "-s", "--max-chars", "-E", "-a", "--arg-file"])],
   ["exec", new Set(["-a"])],
   ["time", new Set(["-o", "--output", "-f", "--format"])],
   ["nice", new Set(["-n", "--adjustment"])],
