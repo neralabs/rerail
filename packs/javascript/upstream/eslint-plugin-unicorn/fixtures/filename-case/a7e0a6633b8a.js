@@ -1,0 +1,1 @@
+/* Filename: /rerail-gates-cache/upstream/eslint-plugin-unicorn/f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1/src/FooBar/file.js */

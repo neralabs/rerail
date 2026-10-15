@@ -71,6 +71,9 @@ interface Tests {
 }
 interface Linted { excluded: string | null; findings: Record<string, MessagePosition[]> }
 
+/** What a recording writes for the recorder's cache root wherever upstream's test code names a path under it. */
+export const CACHE_ROOT_IN_RECORDINGS = "/rerail-gates-cache";
+
 /** A rule name as the plugin's rule map keys it: `@typescript-eslint/no-explicit-any` and `no-explicit-any` are the same rule. */
 export function bareRuleName(plugin: EslintUpstream["plugin"], name: string): string {
   return plugin !== null && name.startsWith(`${plugin.namespace}/`) ? name.slice(plugin.namespace.length + 1) : name;
@@ -549,6 +552,13 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   };
   const facts = await ask<Facts>({ op: "facts", names: ruleNames });
   const tests = await ask<Tests>({ op: "tests", tests: setup.tests, names: ruleNames, caseTesters: setup.case_testers ?? [] });
+  // A case whose code names its own file (Unicorn's filename-case writes `/* Filename: <absolute path> */`) would carry
+  // the recording machine's cache path into the recording, and `gates:record --check` would differ on every other
+  // machine: the cache root reads the same everywhere instead. Such a comment is no finding's position.
+  const machineRoot = resolve(cacheRoot);
+  const stable = (code: string) => code.replaceAll(machineRoot, CACHE_ROOT_IN_RECORDINGS);
+  for (const text of tests.texts) text.code = stable(text.code);
+  for (const cases of Object.values(tests.cases)) for (const testCase of cases) testCase.code = stable(testCase.code);
 
   const upstreamPath = (absolute: string) => relative(upstream.directory, absolute).replaceAll("\\", "/");
   const implementationFile = (name: string) => {

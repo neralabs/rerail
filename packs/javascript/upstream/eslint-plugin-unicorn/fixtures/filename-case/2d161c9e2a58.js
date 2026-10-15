@@ -1,1 +1,0 @@
-/* Filename: /Users/gabrielgiangi/Documents/Repositories/rerail/.claude/worktrees/ner-1899-javascript-rule-gates-41a419/.rerail/gates/upstream/eslint-plugin-unicorn/f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1/src/FooBar/file.js */

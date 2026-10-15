@@ -6675,10 +6675,10 @@
         "text": "/* Filename index.JS */"
       },
       {
-        "text": "/* Filename: /Users/gabrielgiangi/Documents/Repositories/rerail/.claude/worktrees/ner-1899-javascript-rule-gates-41a419/.rerail/gates/upstream/eslint-plugin-unicorn/Src/fooBar.js */"
+        "text": "/* Filename: /rerail-gates-cache/upstream/eslint-plugin-unicorn/Src/fooBar.js */"
       },
       {
-        "text": "/* Filename: /Users/gabrielgiangi/Documents/Repositories/rerail/.claude/worktrees/ner-1899-javascript-rule-gates-41a419/.rerail/gates/upstream/eslint-plugin-unicorn/f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1/src/FooBar/file.js */"
+        "text": "/* Filename: /rerail-gates-cache/upstream/eslint-plugin-unicorn/f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1/src/FooBar/file.js */"
       },
       {
         "text": "/* Filename: Nested/app/Pages/Foo.vue */"
@@ -108132,7 +108132,6 @@
     "DocumentFragment",
     "DocumentTimeline",
     "Documentation",
-    "Documents",
     "Dom",
     "Download",
     "DragSource",
@@ -108792,7 +108791,6 @@
     "Replace",
     "Report",
     "ReportingObserver",
-    "Repositories",
     "Request",
     "RequestInit",
     "Res",
@@ -109050,7 +109048,6 @@
     "UserAuthorization",
     "UserNameField",
     "UserNotFoundError",
-    "Users",
     "Utf",
     "Utf8",
     "Utils",
@@ -109230,7 +109227,6 @@
     "a$",
     "a1",
     "a11y",
-    "a419",
     "aA",
     "aAaA",
     "aBc",
@@ -109762,7 +109758,6 @@
     "className2",
     "classNames",
     "classes",
-    "claude",
     "clauses",
     "cleanup",
     "clear",
@@ -110631,7 +110626,6 @@
     "functions",
     "future",
     "g",
-    "gabrielgiangi",
     "gamma",
     "gamut",
     "gap",
@@ -111617,7 +111611,6 @@
     "needsUpdate",
     "negative",
     "negativeOne",
-    "ner",
     "neric",
     "nest",
     "nested",
@@ -133382,7 +133375,6 @@
     "worker_threads",
     "workerize",
     "works",
-    "worktrees",
     "world",
     "wow",
     "wrap",
@@ -134881,7 +134873,7 @@
     {
       "path": "filename-case/filename-case.0.invalid-58/fooBar.js",
       "script": false,
-      "sha256": "07e696467d6d0a86b6dbc77ea7743394a3ea4c5f82c7e183b88e6d4510958275",
+      "sha256": "c125bff6c23478a18f59b60080a4d3a0c024ed905c04e182902f596dd67c75d9",
       "verdicts": [
         {
           "grammar": [],
@@ -134903,7 +134895,7 @@
     {
       "path": "filename-case/filename-case.0.valid-195/fooBar.js",
       "script": false,
-      "sha256": "07e696467d6d0a86b6dbc77ea7743394a3ea4c5f82c7e183b88e6d4510958275",
+      "sha256": "c125bff6c23478a18f59b60080a4d3a0c024ed905c04e182902f596dd67c75d9",
       "verdicts": [
         {
           "grammar": [],
@@ -138621,7 +138613,7 @@
     {
       "path": "src/FooBar/file.js",
       "script": false,
-      "sha256": "2d161c9e2a58f64a85e62bfdc899fd70e03abb10a3fbc6abbcb1e52626cc9853",
+      "sha256": "a7e0a6633b8af0f032141d2b4cc45477609d30f93533f1422a3d4ce1e05a3291",
       "verdicts": [
         {
           "grammar": [],
@@ -143107,7 +143099,7 @@
           "expected": [
             [0, 0, null, null]
           ],
-          "file": "fixtures/filename-case/07e696467d6d.js",
+          "file": "fixtures/filename-case/c125bff6c234.js",
           "fixture": "test/filename-case.js#0/valid[195]",
           "markup": null,
           "path": "filename-case/filename-case.0.valid-195/fooBar.js",
@@ -143800,7 +143792,7 @@
           "expected": [
             [0, 0, null, null]
           ],
-          "file": "fixtures/filename-case/2d161c9e2a58.js",
+          "file": "fixtures/filename-case/a7e0a6633b8a.js",
           "fixture": "test/filename-case.js#0/invalid[57]",
           "markup": null,
           "path": "src/FooBar/file.js",
@@ -143812,7 +143804,7 @@
           "expected": [
             [0, 0, null, null]
           ],
-          "file": "fixtures/filename-case/07e696467d6d.js",
+          "file": "fixtures/filename-case/c125bff6c234.js",
           "fixture": "test/filename-case.js#0/invalid[58]",
           "markup": null,
           "path": "filename-case/filename-case.0.invalid-58/fooBar.js",
