@@ -1087,7 +1087,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     } catch (error) {
       delete state.codeRuleBridge;
       state.deferredCodeRuleBoundaries = [];
-      const release = this.#releaseOptions(state);
+      const release = this.#lateRelease();
       await (opened ? bridge.close(release) : auditor.close(release)).catch(() => undefined);
       state.codeRuleOffReason = error instanceof Error ? error.message : String(error);
       if (!state.closed) this.#recordWorkspaceFailure(state, settings, error);
@@ -1096,7 +1096,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state.closed) {
       // The session closed while the evaluator opened: close did not wait, so the evaluator is released here, unobserved.
       delete state.codeRuleBridge;
-      await bridge.close(this.#releaseOptions(state)).catch(() => undefined);
+      await bridge.close(this.#lateRelease()).catch(() => undefined);
       return undefined;
     }
     // No await from the drain's last check to here: a close from now on finds the bridge published and closes it
@@ -1107,14 +1107,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return bridge;
   }
 
-  /**
-   * How a late release of an evaluator ends the session's audits: an evaluator whose session id was reopened while
-   * it opened (a different live state owns the id now) must leave the audits of the session that replaced it running.
-   * A plain close, whose state is already gone, still ends every audit of the session.
-   */
-  #releaseOptions(state: RuntimeSessionState): AuditorCloseOptions | undefined {
-    const current = this.#sessions.get(state.descriptor.sessionId);
-    return current !== undefined && current !== state ? { interruptAudits: false } : undefined;
+  /** A late release of an evaluator must never end the session-wide audits: the id may belong to a replacement by now. */
+  #lateRelease(): AuditorCloseOptions {
+    return { interruptAudits: false };
   }
 
   #recordWorkspaceFailure(state: RuntimeSessionState, settings: Required<AuditSettings>, error: unknown): void {
@@ -1168,8 +1163,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     let bridge: CodeRuleBridge | undefined;
     try {
-      // An evaluator still opening is not waited for: it finds the session closed once it has opened and releases itself.
-      if (state?.codeRuleOpening !== true) {
+      // An evaluator still opening is not waited for: it finds the session closed once it has opened and releases itself,
+      // ending only its own audits. The session's other audits end now, while this runtime still owns the id.
+      if (state?.codeRuleOpening === true) this.#audits.interrupt(sessionId);
+      else {
         bridge = await state?.codeRuleWorkspace;
         bridge?.interrupt();
         await state?.auditRequestWork;
