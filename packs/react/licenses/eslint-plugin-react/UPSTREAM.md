@@ -2532,10 +2532,10 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f6ce6116df2b.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f76bbef45753.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f87a7db315a4.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
-| `upstream/eslint-plugin-react/gates.json` | `tests/lib/rules/*.js`: the `code` of each RuleTester case | excerpts |
 
-> `gates.json` is a rule gate recording. It is not committed here: the tool-pack's `recording.lock` names it
-> and a GitHub release holds the bytes (docs/rule-gates.md). The excerpts of this upstream's tests it carries
-> are redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
-> this upstream's own, at the pinned commit.
+> `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
+> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/rule-gates.md). It
+> carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each RuleTester case),
+> redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is this
+> upstream's own, at the pinned commit.
 

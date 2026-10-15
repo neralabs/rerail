@@ -215,10 +215,10 @@ Paths are relative to the pack directory, `packs/next/`.
 | `upstream/eslint-plugin-next/fixtures/no-unwanted-polyfillio/invalid-002.js` | `test/unit/eslint-plugin-next/no-unwanted-polyfillio.test.ts` | extracted from invalid[2] (its `code`, verbatim) |
 | `upstream/eslint-plugin-next/fixtures/no-unwanted-polyfillio/invalid-003.js` | `test/unit/eslint-plugin-next/no-unwanted-polyfillio.test.ts` | extracted from invalid[3] (its `code`, verbatim) |
 | `upstream/eslint-plugin-next/fixtures/no-head-element/2a7f549f6c61.ts` | `test/unit/eslint-plugin-next/no-head-element.test.ts` | derived |
-| `upstream/eslint-plugin-next/gates.json` | `test/unit/eslint-plugin-next/*.test.ts`: the `code` of each RuleTester case | excerpts |
 
-> `gates.json` is a rule gate recording. It is not committed here: the tool-pack's `recording.lock` names it
-> and a GitHub release holds the bytes (docs/rule-gates.md). The excerpts of this upstream's tests it carries
-> are redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
+> `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
+> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/rule-gates.md). It
+> carries excerpts of this upstream's tests (`test/unit/eslint-plugin-next/*.test.ts`: the `code` of each RuleTester
+> case), redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is
 > this upstream's own, at the pinned commit.
 
