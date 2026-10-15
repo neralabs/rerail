@@ -812,14 +812,14 @@ SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # eslint-plugin-unicorn 76.0.0 (packs/javascript/licenses/eslint-plugin-unicorn/UPSTREAM.md): derived or excerpted
 [[annotations]]
-path = "packs/javascript/upstream/eslint-plugin-unicorn/fixtures/**"
+path = ["packs/javascript/upstream/eslint-plugin-unicorn/fixtures/**", "packs/javascript/upstream/eslint-plugin-unicorn/gates.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # ESLint 10.11.0 (packs/javascript/licenses/eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
-path = "packs/javascript/upstream/eslint/fixtures/**"
+path = ["packs/javascript/upstream/eslint/fixtures/**", "packs/javascript/upstream/eslint/gates.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"

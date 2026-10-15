@@ -41,6 +41,10 @@ jobs:
             tool: eslint-plugin-react
           - pack: react
             tool: eslint-plugin-react-hooks
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

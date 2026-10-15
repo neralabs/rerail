@@ -1,6 +1,4 @@
 {
-  "javascript/eslint": "still validated in nera-rule-validation until its ESLint gates recorder lands",
-  "javascript/eslint-plugin-unicorn": "still validated in nera-rule-validation until its ESLint gates recorder lands",
   "next/eslint-plugin-next": "still validated in nera-rule-validation until its ESLint gates recorder lands",
   "typescript/eslint-plugin-vitest": "still validated in nera-rule-validation until its ESLint gates recorder lands",
   "typescript/typescript-eslint": "still validated in nera-rule-validation until its ESLint gates recorder lands"
