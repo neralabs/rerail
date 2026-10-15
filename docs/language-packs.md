@@ -353,8 +353,8 @@ npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces:
 npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
 ```
 
-Then add a changeset for the new pack (`minor`, "Add the Laravel pack: …"). Every later change to a pack adds one too;
-[versioning](pack-format.md#versioning-and-release) says which bump:
+Then add a changeset for the new pack (`patch`, "Add the Laravel pack: …"). Every later change to a pack adds one too;
+[versioning](pack-format.md#versioning-and-release) says which bump (`patch` until the pack reaches 1.0.0):
 
 ```sh
 npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the summary
