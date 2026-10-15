@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-callback-literal",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are.",
+  "description": "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): a callback named `cb` or `callback` need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before passing an error or null first.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -173,7 +173,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-callback-literal",
-        "message": "Unexpected literal in error position of callback.",
+        "message": "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is.",
         "suppress": {
           "eslint": {
             "rules": [

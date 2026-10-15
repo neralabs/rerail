@@ -6,7 +6,7 @@ import {
   randomUUID,
   sign,
   verify as verifySignature,
-  type JsonWebKey,
+  type webcrypto,
 } from "node:crypto";
 import { readFile, rename, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -98,7 +98,7 @@ export interface VerifiedCustomerProfile {
 }
 
 export interface DeviceIdentity {
-  publicKey: JsonWebKey;
+  publicKey: webcrypto.JsonWebKey;
   thumbprint: string;
 }
 
@@ -113,7 +113,7 @@ export interface ActivationRequest {
   createdAt: string;
   profileName: string;
   deploymentId: string;
-  devicePublicKey: JsonWebKey;
+  devicePublicKey: webcrypto.JsonWebKey;
   deviceKeyThumbprint: string;
   platform: string;
   architecture: string;
@@ -160,7 +160,7 @@ function decodeBase64UrlJson(value: string, label: string): unknown {
   }
 }
 
-function publicKeyThumbprint(publicKey: JsonWebKey): string {
+function publicKeyThumbprint(publicKey: webcrypto.JsonWebKey): string {
   if (publicKey.kty !== "OKP" || publicKey.crv !== "Ed25519" || typeof publicKey.x !== "string") {
     throw new Error("Rerail device key must be an Ed25519 public JWK");
   }
@@ -197,7 +197,7 @@ export function verifyCustomerProfile(
   const signedBytes = Buffer.from(`${envelope.protected}.${envelope.payload}`, "ascii");
   const signature = Buffer.from(envelope.signature, "base64url");
   if (signature.toString("base64url") !== envelope.signature) throw new Error("Invalid Rerail profile signature encoding");
-  const key = createPublicKey({ key: trustedKey as JsonWebKey, format: "jwk" });
+  const key = createPublicKey({ key: trustedKey as webcrypto.JsonWebKey, format: "jwk" });
   if (!verifySignature(null, signedBytes, key, signature)) throw new Error("Invalid Rerail profile signature");
 
   const profile = customerProfileSchema.parse(decodeBase64UrlJson(envelope.payload, "JWS payload"));
