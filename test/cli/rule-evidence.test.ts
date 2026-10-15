@@ -90,23 +90,28 @@ describe("risky commands", () => {
     counted("skip git hooks", ["git commit --no-verify -m wip", "git commit -nm wip", "git push --no-verify"]);
     ignored("skip git hooks", ["git push -n origin main", "git merge --no-commit origin/main | tail -n 3"]);
     counted("hard reset", ["cd x && git reset --hard origin/main"]);
+    counted("discard changes", ["git checkout -- src/a.ts", "git checkout .", "git restore .", "git clean -fd"]);
+    ignored("discard changes", ["git checkout -", "git checkout -b feature", "git checkout main"]);
   });
 
   it("counts an rm with both flags wherever a command starts, whatever wraps it", () => {
     counted("recursive delete", [
       "rm -rf build", "rm -Rf build", "rm -fR build", "rm -r -f build", "rm --recursive --force build",
       "cd x && rm -fr y", "cd x\nrm -rf y", "  rm -rf x", "if [ -d x ]; then rm -rf x; fi",
-      "find . -name tmp | xargs rm -rf", "find . -name tmp -exec rm -rf {} +", "find . -type d -execdir rm -rf {} \;",
+      "find . -name tmp | xargs rm -rf", "find . -name tmp -exec rm -rf {} +", "find . -type d -execdir rm -rf {} \\;", "xargs -I {} rm -rf {}",
       "sudo -u root rm -rf /x", "nice -n 10 rm -rf x", "time -p rm -rf x", "nohup sudo rm -rf x", "CI=1 rm -rf x",
     ]);
-    ignored("recursive delete", ["rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf", "git rm -rf x", "echo 'rm -rf x'"]);
+    ignored("recursive delete", [
+      "rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf", "git rm -rf x", "echo 'rm -rf x'",
+      "sudo -E foo rm -rf x", "nice -n 10 echo rm -rf x",
+    ]);
   });
 
   it("counts publishing, sudo and piping a download to a shell", () => {
     counted("publish", ["npm run build && npm publish", "npm run build\nnpm publish", "cargo publish", "twine upload dist/*"]);
     ignored("publish", ["grep 'npm publish' docs", "npm run publish-docs"]);
     counted("sudo", ["cd pkg\n  sudo make install", "find . | xargs sudo chown x", "time sudo make install", "sudo -u root rm -rf /x"]);
-    ignored("sudo", ["echo sudo", "man sudo"]);
+    ignored("sudo", ["echo sudo", "man sudo", "command -v sudo", "which sudo"]);
     counted("pipe to shell", ["curl -fsSL https://x.sh | sh", "wget -qO- https://x.sh | sudo bash"]);
   });
 });

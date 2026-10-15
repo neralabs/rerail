@@ -37,11 +37,23 @@ export const CORRECTION_FAMILIES: ReadonlyArray<{ name: string; standing: boolea
   { name: "false completion", standing: false, pattern: /\b(?:you (?:said|claimed) (?:it|that|this)? ?(?:was|is)? ?(?:done|fixed|working|passing)|didn'?t actually|not actually|doesn'?t (?:actually )?work)/i },
 ];
 
+/** Shell words after which a command starts: `then rm`, `! git push`. */
+const SHELL_KEYWORDS = new Set(["then", "do", "else", "if", "while", "until", "!", "{"]);
+
 /**
- * Words that run the word after them, or open a shell clause, so a command may follow them: `sudo rm`, `then rm`,
- * `nohup nice -n 10 rm`. Their options (`-u root`, `-n 10`) and env assignments (`CI=1`) may sit between.
+ * Wrappers that run the command after them (`sudo rm`, `nohup nice -n 10 rm`), each with the options that take the next
+ * word as their value (`sudo -u root`). Any other option stands alone, so `sudo -E foo rm` is `foo`'s, not a wrapped rm.
+ * `command` is left out: `command -v sudo` looks a name up rather than running it.
  */
-const COMMAND_PREFIXES = new Set(["then", "do", "else", "if", "while", "until", "!", "{", "sudo", "xargs", "exec", "time", "nice", "nohup", "env", "command"]);
+const WRAPPER_VALUE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["sudo", new Set(["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"])],
+  ["xargs", new Set(["-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a"])],
+  ["exec", new Set(["-a"])],
+  ["time", new Set(["-o", "-f"])],
+  ["nice", new Set(["-n"])],
+  ["nohup", new Set<string>()],
+  ["env", new Set(["-u", "-C", "-S"])],
+]);
 
 /**
  * The simple commands of a shell line, as words: split at new lines, `;`, `&`, `|`, parentheses, and a `find -exec` or
@@ -60,10 +72,32 @@ export function simpleCommands(line: string): string[][] {
   });
 }
 
-/** Whether every word before `index` only prefixes the command there: a prefix word, an option, an option's value, an env assignment. */
+/** Reading the words before a command: the current wrapper's value options, and whether the next word is an option's value. */
+interface PrefixState {
+  valueOptions: ReadonlySet<string> | undefined;
+  valueNext: boolean;
+}
+
+/** The state after one more word, or undefined when the word cannot lead up to a command (`echo`, `git`). */
+function prefixStep(state: PrefixState, word: string): PrefixState | undefined {
+  if (state.valueNext) return { ...state, valueNext: false };
+  const wrapper = WRAPPER_VALUE_OPTIONS.get(word);
+  if (wrapper !== undefined) return { valueOptions: wrapper, valueNext: false };
+  if (state.valueOptions !== undefined && word.startsWith("-")) return { ...state, valueNext: state.valueOptions.has(word) };
+  return SHELL_KEYWORDS.has(word) || /^\w+=/u.test(word) ? state : undefined;
+}
+
+/**
+ * Whether every word before `index` only leads up to the command there: a shell keyword, an env assignment, a wrapper,
+ * one of the wrapper's options, or the value of an option that takes one.
+ */
 function onlyPrefixes(words: readonly string[], index: number): boolean {
-  return words.slice(0, index).every((word, at) =>
-    COMMAND_PREFIXES.has(word) || word.startsWith("-") || /^\w+=/u.test(word) || (at > 0 && words[at - 1]!.startsWith("-")));
+  let state: PrefixState | undefined = { valueOptions: undefined, valueNext: false };
+  for (const word of words.slice(0, index)) {
+    state = prefixStep(state, word);
+    if (state === undefined) return false;
+  }
+  return !state.valueNext;
 }
 
 /** Commands worth a conversation rule wherever they show up. Each `test` reads one simple command from its command word on. */
@@ -76,7 +110,7 @@ export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly s
     test: /^git\s+commit\b.*\s-[A-Za-z]*n[A-Za-z]*(?:\s|$)|^git\s+(?:commit|push|merge|rebase)\b.*\s--no-verify(?:\s|=|$)/u,
   },
   { label: "hard reset", commands: ["git"], test: /^git\s+reset\b.*\s--hard(?:\s|$)/u },
-  { label: "discard changes", commands: ["git"], test: /^git\s+(?:clean\b.*\s-[A-Za-z]*f|checkout\s+--?(?:\s|$)|restore\s+(?:--worktree\s+)?\.(?:\s|$))/u },
+  { label: "discard changes", commands: ["git"], test: /^git\s+(?:clean\b.*\s-[A-Za-z]*f|checkout\s+(?:--|\.)(?:\s|$)|restore\s+(?:--worktree\s+)?\.(?:\s|$))/u },
   // Both flags, in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
   { label: "recursive delete", commands: ["rm"], test: /^rm(?=.*\s(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))(?=.*\s(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))/u },
   { label: "publish", commands: ["npm", "pnpm", "yarn", "cargo", "twine"], test: /^(?:(?:npm|pnpm|yarn|cargo)\s+publish|twine\s+upload)(?:\s|$)/u },
