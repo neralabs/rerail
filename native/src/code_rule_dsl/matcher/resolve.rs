@@ -12,8 +12,8 @@ use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::{
-    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
-    PhpstanIndex, PsalmIndex, RerailIgnores, SqlfluffIndex, VueDirectives,
+    BiomeSuppressions, ClippyIndex, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives,
+    PhpcsIndex, PhpstanIndex, PsalmIndex, RerailIgnores, SqlfluffIndex, VueDirectives,
 };
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
@@ -32,10 +32,12 @@ pub(crate) struct Resolves {
     /// `global`: the node is a reference to one of these names that no file-local binding
     /// visible there shadows.
     pub(crate) globals: BTreeSet<String>,
-    /// `import` (Python): the node is a name or attribute chain whose head is bound by an import,
-    /// and the import's qualified name joined with the rest of the chain is one of these.
+    /// `import`: the node is a name or attribute chain whose head is bound by an import, and the
+    /// import's qualified name joined with the rest of the chain is one of these (Python); or a
+    /// name or path whose path, its head read through the file's imports, is one of these (Rust,
+    /// `ScopeRules::import_path`).
     pub(crate) imports: BTreeSet<String>,
-    /// Attribute-chain kinds, which only `import` accepts.
+    /// Attribute-chain kinds (Python) or path kinds (Rust), which only `import` accepts.
     pub(crate) attribute_kinds: BTreeSet<u16>,
     /// `directives: "eslint"`: `/* global */` comments add and remove global names.
     pub(crate) directives: bool,
@@ -285,8 +287,8 @@ impl Resolves {
         if let Some(mode) = self.unresolved {
             return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
         }
-        let chain =
-            (!self.imports.is_empty() || self.import_any) && self.import_chain(node).is_some();
+        let chain = (!self.imports.is_empty() || self.import_any)
+            && (S::IMPORT_PATHS || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
         // Without language options only a comment can make another name global; without the
         // opt-in no table is needed.
@@ -306,7 +308,26 @@ impl Resolves {
             return false;
         };
         (global && self.is_global(&table, node, text.as_ref()))
-            || (chain && self.is_import(&table, node))
+            || (chain && S::IMPORT_PATHS && self.is_import_path::<S, D>(&table, node))
+            || (chain && !S::IMPORT_PATHS && self.is_import(&table, node))
+    }
+
+    /// Rust: the path the read at `node` names through the file's imports is listed (or with
+    /// `import: true`, there is one).
+    fn is_import_path<S: ScopeRules, D: Doc>(
+        &self,
+        table: &ScopeTable,
+        node: &Node<'_, D>,
+    ) -> bool {
+        let file = file_path();
+        S::import_path(table, node, file.as_deref()).is_some_and(|path| {
+            self.import_any
+                || self.imports.contains(&path)
+                || (self.prefix
+                    && path
+                        .match_indices("::")
+                        .any(|(at, _)| self.imports.contains(&path[..at])))
+        })
     }
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
@@ -764,7 +785,7 @@ pub(super) fn unparenthesized<'r, D: Doc>(
     while paren_kinds.contains(&node.kind_id()) {
         let mut inner = node
             .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .filter(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()));
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -857,6 +878,8 @@ struct FileScopes {
     tables: Vec<Arc<ScopeTable>>,
     /// The file's Python module path, which qualifies its definitions and relative imports.
     module: Option<Arc<ModulePath>>,
+    /// The host's path of the file (`FileScopeSlot::path`), which places a Rust file in its crate.
+    path: Option<Arc<str>>,
     /// A build that stopped at its node budget stops again at any budget up to this one.
     failed_within: usize,
     charged: Vec<usize>,
@@ -898,6 +921,8 @@ struct FileScopes {
     psalm: Option<Rc<PsalmIndex>>,
     /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
     phpcs: Option<Rc<PhpcsIndex>>,
+    /// The file's Rust lint-level attributes (`suppress.clippy`), read on first use.
+    clippy: Option<Rc<ClippyIndex>>,
     /// The file's SQLFluff `-- noqa` directives (`suppress.sqlfluff`), read on first use.
     sqlfluff: Option<Rc<SqlfluffIndex>>,
     /// The file's `rerail-ignore` directives, read on first use.
@@ -932,6 +957,7 @@ impl FileScopeSlot {
             tables: cached,
             module,
             failed_within: 0,
+            path: None,
             charged: Vec::new(),
             usage_charged: Vec::new(),
             has_errors,
@@ -950,6 +976,7 @@ impl FileScopeSlot {
             phpstan: None,
             psalm: None,
             phpcs: None,
+            clippy: None,
             sqlfluff: None,
             rerail_ignores: None,
             php_names: None,
@@ -966,6 +993,7 @@ impl FileScopeSlot {
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
+                slot.path = Some(Arc::from(path));
             }
         });
         self
@@ -990,6 +1018,11 @@ impl Drop for FileScopeSlot {
 /// The module path of the file being matched, if the host or its name gives one.
 pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.module.clone()))
+}
+
+/// The host's path of the file being matched, if it gave one.
+fn file_path() -> Option<Arc<str>> {
+    FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 
 /// A value decoded earlier in this file.
@@ -1227,6 +1260,23 @@ pub(crate) fn file_phpcs(read: impl FnOnce() -> PhpcsIndex) -> Rc<PhpcsIndex> {
     index
 }
 
+/// The Rust lint-level attribute index of the file being matched: read once per file while a
+/// file is being matched, and fresh outside one.
+pub(crate) fn file_clippy(read: impl FnOnce() -> ClippyIndex) -> Rc<ClippyIndex> {
+    if let Some(index) =
+        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.clippy.clone()))
+    {
+        return index;
+    }
+    let index = Rc::new(read());
+    FILE_SCOPES.with_borrow_mut(|scopes| {
+        if let Some(scopes) = scopes {
+            scopes.clippy = Some(Rc::clone(&index));
+        }
+    });
+    index
+}
+
 /// The SQLFluff `noqa` index of the file being matched: read once per file while a file is being
 /// matched, and fresh outside one.
 pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<SqlfluffIndex> {
@@ -1325,6 +1375,22 @@ pub(super) fn binding_value<D: Doc>(
     let reference = table.reference(&range)?;
     let (binding, value) = table.binding(reference, name)?;
     Some(binding.followed(value?))
+}
+
+/// The table of `node`'s file a value follows names through (`value.follow`): `None` outside a
+/// file evaluation, in a file with syntax errors (a binding may hide in an error region), or when
+/// the table cannot be built (`UTIL_EXCEEDED` is then set).
+pub(super) fn followed_table<D: Doc>(
+    node: &Node<'_, D>,
+    language: GrammarDialect,
+    options: Option<&LanguageOptions>,
+    python: Option<&PythonOptions>,
+) -> Option<Arc<ScopeTable>> {
+    let has_errors = FILE_SCOPES.with_borrow(|slot| slot.as_ref().map(|slot| slot.has_errors))?;
+    if has_errors {
+        return None;
+    }
+    file_table(node, language, table_reading(options, python))
 }
 
 /// The value node of the PHP constant `target` fetches in `node`'s file (`value.follow`), where

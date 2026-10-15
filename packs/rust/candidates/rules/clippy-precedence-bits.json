@@ -1,0 +1,148 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-precedence-bits",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's precedence_bits lint: reports, at any nesting depth, a bitwise (& | ^) operation with an unparenthesized shift operand and no unparenthesized arithmetic operand (that mix is the precedence lint's). Clippy reports every such operation, but operations sharing a start (a left-nested chain like `a ^ b ^ c >> 1 ^ d >> 2`) are one position, so one finding is made per chain, at the outermost operation; macro expansion and semantic type checks are not modelled.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bitwise-with-shift",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "has": {
+                  "field": "operator",
+                  "regex": "^(?:<<|>>|[&|^])$"
+                }
+              },
+              {
+                "matches": "spine-hit"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "field": "left",
+                    "kind": "binary_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:<<|>>|[&|^])$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "lint": {
+              "all": [
+                {
+                  "kind": "binary_expression"
+                },
+                {
+                  "has": {
+                    "field": "operator",
+                    "regex": "^[&^|]$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:<<|>>)$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:<<|>>)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "left",
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "operator",
+                            "regex": "^[-+*/%]$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "right",
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "operator",
+                            "regex": "^[-+*/%]$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "spine-hit": {
+              "any": [
+                {
+                  "matches": "lint"
+                },
+                {
+                  "has": {
+                    "field": "left",
+                    "kind": "binary_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:<<|>>|[&|^])$"
+                    },
+                    "matches": "spine-hit"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "suppress": {
+          "clippy": {
+            "lints": [
+              "clippy::precedence_bits",
+              "clippy::restriction",
+              "warnings"
+            ]
+          }
+        },
+        "anchor": "witness.span",
+        "code": "precedence_bits",
+        "message": "Clippy precedence_bits: mixed bitwise operations may be confusing"
+      }
+    }
+  ]
+}

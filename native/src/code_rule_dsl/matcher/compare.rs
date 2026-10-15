@@ -306,7 +306,7 @@ const LISTS: &[&str] = &[
 /// A list element's 0-based index: the `,` tokens before it among its parent's children.
 /// Parentheses are transparent, as in ESTree and Python's AST: `(a)` in `[(a)]` is element 0.
 fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
-    if !node.is_named() || matches!(node.kind().as_ref(), "comment" | "html_comment") {
+    if !node.is_named() || super::util::is_comment_kind(&node.kind()) {
         return None;
     }
     let mut node = node.clone();
@@ -334,9 +334,10 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
 fn unparenthesized<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
-        let Some(inner) = node.children().find(|child| {
-            child.is_named() && !matches!(child.kind().as_ref(), "comment" | "html_comment")
-        }) else {
+        let Some(inner) = node
+            .children()
+            .find(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))
+        else {
             break;
         };
         node = inner;
@@ -389,7 +390,7 @@ pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
         }
     };
     for leaf in node.dfs() {
-        let comment = matches!(leaf.kind().as_ref(), "comment" | "html_comment");
+        let comment = super::util::is_comment_kind(&leaf.kind());
         if !comment && leaf.children().next().is_some() {
             continue;
         }

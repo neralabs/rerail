@@ -1,0 +1,20 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-allow-attributes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's allow_attributes: reports the path of every outer #[allow(..)] attribute, one a #[cfg_attr(..)] expands to included. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). Inner #![allow] is not reported. What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "allow-attribute",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "attribute_item", "regex": "^#\\[\\s*(?P<A>allow)\\s*\\(" } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "capture.A", "code": "allow_attributes", "message": "Clippy allow_attributes: #[allow] attribute found" }
+    },
+    {
+      "id": "cfg-attr-allow",
+      "forbid": { "ast": {"language": "rust", "utils": {"cfg-attr-args": {"kind": "token_tree", "any": [{"inside": {"stopBy": "neighbor", "kind": "attribute", "has": {"kind": "identifier", "regex": "^cfg_attr$"}}}, {"follows": {"stopBy": "neighbor", "kind": "identifier", "regex": "^cfg_attr$"}, "inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}]}}, "rule": {"all": [{"kind": "identifier", "regex": "^allow$"}, {"follows": {"stopBy": "neighbor", "regex": "^,$"}}, {"precedes": {"stopBy": "neighbor", "kind": "token_tree"}}, {"inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}, {"inside": {"stopBy": "end", "kind": "attribute_item"}}, {"not": {"inside": {"stopBy": "end", "kind": "attribute", "regex": "(?s)^cfg_attr\\s*\\(\\s*(?:test|any\\s*\\(\\s*\\)|not\\s*\\(\\s*clippy\\s*\\))\\s*,"}}}]}} },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "witness.span", "code": "allow_attributes", "message": "Clippy allow_attributes: #[allow] attribute found" }
+    }
+  ]
+}

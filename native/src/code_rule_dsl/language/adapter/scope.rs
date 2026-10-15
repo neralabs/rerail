@@ -90,6 +90,9 @@ pub(crate) trait ScopeRules {
     const SCOPES: &'static [(&'static str, ScopeName)];
     /// The binding filters the family refuses, in the order compiling checks them.
     const REFUSED_FILTERS: &'static [&'static str];
+    /// Whether the qualified names `resolves.import` lists are paths whose segments `::` joins
+    /// (Rust), read by `import_path`, rather than dotted names an attribute chain reads (Python).
+    const IMPORT_PATHS: bool;
 
     /// Visits the file at `root` into `builder`'s table.
     fn visit<D: Doc>(
@@ -168,6 +171,13 @@ pub(crate) trait ScopeRules {
     ) -> Result<Usage, BuildError>;
     /// The module of a file at `path` no host named and no package holds.
     fn unpackaged_module(path: &str) -> Option<ModulePath>;
+    /// The path the read at `node` names through the file's imports (`resolves.import` where
+    /// `IMPORT_PATHS`); `file` is the host's path of the file, which places it in its crate.
+    fn import_path<D: Doc>(
+        table: &ScopeTable,
+        node: &Node<'_, D>,
+        file: Option<&str>,
+    ) -> Option<String>;
     /// Whether the family reads `feature`.
     fn feature(feature: ScopeFeature) -> Result<(), Refusal>;
 }
@@ -220,6 +230,7 @@ impl ScopeRules for Python {
         ("typeParameters", ScopeName::Kind(ScopeKind::TypeParams)),
     ];
     const REFUSED_FILTERS: &'static [&'static str] = &["directives", "builtin"];
+    const IMPORT_PATHS: bool = false;
 
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
@@ -344,6 +355,10 @@ impl ScopeRules for Python {
         ModulePath::stem(path)
     }
 
+    fn import_path<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: Option<&str>) -> Option<String> {
+        None
+    }
+
     fn feature(feature: ScopeFeature) -> Result<(), Refusal> {
         match feature {
             ScopeFeature::This => refused("`this` is TypeScript's; Python has none"),
@@ -419,6 +434,7 @@ impl ScopeRules for Ecma {
         ("functionName", ScopeName::Kind(ScopeKind::FunctionName)),
     ];
     const REFUSED_FILTERS: &'static [&'static str] = &["latest", "outer"];
+    const IMPORT_PATHS: bool = false;
 
     /// Each region of the document (`regions`), read as its dialect: a TypeScript file's root,
     /// or the program an embedding file's tape holds.
@@ -534,6 +550,10 @@ impl ScopeRules for Ecma {
     }
 
     fn unpackaged_module(_: &str) -> Option<ModulePath> {
+        None
+    }
+
+    fn import_path<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: Option<&str>) -> Option<String> {
         None
     }
 
@@ -667,6 +687,7 @@ impl ScopeRules for Php {
         ("closure", ScopeName::Kind(ScopeKind::Lambda)),
     ];
     const REFUSED_FILTERS: &'static [&'static str] = &["exported", "builtin", "directives"];
+    const IMPORT_PATHS: bool = false;
 
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
@@ -776,6 +797,10 @@ impl ScopeRules for Php {
         None
     }
 
+    fn import_path<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: Option<&str>) -> Option<String> {
+        None
+    }
+
     fn feature(feature: ScopeFeature) -> Result<(), Refusal> {
         php_feature(
             feature,
@@ -801,6 +826,7 @@ impl ScopeRules for Blade {
     const FORMS: &'static [(&'static str, Form)] = <Php as ScopeRules>::FORMS;
     const SCOPES: &'static [(&'static str, ScopeName)] = <Php as ScopeRules>::SCOPES;
     const REFUSED_FILTERS: &'static [&'static str] = <Php as ScopeRules>::REFUSED_FILTERS;
+    const IMPORT_PATHS: bool = <Php as ScopeRules>::IMPORT_PATHS;
 
     fn visit<D: Doc>(
         builder: &mut Builder<'_>,
@@ -903,6 +929,14 @@ impl ScopeRules for Blade {
 
     fn unpackaged_module(path: &str) -> Option<ModulePath> {
         <Php as ScopeRules>::unpackaged_module(path)
+    }
+
+    fn import_path<D: Doc>(
+        table: &ScopeTable,
+        node: &Node<'_, D>,
+        file: Option<&str>,
+    ) -> Option<String> {
+        <Php as ScopeRules>::import_path(table, node, file)
     }
 
     fn feature(feature: ScopeFeature) -> Result<(), Refusal> {

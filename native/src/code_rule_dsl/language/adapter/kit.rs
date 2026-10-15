@@ -4,8 +4,8 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, ScopeRules, Sql,
-    ValueRules, Vue, with_adapter,
+    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
+    Sql, ValueRules, Vue, with_adapter,
 };
 use crate::code_rule_dsl::language::{
     CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
@@ -178,6 +178,9 @@ fn python() {
                     "`printf` reads PHP's printf-family calls; Python's printf formats are style `percent`",
                 ),
                 Some("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats"),
+                Some(
+                    "`rust` reads Rust's format macros; Python's format calls are styles `brace` and `percent`",
+                ),
             ],
         },
         syntax: super::syntax::kit::Expect {
@@ -202,6 +205,7 @@ fn python() {
                 ),
                 Some("`scanfFormat` parses PHP strings; Python has no scanf formats"),
                 Some("`phpDoc` parses PHP doc comments"),
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("# c\nx = 1\n", 1),
@@ -272,7 +276,7 @@ fn ecma() {
         calls: super::calls::kit::Calls {
             call_kinds: &[],
             function_kinds: &[],
-            refusal: Some("calls follows Python and PHP calls only"),
+            refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
             taped: false,
             subclasses: false,
@@ -296,7 +300,7 @@ fn ecma() {
         },
         format_args: super::format_args::kit::Expect {
             follows_strings: false,
-            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
+            styles: [Some("formatArgs reads Python, PHP and Rust format calls"); 5],
         },
         syntax: super::syntax::kit::Expect {
             dollar_names: false,
@@ -322,6 +326,7 @@ fn ecma() {
                 Some("`printfFormat` parses PHP strings"),
                 Some("`scanfFormat` parses PHP strings"),
                 Some("`phpDoc` parses PHP doc comments"),
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("// c\nlet x = 1;\n", 1),
@@ -454,6 +459,9 @@ fn php() {
                 ),
                 None,
                 None,
+                Some(
+                    "`rust` reads Rust's format macros; PHP's printf-family calls are style `printf`",
+                ),
             ],
         },
         syntax: super::syntax::kit::Expect {
@@ -482,6 +490,7 @@ fn php() {
                 None,
                 None,
                 None,
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[("sprintf($F, $$$A)", false)],
             php_comments: ("<?php /** d */ // c\n", 2),
@@ -603,6 +612,9 @@ fn blade() {
                 ),
                 None,
                 None,
+                Some(
+                    "`rust` reads Rust's format macros; blade embeds PHP, whose printf-family calls are style `printf`",
+                ),
             ],
         },
         syntax: super::syntax::kit::Expect {
@@ -631,6 +643,7 @@ fn blade() {
                 None,
                 None,
                 None,
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[("sprintf($F, $$$A)", true), ("<p>{{ $x }}</p>", false)],
             php_comments: ("{{-- a --}}\n@php /** b */ @endphp\n", 1),
@@ -709,7 +722,7 @@ fn vue() {
         calls: super::calls::kit::Calls {
             call_kinds: &[],
             function_kinds: &[],
-            refusal: Some("calls follows Python and PHP calls only"),
+            refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
             taped: false,
             subclasses: false,
@@ -733,7 +746,7 @@ fn vue() {
         },
         format_args: super::format_args::kit::Expect {
             follows_strings: false,
-            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
+            styles: [Some("formatArgs reads Python, PHP and Rust format calls"); 5],
         },
         syntax: super::syntax::kit::Expect {
             dollar_names: false,
@@ -759,6 +772,7 @@ fn vue() {
                 Some("`printfFormat` parses PHP strings"),
                 Some("`scanfFormat` parses PHP strings"),
                 Some("`phpDoc` parses PHP doc comments"),
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[
                 ("foo($A, $$$B)", true),
@@ -844,7 +858,7 @@ fn sql() {
         calls: super::calls::kit::Calls {
             call_kinds: &[],
             function_kinds: &[],
-            refusal: Some("calls follows Python and PHP calls only"),
+            refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
             taped: false,
             subclasses: false,
@@ -870,7 +884,7 @@ fn sql() {
         },
         format_args: super::format_args::kit::Expect {
             follows_strings: false,
-            styles: [Some("formatArgs reads Python and PHP format calls"); 4],
+            styles: [Some("formatArgs reads Python, PHP and Rust format calls"); 5],
         },
         syntax: super::syntax::kit::Expect {
             dollar_names: false,
@@ -891,6 +905,7 @@ fn sql() {
                 Some("`printfFormat` parses PHP strings"),
                 Some("`scanfFormat` parses PHP strings"),
                 Some("`phpDoc` parses PHP doc comments"),
+                Some("`rustFormat` parses Rust strings"),
             ],
             embeds: &[("SELECT $A", false)],
             php_comments: ("-- c\nSELECT 1;\n", 1),
@@ -922,6 +937,168 @@ fn sql() {
                 ),
             ],
             reads: &[super::ScopeFeature::Every],
+            unpackaged: None,
+        },
+    });
+}
+
+#[test]
+fn rust() {
+    kit::<Rust>(&Expect {
+        family: Family::Rust,
+        label: "rust",
+        terminators: Terminators::Newlines,
+        dialect: GrammarDialect::Rust,
+        name: "ﬁle",
+        regions: &[("fn f() {}\n", &[("source_file", 0..10)])],
+        module: (".rs", None),
+        value: value_kit::Expect {
+            lang: Family::Rust,
+            string: Value::Str("é".to_owned()),
+            numbers: [
+                Value::RustInt {
+                    value: 16.into(),
+                    ty: None,
+                },
+                Value::RustInt {
+                    value: u64::MAX.into(),
+                    ty: None,
+                },
+            ],
+            decoded: (
+                "const X: u8 = 0x10;\n",
+                "integer_literal",
+                Value::RustInt {
+                    value: 16.into(),
+                    ty: None,
+                },
+            ),
+            name_kinds: &["identifier"],
+            str_type: Err(
+                "`str` is not a Rust type name; expected one of bool, char, &str, &[u8], &CStr, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64",
+            ),
+            structure_parts: Err(
+                "the structural modes compare Python and PHP syntax; use tokens for Rust",
+            ),
+            spelled: ("fn f() {}\n", true),
+            name: None,
+        },
+        calls: super::calls::kit::Calls {
+            call_kinds: &["call_expression"],
+            function_kinds: &["function_item"],
+            refusal: None,
+            seed_language: None,
+            taped: false,
+            subclasses: false,
+            summary: ("fn f() {\n    g();\n}\n", &["kit/crate::f"]),
+            unread: None,
+            label: ("crate::a::f", "crate::a::f"),
+            keys: &[("crate::f", 0, &["crate::f"])],
+        },
+        arguments: super::arguments::kit::Expect {
+            call_kinds: &["call_expression"],
+            features: [
+                Some(
+                    "`/` and `*` mark Python's positional-only and keyword-only slots; Rust passes arguments by position only",
+                ),
+                Some(
+                    "`syntactic` finds arguments by position and keyword as Ruff's find_argument does; Rust has no keywords",
+                ),
+                Some(
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; rust has none (use language)",
+                ),
+            ],
+            passed: ("fn main() { f(1, (2)); }\n", ["1", "2"]),
+        },
+        format_args: super::format_args::kit::Expect {
+            follows_strings: false,
+            styles: [
+                Some(
+                    "`brace` reads Python's `str.format` calls; Rust's format macros are style `rust`",
+                ),
+                Some("`percent` reads Python's `%` formats; Rust's format macros are style `rust`"),
+                Some(
+                    "`printf` reads PHP's printf-family calls; Rust's format macros are style `rust`",
+                ),
+                Some("`scanf` reads PHP's sscanf and fscanf calls; Rust has no scanf formats"),
+                None,
+            ],
+        },
+        syntax: super::syntax::kit::Expect {
+            dollar_names: false,
+            language_options: Some("`languageOptions` is not available for rust policies"),
+            compiled_options: None,
+            when: &[
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
+                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (
+                    r#"{"pythonVersion": {"min": "3.10"}}"#,
+                    Err("unknown field `pythonVersion` at /q/when"),
+                ),
+            ],
+            parse: [
+                Some(
+                    "`percentFormat` parses Python literals; Rust's format templates are `rustFormat`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; Rust's format templates are `rustFormat`",
+                ),
+                Some("`annotation` parses Python literals"),
+                Some("`eslintDirective` parses TypeScript comments"),
+                Some("`printfFormat` parses PHP strings; Rust's format templates are `rustFormat`"),
+                Some("`scanfFormat` parses PHP strings; Rust has no scanf formats"),
+                Some("`phpDoc` parses PHP doc comments"),
+                None,
+            ],
+            embeds: &[("println!($F, $$$A)", false)],
+            php_comments: ("// c\nfn f() {}\n", 0),
+        },
+        scope: super::scope::kit::Expect {
+            flow: false,
+            declared: (None, None),
+            unresolved: &[
+                ("fn f() { undefined_name(); }\n", "undefined_name", true),
+                ("fn f() { Vec::new(); }\n", "Vec", false),
+                ("use m::*;\nfn f() { g(); }\n", "g", false),
+            ],
+            stubs: false,
+            redefines_shadowed: false,
+            reference_kinds: &[
+                "identifier",
+                "type_identifier",
+                "self",
+                "shorthand_field_identifier",
+                "lifetime",
+                "label",
+            ],
+            name_kinds: &[
+                "identifier",
+                "type_identifier",
+                "self",
+                "shorthand_field_identifier",
+                "lifetime",
+                "label",
+            ],
+            resolves: (
+                "fn f() {\n    let x = 1;\n    x;\n}\n",
+                "x",
+                Some(crate::code_rule_dsl::scope::Form::Assignment),
+            ),
+            refuses: &[
+                (
+                    super::ScopeFeature::This,
+                    "`this` asks whether JavaScript's `this` is the global object; Rust has none (`self` is a method's parameter, which `binding` reads)",
+                ),
+                (
+                    super::ScopeFeature::BeforeLocal,
+                    "`beforeLocal` reads Python's binding order; a Rust function sees no local of an enclosing one, which `binding` reads",
+                ),
+            ],
+            reads: &[
+                super::ScopeFeature::Imports,
+                super::ScopeFeature::Every,
+                super::ScopeFeature::Occurrence,
+            ],
             unpackaged: None,
         },
     });

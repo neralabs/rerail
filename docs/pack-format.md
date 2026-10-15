@@ -316,12 +316,9 @@ repository allowlist are accepted.
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
 | Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
 
-Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next` and `sql`, each from `conformance/languages/<id>/`,
+Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` and `rust`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
 share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
 parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
-draft `rules.json` becoming `packs/vue/conformance.json`. Not moved yet: `rust`, which has upstream recordings but no
-rules: it stays in `fixtures/rust/upstream/` beside its draft manifest (`fixtures/rust/upstream/conformance.draft.json`)
-until its pack gains rules, when the draft becomes `packs/rust/conformance.json` and `upstream/` moves to
-`packs/rust/upstream/`.
+draft `rules.json` becoming `packs/vue/conformance.json`.

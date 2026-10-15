@@ -1,21 +1,28 @@
 {
   "format": "rerail.language/v1",
   "id": "rust",
-  "status": "planned",
+  "status": "supported",
   "family": "rust",
   "dialects": [
     {
       "label": "rust",
-      "suffixes": [".rs"],
+      "variant": "Rust",
+      "suffixes": [
+        ".rs"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Rust",
       "tapeTag": 9
     }
   ],
   "capabilities": {
-    "scope": "not-supported-yet",
-    "value": "not-supported-yet",
-    "arguments": "not-supported-yet",
-    "calls": "not-supported-yet",
-    "formatArgs": "not-supported-yet"
+    "scope": "supported",
+    "value": "supported",
+    "arguments": "supported",
+    "calls": "supported",
+    "formatArgs": "supported"
   },
-  "suppressions": []
+  "suppressions": [
+    "clippy"
+  ]
 }

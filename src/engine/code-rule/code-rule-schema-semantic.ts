@@ -12,6 +12,10 @@ const psalmIssue = z.string().regex(/^(?!all$)[A-Za-z0-9_-]+$/, "Must be a Psalm
 const phpcsCode = z
   .string()
   .regex(/^\w+\.\w+\.\w+(?:\.\w+)?$/, "Must be a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code).");
+const clippyLint = z
+  .string()
+  .regex(/^[a-z0-9_]+(?:::[a-z0-9_]+)?$/, "Must be a lint name as a lint attribute spells it (clippy::name, a group such as clippy::all, or a rustc lint or group).");
+const rustVersion = z.string().regex(/^[0-9]+\.[0-9]+(?:\.[0-9]+)?$/, "Must be a Rust version, major.minor or major.minor.patch (1.53).");
 const sqlfluffReference = z
   .string()
   .refine(name => name.length > 0 && !name.includes(",") && name.trim() === name, "Must be a rule's code, name, alias or group (non-empty, without commas or surrounding white space).");
@@ -39,6 +43,11 @@ export const codeRuleSuppressSchema = z
     psalm: z.object({ issues: z.array(psalmIssue).min(1).max(256), suppressAll: z.boolean().optional() }).strict().optional(),
     /** PHP_CodeSniffer's `phpcs:` annotations, as version 4 reads them unless `version: 3` (which adds `@codingStandardsIgnore*`). */
     phpcs: z.object({ sniffs: z.array(phpcsCode).min(1).max(256), version: z.union([z.literal(3), z.literal(4)]).optional() }).strict().optional(),
+    /**
+     * rustc's and Clippy's lint-level attributes, `#[allow(..)]` and `#[expect(..)]`, naming one of `lints` (a lint or its group);
+     * with `msrv`, the Rust version the lint needs, also a `#[clippy::msrv = ".."]` in force naming an older one.
+     */
+    clippy: z.object({ lints: z.array(clippyLint).min(1).max(256), msrv: rustVersion.optional() }).strict().optional(),
     /** SQLFluff's `-- noqa` comments: `rules` are the references SQLFluff knows the rule by (its code, name, aliases and groups), which a directive's code, name or glob may match. */
     sqlfluff: z.object({ rules: z.array(sqlfluffReference).min(1).max(256) }).strict().optional(),
   })

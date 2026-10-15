@@ -5,6 +5,8 @@
 use super::json::{invalid, object, reject_unknown};
 use ast_grep_core::{Doc, Node};
 pub(crate) use biome::BiomeSuppressions;
+use clippy::Clippy;
+pub(crate) use clippy::ClippyIndex;
 pub(crate) use eslint::EslintDirectives;
 use napi::Result;
 use noqa::Noqa;
@@ -97,9 +99,7 @@ macro_rules! suppression_kinds {
 // - `linter::spec`, `fn(&Value, at: &str) -> napi::Result<Spec>`, parses it, in
 //   `suppress/<linter>.rs` beside the reader of the linter's suppressions;
 // - `"detail"` says whose they are, for a query of a family that does not honour them.
-// Nothing here assumes comments. Clippy's `#[allow(clippy::..)]` attributes would be
-//     /// Clippy's `#[allow]`, `#[expect]` attributes.
-//     Clippy clippy: Clippy = clippy::spec, "#[allow] attributes are Clippy's";
+// Nothing here assumes comments: Clippy's are attributes.
 // The host's twin is `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`.
 suppression_kinds! {
     /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
@@ -120,6 +120,9 @@ suppression_kinds! {
     Psalm psalm: Psalm = psalm::spec, "@psalm-suppress tags are Psalm's";
     /// PHP_CodeSniffer's `phpcs:` annotations.
     Phpcs phpcs: Phpcs = phpcs::spec, "phpcs: annotations are PHP_CodeSniffer's";
+    /// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
+    /// names that silence the violation.
+    Clippy clippy: Clippy = clippy::spec, "#[allow] and #[expect] attributes are Clippy's";
     /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
     /// name the violation's rule by.
     Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
@@ -183,6 +186,7 @@ fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
 }
 
 mod biome;
+mod clippy;
 mod eslint;
 #[cfg(test)]
 mod eslint_tests;
@@ -237,7 +241,7 @@ mod tests {
             keys,
             [
                 "eslint", "noqa", "nosec", "oxlint", "biome", "phpstan", "psalm", "phpcs",
-                "sqlfluff"
+                "clippy", "sqlfluff"
             ]
         );
         for kind in Suppression::ALL {
@@ -256,7 +260,7 @@ mod tests {
                 "typescript",
                 json!({}),
                 format!(
-                    "{at} must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, or sqlfluff"
+                    "{at} must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, or sqlfluff"
                 ),
             ),
             (
@@ -468,6 +472,13 @@ mod tests {
                 "php",
                 json!({ "phpcs": { "sniffs": ["Squiz.PHP.DiscouragedFunctions"], "version": 2 } }),
                 format!("{at}/phpcs/version must be 3 or 4"),
+            ),
+            (
+                "rust",
+                json!({ "clippy": { "lints": ["clippy::all"], "msrv": "1" } }),
+                format!(
+                    "{at}/clippy/msrv must be a Rust version, `major.minor` or `major.minor.patch`"
+                ),
             ),
             (
                 "python",

@@ -326,9 +326,9 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# rust-clippy (Rust 1.99.0) (rust/licenses/clippy/UPSTREAM.md): verbatim
+# rust-clippy (Rust 1.99.0) (packs/rust/licenses/clippy/UPSTREAM.md): verbatim
 [[annotations]]
-path = "fixtures/rust/upstream/clippy/fixtures/**"
+path = "packs/rust/upstream/clippy/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = "The Rust Project Contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
@@ -707,6 +707,15 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
+# packs/rust
+# Rule documents are Rerail's ports, published under the pack's Apache-2.0 AND MIT licence expression.
+[[annotations]]
+path = ["packs/rust/rules/**", "packs/rust/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["The Rust Project Contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+
 # Bandit 1.9.4 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
 path = "packs/python/upstream/bandit/fixtures/**"
@@ -741,9 +750,10 @@ precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
 
-# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md).
+# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md,
+# packs/rust/upstream/clippy/UPSTREAM.md).
 [[annotations]]
-path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**"]
+path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**", "packs/rust/upstream/clippy/fixtures/rerail/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
