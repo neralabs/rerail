@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-next-script-for-ga",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/next-script-for-ga: a <script> with a literal src containing the Google Analytics or gtag URL, or whose dangerouslySetInnerHTML object's first property is a template literal whose first quasi contains the GA or GTM script URL.",
   "scope": {
@@ -134,6 +134,11 @@
           "eslint": {
             "rules": [
               "@next/next/next-script-for-ga"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "next-script-for-ga"
             ]
           }
         }

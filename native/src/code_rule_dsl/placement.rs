@@ -1,12 +1,14 @@
-//! A compiled code rule's placement in one checkout: per folder, the mode it runs at there, or off.
-//! A workspace holds it on its resident copy of the code rule, so one compiled code rule can run in
-//! several folders of a checkout at different modes without being compiled again.
+//! A compiled code rule's placement in one checkout: per folder, the mode it runs at there, or off,
+//! and whether linters' suppression comments silence it there. A workspace holds it on its resident
+//! copy of the code rule, so one compiled code rule can run in several folders of a checkout at
+//! different modes without being compiled again.
 
 use super::json::{invalid, json_error};
 use super::model::{Placement, PlacementEntry, RuleMode};
 use serde_json::Value;
 
-/// The placement in `json`: an array of `{"folder": string, "mode": "log"|"steer"|"block"|null}`.
+/// The placement in `json`: an array of `{"folder": string, "mode": "log"|"steer"|"block"|null,
+/// "suppressions"?: "honour"|"ignore"}`. A missing `suppressions` is `honour`.
 /// Folders are normalised as the host normalises them (`\` is `/`, empty and `.` segments drop);
 /// an absolute folder, a `..` segment or a folder named twice is rejected.
 pub(super) fn parse_placement(json: &str) -> napi::Result<Placement> {
@@ -36,7 +38,10 @@ fn parse_entry(entry: &Value, at: &str) -> napi::Result<PlacementEntry> {
     let object = entry
         .as_object()
         .ok_or_else(|| invalid(format!("{at} must be an object")))?;
-    if let Some(key) = object.keys().find(|key| *key != "folder" && *key != "mode") {
+    if let Some(key) = object
+        .keys()
+        .find(|key| !matches!(key.as_str(), "folder" | "mode" | "suppressions"))
+    {
         return Err(invalid(format!("{at}/{key} is not a placement field")));
     }
     let folder = object
@@ -49,9 +54,17 @@ fn parse_entry(entry: &Value, at: &str) -> napi::Result<PlacementEntry> {
         _ => None,
     }
     .ok_or_else(|| invalid(format!("{at}/mode must equal log, steer, block, or null")))?;
+    let honour_suppressions = match object.get("suppressions") {
+        None => Some(true),
+        Some(Value::String(choice)) if choice == "honour" => Some(true),
+        Some(Value::String(choice)) if choice == "ignore" => Some(false),
+        _ => None,
+    }
+    .ok_or_else(|| invalid(format!("{at}/suppressions must equal honour or ignore")))?;
     Ok(PlacementEntry {
         folder: normalize_folder(folder, at)?,
         mode,
+        honour_suppressions,
     })
 }
 
@@ -85,6 +98,12 @@ pub(super) fn placement_identity(placement: &[PlacementEntry]) -> Vec<u8> {
         bytes.extend_from_slice(entry.folder.as_bytes());
         bytes.push(0);
         bytes.extend_from_slice(entry.mode.map_or("off", RuleMode::as_str).as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(if entry.honour_suppressions {
+            b"honour"
+        } else {
+            b"ignore"
+        });
         bytes.push(0);
     }
     bytes
@@ -179,9 +198,48 @@ mod tests {
                 r#"[{"folder": "", "mode": "log", "on": true}]"#,
                 "not a placement field",
             ),
+            (
+                r#"[{"folder": "", "mode": "log", "suppressions": "skip"}]"#,
+                "/suppressions must equal honour or ignore",
+            ),
+            (
+                r#"[{"folder": "", "mode": "log", "suppressions": null}]"#,
+                "/suppressions must equal honour or ignore",
+            ),
+            (
+                r#"[{"folder": "", "mode": "log", "suppressions": false}]"#,
+                "/suppressions must equal honour or ignore",
+            ),
         ] {
             let error = parse_placement(json).expect_err(json);
             assert!(error.reason.contains(reason), "{json}: {}", error.reason);
         }
+    }
+
+    #[test]
+    fn suppressions_default_to_honour_and_follow_the_deciding_folder() {
+        let placement = parse_placement(
+            r#"[
+                {"folder": "", "mode": "log"},
+                {"folder": "web", "mode": "log", "suppressions": "ignore"},
+                {"folder": "web/vendor", "mode": "log", "suppressions": "honour"}
+            ]"#,
+        )
+        .unwrap();
+        let honours = |path| placed(&placement, path).map(|entry| entry.honour_suppressions);
+        assert_eq!(
+            ["api/a.py", "web/a.ts", "web/vendor/a.ts"].map(honours),
+            [Some(true), Some(false), Some(true)]
+        );
+    }
+
+    #[test]
+    fn the_identity_differs_when_only_suppressions_differ() {
+        let identity = |json| placement_identity(&parse_placement(json).unwrap());
+        let omitted = identity(r#"[{"folder": "web", "mode": "log"}]"#);
+        let honour = identity(r#"[{"folder": "web", "mode": "log", "suppressions": "honour"}]"#);
+        let ignore = identity(r#"[{"folder": "web", "mode": "log", "suppressions": "ignore"}]"#);
+        assert_eq!(omitted, honour);
+        assert_ne!(honour, ignore);
     }
 }

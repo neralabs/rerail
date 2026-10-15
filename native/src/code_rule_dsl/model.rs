@@ -52,14 +52,27 @@ impl CodeRuleScope {
     pub(super) fn mode_at(&self, path: &str) -> Option<RuleMode> {
         placed(self.placement.as_deref()?, path)?.mode
     }
+
+    /// Whether a linter's suppression comment at `path` silences the code rule's violations there:
+    /// what the placement entry deciding `path` says, and `true` when the code rule is not placed
+    /// or no entry contains `path`.
+    pub(super) fn honours_suppressions_at(&self, path: &str) -> bool {
+        self.placement
+            .as_deref()
+            .and_then(|placement| placed(placement, path))
+            .is_none_or(|entry| entry.honour_suppressions)
+    }
 }
 
 /// One folder of a placement. `folder` is relative to the checkout root in POSIX form (`""` is the
-/// whole checkout); `mode` is `None` where the code rule is off.
+/// whole checkout); `mode` is `None` where the code rule is off; `honour_suppressions` is whether a
+/// linter's suppression comment (`// eslint-disable-next-line`, `# noqa`, ...) silences a violation
+/// in the folder, as the violation's `suppress` names it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PlacementEntry {
     pub(super) folder: String,
     pub(super) mode: Option<RuleMode>,
+    pub(super) honour_suppressions: bool,
 }
 
 /// A placement's entries, sorted by folder, no folder twice.
@@ -101,6 +114,15 @@ pub(super) struct ViolationSpec {
     pub(super) fix_range: Option<String>,
     /// `suppress`: the other linter's suppression comments this violation honours.
     pub(super) suppress: Option<super::suppress::Suppress>,
+    /// The code rule id a `rerail-ignore` comment names to silence this violation's witnesses,
+    /// whatever `suppress` and the `suppressions` setting; `None` where the witnesses report
+    /// nothing (an `exists` leaf, a `calls` seed, a `require_each`'s evidence): a comment silences
+    /// a reported violation, never removes a fact another file's violation reads.
+    pub(super) ignored_by: Option<Arc<str>>,
+    /// A covered witness is kept and marked (`Witness::ignored`) rather than dropped: a `budget`'s
+    /// rows, counted whatever the comments, whose violation a comment silences only at the row
+    /// it is reported at.
+    pub(super) ignore_marks: bool,
     /// The query's `transform` where one of its sources is a regex group of the witness, computed
     /// again with each witness's groups.
     pub(super) group_transform: Option<Arc<Transform>>,

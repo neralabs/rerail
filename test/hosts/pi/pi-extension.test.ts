@@ -26,6 +26,7 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   steerBlock,
+  steerOrigin,
   type ConversationRule,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
@@ -166,7 +167,7 @@ describe("Pi conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock("checkout", "Check checkout requirements."),
+          content: steerBlock("checkout", "Check checkout requirements.", { mode, origin: steerOrigin("checkout") }),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
         },
@@ -189,7 +190,7 @@ describe("Pi conversation-rules extension", () => {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
       createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["Rerail ○ not on here"]);
+      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["R E R A I L ○ not on here"]);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
@@ -398,6 +399,57 @@ describe("Pi conversation-rules extension", () => {
     await expect(Promise.resolve(input({ type: "input", text: "still active" }, harness.context))).rejects.toThrow(
       "before session_start",
     );
+  });
+  it("never fails a tool call or result when the session could not attach, since Pi would block the tool", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    // The tool hooks wait for the attach in flight, which fails: without the guard they would throw it into Pi.
+    const starting = Promise.resolve(install(harness));
+    const call = { type: "tool_call", toolCallId: "call-1", toolName: "write", input: { path: "a.ts" } };
+    const result = { type: "tool_result", toolCallId: "call-1", toolName: "write", content: [], isError: false };
+    const calling = Promise.resolve(harness.handlers.get("tool_call")!(call, harness.context));
+    const resulting = Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context));
+    await expect(starting).rejects.toThrow("fetch failed");
+    await expect(calling).resolves.toBeUndefined();
+    await expect(resulting).resolves.toBeUndefined();
+    expect(stderr.mock.calls.filter(([line]) => String(line).includes("hook failed"))).toHaveLength(2);
+  });
+
+  it("releases a tool call that a wedged daemon never answers before Pi's own deadline blocks it", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    const wedged = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { operation: string };
+      if (request.operation === "ingest") await wedged.promise;
+      return Response.json({ result: null, deliveries: [], entries: [] });
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await install(harness);
+    vi.useFakeTimers();
+
+    let released = false;
+    const call = { type: "tool_call", toolCallId: "call-1", toolName: "write", input: { path: "a.ts" } };
+    void (harness.handlers.get("tool_call")!(call, harness.context) as Promise<void>).then(() => { released = true; });
+    await vi.advanceTimersByTimeAsync(24_000);
+    expect(released).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(released).toBe(true);
+    // Shutdown goes through the same client, so the wedge has to clear for the test to end.
+    wedged.resolve();
+    vi.useRealTimers();
   });
 
 

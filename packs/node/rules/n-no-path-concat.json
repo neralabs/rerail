@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-path-concat",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/no-path-concat: `__dirname`/`__filename` (Node's CommonJS-scope globals) or `import.meta.dirname|filename|url` as the left of `+` or a template substitution, when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module (ReferenceTracker reach), or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part.",
   "scope": {
@@ -758,6 +758,11 @@
             "rules": [
               "n/no-path-concat"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-path-concat"
+            ]
           }
         }
       }
@@ -816,6 +821,11 @@
           "eslint": {
             "rules": [
               "n/no-path-concat"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-path-concat"
             ]
           }
         }

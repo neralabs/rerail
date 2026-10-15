@@ -107,7 +107,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "require-yield",
-        "message": "This generator function does not have 'yield'."
+        "message": "This generator function does not have 'yield'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "require-yield"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "require-yield"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useYield"
+            ]
+          }
+        }
       }
     }
   ]

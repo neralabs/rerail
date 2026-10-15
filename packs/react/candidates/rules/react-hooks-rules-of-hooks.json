@@ -1368,6 +1368,16 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1586,6 +1596,16 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1660,6 +1680,16 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -1736,6 +1766,16 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -1851,6 +1891,16 @@
             "rules": [
               "react-hooks/rules-of-hooks"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
+            ]
           }
         }
       }
@@ -1921,6 +1971,16 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }
@@ -1994,6 +2054,16 @@
           "eslint": {
             "rules": [
               "react-hooks/rules-of-hooks"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "rules-of-hooks"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useHookAtTopLevel"
             ]
           }
         }

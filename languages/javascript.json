@@ -9,7 +9,7 @@
       "variant": "JavaScript",
       "suffixes": [".js", ".jsx", ".mjs", ".cjs"],
       "parser": "tree-sitter",
-      "grammar": "ast-grep:JavaScript",
+      "grammar": "vendored:javascript",
       "tapeTag": 6
     }
   ],
@@ -20,5 +20,5 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": ["eslint"]
+  "suppressions": ["eslint", "oxlint", "biome"]
 }
