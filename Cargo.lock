@@ -2428,7 +2428,7 @@ dependencies = [
  "ast-grep-core",
  "ast-grep-language",
  "cc",
- "fancy-regex 0.14.0",
+ "fancy-regex 0.17.0",
  "foldhash",
  "gix",
  "globset",
