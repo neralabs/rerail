@@ -17,6 +17,7 @@ export const MATCHES_REAL_CODE_METHOD = {
   agreement: "the same findings as upstream on every case, start and end of every span less any end part matches-upstream-tests leaves out for the rule, with nothing missing and nothing extra, and no engine failure",
   "end to end": "matches-real-code never stops a rule and never decides whether it starts on; a file where the rule and upstream differ means matches-upstream-tests was missing that case, so every eligible file where they differ, among its cases or elsewhere, that is not a golden yet is promoted to a golden test in the tool-pack's goldens.tsv and judged by this run's matches-upstream-tests; a golden's expected answer is the pinned upstream's findings on its file",
   report: "per rule, the cases, and how many other eligible files differ with the first 5 of them",
+  "no eligible file": "a rule with no eligible file is judged on nothing and reported not-run, never as agreeing with upstream",
   excused: "nothing excuses a difference: a corpus file is real code, so a file the engine cannot parse is a mismatch, and becomes a golden that matches-upstream-tests reports as an engine gap until the engine reads it",
   "gap candidates": "every eligible file the engine cannot fully parse is read by the same independent parsers as matches-upstream-tests's",
 } as const;
@@ -76,7 +77,7 @@ function constructScore(source: string, constructs: Set<string>): number {
  * matches-real-code: on real code from SWE Atlas/Evo tasks and the pack's pinned corpora, the rule must agree with
  * upstream on every case. Cases are chosen from upstream's verdicts alone, so they do not move when a port changes:
  * positives in task and path order, and negatives that contain the rule's own constructs first. It never stops a rule:
- * each mismatching case becomes a golden of matches-upstream-tests (run.ts).
+ * each mismatching case becomes a golden of matches-upstream-tests (run.ts). A rule with no eligible file is `not-run`.
  */
 export function matchesRealCodeGate(
   engine: Engine,
@@ -146,7 +147,12 @@ export function matchesRealCodeGate(
 
   const mismatches = cases.filter((testCase) => testCase.status === "mismatch");
   return {
-    checks: [{
+    // With no eligible file there is nothing to agree on: the gate judged nothing, as when it does not run.
+    checks: [eligible.length === 0 ? {
+      id: "not-run",
+      ok: false,
+      detail: `0 eligible files: none of the corpus's ${files.length} file(s) is one the document applies to and upstream reads, so nothing was judged`,
+    } : {
       id: "agrees-on-real-code",
       ok: mismatches.length === 0,
       detail: mismatches.length === 0

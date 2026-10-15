@@ -121,8 +121,14 @@ function realCodeSection(report: GatesReport): string[] {
     report.corpus === null ? "The corpus was not read on this run." : `The corpus is ${report.corpus.files} file(s) from ${report.corpus.tasks.filter((task) => task.status === "applied").length} applied task(s) and corpora; ${report.corpus.files - report.corpus.excluded} have upstream's answer.`,
     "",
   ];
+  // A rule judged on no file (no eligible file, or the gate could not run) is not one that agrees with upstream.
+  const unjudged = report.rules.filter((rule) => rule.gates["matches-real-code"].eligible === 0);
+  if (unjudged.length > 0) {
+    const named = unjudged.slice(0, 5).map((rule) => `\`${rule.id}\``).join(", ");
+    lines.push(`${unjudged.length} of ${report.rules.length} rule(s) were judged on no file (0 eligible files, so matches-real-code is not-run and says nothing about them): ${named}${unjudged.length > 5 ? ", …" : ""}.`, "");
+  }
   const differing = report.rules.filter((rule) => rule.gates["matches-real-code"].cases.some((testCase) => testCase.status === "mismatch") || rule.gates["matches-real-code"].disagreementsElsewhere.count > 0);
-  if (differing.length === 0) lines.push("No rule differs from upstream on any eligible file.");
+  if (differing.length === 0) lines.push(unjudged.length === report.rules.length ? "No rule was judged on any file." : "No rule differs from upstream on any eligible file.");
   for (const rule of differing) {
     const real = rule.gates["matches-real-code"];
     const mismatches = real.cases.filter((testCase) => testCase.status === "mismatch");

@@ -4,6 +4,8 @@ import { test } from "vitest";
 import { patchedPaths, type CorpusFile } from "../../../conformance/gates/corpus.js";
 import type { CompiledPolicy, Engine } from "../../../conformance/gates/engine.js";
 import { CASES_PER_KIND, constructWords, differingFiles, matchesRealCodeGate } from "../../../conformance/gates/checks/matches-real-code.js";
+import { renderMarkdown } from "../../../conformance/gates/report.js";
+import { summarizeRules, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import type { PackAdapter, Span, UpstreamFile } from "../../../conformance/gates/types.js";
 
 // Sources are single lines of ASCII, so a byte offset is the column.
@@ -111,6 +113,54 @@ test("a rule with no file where upstream reports it agrees on its negatives, and
   assert.equal(result.checks[0]!.ok, true);
   assert.equal(result.positives, 0);
   assert.equal(result.checks[0]!.detail, "agrees with upstream on all 1 case(s) (0 positive) from 1 eligible file(s)");
+});
+
+test("a rule with no eligible file is judged on nothing and reported not-run, not as agreeing", () => {
+  const outOfScope = [file("t1", "src/a.mts", [span(0, 9)]), file("t1", "src/b.ts", [], "const x = 1;", "TS1005 ';' expected.")];
+  for (const files of [[], outOfScope]) {
+    const result = matchesRealCodeGate(engine, adapter, compiled({}), "no-debugger", DOCUMENT, files);
+    assert.equal(result.eligible, 0);
+    assert.deepEqual(result.cases, []);
+    assert.deepEqual(result.checks, [{
+      id: "not-run",
+      ok: false,
+      detail: `0 eligible files: none of the corpus's ${files.length} file(s) is one the document applies to and upstream reads, so nothing was judged`,
+    }]);
+  }
+});
+
+test("the report names the rules matches-real-code judged on no file instead of calling them in agreement", () => {
+  const rule = (id: string, eligible: number): RuleReport => {
+    const ok = { pass: true, checks: [] };
+    return {
+      id, file: `packs/demo/rules/${id}.json`, location: "shipped", upstreamRule: id, sha256: "0", bytes: 1, policyDigest: null, pass: true, stoppedAt: null,
+      blockedBy: null, defaultOn: true, defaultOnReason: "", on: true,
+      gates: {
+        "upstream-status": { checks: [] }, loads: ok, "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] }, compact: { ...ok, metrics: null },
+        "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
+        "matches-real-code": { checks: [], eligible, positives: 0, cases: [], disagreementsElsewhere: { count: 0, first: [] } },
+        "passes-conformance": ok,
+      },
+    };
+  };
+  const report = (rules: RuleReport[]): GatesReport => ({
+    format: "rerail.rule-gates/v1", pack: "demo", tool: "tool", toolPack: "demo/tool",
+    upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },
+    engine: { sha256: "e" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] }, integrity: [], knownGaps: [], gapCandidates: [],
+    corpus: { tasks: [], files: 0, excluded: 0 }, unmapped: [], listedWithoutDocument: 0, cache: { rules: rules.length, hits: 0 }, uncommittedPromotions: 0,
+    summary: summarizeRules(rules), rules,
+  });
+
+  const none = renderMarkdown(report([rule("a", 0), rule("b", 0)]));
+  assert.match(none, /^2 of 2 rule\(s\) were judged on no file \(0 eligible files, so matches-real-code is not-run and says nothing about them\): `a`, `b`\.$/mu);
+  assert.match(none, /^No rule was judged on any file\.$/mu);
+  assert.doesNotMatch(none, /No rule differs from upstream/u);
+
+  const some = renderMarkdown(report([rule("a", 0), rule("b", 3)]));
+  assert.match(some, /^1 of 2 rule\(s\) were judged on no file .*: `a`\.$/mu);
+  assert.match(some, /^No rule differs from upstream on any eligible file\.$/mu);
+
+  assert.doesNotMatch(renderMarkdown(report([rule("b", 3)])), /judged on no file/u);
 });
 
 test("only files the document applies to and upstream can read are eligible", () => {
