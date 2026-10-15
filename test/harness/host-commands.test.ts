@@ -103,6 +103,20 @@ describe("/rerail", () => {
     expect(notice?.message).not.toContain("rerail-test");
   });
 
+  it("answers /rerail-help exactly as /rerail", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    const { run, notices } = commandHarness();
+    await run("rerail");
+    await run("rerail-help");
+    expect(notices).toHaveLength(2);
+    expect(notices[1]).toEqual(notices[0]);
+    expect(notices[0]?.message).toContain("/rerail-help        show a list of commands");
+  });
+
   it("says Rerail is not on here, and how to start it, where it is stopped", async () => {
     mocks.presentation.mockResolvedValue({
       status: "not-on-here", text: "", url: null, parts: [], presence: "compact", repositoryState: "stopped", counts: null,
@@ -155,13 +169,13 @@ describe("/rerail", () => {
   });
 });
 
-describe("/rerail-ui", () => {
+describe("/rerail-manage", () => {
   const scoped = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp&checkout=%2Fworkspace#rules";
 
   it("opens the rules page scoped to this checkout in the browser", async () => {
     mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
     const { run, notices } = commandHarness();
-    await run("rerail-ui");
+    await run("rerail-manage");
     expect(mocks.rulesDashboard).toHaveBeenCalledWith({ cwd: "/workspace/acme-web" });
     expect(mocks.openDashboard).toHaveBeenCalledWith(scoped);
     expect(notices).toEqual([{ message: `Opening ${scoped}`, level: "info" }]);
@@ -171,16 +185,16 @@ describe("/rerail-ui", () => {
     mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
     mocks.openDashboard.mockResolvedValue("orca-tab");
     const { run, notices } = commandHarness();
-    await run("rerail-ui");
+    await run("rerail-manage");
     expect(notices).toEqual([{ message: `Opening ${scoped} in the Orca window`, level: "info" }]);
   });
 
   it("reports why there is no dashboard instead of opening nothing", async () => {
     mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run, notices } = commandHarness();
-    await run("rerail-ui");
+    await run("rerail-manage");
     expect(mocks.openDashboard).not.toHaveBeenCalled();
-    expect(notices).toEqual([{ message: "/rerail-ui: no dashboard to open: daemon unavailable", level: "error" }]);
+    expect(notices).toEqual([{ message: "/rerail-manage: no dashboard to open: daemon unavailable", level: "error" }]);
   });
 });
 
@@ -221,11 +235,11 @@ describe("/rerail-show-me", () => {
   });
 });
 
-describe("/rerail-rage-quit", () => {
+describe("/rerail-uninstall", () => {
   it("asks once and changes nothing unless the person says yes", async () => {
     const detach = vi.fn();
     const { run, notices, selections } = commandHarness({ detach }, "Cancel");
-    await run("rerail-rage-quit");
+    await run("rerail-uninstall");
     expect(selections).toEqual([["Yes, remove Rerail", "Just stop it in this repo (/rerail-stop)", "Cancel"]]);
     expect(detach).not.toHaveBeenCalled();
     expect(notices).toEqual([]);
@@ -236,7 +250,7 @@ describe("/rerail-rage-quit", () => {
     const detach = vi.fn();
     const reattach = vi.fn();
     const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
-    await run("rerail-rage-quit");
+    await run("rerail-uninstall");
     expect(detach).toHaveBeenCalledOnce();
     expect(reattach).not.toHaveBeenCalled();
     expect(notices).toEqual([{ message: "Backup: /home/me/.rerail-clean-20261005", level: "info" }]);
@@ -247,7 +261,7 @@ describe("/rerail-rage-quit", () => {
     const detach = vi.fn();
     const reattach = vi.fn();
     const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
-    await run("rerail-rage-quit");
+    await run("rerail-uninstall");
     expect(reattach).toHaveBeenCalledOnce();
     expect(reattach.mock.invocationCallOrder[0]).toBeGreaterThan(detach.mock.invocationCallOrder[0]!);
     expect(notices).toEqual([{ message: "could not write ~/.claude/settings.json", level: "error" }]);
@@ -259,8 +273,8 @@ describe("/rerail-rage-quit", () => {
     const detach = vi.fn();
     const reattach = vi.fn();
     const { run, notices } = commandHarness({ cwd: () => unlaunchable, detach, reattach }, "Yes, remove Rerail");
-    await run("rerail-rage-quit");
-    expect(notices).toEqual([expect.objectContaining({ message: expect.stringMatching(/^\/rerail-rage-quit: /u), level: "error" })]);
+    await run("rerail-uninstall");
+    expect(notices).toEqual([expect.objectContaining({ message: expect.stringMatching(/^\/rerail-uninstall: /u), level: "error" })]);
     expect(detach).toHaveBeenCalledOnce();
     expect(reattach).toHaveBeenCalledOnce();
   });

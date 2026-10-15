@@ -74,7 +74,7 @@ Score each one and keep the best five at most.
 | **Repo agreement** | The repo pass matches a handful of places, and each one is a real violation | Hundreds of matches: the repo's convention says otherwise |
 | **Safe to obey** | Following the steer cannot break working code | The fix it asks for is wrong in some cases the matcher cannot tell apart |
 | **Checkable** | A regex, a syntax shape, or a command | It needs judgement ("is this name good?") |
-| **Not covered** | Nothing enforces it before review | The linter, formatter or type-checker already does, or a rule that is already on does. The person's own rules are in `rules export`; rules from packs show in `steers[]` when they fire, and all of them on the dashboard (`rerail ui --print`) |
+| **Not covered** | Nothing enforces it before review | The linter, formatter or type-checker already does, or a rule that is already on does. The person's own rules are in `rules export`; rules from packs show in `steers[]` when they fire, and all of them on the dashboard (`rerail manage --print`) |
 
 - **High:** strong evidence, harm prevented of 2 or more, matches only a handful of places in the repo, and safe to obey.
 - **Medium:** one weak dimension, which you name on the card's Risk line.

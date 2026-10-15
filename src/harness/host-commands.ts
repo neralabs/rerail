@@ -173,7 +173,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     });
   }
 
-  register("rerail", async ctx => {
+  const summary: CommandAction = async ctx => {
     const cwd = options.cwd();
     const host = options.host ?? "omp";
     const sessionId = options.sessionId?.();
@@ -192,9 +192,11 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       repositoryName: repositoryName(cwd),
       sigil: "/",
     }), "info");
-  });
+  };
+  register("rerail", summary);
+  register("rerail-help", summary);
 
-  register("rerail-ui", async ctx => {
+  register("rerail-manage", async ctx => {
     const page = await readRulesDashboard({ cwd: options.cwd() });
     // The page needs a reachable daemon; the reason says why there is none.
     if (page.url === null) throw new Error(`no dashboard to open: ${page.reason}`);
@@ -227,7 +229,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   });
 
   // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes.
-  register("rerail-rage-quit", async ctx => {
+  register("rerail-uninstall", async ctx => {
     const choice = await ctx.ui.select([
       "This removes Rerail from this computer, from every coding agent, in every repo.",
       "Your rules and history are kept in a backup folder.",
@@ -249,6 +251,6 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       throw error;
     }
     if (result.code !== 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-rage-quit", result);
+    notifyResult(ctx, "rerail-uninstall", result);
   });
 }

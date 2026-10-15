@@ -1,18 +1,19 @@
 /**
  * The Rerail commands every coding agent gets, and the instructions each one carries. Claude Code and
- * Cursor read them as slash-command files, Codex as skills (`$rerail-ui`), and OMP and Pi register them
+ * Cursor read them as slash-command files, Codex as skills (`$rerail-manage`), and OMP and Pi register them
  * in-process (`host-commands.ts`). One catalog keeps the names, descriptions and `/rerail` list the same
  * everywhere.
  */
 
 export type RerailCommandName =
   | "rerail"
-  | "rerail-ui"
+  | "rerail-manage"
   | "rerail-create"
   | "rerail-stop"
   | "rerail-start"
   | "rerail-update"
-  | "rerail-rage-quit"
+  | "rerail-uninstall"
+  | "rerail-help"
   | "rerail-show-me";
 
 export interface RerailCommand {
@@ -25,12 +26,14 @@ export interface RerailCommand {
 
 export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail", description: "What Rerail is doing in this repo, and every Rerail command", summary: "what Rerail is doing here" },
-  { name: "rerail-ui", description: "Open the Rerail dashboard", summary: "open the dashboard" },
+  { name: "rerail-manage", description: "Open the Rerail dashboard", summary: "open the dashboard" },
   { name: "rerail-create", description: "Create a rule for this repo, in your own words", summary: "create a rule, in your own words" },
   { name: "rerail-stop", description: "Stop Rerail in this checkout and the worktrees inside it; rules and history are kept", summary: "stop Rerail in this repo" },
   { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },
-  { name: "rerail-rage-quit", description: "Remove Rerail from this computer; rules and history are kept in a backup", summary: "remove Rerail from this computer" },
+  { name: "rerail-uninstall", description: "Remove Rerail from this computer; rules and history are kept in a backup", summary: "remove Rerail from this computer" },
+  // An alias of `/rerail`: the same summary and command list.
+  { name: "rerail-help", description: "Show a list of Rerail commands", summary: "show a list of commands" },
   { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
 ];
 
@@ -92,8 +95,8 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
   ].join("\n");
 }
 
-/** `/rerail-rage-quit`: say what goes and what stays, ask once, and remove only on an explicit yes (design A9, A10). */
-export function rageQuitInstructions(cli: string, sigil: CommandSigil): string {
+/** `/rerail-uninstall`: say what goes and what stays, ask once, and remove only on an explicit yes (design A9, A10). */
+export function uninstallInstructions(cli: string, sigil: CommandSigil): string {
   return [
     "Remove Rerail from this computer, if the person confirms.",
     "",
