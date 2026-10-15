@@ -92,67 +92,17 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The drift check records through the same reusable job the on-demand recorder uses (rule-gates-record.yml): one
+  # place runs the upstream linters, one place uploads to the release. `check: true` makes it report drift and upload
+  # nothing, so the night tells main that upstream moved without quietly re-recording main behind the maintainers.
   record-check:
-    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
+    name: Recordings match upstream
     needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - pack: python
-            tool: ruff
-          - pack: python
-            tool: bandit
-          - pack: react
-            tool: eslint-plugin-react
-          - pack: react
-            tool: eslint-plugin-react-hooks
-          - pack: javascript
-            tool: eslint
-          - pack: javascript
-            tool: eslint-plugin-unicorn
-          - pack: typescript
-            tool: typescript-eslint
-          - pack: typescript
-            tool: eslint-plugin-vitest
-          - pack: next
-            tool: eslint-plugin-next
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - uses: ./.github/actions/lfs
-
-      - uses: ./.github/actions/node-deps
-        with:
-          built: "true"
-
-      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed pins. No lockfile
-      # is committed, so a transitive release that changes upstream's answers fails --check here: pin that package too.
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Restore the upstream runtimes, checkouts and corpus
-        uses: actions/cache@v6
-        with:
-          path: |
-            .rerail/gates/runtimes
-            .rerail/gates/upstream
-            .rerail/gates/corpus
-          key: rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/gates/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/gates/corpus-tasks.json') }}
-          restore-keys: |
-            rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-
-
-      - name: Check the committed recording against a fresh one
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/rule-gates-record.yml
+    with:
+      check: true
 
   gates:
     name: Rule gates, uncached
