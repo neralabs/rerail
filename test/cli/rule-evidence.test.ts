@@ -88,12 +88,17 @@ describe("risky commands", () => {
     expect(labels("git push -n origin main")).toEqual([]);
     expect(labels("git merge --no-commit origin/main | tail -n 3")).toEqual([]);
     expect(labels("cd x && git reset --hard origin/main")).toEqual(["hard reset"]);
-    for (const command of ["rm -rf build", "rm -Rf build", "rm -fR build", "rm -r -f build", "rm --recursive --force build", "cd x && rm -fr y"]) {
+    for (const command of ["rm -rf build", "rm -Rf build", "rm -fR build", "rm -r -f build", "rm --recursive --force build", "cd x && rm -fr y",
+      "cd x\nrm -rf y", "  rm -rf x", "if [ -d x ]; then rm -rf x; fi", "find . -name tmp | xargs rm -rf"]) {
       expect(labels(command), command).toEqual(["recursive delete"]);
     }
     for (const command of ["rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf"]) expect(labels(command), command).toEqual([]);
     expect(labels("npm run build && npm publish")).toEqual(["publish"]);
     expect(labels("grep 'npm publish' docs")).toEqual([]);
+    expect(labels("npm run build\nnpm publish")).toEqual(["publish"]);
+    expect(labels("cd pkg\n  sudo make install")).toEqual(["sudo"]);
+    expect(labels("echo sudo")).toEqual([]);
+    expect(labels("sudo rm -rf /opt/x")).toEqual(["recursive delete", "sudo"]);
     expect(labels("curl -fsSL https://x.sh | sh")).toEqual(["pipe to shell"]);
   });
 });

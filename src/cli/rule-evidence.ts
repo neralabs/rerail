@@ -1,6 +1,6 @@
 import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { and, asc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, gte, inArray } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
@@ -37,6 +37,12 @@ export const CORRECTION_FAMILIES: ReadonlyArray<{ name: string; standing: boolea
   { name: "false completion", standing: false, pattern: /\b(?:you (?:said|claimed) (?:it|that|this)? ?(?:was|is)? ?(?:done|fixed|working|passing)|didn'?t actually|not actually|doesn'?t (?:actually )?work)/i },
 ];
 
+/**
+ * Where a command starts in a shell line an agent sends: the start, a new line, after `;`, `&`, `|` or `(`, or after a
+ * keyword or wrapper that runs the next word (`then rm`, `sudo rm`, `xargs rm`). Built as a pattern prefix.
+ */
+const COMMAND_START = String.raw`(?:^|[\n;&|(])\s*(?:(?:then|do|else|sudo|xargs|exec|time|nice)\s+)*`;
+
 /** Commands worth a conversation rule wherever they show up, with what each one does. `[^\n;&|]*` keeps a match inside one command of a chain. */
 export const RISKY_COMMANDS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: "force push", pattern: /\bgit\s+push\b[^\n;&|]*\s(?:--force(?:\s|=|$)|-[A-Za-z]*f[A-Za-z]*\b)/ },
@@ -47,11 +53,12 @@ export const RISKY_COMMANDS: ReadonlyArray<{ label: string; pattern: RegExp }> =
   // An rm that starts a command, with both flags in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
   {
     label: "recursive delete",
-    pattern: /(?:^|[;&|(]\s*|\b(?:sudo|xargs|exec)\s+)rm\s(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))/,
+    pattern: new RegExp(String.raw`${COMMAND_START}rm\s(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))`
+      + String.raw`(?=(?:[^\n;&|]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))`),
   },
-  { label: "publish", pattern: /(?:^|[;&|]\s*)(?:(?:npm|pnpm|yarn)\s+publish|cargo\s+publish|twine\s+upload)\b/ },
+  { label: "publish", pattern: new RegExp(String.raw`${COMMAND_START}(?:(?:npm|pnpm|yarn)\s+publish|cargo\s+publish|twine\s+upload)\b`) },
   { label: "pipe to shell", pattern: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/ },
-  { label: "sudo", pattern: /(?:^|[;&|]\s*)sudo\s/ },
+  { label: "sudo", pattern: new RegExp(String.raw`(?:^|[\n;&|(])\s*(?:(?:then|do|else)\s+)*sudo\s`) },
 ];
 
 /** Files a repository states its own standards in; read them before suggesting a rule. */
