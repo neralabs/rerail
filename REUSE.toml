@@ -1013,7 +1013,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # The rule gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
 # beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
-# and the bytes are a GitHub release asset (conformance/gates/recording-store.ts) — so REUSE cannot annotate them, and
+# and the bytes are a GitHub release asset (conformance/gates/recording/store.ts) — so REUSE cannot annotate them, and
 # there is nothing here to annotate. The attribution is where a reader of the asset can find it: each upstream's
 # packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,
 # the kept LICENSE sits beside it, and the release's own description names both. Ruff's GPL-derived fixture texts are

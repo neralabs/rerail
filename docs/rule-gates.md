@@ -130,7 +130,7 @@ pinned real-code corpus and upstream's pinned test files:
 ```text
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, and the team's decisions for the tool
-├── recording.lock      the manifest: which recording this commit's rules are judged against (recording-store.ts)
+├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/gates/recording/store.ts)
 ├── goldens.tsv         the rule's goldens
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
 ```

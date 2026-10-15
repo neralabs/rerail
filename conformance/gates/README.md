@@ -51,11 +51,11 @@ it, so nothing a pull request's code computes is replayed later.
 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
-packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording-store.ts)
+packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id
 
 .rerail/gates/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
-  gates.json                                    upstream's recorded answers (recording.ts, rerail.gates-recording/v2)
+  gates.json                                    upstream's recorded answers (recording/schema.ts, rerail.gates-recording/v2)
   gates-corpus.json                             upstream's findings on the corpus (rerail.gates-corpus/v2)
 ```
 

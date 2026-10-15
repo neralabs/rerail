@@ -214,7 +214,7 @@ export async function conformanceRuleNames(root: string, pack: string, tool: str
 
 /**
  * A case path the recording can hold. Ruff's linter tests read its notebook fixtures from a sibling crate
- * (`../ruff_notebook/…`); recording.ts takes no `..` segment, so such a path is recorded as the fixture's
+ * (`../ruff_notebook/…`); recording/schema.ts takes no `..` segment, so such a path is recorded as the fixture's
  * repository path. Those cases are notebooks, which no Rerail dialect reads, so no gate result depends on the path.
  */
 function recordedPath(path: string, fixture: string): string {

@@ -1,6 +1,6 @@
 /**
  * Downloading the recordings a commit's `recording.lock`s name, into the cache they are read from
- * (recording-store.ts). `npm run gates -- fetch --pack <id> --tool <tool>` runs it, once per gate shard, so a shard
+ * (store.ts). `npm run gates -- fetch --pack <id> --tool <tool>` runs it, once per gate shard, so a shard
  * downloads its own tool-pack and nothing else, and a job that runs no gate downloads nothing at all.
  *
  * It goes through the releases API rather than a `releases/download/` URL because the same call works before and

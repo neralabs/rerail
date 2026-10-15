@@ -54,7 +54,7 @@ const fakeAdapter: AdapterFactory = async () => ({
   parserVerdicts: async (files) => files.map(() => [{ parser: "cpython 3.14.0", syntax: [], grammar: [] }]),
 }) satisfies PackAdapter;
 
-test("a fake adapter's answers are recorded in the form recording.ts reads, and a second recording finds no drift", async () => {
+test("a fake adapter's answers are recorded in the form recording/schema.ts reads, and a second recording finds no drift", async () => {
   const root = mkdtempSync(join(tmpdir(), "gates-record-"));
   try {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
