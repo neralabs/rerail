@@ -44,7 +44,7 @@ export function eslintSpan(source: string, startByte: number, endByte: number, p
   return { startLine: start.line, startCol: start.column, endLine: parts.endLine ? end.line : null, endCol: parts.endCol ? end.column : null };
 }
 
-/** An ESLint finding position (1-based, exclusive end) as a 0-based span; without ends when upstream reports none for the rule. */
+/** An ESLint finding position (1-based, exclusive end) as a 0-based span; without ends when it has none or `ends` is false (some finding of the rule on its own tests has none). */
 export function messageSpan([line, column, endLine, endColumn]: MessagePosition, ends: boolean): Span {
   return ends && endLine !== null && endColumn !== null
     ? { startLine: line - 1, startCol: column - 1, endLine: endLine - 1, endCol: endColumn - 1 }

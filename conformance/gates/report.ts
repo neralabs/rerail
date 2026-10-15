@@ -74,8 +74,9 @@ function failuresFor(report: GatesReport, gate: BlockingGateId): string[] {
 }
 
 /**
- * The rules matches-upstream-tests compared without an end part, because upstream reports none for them, by the
- * positions compared: an ESLint rule any of whose findings on its own tests has no end is compared on starts alone.
+ * The rules matches-upstream-tests compared without an end part, by the positions compared. A part is left out for the
+ * whole rule when upstream does not report it on every finding: for an ESLint rule, one finding on its own tests without
+ * an end is enough, so upstream may report ends on the rule's other findings and they go uncompared.
  */
 function partialPositions(report: GatesReport): string[] {
   const byPositions = new Map<string, string[]>();
@@ -86,7 +87,7 @@ function partialPositions(report: GatesReport): string[] {
     byPositions.set(positions, [...(byPositions.get(positions) ?? []), `\`${rule.id}\` (${rule.location})`]);
   }
   if (byPositions.size === 0) return [];
-  return ["", "Rules compared without an end part, because upstream reports none for them:", "", ...[...byPositions].map(([positions, rules]) => `- ${positions}: ${rules.join(", ")}`)];
+  return ["", "Rules compared without an end part, left out for every finding because upstream does not report it on every finding (for an ESLint rule, one finding on its own tests without an end is enough):", "", ...[...byPositions].map(([positions, rules]) => `- ${positions}: ${rules.join(", ")}`)];
 }
 
 function list(items: string[], empty: string): string[] {

@@ -14,7 +14,7 @@ export const MATCHES_REAL_CODE_METHOD = {
   "ground truth": "the upstream linter on the same file, configured as upstream recommends",
   eligible: "files the shipped document applies to and upstream's own parser reads without syntax errors",
   cases: "up to 5 positive files (upstream reports the rule) in task and path order, and up to 5 negative files ranked by how many of the rule's own constructs they contain",
-  agreement: "the same findings as upstream on every case, start and end of every span, with nothing missing and nothing extra, and no engine failure",
+  agreement: "the same findings as upstream on every case, start and end of every span less any end part matches-upstream-tests leaves out for the rule, with nothing missing and nothing extra, and no engine failure",
   "end to end": "matches-real-code never stops a rule and never decides whether it starts on; a file where the rule and upstream differ means matches-upstream-tests was missing that case, so every eligible file where they differ, among its cases or elsewhere, that is not a golden yet is promoted to a golden test in the tool-pack's goldens.tsv and judged by this run's matches-upstream-tests; a golden's expected answer is the pinned upstream's findings on its file",
   report: "per rule, the cases, and how many other eligible files differ with the first 5 of them",
   excused: "nothing excuses a difference: a corpus file is real code, so a file the engine cannot parse is a mismatch, and becomes a golden that matches-upstream-tests reports as an engine gap until the engine reads it",

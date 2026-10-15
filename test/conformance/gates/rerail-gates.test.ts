@@ -150,7 +150,7 @@ describe("the report", () => {
       compared("entities", "candidate", { endLine: false, endCol: false }),
     ]));
     assert.ok(markdown.includes([
-      "Rules compared without an end part, because upstream reports none for them:",
+      "Rules compared without an end part, left out for every finding because upstream does not report it on every finding (for an ESLint rule, one finding on its own tests without an end is enough):",
       "",
       "- start only: `filename-case` (shipped), `entities` (candidate)",
       "- start and end column: `b101` (candidate)",

@@ -11,7 +11,7 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   expected: "the upstream source linter's own output on each of its own test files, configured as upstream recommends (the rule on for the languages the document covers, with the options of the first approved configuration that turns it on)",
   unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences",
   identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports for the rule (start and end, in upstream's coordinates); messages are not compared",
-  positions: "an end part upstream does not report for the rule is compared on neither side, and the report lists every rule compared without one; when any finding of an ESLint rule on its own tests has no end, all of the rule's findings are compared on their starts alone",
+  positions: "an end part upstream does not report on every finding of the rule is compared on neither side, for any of the rule's findings, and the report lists every rule compared without one; for an ESLint rule, one finding on its own tests without an end is enough to compare all of its findings on their starts alone",
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
@@ -208,8 +208,8 @@ export async function provenGaps(
 
 /**
  * matches-upstream-tests: run the rule on every upstream test file upstream lints under the shipped configuration, and
- * require the same findings as upstream's own output, span for span (start and end, in upstream's coordinates). A
- * mismatch is excused only when a proven known gap lists the file and the engine reported a parse failure on it, as the
+ * require the same findings as upstream's own output, span for span (start and end, in upstream's coordinates, less
+ * any end part left out for the whole rule, as MATCHES_UPSTREAM_TESTS_METHOD.positions says). A mismatch is excused only when a proven known gap lists the file and the engine reported a parse failure on it, as the
  * spec's "apart from known parser gaps we have listed" requires. The rule also needs at least one upstream finding in
  * agreeing files.
  */
@@ -227,10 +227,10 @@ export function matchesUpstreamTestsGate(
   const unparsed: UnparsedFile[] = [];
   const totals = { scoredCases: 0, expected: 0, matched: 0, missing: 0, extra: 0, startsMatched: 0 };
   let evidence = 0;
-  // The end parts toSpan keeps for the rule, as the recorder reads them (record.ts): those upstream reports for it.
+  // The end parts toSpan keeps for the rule, as the recorder reads them (record.ts): those upstream reports on every finding of it.
   const probe = adapter.toSpan(name, "a\nb", 0, 3);
   const compared: SpanParts = { endLine: probe.endLine !== null, endCol: probe.endCol !== null };
-  const positionsNote = compared.endLine && compared.endCol ? "" : `; compared on ${comparedPositions(compared)}, the positions upstream reports for the rule`;
+  const positionsNote = compared.endLine && compared.endCol ? "" : `; compared on ${comparedPositions(compared)} for every finding, since not every upstream finding of the rule carries the rest`;
 
   for (const testCase of cases) {
     const base = { fixture: testCase.fixture, variant: testCase.variant, path: testCase.path, expected: testCase.expected.length };

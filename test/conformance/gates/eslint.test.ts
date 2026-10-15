@@ -45,7 +45,7 @@ test("a leading BOM is stripped before positions are counted, as ESLint does", (
   assert.deepEqual(eslintPoint(source, 0), { line: 0, column: 0 });
 });
 
-test("ESLint positions become 0-based spans with an exclusive end, and without ends when upstream reports none", () => {
+test("ESLint positions become 0-based spans with an exclusive end, and without ends when the rule is compared on starts", () => {
   assert.deepEqual(messageSpan([1, 10, 1, 18], true), { startLine: 0, startCol: 9, endLine: 0, endCol: 17 });
   assert.deepEqual(messageSpan([3, 1, 4, 2], false), { startLine: 2, startCol: 0, endLine: null, endCol: null });
   assert.deepEqual(messageSpan([3, 1, null, null], true), { startLine: 2, startCol: 0, endLine: null, endCol: null });
