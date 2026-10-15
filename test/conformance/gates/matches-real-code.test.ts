@@ -152,7 +152,7 @@ test("the report names the rules matches-real-code judged on no file instead of 
   });
 
   const none = renderMarkdown(report([rule("a", 0), rule("b", 0)]));
-  assert.match(none, /^2 of 2 rule\(s\) were judged on no file \(0 eligible files, so matches-real-code is not-run and says nothing about them\): `a`, `b`\.$/mu);
+  assert.match(none, /^2 of 2 rule\(s\) were judged on no file \(matches-real-code is not-run for them and says nothing about them; its detail gives the reason\): `a`, `b`\.$/mu);
   assert.match(none, /^No rule was judged on any file\.$/mu);
   assert.doesNotMatch(none, /No rule differs from upstream/u);
 

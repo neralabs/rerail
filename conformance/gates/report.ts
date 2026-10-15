@@ -125,7 +125,7 @@ function realCodeSection(report: GatesReport): string[] {
   const unjudged = report.rules.filter((rule) => rule.gates["matches-real-code"].eligible === 0);
   if (unjudged.length > 0) {
     const named = unjudged.slice(0, 5).map((rule) => `\`${rule.id}\``).join(", ");
-    lines.push(`${unjudged.length} of ${report.rules.length} rule(s) were judged on no file (0 eligible files, so matches-real-code is not-run and says nothing about them): ${named}${unjudged.length > 5 ? ", …" : ""}.`, "");
+    lines.push(`${unjudged.length} of ${report.rules.length} rule(s) were judged on no file (matches-real-code is not-run for them and says nothing about them; its detail gives the reason): ${named}${unjudged.length > 5 ? ", …" : ""}.`, "");
   }
   const differing = report.rules.filter((rule) => rule.gates["matches-real-code"].cases.some((testCase) => testCase.status === "mismatch") || rule.gates["matches-real-code"].disagreementsElsewhere.count > 0);
   if (differing.length === 0) lines.push(unjudged.length === report.rules.length ? "No rule was judged on any file." : "No rule differs from upstream on any eligible file.");
