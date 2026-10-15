@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { mkdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
+import { ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, GATE_DEPENDENCIES, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
@@ -97,6 +97,21 @@ interface CachedPack {
   corpus: GatesReport["corpus"];
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** Whether a cached value has the shape of one rule's result. */
+export function isCachedRule(value: unknown): value is CachedRule {
+  if (!isRecord(value) || !isRecord(value.report) || !Array.isArray(value.promoted) || !isRecord(value.gapUses) || !Array.isArray(value.integrity) || !Array.isArray(value.gapCandidates)) return false;
+  const report = value.report;
+  return typeof report.id === "string" && typeof report.file === "string" && (report.location === "shipped" || report.location === "candidate")
+    && typeof report.pass === "boolean" && isRecord(report.gates);
+}
+
+/** Whether a cached value has the shape of a tool-pack's shared result. */
+export function isCachedPack(value: unknown): value is CachedPack {
+  return isRecord(value) && Array.isArray(value.integrity) && Array.isArray(value.knownGaps) && isRecord(value.corpus) && Array.isArray(value.corpus.tasks);
+}
+
 export interface GatesReport {
   format: typeof REPORT_FORMAT;
   pack: string;
@@ -136,7 +151,10 @@ export interface RunOptions {
   pack: string;
   tool: string;
   cacheRoot: string;
-  useCache: boolean;
+  /** Take a rule's earlier result from the cache when its inputs are unchanged. */
+  readCache: boolean;
+  /** Save this run's results to the cache. */
+  writeCache: boolean;
   runner: CommandRunner;
   /** Judge only this shard's rules (shard.ts); every rule still counts for the tool-pack checks. */
   shard?: Shard;
@@ -455,6 +473,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const readOr = (file: string) => (existsSync(join(directory, file)) ? readFileSync(join(directory, file)) : "");
   const shared: SharedKeyInputs = {
     gateCode: trackedDigest(root, GATE_CODE),
+    dependencies: trackedDigest(root, GATE_DEPENDENCIES),
     engine: engineIdentity(root).sha256,
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     gatesJson: sha256(readOr(GATES_RECORDING)),
@@ -481,12 +500,13 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   // Plan: every key first; when all hit, nothing is fetched or evaluated.
   const cached = new Map<string, CachedRule>();
   let packCached: CachedPack | undefined;
-  if (options.useCache) {
+  if (options.readCache) {
     for (const entry of judged) {
-      const hit = await readCached<CachedRule>(cacheRoot, pack, tool, entry.key, shard);
-      if (hit !== undefined) cached.set(entry.key, hit);
+      const hit = await readCached(cacheRoot, pack, tool, entry.key, isCachedRule, shard);
+      // An entry for another document under this key is a miss.
+      if (hit !== undefined && hit.report.file === entry.path && hit.report.location === entry.location) cached.set(entry.key, hit);
     }
-    packCached = await readCached<CachedPack>(cacheRoot, pack, tool, `pack-${packKey}`, shard);
+    packCached = await readCached(cacheRoot, pack, tool, `pack-${packKey}`, isCachedPack, shard);
   }
   const misses = judged.filter((entry) => !cached.has(entry.key));
   const results = new Map<string, CachedRule>(cached);
@@ -528,7 +548,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
-        if (options.useCache) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
+        if (options.writeCache) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
       }
     } finally {
       rmSync(scratch, { recursive: true, force: true });
@@ -546,7 +566,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
     };
-    if (options.useCache) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
+    if (options.writeCache) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }
 
   const reports = judged.map((entry) => {

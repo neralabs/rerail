@@ -18,6 +18,15 @@ export const GATE_CODE = [
   ":(exclude)conformance/gates/README.md",
 ] as const;
 
+/**
+ * The gate code's own dependencies: a lockfile bump can change what a verdict reads (the schema validator, the YAML
+ * reader), so it is part of every rule's key too.
+ */
+export const GATE_DEPENDENCIES = ["package.json", "package-lock.json"] as const;
+
+/** Tags every cached entry, so an entry written by another layout of the cache is a miss. */
+export const CACHE_FORMAT = "rerail.rule-gates-cache/v1";
+
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** sha256 of every file `git ls-files` lists under `pathspec` at `root`, by path, hashed from the working tree. */
@@ -35,6 +44,7 @@ export function trackedDigest(root: string, pathspec: string | readonly string[]
 /** The inputs every rule of a tool-pack shares; each is a digest or the text itself. */
 export interface SharedKeyInputs {
   gateCode: string;
+  dependencies: string;
   engine: string;
   gatesYaml: string;
   gatesJson: string;
@@ -52,12 +62,12 @@ export interface RuleKeyInputs {
 }
 
 /**
- * A rule's result key: sha256 over the gate code, the engine identity, the tool-pack's manifest and recordings, the
+ * A rule's result key: sha256 over the gate code and its dependencies, the engine identity, the tool-pack's manifest and recordings, the
  * corpus pins, and the rule's own document, conformance entry, goldens and case sources, each digested in that order.
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.engine, shared.gatesYaml, shared.gatesJson, shared.gatesCorpus, shared.corpusTasks, shared.corpora,
+    shared.gateCode, shared.dependencies, shared.engine, shared.gatesYaml, shared.gatesJson, shared.gatesCorpus, shared.corpusTasks, shared.corpora,
     rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
@@ -71,11 +81,19 @@ export function resultPath(cacheRoot: string, pack: string, tool: string, key: s
   return join(cacheRoot, "results", pack, tool, ...(shard === undefined ? [] : [shardName(shard)]), `${key}.json`);
 }
 
-export async function readCached<T>(cacheRoot: string, pack: string, tool: string, key: string, shard?: Shard): Promise<T | undefined> {
+/**
+ * A cached entry, or undefined when there is none or it is not one `valid` accepts: an entry that is not JSON, was
+ * written by another cache layout, or does not have the shape the run reads is a miss, never a verdict. The shape check
+ * guards against corruption, not forgery; pull request runs never save the cache (rule-gates.yml).
+ */
+export async function readCached<T>(cacheRoot: string, pack: string, tool: string, key: string, valid: (value: unknown) => value is T, shard?: Shard): Promise<T | undefined> {
   const path = resultPath(cacheRoot, pack, tool, key, shard);
   if (!existsSync(path)) return undefined;
   try {
-    return JSON.parse(await readFile(path, "utf8")) as T;
+    const entry: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (entry === null || typeof entry !== "object" || (entry as { format?: unknown }).format !== CACHE_FORMAT) return undefined;
+    const value = (entry as { value?: unknown }).value;
+    return valid(value) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -85,6 +103,6 @@ export async function writeCached(cacheRoot: string, pack: string, tool: string,
   const path = resultPath(cacheRoot, pack, tool, key, shard);
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`);
+  await writeFile(temporary, `${JSON.stringify({ format: CACHE_FORMAT, value })}\n`);
   await rename(temporary, path);
 }

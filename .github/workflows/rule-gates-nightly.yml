@@ -1,8 +1,9 @@
 name: Rule gates (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
-# no longer matches the pinned upstream (gates:record --check), then judges every rule again with the result cache
-# off. Pull requests judge rules against the committed recordings (rule-gates.yml); this job keeps them honest.
+# no longer matches the pinned upstream (gates:record --check), then judges every rule again and saves the fresh
+# results for pull requests to read. Pull requests judge rules against the committed recordings (rule-gates.yml); this
+# job keeps them honest.
 
 on:
   schedule:

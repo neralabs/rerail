@@ -2,9 +2,12 @@ name: Rule gates
 
 # The rule gates (docs/rule-gates.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine), and by
-# rule-gates-nightly.yml with the result cache off. The gates read each pack's recordings
-# (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code corpora and
-# upstream's pinned test files are fetched, and they are cached by their pins.
+# rule-gates-nightly.yml, which judges every rule again and refreshes the result cache. The gates read each pack's
+# recordings (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code
+# corpora and upstream's pinned test files are fetched, and they are cached by their pins.
+#
+# Pull request runs only read the caches: what a pull request's code computes is never saved, so a commit that is
+# later reverted cannot leave verdicts behind for the final head. Pushes to main and the nightly save them.
 
 on:
   workflow_call:
@@ -14,7 +17,7 @@ on:
         type: string
         default: ""
       no-cache:
-        description: Judge every rule again instead of reusing the results of unchanged rules.
+        description: Judge every rule again instead of reusing the results of unchanged rules; the fresh results are saved.
         type: boolean
         default: false
 
@@ -123,14 +126,14 @@ jobs:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
           SHARD: ${{ matrix.shards && format('{0}/{1}', matrix.shard, matrix.shards) || '' }}
-          NO_CACHE: ${{ inputs.no-cache && '--no-cache' || '' }}
+          REFRESH: ${{ inputs.no-cache && '--refresh-cache' || '' }}
         run: |
           set +e
-          npm run gates -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $NO_CACHE
+          npm run gates -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Save the corpus and upstream's test files
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -140,7 +143,7 @@ jobs:
         continue-on-error: true
 
       - name: Save the rule results
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/cache/save@v6
         with:
           path: .rerail/gates/results

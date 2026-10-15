@@ -18,7 +18,7 @@ import { parseShard, shardName } from "./shard.js";
 import { writeSummary } from "./summary.js";
 
 const USAGE = `usage:
-  npm run gates -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache] [--write] [--out dir]
+  npm run gates -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--write] [--out dir]
   npm run gates -- merge <dir> [--write]
   npm run gates -- summary <dir> [--base <sha>]
 `;
@@ -45,7 +45,7 @@ function parse(args: string[], valued: string[], flags: string[]): Record<string
 }
 
 async function gates(args: string[]): Promise<number> {
-  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--write"]);
+  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--refresh-cache", "--write"]);
   const root = PACKAGE_ROOT;
   const shard = typeof flags["--shard"] === "string" ? parseShard(flags["--shard"]) : undefined;
   // Shards run side by side; each writes its promotions to its own report directory, and merge --write commits them.
@@ -53,12 +53,16 @@ async function gates(args: string[]): Promise<number> {
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
   const out = join(resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT), shard === undefined ? "" : shardName(shard));
+  if (flags["--no-cache"] === true && flags["--refresh-cache"] === true) throw new Error(`--no-cache and --refresh-cache exclude each other\n${USAGE}`);
+  // --no-cache neither reads nor saves results; --refresh-cache judges every rule again and saves the fresh results.
+  const readCache = flags["--no-cache"] !== true && flags["--refresh-cache"] !== true;
+  const writeCache = flags["--no-cache"] !== true;
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   await mkdir(out, { recursive: true });
   const runner = new ProcessCommandRunner();
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const { report, goldens, goldensChanged } = await runToolPack({ root, pack, tool, cacheRoot, useCache: flags["--no-cache"] !== true, runner, ...(shard === undefined ? {} : { shard }) });
+    const { report, goldens, goldensChanged } = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));

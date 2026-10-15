@@ -5,11 +5,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
-import { ruleKey, type SharedKeyInputs } from "../../../conformance/gates/cache.js";
+import { CACHE_FORMAT, readCached, resultPath, ruleKey, writeCached, type SharedKeyInputs } from "../../../conformance/gates/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/gates/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/gates/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/gates/process.js";
-import { blockingFailures, packDocuments, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
+import { blockingFailures, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import { summarize } from "../../../conformance/gates/summary.js";
 import { ungatedChecks } from "../../../conformance/gates/ungated.js";
 
@@ -139,7 +139,7 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", engine: "e", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", engine: "e", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
   const rules = {
     a: { document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
     b: { document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
@@ -158,11 +158,37 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("an engine, gate-code or recording change changes every key", () => {
-    for (const part of ["engine", "gateCode", "gatesJson", "gatesCorpus"] as const) {
+  it("an engine, gate-code, dependency or recording change changes every key", () => {
+    for (const part of ["engine", "gateCode", "dependencies", "gatesJson", "gatesCorpus"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
+    }
+  });
+});
+
+describe("cached results", () => {
+  const result = {
+    report: { id: "a", file: "packs/p/rules/a.json", location: "shipped", pass: true, gates: {} },
+    promoted: [],
+    gapUses: {},
+    integrity: [],
+    gapCandidates: [],
+  } as unknown as CachedRule;
+
+  it("reads back what it wrote", async () => {
+    const cache = tempRoot();
+    await writeCached(cache, "p", "t", "k", result);
+    assert.deepEqual(await readCached(cache, "p", "t", "k", isCachedRule), result);
+  });
+
+  it("an entry of another layout, the wrong shape or not JSON is a miss, never a verdict", async () => {
+    const cache = tempRoot();
+    const path = resultPath(cache, "p", "t", "k");
+    mkdirSync(join(path, ".."), { recursive: true });
+    for (const text of [JSON.stringify(result), JSON.stringify({ format: CACHE_FORMAT, value: { report: { pass: true } } }), "{"]) {
+      writeFileSync(path, text);
+      assert.equal(await readCached(cache, "p", "t", "k", isCachedRule), undefined, text);
     }
   });
 });

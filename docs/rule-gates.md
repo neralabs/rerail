@@ -62,7 +62,8 @@ npm run gates -- summary .rerail/reports/gates # the merged summary CI writes
 
 The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code corpus into
 `.rerail/gates/` (pinned, about 400 MB); later runs reuse it and the results of every rule whose inputs did not change.
-`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
+`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does. In CI, pull request
+runs read the cached results that pushes to main and the nightly saved, and save none of their own.
 
 ## Read the report
 
@@ -106,7 +107,7 @@ npm run gates:record -- --pack python --tool ruff
 ```
 
 `rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
-matches the pinned upstream, then judges every rule again with the cache off.
+matches the pinned upstream, then judges every rule again (`--refresh-cache`) and saves the fresh results.
 
 `not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
