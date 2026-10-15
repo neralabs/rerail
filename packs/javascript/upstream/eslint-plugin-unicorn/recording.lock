@@ -1,0 +1,34 @@
+{
+  "format": "rerail.gates-recording-lock/v1",
+  "tool": "eslint-plugin-unicorn",
+  "release": "gate-recordings",
+  "recorder": "0.1.0-next.1",
+  "pins": {
+    "repository": "https://github.com/sindresorhus/eslint-plugin-unicorn",
+    "commit": "f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1",
+    "version": "76.0.0",
+    "runtime": "eslint-plugin-unicorn-76.0.0"
+  },
+  "runtimes": {
+    "eslint-plugin-unicorn-76.0.0": {
+      "package.json": "d73863bb1335ec88a1a15f912a587498fd70742f1c729c5811c53d401eb3b334"
+    },
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    }
+  },
+  "files": {
+    "gates.json": {
+      "sha256": "eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217",
+      "size": 7798568,
+      "format": "rerail.gates-recording/v2",
+      "asset": "javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz"
+    },
+    "gates-corpus.json": {
+      "sha256": "2c1af5f587d2bc7d34e6cb1b89e0d5e5267b2a84445acba29172f7fa0869efd0",
+      "size": 548,
+      "format": "rerail.gates-corpus/v2",
+      "asset": "javascript-eslint-plugin-unicorn-gates-corpus-2c1af5f587d2bc7d34e6cb1b89e0d5e5267b2a84445acba29172f7fa0869efd0.json.gz"
+    }
+  }
+}

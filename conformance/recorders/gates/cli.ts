@@ -6,19 +6,22 @@
  * `npm run gates:record -- migrate-v2` rewrites every committed recording in the v2 format instead of recording
  * anything, which needs no upstream runtime (migrate-v2.ts).
  */
-import { resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "../../gates/corpus.js";
-import { toolPackDirectory } from "../../gates/manifest.js";
 import { ProcessCommandRunner } from "../../gates/process.js";
-import { migrateToolPacks } from "./migrate-v2.js";
+import { renderRecordingChanges } from "../../gates/recording-diff.js";
+import { RECORDING_LOCK } from "../../gates/recording-store.js";
+import { liftRecordings, migrateToolPacks } from "./migrate-v2.js";
 import { diffRecording, recordToolPack, writeRecording } from "./record.js";
 
 const USAGE = `usage:
-  npm run gates:record -- --pack <id> --tool <tool> [--cache dir] [--check]
+  npm run gates:record -- --pack <id> --tool <tool> [--cache dir] [--release tag] [--changes file] [--check]
   npm run gates:record -- migrate-v2 [--check]
+  npm run gates:record -- lift [--cache dir] [--release tag]
 `;
 
 /** `migrate-v2`: rewrite every committed recording in the v2 format; `--check` writes nothing and reports what differs. */
@@ -38,24 +41,53 @@ async function migrate(root: string, check: boolean): Promise<number> {
   return check && stale.length > 0 ? 1 : 0;
 }
 
+/**
+ * `lift`: seed the release from the recordings that were committed before it existed. It writes each tool-pack's
+ * `recording.lock`, puts both recordings in the cache and the gzipped assets in `<cache>/recordings/upload/`; the
+ * in-tree files are then removed from the tree and the assets uploaded once.
+ */
+async function lift(root: string, cacheRoot: string, release: string | undefined): Promise<number> {
+  const lifted = await liftRecordings(root, cacheRoot, release);
+  let total = 0;
+  for (const entry of lifted) {
+    process.stdout.write(`packs/${entry.pack}/upstream/${entry.tool}/${RECORDING_LOCK} names ${entry.lock.release}\n`);
+    for (const asset of entry.assets) {
+      total += asset.bytes;
+      process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
+    }
+  }
+  process.stdout.write(`${lifted.length} tool-pack(s), ${lifted.length * 2} assets, ${(total / 1024 / 1024).toFixed(1)} MB gzipped in ${cacheRoot}/recordings/upload/\n`);
+  return 0;
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
-    options: { pack: { type: "string" }, tool: { type: "string" }, cache: { type: "string" }, check: { type: "boolean", default: false }, help: { type: "boolean", default: false } },
+    options: {
+      pack: { type: "string" },
+      tool: { type: "string" },
+      cache: { type: "string" },
+      release: { type: "string" },
+      changes: { type: "string" },
+      check: { type: "boolean", default: false },
+      help: { type: "boolean", default: false },
+    },
     allowPositionals: true,
     strict: true,
   });
   if (positionals[0] === "migrate-v2") return migrate(PACKAGE_ROOT, values.check === true);
+  if (positionals[0] === "lift") return lift(PACKAGE_ROOT, resolve(values.cache ?? DEFAULT_CACHE_ROOT), values.release);
   if (values.help === true || positionals.length > 0 || values.pack === undefined || values.tool === undefined) {
     process.stderr.write(USAGE);
     return values.help === true ? 0 : 2;
   }
   const root = PACKAGE_ROOT;
+  const cacheRoot = resolve(values.cache ?? DEFAULT_CACHE_ROOT);
   const started = Date.now();
   const recorded = await recordToolPack({
     root,
     pack: values.pack,
     tool: values.tool,
-    cacheRoot: resolve(values.cache ?? DEFAULT_CACHE_ROOT),
+    cacheRoot,
     runner: new ProcessCommandRunner(),
   });
   const label = `packs/${values.pack}/upstream/${values.tool}`;
@@ -64,7 +96,7 @@ async function main(): Promise<number> {
     + `(${cases.filter((testCase) => testCase.skipped === "not-copied").length} not copied), ${recorded.sources.length} case sources, `
     + `${recorded.corpus.files.length} corpus files, ${((Date.now() - started) / 1000).toFixed(0)} s`;
   if (values.check) {
-    const diff = diffRecording(toolPackDirectory(root, values.pack, values.tool), recorded);
+    const diff = diffRecording(root, values.pack, values.tool, recorded);
     const problems = [
       ...diff.changed.map((file) => `${label}/${file} differs from a fresh recording`),
       ...diff.missing.slice(0, 10).map((copy) => `${label}/${copy.file} is missing`),
@@ -78,8 +110,20 @@ async function main(): Promise<number> {
     process.stdout.write(`${label}: the recording is stale; run npm run gates:record -- --pack ${values.pack} --tool ${values.tool}\n${problems.map((problem) => `  ${problem}`).join("\n")}\n`);
     return 1;
   }
-  const diff = await writeRecording(root, values.pack, values.tool, recorded);
-  process.stdout.write(`${label}: recorded ${summary}; copied ${diff.missing.length} case sources\n`);
+  const written = await writeRecording(root, values.pack, values.tool, recorded, { cacheRoot, ...(values.release === undefined ? {} : { release: values.release }) });
+  process.stdout.write(`${label}: recorded ${summary}; copied ${written.missing.length} case sources\n`);
+  for (const asset of written.assets) process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
+  process.stdout.write(`  ${RECORDING_LOCK} names them; the recordings are in ${cacheRoot}/recordings/ and the assets to upload in ${cacheRoot}/recordings/upload/\n`);
+
+  // The per-rule summary replaces the recording's own diff, which is no longer in the tree to read.
+  const changes = [written.changes];
+  if (values.changes !== undefined) {
+    await mkdir(dirname(resolve(values.changes)), { recursive: true });
+    await writeFile(resolve(values.changes), renderRecordingChanges(changes));
+  }
+  process.stdout.write(written.changes.first
+    ? `  first recording: nothing to compare upstream's answers with\n`
+    : `  ${written.changes.rules.length} upstream rule(s) answer differently${written.changes.pinsChanged.length === 0 ? "" : `, pins moved (${written.changes.pinsChanged.join("; ")})`}\n`);
   return 0;
 }
 

@@ -102,21 +102,60 @@ pinned real-code corpus and upstream's pinned test files:
 ```text
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, and the team's decisions for the tool
-├── gates.json          the recording: upstream's facts per rule, its test cases and expected findings (start and end)
-├── gates-corpus.json   upstream's findings on the real-code corpus
+├── recording.lock      the manifest: which recording this commit's rules are judged against (recording-store.ts)
 ├── goldens.tsv         the rule's goldens
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
 ```
 
-Record again after adding a port, changing a tool's pins or adding a corpus; it needs `uv`, the network, and the pinned
-upstream runtimes (`conformance/recorders/gates/runtimes/`):
+### The recordings are not in the tree
+
+A recording — `gates.json`, upstream's facts and expected findings per rule, and `gates-corpus.json`, its findings on
+the real-code corpus — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
+them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
+another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
+`recording.lock` of a few hundred bytes naming exactly the one its rules are judged against: its sha256, its size, its
+format, the pins it was made at and the release that holds it.
+
+Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
+bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
+expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-<stem>-<sha256>.json.gz`, so
+it is write-once: the same recording is the same asset, and nothing a commit already names is ever replaced.
+
+```sh
+npm run gates -- fetch --pack python --tool ruff   # download what this commit's lock names, into .rerail/gates/recordings/
+```
+
+Each gate leg fetches its own tool-pack and nothing else, and a job that runs no gate fetches nothing. A recording is
+cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
+one the lock names fails the leg — which is how a pull request that points its lock at a recording of its own fails.
+
+### Recording
+
+`gates:record` writes the recording into the local cache, the `recording.lock` beside it, and the gzipped assets to
+upload under `.rerail/gates/recordings/upload/`. Only the lock is committed. Record again after adding a port,
+changing a tool's pins or adding a corpus; it needs `uv`, the network, and the pinned upstream runtimes
+(`conformance/recorders/gates/runtimes/`):
 
 ```sh
 npm run gates:record -- --pack python --tool ruff
 ```
 
-`rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
-matches the pinned upstream, then judges every rule again (`--refresh-cache`) and saves the fresh results.
+Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
+port needs no release and no network. In CI only `rule-gates-record.yml` records, and it is the only job that
+uploads. Pull request CI never runs an upstream linter, so it cannot tell a recording that is what upstream says from
+one written to make a rule pass; in a public repository that would be a way past the gates. A maintainer starts a
+recording with the `record-gates` label or by hand, and the job runs the recorder and the runtimes **from the base
+branch**, reading only the pull request's pins and rule list. For a branch in this repository it pushes the manifest
+commit to that branch; for a fork, whose branch the default token cannot write to, it pushes
+`gate-recordings/pr-<n>` here and comments to say so.
+
+`rule-gates-nightly.yml` calls the same job with `check: true`, so it reports when a committed recording no longer
+matches the pinned upstream and uploads nothing, then judges every rule again (`--refresh-cache`) and saves the fresh
+results.
+
+Because the recordings are no longer in the diff, `gates:record` writes a per-rule summary of what moved instead —
+expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
+(`--changes <file>`, `conformance/gates/recording-diff.ts`) — and the recording job posts it on the pull request.
 
 Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
 and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored). Only those direct

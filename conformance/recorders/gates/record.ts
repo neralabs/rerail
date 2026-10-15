@@ -15,6 +15,10 @@ import {
   GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../gates/recording.js";
+import { diffRecordings, type RecordedPair, type RecordingChanges } from "../../gates/recording-diff.js";
+import {
+  buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
+} from "../../gates/recording-store.js";
 import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../gates/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../gates/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
@@ -424,9 +428,9 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   return { recording, corpus, sources: [...sources.values()].sort((a, b) => byText(a.file, b.file)) };
 }
 
-/** What differs between a fresh recording and the committed tool-pack directory. */
+/** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
 export interface RecordingDiff {
-  /** gates.json or gates-corpus.json when its committed text differs. */
+  /** gates.json or gates-corpus.json when the lock names other bytes for it, or no lock is committed. */
   changed: string[];
   /** Case sources the directory lacks. */
   missing: CaseCopy[];
@@ -434,11 +438,18 @@ export interface RecordingDiff {
   conflicting: string[];
 }
 
-export function diffRecording(directory: string, recorded: Recorded): RecordingDiff {
+/**
+ * A fresh recording against the committed lock. The comparison is of digests, not of files: the recordings are not in
+ * the tree, and the lock is what the commit pins, so a lock naming other bytes is exactly what a stale recording is.
+ */
+export function diffRecording(root: string, pack: string, tool: string, recorded: Recorded): RecordingDiff {
+  const directory = toolPackDirectory(root, pack, tool);
+  const lockPath = join(directory, RECORDING_LOCK);
+  const lock = existsSync(lockPath) ? recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8"))) : null;
   const changed: string[] = [];
   for (const [file, value] of [[GATES_RECORDING, recorded.recording], [GATES_CORPUS, recorded.corpus]] as const) {
-    const path = join(directory, file);
-    if (!existsSync(path) || readFileSync(path, "utf8") !== recordingText(value)) changed.push(file);
+    const digest = sha256(Buffer.from(recordingText(value), "utf8"));
+    if (lock === null || !lock.success || lock.data.files[file].sha256 !== digest) changed.push(file);
   }
   const missing: CaseCopy[] = [];
   const conflicting: string[] = [];
@@ -517,13 +528,46 @@ export function withRecordingRow(text: string, tool: string, source: string): st
   return [...lines.slice(0, first), ...table, ...lines.slice(last + 1)].join("\n");
 }
 
-/** Write the recording and the missing case sources into the tool-pack directory, and list the copies in UPSTREAM.md. */
-export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded): Promise<RecordingDiff> {
+/** What a written recording left behind, for the caller to upload and to commit. */
+export interface WrittenRecording extends RecordingDiff {
+  /** The lock as it is now committed. */
+  lock: RecordingLock;
+  /** The gzipped recordings, by their asset name, ready for the release; written beside the cache. */
+  assets: { name: string; path: string; bytes: number }[];
+  /** The per-rule summary against the recording the lock named before, or a first recording. */
+  changes: RecordingChanges;
+}
+
+/**
+ * Write the recording into the local cache, the `recording.lock` that names it, the gzipped assets a trusted job
+ * uploads, and the missing case sources; list the copies in UPSTREAM.md.
+ *
+ * Only the lock is committed. The recordings go to the cache the gates read, so iterating locally needs no release
+ * and no network: record, then run the gates, and they read what was just recorded because the lock names it.
+ */
+export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; release?: string }): Promise<WrittenRecording> {
   const directory = toolPackDirectory(root, pack, tool);
-  const diff = diffRecording(directory, recorded);
+  const diff = diffRecording(root, pack, tool, recorded);
   if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: committed case sources differ from upstream's: ${diff.conflicting.slice(0, 5).join(", ")}`);
-  await writeFile(join(directory, GATES_RECORDING), recordingText(recorded.recording));
-  await writeFile(join(directory, GATES_CORPUS), recordingText(recorded.corpus));
+
+  // The summary compares against the recording the committed lock named, where it is still in the cache; without it
+  // there is nothing honest to say about what moved, so the report says it is a first recording.
+  const before = readLockedPair(root, options.cacheRoot, pack, tool);
+  const texts = { [GATES_RECORDING]: recordingText(recorded.recording), [GATES_CORPUS]: recordingText(recorded.corpus) };
+  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
+  for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
+  await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
+
+  const uploads = join(options.cacheRoot, "recordings", "upload");
+  await mkdir(uploads, { recursive: true });
+  const assets = [];
+  for (const file of [GATES_RECORDING, GATES_CORPUS] as const) {
+    const gzipped = gzipRecording(texts[file]);
+    const path = join(uploads, lock.files[file].asset);
+    await writeFile(path, gzipped);
+    assets.push({ name: lock.files[file].asset, path, bytes: gzipped.length });
+  }
+
   for (const copy of diff.missing) {
     await mkdir(dirname(join(directory, copy.file)), { recursive: true });
     await writeFile(join(directory, copy.file), copy.bytes);
@@ -537,5 +581,30 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     if (inline > 0) text = withRecordingRow(text, tool, inlineTextsSource(manifest));
     await writeFile(upstreamMd, text);
   }
-  return diff;
+  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }) };
+}
+
+/**
+ * The recording the committed lock names, read from the cache, or null when there is no lock or its bytes are not
+ * cached. It is what a re-record is summarized against; nothing fetches it, because a summary is not worth a
+ * download and a maintainer re-recording has usually just run the gates.
+ */
+export function readLockedPair(root: string, cacheRoot: string, pack: string, tool: string): RecordedPair | null {
+  const lockPath = join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
+  if (!existsSync(lockPath)) return null;
+  const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
+  if (!lock.success) return null;
+  const texts = [GATES_RECORDING, GATES_CORPUS].map((file) => readCachedRecording(cacheRoot, lock.data.files[file as typeof GATES_RECORDING].sha256));
+  if (texts.some((text) => text === undefined)) return null;
+  const recording = gatesRecordingSchema.safeParse(JSON.parse(texts[0]!));
+  const corpus = gatesCorpusSchema.safeParse(JSON.parse(texts[1]!));
+  if (!recording.success || !corpus.success) return null;
+  return { recording: recording.data, corpus: corpus.data };
+}
+
+/** The repository version the recorder ran from, written into the lock so a reader can date a recording. */
+function recorderVersion(root: string): string {
+  const path = join(root, "package.json");
+  if (!existsSync(path)) return "0.0.0";
+  return (JSON.parse(readFileSync(path, "utf8")) as { version?: string }).version ?? "0.0.0";
 }

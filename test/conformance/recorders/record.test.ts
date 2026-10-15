@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/gates/corpus.js";
 import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/gates/recording.js";
+import { readCachedRecording, recordingLockSchema, recordingLockText } from "../../../conformance/gates/recording-store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/gates/types.js";
 import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/gates/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/gates/runtimes.js";
@@ -75,9 +76,15 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
       runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
     };
     const recorded = await recordToolPack(options);
-    await writeRecording(root, "demo", "bandit", recorded);
+    const written = await writeRecording(root, "demo", "bandit", recorded, { cacheRoot: join(root, "cache") });
 
-    const recording = gatesRecordingSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/gates.json"), "utf8")));
+    // Only the lock is committed; the recording itself went into the cache, by its own digest.
+    const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
+    assert.deepEqual(lock.pins, recorded.recording.pins);
+    assert.match(lock.files["gates.json"].asset, /^demo-bandit-gates-[0-9a-f]{64}\.json\.gz$/u);
+    assert.deepEqual(written.assets.map((asset) => asset.name).sort(), [lock.files["gates-corpus.json"].asset, lock.files["gates.json"].asset].sort());
+    assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/gates.json")), false);
+    const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["gates.json"].sha256)!));
     assert.deepEqual(Object.keys(recording.rules), ["B301"]);
     assert.deepEqual(recording.absent, ["B999"]);
     const rule = recording.rules.B301!;
@@ -90,16 +97,16 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
     assert.equal(recording.parserVerdicts.length, 1);
     assert.equal(recording.corpus.extensions.includes(".py"), true);
 
-    const corpus = gatesCorpusSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/gates-corpus.json"), "utf8")));
+    const corpus = gatesCorpusSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["gates-corpus.json"].sha256)!));
     assert.deepEqual(corpus.files.map((file) => [file.task, file.path, Object.keys(file.findings)]), [["demo-task", "app.py", ["B301"]]]);
     assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py"), "utf8"), SOURCE);
     assert.match(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), /\| `upstream\/bandit\/fixtures\/pickle_deserialize\.py` \| `examples\/pickle_deserialize\.py` \| verbatim \|/u);
 
     const again = await recordToolPack(options);
-    assert.deepEqual(diffRecording(join(root, "packs/demo/upstream/bandit"), again), { changed: [], missing: [], conflicting: [] });
-    cpSync(join(root, "packs/demo/upstream/bandit/gates.json"), join(root, "gates.json.bak"));
-    writeFileSync(join(root, "packs/demo/upstream/bandit/gates.json"), "{}\n");
-    assert.deepEqual(diffRecording(join(root, "packs/demo/upstream/bandit"), again).changed, ["gates.json"]);
+    assert.deepEqual(diffRecording(root, "demo", "bandit", again), { changed: [], missing: [], conflicting: [] });
+    // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
+    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], sha256: "e".repeat(64) } } }));
+    assert.deepEqual(diffRecording(root, "demo", "bandit", again).changed, ["gates.json"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -10,7 +10,7 @@
  * already in canonical form, so a second run rewrites the same bytes.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -18,6 +18,16 @@ import {
   isCleanVerdict, recordedParsers, recordingText, type GatesCorpusRecording, type GatesRecording, type RecordedParser,
 } from "../../gates/recording.js";
 import { toolPackDirectory } from "../../gates/manifest.js";
+import {
+  buildRecordingLock, DEFAULT_RELEASE, gzipRecording, RECORDING_LOCK, recordingLockText, writeCachedRecording, type RecordingLock,
+} from "../../gates/recording-store.js";
+
+/** The repository version the lift ran from, as the recorder writes it. */
+function recorderVersion(root: string): string {
+  const path = join(root, "package.json");
+  if (!existsSync(path)) return "0.0.0";
+  return (JSON.parse(readFileSync(path, "utf8")) as { version?: string }).version ?? "0.0.0";
+}
 
 /** A v1 or v2 entry: `verdicts` is written on every v1 entry and only on a v2 entry some parser objected to. */
 interface Entry {
@@ -94,6 +104,39 @@ export interface MigrationResult {
   after: number;
   /** True when both files already held the bytes the migration writes. */
   unchanged: boolean;
+}
+
+/**
+ * Take a tool-pack's two recordings out of the tree: put them in the cache under their own digests, write the
+ * `recording.lock` that names them and the gzipped assets a maintainer uploads to the release, and leave the
+ * in-tree files for `git rm`.
+ *
+ * This is how the release is seeded from recordings that were committed before it existed. Afterwards the recorder
+ * writes all three itself, and nothing reads the in-tree files again.
+ */
+export async function liftRecordings(root: string, cacheRoot: string, release?: string): Promise<{ pack: string; tool: string; lock: RecordingLock; assets: { name: string; bytes: number }[] }[]> {
+  const lifted = [];
+  for (const { pack, tool } of recordedToolPacks(root)) {
+    const directory = toolPackDirectory(root, pack, tool);
+    const texts = {
+      [GATES_RECORDING]: readFileSync(join(directory, GATES_RECORDING), "utf8"),
+      [GATES_CORPUS]: readFileSync(join(directory, GATES_CORPUS), "utf8"),
+    };
+    const recording = gatesRecordingSchema.parse(JSON.parse(texts[GATES_RECORDING]));
+    const lock = buildRecordingLock(pack, tool, release ?? DEFAULT_RELEASE, recorderVersion(root), recording.pins, recording.runtimes, texts);
+    for (const text of Object.values(texts)) await writeCachedRecording(cacheRoot, text);
+    await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
+    const uploads = join(cacheRoot, "recordings", "upload");
+    await mkdir(uploads, { recursive: true });
+    const assets = [];
+    for (const file of [GATES_RECORDING, GATES_CORPUS] as const) {
+      const gzipped = gzipRecording(texts[file]);
+      await writeFile(join(uploads, lock.files[file].asset), gzipped);
+      assets.push({ name: lock.files[file].asset, bytes: gzipped.length });
+    }
+    lifted.push({ pack, tool, lock, assets });
+  }
+  return lifted;
 }
 
 /** Rewrite every committed recording under `root` in place, and report what each one cost before and after. */

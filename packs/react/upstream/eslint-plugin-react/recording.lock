@@ -1,0 +1,34 @@
+{
+  "format": "rerail.gates-recording-lock/v1",
+  "tool": "eslint-plugin-react",
+  "release": "gate-recordings",
+  "recorder": "0.1.0-next.1",
+  "pins": {
+    "repository": "https://github.com/jsx-eslint/eslint-plugin-react",
+    "commit": "2c98b83c451a4297edf1787d9a616e50687e27e8",
+    "version": "7.37.5",
+    "runtime": "eslint-plugin-react-7.37.5"
+  },
+  "runtimes": {
+    "eslint-plugin-react-7.37.5": {
+      "package.json": "ded4b1bcd5e8a303f35b96731275b8fa3806dd3b7d0467d8cae8f55f92ccb92a"
+    },
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    }
+  },
+  "files": {
+    "gates.json": {
+      "sha256": "17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55",
+      "size": 6033520,
+      "format": "rerail.gates-recording/v2",
+      "asset": "react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz"
+    },
+    "gates-corpus.json": {
+      "sha256": "6257ec57d71616eab398281ae57bd7d47bca946c29fb603ee607809fc87cfcbc",
+      "size": 296849,
+      "format": "rerail.gates-corpus/v2",
+      "asset": "react-eslint-plugin-react-gates-corpus-6257ec57d71616eab398281ae57bd7d47bca946c29fb603ee607809fc87cfcbc.json.gz"
+    }
+  }
+}
