@@ -2398,5 +2398,37 @@
     "line": 53,
     "kind": "upstream-wrong",
     "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $dir first, mkdir() warns and returns false, and the is_dir($dir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Translation/Tests/Util/XliffUtilsTest.php",
+    "line": 92,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $tmpDir first, mkdir() warns and returns false, and the is_dir($tmpDir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Translation/Writer/TranslationWriter.php",
+    "line": 64,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $options['path'] first, mkdir() warns and returns false, and the is_dir($options['path']) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Validator/Tests/Constraints/YamlValidatorTest.php",
+    "line": 141,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Contracts/Deprecation/function.php",
+    "line": 25,
+    "kind": "upstream-wrong",
+    "evidence": "This is trigger_deprecation() itself, the function the convention goes through: `@trigger_error(..., \\E_USER_DEPRECATED)` keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing the @, as the finding steers, sends every deprecation in every package that calls trigger_deprecation() to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
   }
 ]

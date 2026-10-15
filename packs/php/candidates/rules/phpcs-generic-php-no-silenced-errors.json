@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-no-silenced-errors",
   "revision": 2,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator. Divergence: not reported where the @ is part of an idiom that needs it, because removing it changes behaviour. These are a silenced mkdir(), rmdir() or unlink() in the left operand of `&&`, `||`, `and` or `or` whose right operand re-checks the same path with is_dir(), is_file() or file_exists() (the race-safe `!@mkdir($dir) && !is_dir($dir)`, where the re-check decides whether a warning was a failure), and a silenced trigger_error() or user_error() at E_USER_DEPRECATED (Symfony's deprecation convention, silenced so only error handlers that opt in log it) (NER-1811).",
+  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator. Divergence: not reported where the @ is part of an idiom that needs it, because removing it changes behaviour. These are a silenced mkdir(), rmdir() or unlink() of a path that the right operand of a `&&`, `||`, `and` or `or` re-checks with is_dir(), is_file() or file_exists(), where the @ call is that operator's left operand or reaches it only through `!`, parentheses and earlier operands of the same `&&`/`||`/`and`/`or` chain (the race-safe `!@mkdir($dir) && !is_dir($dir)`, where the re-check decides whether a warning was a failure), and a silenced trigger_error() or user_error() whose second argument, or argument named error_level, is E_USER_DEPRECATED (Symfony's deprecation convention, silenced so only error handlers that opt in log it) (NER-1811).",
   "scope": {
     "include": [
       "**/*.php"
@@ -26,7 +26,7 @@
                   "matches": "deprecation-notice"
                 },
                 {
-                  "matches": "filesystem-call"
+                  "matches": "filesystem-call-with-an-argument"
                 }
               ]
             }
@@ -43,26 +43,46 @@
                     }
                   },
                   {
+                    "arguments": {
+                      "signature": [
+                        "message",
+                        "error_level"
+                      ],
+                      "bind": {
+                        "LEVEL": "error_level"
+                      },
+                      "mode": "syntactic"
+                    }
+                  },
+                  {
                     "has": {
-                      "field": "arguments",
-                      "has": {
-                        "kind": "argument",
-                        "has": {
-                          "regex": "^\\\\?E_USER_DEPRECATED$"
-                        }
-                      }
+                      "stopBy": "end",
+                      "pattern": "$LEVEL",
+                      "regex": "^\\\\?E_USER_DEPRECATED$"
                     }
                   }
                 ]
               }
             },
-            "filesystem-call": {
+            "filesystem-call-with-an-argument": {
               "has": {
                 "kind": "function_call_expression",
-                "has": {
-                  "field": "function",
-                  "regex": "^\\\\?(mkdir|rmdir|unlink)$"
-                }
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(mkdir|rmdir|unlink)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "kind": "argument"
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -163,7 +183,29 @@
             },
             "rechecked-in-a-condition": {
               "inside": {
-                "stopBy": "end",
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "unary_op_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^!$"
+                        }
+                      },
+                      {
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(&&|\\|\\||(?i:and|or))$"
+                        }
+                      }
+                    ]
+                  }
+                },
                 "field": "left",
                 "kind": "binary_expression",
                 "all": [
