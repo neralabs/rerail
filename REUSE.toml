@@ -990,3 +990,10 @@ path = "packs/react/upstream/eslint-plugin-react-hooks/gates.json"
 precedence = "override"
 SPDX-FileCopyrightText = ["Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# Next.js 16.3.8 (@next/eslint-plugin-next): test excerpts in the rule gates' recording (packs/next/licenses/next.js/UPSTREAM.md)
+[[annotations]]
+path = "packs/next/upstream/eslint-plugin-next/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
