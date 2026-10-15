@@ -1,8 +1,9 @@
 import {
   createRuleInstructions,
-  rageQuitInstructions,
+  uninstallInstructions,
   showMeInstructions,
   RERAIL_COMMANDS,
+  type CommandSigil,
   type RerailCommand,
   type RerailCommandName,
 } from "./rerail-commands.js";
@@ -85,7 +86,7 @@ const SESSION_ARGUMENTS: Record<CommandFileAgent, string> = {
 
 const CODEX_IDENTITY = "\n\nThe launcher reads this session's identity from `CODEX_THREAD_ID`; never pick another or the newest session.";
 
-/** `/rerail`: the L1 summary for this session (or this repo, where the agent cannot name its session). */
+/** `/rerail` and its alias `/rerail-help`: the L1 summary for this session (or this repo, where the agent cannot name its session). */
 function overviewBody(agent: CommandFileAgent, cli: string): CommandBody {
   const command = `${cli} session${SESSION_ARGUMENTS[agent]}`;
   return {
@@ -108,9 +109,9 @@ function stopBody(agent: CommandFileAgent, cli: string): CommandBody {
   };
 }
 
-/** `/rerail-ui`: read the URL first, so opening is the only step that launches anything. */
+/** `/rerail-manage`: read the URL first, so opening is the only step that launches anything. */
 function dashboardBody(agent: CommandFileAgent, cli: string): CommandBody {
-  if (agent === "codex") return { text: runOne(`${cli} ui`, "Open the Rerail dashboard for this repo in the browser."), allowed: [] };
+  if (agent === "codex") return { text: runOne(`${cli} manage`, "Open the Rerail dashboard for this repo in the browser."), allowed: [] };
   return {
     text: [
       "Open the Rerail dashboard for this repo.",
@@ -118,7 +119,7 @@ function dashboardBody(agent: CommandFileAgent, cli: string): CommandBody {
       "Get the URL without opening anything. Run exactly this and read the URL from its output:",
       "",
       "```sh",
-      `${cli} ui --print`,
+      `${cli} manage --print`,
       "```",
       "",
       "If the command fails, show the error and stop.",
@@ -126,54 +127,54 @@ function dashboardBody(agent: CommandFileAgent, cli: string): CommandBody {
       "Open the URL as a tab in this window before reaching for the desktop browser, in this order:",
       "",
       ...(agent === "claude-code"
-        ? [`- Under Orca (\`ORCA_TAB_ID\` set): run \`${cli} ui\`. It opens the page as a tab in the Orca window and falls back to the desktop browser on its own.`]
+        ? [`- Under Orca (\`ORCA_TAB_ID\` set): run \`${cli} manage\`. It opens the page as a tab in the Orca window and falls back to the desktop browser on its own.`]
         : []),
       "- In Cursor with a built-in browser tool: navigate that browser to the URL; it opens as a tab in the Cursor window.",
-      `- Otherwise let the launcher open the desktop browser: \`${cli} ui\`.`,
+      `- Otherwise let the launcher open the desktop browser: \`${cli} manage\`.`,
       "",
       "Report the URL and where it was opened. Do not run anything else.",
     ].join("\n"),
-    allowed: [`${cli} ui --print`, `${cli} ui`],
+    allowed: [`${cli} manage --print`, `${cli} manage`],
   };
 }
 
-function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: CommandFileContext): CommandBody {
-  const { cli, packageRoot } = context;
-  const sigil = agent === "codex" ? "$" : "/";
-  switch (name) {
-    case "rerail":
-      return overviewBody(agent, cli);
-    case "rerail-ui":
-      return dashboardBody(agent, cli);
-    case "rerail-create": {
-      const request = agent === "claude-code" ? "\"$ARGUMENTS\""
-        : `the words the person typed after ${sigil}rerail-create`;
-      return {
-        text: createRuleInstructions({ cli, packageRoot, request }),
-        // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
-        allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
-      };
-    }
-    case "rerail-start":
-      return startBody(cli, context.setupLauncher);
-    case "rerail-stop":
-      return stopBody(agent, cli);
-    case "rerail-update":
-      return {
-        text: runOne(`${cli} update`, "Update Rerail to the newest version.") + "\n\nAfterwards, tell the person that new sessions use the new version.",
-        allowed: [`${cli} update`],
-      };
-    case "rerail-rage-quit":
-      // The removal itself is left out of `allowed`, so Claude Code asks the person once more before running it.
-      return { text: rageQuitInstructions(cli, sigil), allowed: [`${cli} install --remove --dry-run`, `${cli} stop`] };
-    case "rerail-show-me":
-      // The demo file's write and fix still go through the coding agent's own edit permission.
-      return {
-        text: showMeInstructions({ cli, sigil, write: agent === "codex" ? "shell" : "edit-tool" }),
-        allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
-      };
-  }
+type BodyBuilder = (agent: CommandFileAgent, context: CommandFileContext) => CommandBody;
+
+const sigilFor = (agent: CommandFileAgent): CommandSigil => agent === "codex" ? "$" : "/";
+
+function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileContext): CommandBody {
+  const request = agent === "claude-code" ? "\"$ARGUMENTS\""
+    : `the words the person typed after ${sigilFor(agent)}rerail-create`;
+  return {
+    text: createRuleInstructions({ cli, packageRoot, request }),
+    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
+    allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
+  };
 }
+
+/** Every command's body; the `Record` makes a command without one a type error. */
+const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
+  "rerail": (agent, { cli }) => overviewBody(agent, cli),
+  "rerail-help": (agent, { cli }) => overviewBody(agent, cli),
+  "rerail-manage": (agent, { cli }) => dashboardBody(agent, cli),
+  "rerail-create": createBody,
+  "rerail-start": (_agent, { cli, setupLauncher }) => startBody(cli, setupLauncher),
+  "rerail-stop": (agent, { cli }) => stopBody(agent, cli),
+  "rerail-update": (_agent, { cli }) => ({
+    text: runOne(`${cli} update`, "Update Rerail to the newest version.") + "\n\nAfterwards, tell the person that new sessions use the new version.",
+    allowed: [`${cli} update`],
+  }),
+  // The removal itself is left out of `allowed`, so Claude Code asks the person once more before running it.
+  "rerail-uninstall": (agent, { cli }) => ({
+    text: uninstallInstructions(cli, sigilFor(agent)),
+    allowed: [`${cli} install --remove --dry-run`, `${cli} stop`],
+  }),
+  // The demo file's write and fix still go through the coding agent's own edit permission.
+  "rerail-show-me": (agent, { cli }) => ({
+    text: showMeInstructions({ cli, sigil: sigilFor(agent), write: agent === "codex" ? "shell" : "edit-tool" }),
+    allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
+  }),
+};
 
 function command(name: RerailCommandName): RerailCommand {
   const found = RERAIL_COMMANDS.find(entry => entry.name === name);
@@ -187,7 +188,7 @@ function command(name: RerailCommandName): RerailCommand {
  */
 export function commandFileText(agent: CommandFileAgent, name: RerailCommandName, context: CommandFileContext): string {
   const { description } = command(name);
-  const body = commandBody(agent, name, context);
+  const body = COMMAND_BODIES[name](agent, context);
   if (agent === "cursor") return `${description}.\n\n${body.text}\n`;
   if (agent === "codex") {
     const text = `${body.text}\n\n${CODEX_APPROVAL}`;

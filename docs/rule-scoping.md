@@ -101,7 +101,7 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 **MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target.
 
-**Dashboard.** The rules page for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`; `rerail ui`, `/rerail-ui` and the status line build it. Without a scope the dashboard lists repositories to pick from.
+**Dashboard.** The rules page for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`; `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
 
 ## Export and import
 
