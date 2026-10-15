@@ -9319,11 +9319,9 @@
   },
   "runtimes": {
     "eslint-plugin-next-16.3.8": {
-      "package-lock.json": "8c171ef78208e18c23ad90afa2ba96e17e913012a75cd6ee3efd25f9f60dd15f",
       "package.json": "01c0769560c39074a9ede986868b8a47414bc1710fdf72c19020b5012be1b627"
     },
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     }
   },
