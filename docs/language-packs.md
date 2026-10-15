@@ -54,6 +54,16 @@ refused feature as invalid and a planned one as `language-not-supported`. The ad
 one generic suite over every adapter, and checks that each family's adapter reads exactly the capabilities its
 registry entries support.
 
+| Family | Languages | Adapter | Capabilities | Suppressions |
+|---|---|---|---|---|
+| `python` | `python` | `Python` (`adapter/scope.rs`, `value.rs`, ...) | all five | `noqa`, `nosec` |
+| `ecma` | `typescript`, `javascript` | `Ecma` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint`, `oxlint`, `biome` |
+| `php` | `php` | `Php` | all five | `phpstan`, `psalm`, `phpcs` |
+| `blade` | `blade` | `Blade`, delegating to `Php` over the compiled view | all five | none |
+| `rust` | `rust` | `Rust` (`adapter/rust.rs`) | all five | `clippy` |
+| `vue` | `vue` | `Vue` (`adapter/vue.rs`), delegating to `Ecma` over the script-block program | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
+| `sql` | `sql` | `Sql` (`adapter/sql.rs`) | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
+
 ### Vue
 
 Vue's adapter is `adapter/vue.rs`. A `.vue` file's tape holds its tree-sitter-vue tree and, as the root's last
@@ -71,15 +81,6 @@ wherever their names agree, so a rule's `kind`, `field` and `pattern` read every
 | Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
 | Patterns | A pattern holding a Vue construct (an element, a directive, an interpolation, a comment) is Vue's; any other is TypeScript and matches the program in any of its grammars (JSX, TSX's alone, matches none) |
 | `languageOptions`, `when` | Ecma's keys |
-
-| Family | Languages | Adapter | Capabilities | Suppressions |
-|---|---|---|---|---|
-| `python` | `python` | `Python` (`adapter/scope.rs`, `value.rs`, ...) | all five | `noqa`, `nosec` |
-| `ecma` | `typescript`, `javascript` | `Ecma` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
-| `php` | `php` | `Php` | all five | `phpstan`, `psalm`, `phpcs` |
-| `blade` | `blade` | `Blade`, delegating to `Php` over the compiled view | all five | none |
-| `rust` | `rust` | `Rust` (`adapter/rust.rs`) | all five | `clippy` |
-| `sql` | `sql` | `Sql` (`adapter/sql.rs`) | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 
 ### The Rust adapter
 
@@ -156,7 +157,7 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. SQL's is 10; reserved today: Rust 9 and Vue 12 (11 is free for a second SQL dialect) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`, or `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md)) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Taken today: Rust 9, SQL 10 and Vue 12 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |

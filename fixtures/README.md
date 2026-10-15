@@ -93,8 +93,6 @@ upstream path and whether the copy is verbatim, derived or an excerpt. Those fil
 | `php/licenses/symfony/` | symfony/symfony 2c4011aa7e | MIT |
 | `blade/licenses/bagisto/`, `bookstack/`, `filament/`, `livewire/` | directive closures excerpted into `blade/blade/directives.php`; templates in `blade/blade/forte/corpus/` | MIT |
 | `blade/licenses/forte/` | fortephp/forte 1.1.0 (its test suite's templates in `blade/blade/forte/suite.expected.json`) | MIT |
-| `vue/licenses/eslint-plugin-vue/` | eslint-plugin-vue 10.11.1 | MIT |
-| `rust/licenses/clippy/` | rust-clippy (Rust 1.99.0) | MIT OR Apache-2.0 |
 
 Verbatim copies keep the upstream licence alone; derived files and excerpts are under the upstream licence and
 Apache-2.0 together.
