@@ -2,7 +2,8 @@
 
 The rule gates judge every rule document of a gated tool-pack (one upstream tool in one pack: `python/ruff`,
 `typescript/typescript-eslint`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
-of the pack contract (`test/engine/catalog/packs.test.ts`) and the conformance check; they do not replace either.
+of the pack contract (`test/engine/catalog/packs.test.ts`) and the conformance check, and a superset of the check: its
+verdict is the `passes-conformance` gate (checks/passes-conformance.ts), for candidates as well as shipped rules.
 Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Documents under `packs/<pack>/candidates/**`
 (except `candidates/probes/**`) go through the same gates and are only reported.
 
@@ -14,6 +15,7 @@ Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Document
 | 4 | `compact` | yes |
 | 5 | `matches-upstream-tests` | yes |
 | 6 | `matches-real-code` (its disagreements become goldens of `matches-upstream-tests`) | no |
+| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule, judged after V1's gates; never cached) | yes |
 
 A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the

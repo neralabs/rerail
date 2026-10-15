@@ -6,6 +6,7 @@ import { join, relative, resolve } from "node:path";
 import { ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, GATE_DEPENDENCIES, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
+import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { CASES_PER_KIND, differingFiles, MATCHES_REAL_CODE_METHOD, matchesRealCodeGate, type MatchesRealCodeResult, type RealCodeCase } from "./checks/matches-real-code.js";
@@ -79,6 +80,8 @@ export interface RuleReport {
     compact: GateReport & { metrics: SizeMetrics | null };
     "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; cases: Record<string, number>; differences: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
     "matches-real-code": { checks: Check[]; eligible: number; positives: number; cases: RealCodeCase[]; disagreementsElsewhere: Sample<MatchesRealCodeResult["disagreementsElsewhere"][number]> };
+    /** Judged when the tool-pack's report is assembled, from the pack's conformance check; never cached. */
+    "passes-conformance": GateReport;
   };
 }
 
@@ -303,6 +306,10 @@ function method(manifest: PackManifest): GatesReport["method"] {
       rewrite: `a flagged rule goes back when ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}% or more of its clauses is structure written out over and over, or one node kind definitely occurs ${NESTING_RUN_LIMIT} or more times along a single nesting path`,
     },
     "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's gates.json, recorded by the gates recorder at the pinned upstream" },
+    "passes-conformance": {
+      check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
+      fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
+    },
     "matches-real-code": { ...MATCHES_REAL_CODE_METHOD, cases: MATCHES_REAL_CODE_METHOD.cases.replaceAll("5", String(CASES_PER_KIND)), recorded: "upstream's findings on the corpus are read from gates-corpus.json, joined to each fetched file by task, path and sha256; a fetched file the recording lacks has no ground truth" },
   };
 }
@@ -409,7 +416,8 @@ async function evaluateRule(
   }
 
   const start = defaultOn(status);
-  const gates = { "upstream-status": { checks: status }, loads, "not-overfit": notOverfit, compact, "matches-upstream-tests": upstreamTests, "matches-real-code": realCode };
+  // passes-conformance reads the whole pack, so runToolPack judges it on every run; this placeholder never decides.
+  const gates = { "upstream-status": { checks: status }, loads, "not-overfit": notOverfit, compact, "matches-upstream-tests": upstreamTests, "matches-real-code": realCode, "passes-conformance": gate([]) };
   const unparsedFiles = [...unparsed.values()].sort((a, b) => byText(a.gate, b.gate) || byText(a.file, b.file));
   return {
     report: {
@@ -581,11 +589,16 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }
 
+  // passes-conformance: the pack's own conformance check reads every rule of the pack, so it runs on every run.
+  const conformance = await packConformance(root, pack);
+  pinChecks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
   const toolPack = gate(pinChecks);
   const blockedBy = toolPack.pass ? null : toolPack.checks.filter((check) => !check.ok).map((check) => `${check.id}: ${check.detail}`).join("; ");
 
   const reports = judged.map((entry) => {
     const report = structuredClone(results.get(entry.key)!.report);
+    report.gates["passes-conformance"] = gate(passesConformanceChecks(conformance, report.id));
+    Object.assign(report, verdict(report.gates));
     // A failing tool-pack check (a stale recording, an incomplete corpus, shipped rules that do not load together) fails
     // every rule, whatever its gates say: a shipped rule blocks, and a candidate is not ready to promote.
     if (blockedBy !== null) {

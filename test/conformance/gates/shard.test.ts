@@ -26,6 +26,7 @@ function passingGates(): RuleReport["gates"] {
     compact: { ...ok, metrics: null },
     "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 1, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
     "matches-real-code": { checks: [], eligible: 0, positives: 0, cases: [], disagreementsElsewhere: { count: 0, first: [] } },
+    "passes-conformance": ok,
   };
 }
 

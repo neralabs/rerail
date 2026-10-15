@@ -50,6 +50,7 @@ function passingGates(): RuleReport["gates"] {
     compact: { ...ok, metrics: null },
     "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
     "matches-real-code": { checks: [], eligible: 0, positives: 0, cases: [], disagreementsElsewhere: { count: 0, first: [] } },
+    "passes-conformance": ok,
   };
 }
 
@@ -66,7 +67,7 @@ function rule(id: string, location: RuleReport["location"], failing: Partial<Rec
 }
 
 function report(rules: RuleReport[], unmapped: GatesReport["unmapped"] = []): GatesReport {
-  const zero = { loads: 0, "not-overfit": 0, compact: 0, "matches-upstream-tests": 0 };
+  const zero = { loads: 0, "not-overfit": 0, compact: 0, "matches-upstream-tests": 0, "passes-conformance": 0 };
   return {
     format: "rerail.rule-gates/v1", pack: "python", tool: "bandit", toolPack: "python/bandit",
     upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },

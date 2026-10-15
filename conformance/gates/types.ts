@@ -4,9 +4,10 @@ import type { GatesManifest } from "./manifest.js";
 export type { EslintUpstream, KnownGap } from "./manifest.js";
 
 /**
- * The gates in the order a rule meets them. `loads` to `matches-upstream-tests` decide whether a rule ships
- * (`blocking`); `upstream-status` only decides whether it ships on or off, and `matches-real-code` is an end-to-end
- * check whose every disagreement becomes a golden that `matches-upstream-tests` judges.
+ * The gates in the order a rule meets them. `loads` to `passes-conformance` decide whether a rule ships (`blocking`);
+ * `upstream-status` only decides whether it ships on or off, and `matches-real-code` is an end-to-end check whose every
+ * disagreement becomes a golden that `matches-upstream-tests` judges. `passes-conformance` is the pack contract's own
+ * check (`test:conformance`), so the gates are a superset of it; it comes last, after V1's gates.
  */
 export const GATES = [
   { id: "upstream-status", title: "Upstream status (decides on or off)", blocking: false },
@@ -14,6 +15,7 @@ export const GATES = [
   { id: "not-overfit", title: "Not overfit to upstream's tests", blocking: true },
   { id: "compact", title: "Compact (no written-out expansion)", blocking: true },
   { id: "matches-upstream-tests", title: "Matches upstream on its own tests", blocking: true },
+  { id: "passes-conformance", title: "Passes the pack's conformance check", blocking: true },
   { id: "matches-real-code", title: "Matches upstream on real code", blocking: false },
 ] as const;
 

@@ -75,10 +75,10 @@ test("a rule starts on exactly when it exists upstream, is stable and is recomme
 test("upstream-status and matches-real-code never decide the verdict: a rule ships when it passes the blocking gates", () => {
   const pass = { pass: true };
   const fail = { pass: false };
-  assert.deepEqual(verdict({ loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass }), { pass: true, stoppedAt: null });
-  assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": fail }), { pass: false, stoppedAt: "not-overfit" });
+  assert.deepEqual(verdict({ loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "passes-conformance": pass }), { pass: true, stoppedAt: null });
+  assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": fail, "passes-conformance": pass }), { pass: false, stoppedAt: "not-overfit" });
   // upstream-status and matches-real-code are not among the gates a verdict reads, whatever they say.
-  const gates = { "upstream-status": fail, loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "matches-real-code": fail };
+  const gates = { "upstream-status": fail, loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "matches-real-code": fail, "passes-conformance": pass };
   assert.deepEqual(verdict(gates), { pass: true, stoppedAt: null });
   assert.deepEqual(verdict({ ...gates, "matches-upstream-tests": fail }), { pass: false, stoppedAt: "matches-upstream-tests" });
 });
