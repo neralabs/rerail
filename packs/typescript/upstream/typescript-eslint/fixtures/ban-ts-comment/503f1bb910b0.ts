@@ -1,0 +1,1 @@
+// @ts-check    : TS1234 because xyz

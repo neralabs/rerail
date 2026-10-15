@@ -1,0 +1,7 @@
+
+function foo(a) {
+  var b = (a = a + 1);
+  bar(b);
+}
+foo();
+    

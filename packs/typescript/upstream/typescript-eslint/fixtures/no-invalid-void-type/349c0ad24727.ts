@@ -1,0 +1,1 @@
+type alias = Array<void>;

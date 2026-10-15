@@ -17,6 +17,7 @@ import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
 import { GATES_CORPUS, GATES_RECORDING } from "./recording.js";
+import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type UpstreamCase, type UpstreamFile } from "./types.js";
 
 export const REPORT_FORMAT = "rerail.rule-gates/v1" as const;
@@ -118,6 +119,8 @@ export interface GatesReport {
   cache: { rules: number; hits: number };
   /** Goldens this run promoted, not yet in the committed goldens.tsv (`--write` adds them). */
   uncommittedPromotions: number;
+  /** The shard this report judged, and how many rules the whole tool-pack has; absent on a whole or merged report. */
+  shard?: Shard & { rules: number };
   summary: {
     shipped: { rules: number; pass: number };
     candidates: { rules: number; pass: number };
@@ -135,6 +138,8 @@ export interface RunOptions {
   cacheRoot: string;
   useCache: boolean;
   runner: CommandRunner;
+  /** Judge only this shard's rules (shard.ts); every rule still counts for the tool-pack checks. */
+  shard?: Shard;
 }
 
 function gate(checks: Check[]): GateReport {
@@ -143,6 +148,33 @@ function gate(checks: Check[]): GateReport {
 
 function notRun(reason: string): GateReport {
   return { pass: false, checks: [{ id: "not-run", ok: false, detail: reason }] };
+}
+
+/** The integrity line for a proven known gap that excused nothing. */
+export function unusedGapLine(id: string): string {
+  return `known gap ${id} excused no mismatch; remove it or correct its fixtures`;
+}
+
+/** A tool-pack report's summary, from its rules' reports. */
+export function summarizeRules(reports: RuleReport[]): GatesReport["summary"] {
+  const shipped = reports.filter((report) => report.location === "shipped");
+  const candidates = reports.filter((report) => report.location === "candidate");
+  const stopped = (list: RuleReport[]) => Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, list.filter((report) => report.stoppedAt === entry.id).length])) as Record<BlockingGateId, number>;
+  const goldenCounts = reports.map((report) => report.gates["matches-upstream-tests"].goldens);
+  const realCodeCases = reports.flatMap((report) => report.gates["matches-real-code"].cases);
+  return {
+    shipped: { rules: shipped.length, pass: shipped.filter((entry) => entry.pass).length },
+    candidates: { rules: candidates.length, pass: candidates.filter((entry) => entry.pass).length },
+    stoppedAt: { shipped: stopped(shipped), candidate: stopped(candidates) },
+    failedGate: Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, reports.filter((rule) => !rule.gates[entry.id].pass).length])) as Record<BlockingGateId, number>,
+    endToEnd: {
+      cases: realCodeCases.length,
+      mismatches: realCodeCases.filter((testCase) => testCase.status === "mismatch").length,
+      goldens: goldenCounts.reduce((sum, entry) => sum + entry.count, 0),
+      goldensDiffering: goldenCounts.reduce((sum, entry) => sum + entry.differing.count, 0),
+      goldensEngineGaps: goldenCounts.reduce((sum, entry) => sum + entry.engineGaps.count, 0),
+    },
+  };
 }
 
 function countBy<T>(items: T[], keyOf: (item: T) => string): Record<string, number> {
@@ -439,28 +471,31 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       goldens: JSON.stringify(goldens.get(id) ?? []),
       caseSources: caseFiles.map((file) => `${file}\0${existsSync(join(directory, file)) ? sha256(readFileSync(join(directory, file))) : "missing"}`),
     });
-    return { ...entry, key };
+    return { ...entry, id, key };
   });
-  const packKey = sha256(keyed.map((entry) => entry.key).sort(byText).join("\n"));
+  // A shard judges only its own rules; the tool-pack checks and the bundled-rule load above still read every rule.
+  const shard = options.shard;
+  const judged = shard === undefined ? keyed : keyed.filter((entry) => shardOf(entry.id, shard.count) === shard.index);
+  const packKey = sha256(judged.map((entry) => entry.key).sort(byText).join("\n"));
 
   // Plan: every key first; when all hit, nothing is fetched or evaluated.
   const cached = new Map<string, CachedRule>();
   let packCached: CachedPack | undefined;
   if (options.useCache) {
-    for (const entry of keyed) {
-      const hit = await readCached<CachedRule>(cacheRoot, pack, tool, entry.key);
+    for (const entry of judged) {
+      const hit = await readCached<CachedRule>(cacheRoot, pack, tool, entry.key, shard);
       if (hit !== undefined) cached.set(entry.key, hit);
     }
-    packCached = await readCached<CachedPack>(cacheRoot, pack, tool, `pack-${packKey}`);
+    packCached = await readCached<CachedPack>(cacheRoot, pack, tool, `pack-${packKey}`, shard);
   }
-  const misses = keyed.filter((entry) => !cached.has(entry.key));
+  const misses = judged.filter((entry) => !cached.has(entry.key));
   const results = new Map<string, CachedRule>(cached);
   let packResult: CachedPack;
 
   if (misses.length === 0 && packCached !== undefined) {
     packResult = packCached;
     // Promotions are part of a cached result: replay them so --write gives the same goldens.tsv.
-    for (const entry of keyed) {
+    for (const entry of judged) {
       const result = cached.get(entry.key)!;
       promote(goldens, result.report.id, result.promoted);
     }
@@ -485,7 +520,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
         integrity.push(`the shipped rules do not load through RERAIL's bundled-rule loader: ${error instanceof Error ? error.message : String(error)}`);
       }
       // Replay cached promotions first, so evaluated rules see the same goldens a full run would.
-      for (const entry of keyed) {
+      for (const entry of judged) {
         const hit = cached.get(entry.key);
         if (hit !== undefined) promote(goldens, hit.report.id, hit.promoted);
       }
@@ -493,7 +528,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
-        if (options.useCache) await writeCached(cacheRoot, pack, tool, entry.key, result);
+        if (options.useCache) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
       }
     } finally {
       rmSync(scratch, { recursive: true, force: true });
@@ -501,7 +536,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     const gapUses: Record<string, number> = {};
     for (const result of results.values()) for (const [gapId, uses] of Object.entries(result.gapUses)) gapUses[gapId] = (gapUses[gapId] ?? 0) + uses;
     for (const gap of manifest.known_gaps) {
-      if (gaps.proven.has(gap.id) && (gapUses[gap.id] ?? 0) === 0) integrity.push(`known gap ${gap.id} excused no mismatch; remove it or correct its fixtures`);
+      if (gaps.proven.has(gap.id) && (gapUses[gap.id] ?? 0) === 0) integrity.push(unusedGapLine(gap.id));
     }
     const probes = [...gaps.proven.values()];
     const probeVerdicts = await adapter.parserVerdicts(probes.map(({ gap, probePath }) => ({ path: probePath, source: gap.probe })));
@@ -511,10 +546,10 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
     };
-    if (options.useCache) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult);
+    if (options.useCache) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }
 
-  const reports = keyed.map((entry) => {
+  const reports = judged.map((entry) => {
     const report = structuredClone(results.get(entry.key)!.report);
     // A stale recording fails every shipped rule, whatever its gates say.
     if (!toolPack.pass && report.location === "shipped") {
@@ -523,14 +558,9 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     }
     return report;
   }).sort((a, b) => byText(a.file, b.file));
-  const all = keyed.map((entry) => results.get(entry.key)!);
+  const all = judged.map((entry) => results.get(entry.key)!);
   const gapCandidates = new Map<string, GapCandidateReport>();
   for (const result of all) for (const candidate of result.gapCandidates) gapCandidates.set(`${candidate.gate}\0${candidate.file}`, candidate);
-  const shipped = reports.filter((report) => report.location === "shipped");
-  const candidates = reports.filter((report) => report.location === "candidate");
-  const stopped = (list: RuleReport[]) => Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, list.filter((report) => report.stoppedAt === entry.id).length])) as Record<BlockingGateId, number>;
-  const goldenCounts = reports.map((report) => report.gates["matches-upstream-tests"].goldens);
-  const realCodeCases = reports.flatMap((report) => report.gates["matches-real-code"].cases);
   const serialized = serializeGoldens(goldens);
 
   const report: GatesReport = {
@@ -549,21 +579,10 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     corpus: packResult.corpus,
     unmapped,
     listedWithoutDocument,
-    cache: { rules: keyed.length, hits: cached.size },
+    cache: { rules: judged.length, hits: cached.size },
     uncommittedPromotions: all.reduce((sum, result) => sum + result.promoted.length, 0),
-    summary: {
-      shipped: { rules: shipped.length, pass: shipped.filter((entry) => entry.pass).length },
-      candidates: { rules: candidates.length, pass: candidates.filter((entry) => entry.pass).length },
-      stoppedAt: { shipped: stopped(shipped), candidate: stopped(candidates) },
-      failedGate: Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, reports.filter((rule) => !rule.gates[entry.id].pass).length])) as Record<BlockingGateId, number>,
-      endToEnd: {
-        cases: realCodeCases.length,
-        mismatches: realCodeCases.filter((testCase) => testCase.status === "mismatch").length,
-        goldens: goldenCounts.reduce((sum, entry) => sum + entry.count, 0),
-        goldensDiffering: goldenCounts.reduce((sum, entry) => sum + entry.differing.count, 0),
-        goldensEngineGaps: goldenCounts.reduce((sum, entry) => sum + entry.engineGaps.count, 0),
-      },
-    },
+    ...(shard === undefined ? {} : { shard: { ...shard, rules: keyed.length } }),
+    summary: summarizeRules(reports),
     rules: reports,
   };
   return { report, goldens: serialized, goldensChanged: serialized !== committedGoldens };

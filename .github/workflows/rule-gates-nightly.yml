@@ -104,6 +104,18 @@ jobs:
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: react
+            tool: eslint-plugin-react
+          - pack: react
+            tool: eslint-plugin-react-hooks
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
+          - pack: typescript
+            tool: typescript-eslint
+          - pack: typescript
+            tool: eslint-plugin-vitest
           - pack: next
             tool: eslint-plugin-next
     steps:

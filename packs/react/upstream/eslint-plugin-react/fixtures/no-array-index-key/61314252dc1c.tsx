@@ -1,0 +1,2 @@
+foo.map((baz, i) => <Foo key={baz.id} />)
+// features: [], parser: @typescript-eslint/parser

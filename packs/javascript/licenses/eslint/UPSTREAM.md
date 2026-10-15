@@ -9,9 +9,12 @@ under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annot
 Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json` recordings
 it writes by running ESLint.
 
-Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written
-by `upstream/generate.mjs`: cases with a custom parser or type information, and performance stress cases over 64 KiB,
-are left out, and identical code in the same language is written once.
+Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written by
+`upstream/generate.mjs`: cases with a custom parser or type information, and performance stress cases over 64 KiB, are
+left out, and identical code in the same language is written once. The rule gates' recorder (`npm run gates:record`)
+reuses those files and writes every other case the gates read, the same verbatim `code`, as
+`upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording, `upstream/eslint/gates.json`, also holds the
+`code` of every RuleTester case of ESLint's rule tests, verbatim, as the words `not-overfit` reads.
 
 Paths are relative to the pack directory, `packs/javascript/`.
 
@@ -6971,6 +6974,10 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/no-unexpected-multiline/052.js` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
 | `upstream/eslint/fixtures/no-unexpected-multiline/053.js` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
 | `upstream/eslint/fixtures/no-unexpected-multiline/054.js` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
+| `upstream/eslint/fixtures/no-unexpected-multiline/09012da2448d.ts` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
+| `upstream/eslint/fixtures/no-unexpected-multiline/16c56cd7a81e.ts` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
+| `upstream/eslint/fixtures/no-unexpected-multiline/76ed1f1f9f52.ts` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
+| `upstream/eslint/fixtures/no-unexpected-multiline/b2f0d5ba988b.ts` | `tests/lib/rules/no-unexpected-multiline.js` | derived |
 | `upstream/eslint/fixtures/no-unneeded-ternary/001.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
 | `upstream/eslint/fixtures/no-unneeded-ternary/002.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
 | `upstream/eslint/fixtures/no-unneeded-ternary/003.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
@@ -7011,6 +7018,8 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/no-unneeded-ternary/038.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
 | `upstream/eslint/fixtures/no-unneeded-ternary/039.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
 | `upstream/eslint/fixtures/no-unneeded-ternary/040.js` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
+| `upstream/eslint/fixtures/no-unneeded-ternary/3f6b9d3d2fc1.ts` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
+| `upstream/eslint/fixtures/no-unneeded-ternary/b4f090f8516b.ts` | `tests/lib/rules/no-unneeded-ternary.js` | derived |
 | `upstream/eslint/fixtures/no-unsafe-finally/001.js` | `tests/lib/rules/no-unsafe-finally.js` | derived |
 | `upstream/eslint/fixtures/no-unsafe-finally/002.js` | `tests/lib/rules/no-unsafe-finally.js` | derived |
 | `upstream/eslint/fixtures/no-unsafe-finally/003.js` | `tests/lib/rules/no-unsafe-finally.js` | derived |
@@ -8107,6 +8116,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/no-useless-constructor/055.ts` | `tests/lib/rules/no-useless-constructor.js` | derived |
 | `upstream/eslint/fixtures/no-useless-constructor/056.ts` | `tests/lib/rules/no-useless-constructor.js` | derived |
 | `upstream/eslint/fixtures/no-useless-constructor/057.ts` | `tests/lib/rules/no-useless-constructor.js` | derived |
+| `upstream/eslint/fixtures/no-useless-constructor/4239427f184a.ts` | `tests/lib/rules/no-useless-constructor.js` | derived |
 | `upstream/eslint/fixtures/no-useless-rename/001.js` | `tests/lib/rules/no-useless-rename.js` | derived |
 | `upstream/eslint/fixtures/no-useless-rename/002.js` | `tests/lib/rules/no-useless-rename.js` | derived |
 | `upstream/eslint/fixtures/no-useless-rename/003.js` | `tests/lib/rules/no-useless-rename.js` | derived |
@@ -8335,6 +8345,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/no-var/073.ts` | `tests/lib/rules/no-var.js` | derived |
 | `upstream/eslint/fixtures/no-var/074.ts` | `tests/lib/rules/no-var.js` | derived |
 | `upstream/eslint/fixtures/no-var/075.ts` | `tests/lib/rules/no-var.js` | derived |
+| `upstream/eslint/fixtures/no-var/b278601439f1.ts` | `tests/lib/rules/no-var.js` | derived |
 | `upstream/eslint/fixtures/no-void/001.js` | `tests/lib/rules/no-void.js` | derived |
 | `upstream/eslint/fixtures/no-void/002.js` | `tests/lib/rules/no-void.js` | derived |
 | `upstream/eslint/fixtures/no-void/003.js` | `tests/lib/rules/no-void.js` | derived |
@@ -9131,6 +9142,9 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/prefer-exponentiation-operator/190.js` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
 | `upstream/eslint/fixtures/prefer-exponentiation-operator/191.js` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
 | `upstream/eslint/fixtures/prefer-exponentiation-operator/192.js` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
+| `upstream/eslint/fixtures/prefer-exponentiation-operator/09e6366eecac.ts` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
+| `upstream/eslint/fixtures/prefer-exponentiation-operator/608ea709a0a0.ts` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
+| `upstream/eslint/fixtures/prefer-exponentiation-operator/f3ae74ea3df1.ts` | `tests/lib/rules/prefer-exponentiation-operator.js` | derived |
 | `upstream/eslint/fixtures/prefer-numeric-literals/001.js` | `tests/lib/rules/prefer-numeric-literals.js` | derived |
 | `upstream/eslint/fixtures/prefer-numeric-literals/002.js` | `tests/lib/rules/prefer-numeric-literals.js` | derived |
 | `upstream/eslint/fixtures/prefer-numeric-literals/003.js` | `tests/lib/rules/prefer-numeric-literals.js` | derived |
@@ -9436,6 +9450,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/prefer-template/085.js` | `tests/lib/rules/prefer-template.js` | derived |
 | `upstream/eslint/fixtures/prefer-template/086.js` | `tests/lib/rules/prefer-template.js` | derived |
 | `upstream/eslint/fixtures/prefer-template/087.js` | `tests/lib/rules/prefer-template.js` | derived |
+| `upstream/eslint/fixtures/prefer-template/d6a8df525147.js` | `tests/lib/rules/prefer-template.js` | derived |
 | `upstream/eslint/fixtures/radix/001.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/002.js` | `tests/lib/rules/radix.js` | derived |
 | `upstream/eslint/fixtures/radix/003.js` | `tests/lib/rules/radix.js` | derived |
@@ -9553,6 +9568,8 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/require-await/037.js` | `tests/lib/rules/require-await.js` | derived |
 | `upstream/eslint/fixtures/require-await/038.js` | `tests/lib/rules/require-await.js` | derived |
 | `upstream/eslint/fixtures/require-await/039.js` | `tests/lib/rules/require-await.js` | derived |
+| `upstream/eslint/fixtures/require-await/5f9c9ff60882.ts` | `tests/lib/rules/require-await.js` | derived |
+| `upstream/eslint/fixtures/require-await/d7f53e0b28cf.ts` | `tests/lib/rules/require-await.js` | derived |
 | `upstream/eslint/fixtures/require-yield/001.js` | `tests/lib/rules/require-yield.js` | derived |
 | `upstream/eslint/fixtures/require-yield/002.js` | `tests/lib/rules/require-yield.js` | derived |
 | `upstream/eslint/fixtures/require-yield/003.js` | `tests/lib/rules/require-yield.js` | derived |

@@ -23,18 +23,65 @@ permissions:
 
 jobs:
   gates:
-    name: Rule gates (${{ matrix.pack }} · ${{ matrix.tool }})
+    name: Rule gates (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
+    # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml.
+        # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml. A tool-pack
+        # too slow for one leg runs in `shards` legs, one per `shard` (1 to shards), each judging the rules whose
+        # sha256(id) mod shards is shard - 1; the report job merges them (docs/rule-gates.md, "Sharding").
         include:
           - pack: python
             tool: ruff
           - pack: python
             tool: bandit
+          - pack: react
+            tool: eslint-plugin-react
+          - pack: react
+            tool: eslint-plugin-react-hooks
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
+          # 47 rules on vscode's 10,176 files: one leg would run about two hours.
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 1
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 2
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 3
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 4
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 5
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 6
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 7
+            shards: 8
+          - pack: typescript
+            tool: typescript-eslint
+            shard: 8
+            shards: 8
+          - pack: typescript
+            tool: eslint-plugin-vitest
           - pack: next
             tool: eslint-plugin-next
     steps:
@@ -68,19 +115,20 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .rerail/gates/results
-          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-
+            rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-
 
       - id: gates
         name: Run the gates
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
+          SHARD: ${{ matrix.shards && format('{0}/{1}', matrix.shard, matrix.shards) || '' }}
           NO_CACHE: ${{ inputs.no-cache && '--no-cache' || '' }}
         run: |
           set +e
-          npm run gates -- --pack "$PACK" --tool "$TOOL" --out "$RUNNER_TEMP/gates" $NO_CACHE
+          npm run gates -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $NO_CACHE
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Save the corpus and upstream's test files
@@ -98,14 +146,14 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .rerail/gates/results
-          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: rule-gates-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
         continue-on-error: true
 
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: rule-gates-${{ matrix.pack }}-${{ matrix.tool }}
+          name: rule-gates-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}
           path: ${{ runner.temp }}/gates/
           if-no-files-found: warn
           retention-days: 14
@@ -165,6 +213,10 @@ jobs:
           set +e
           # A push that creates a branch has no previous head.
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
+          # A sharded tool-pack's legs each wrote shard-<i>of<n>/<pack>--<tool>.json: merge them into its report first.
+          # Shards that are missing or disagree leave the tool-pack without a report, which the summary fails.
+          npm run gates -- merge "$RUNNER_TEMP/gates"
+          if [ "$?" = 2 ]; then echo "::error::A sharded tool-pack's shards are missing or disagree (gates merge says which); it has no report."; fi
           npm run gates -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 

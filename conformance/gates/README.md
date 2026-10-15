@@ -1,7 +1,7 @@
 # Rule gates
 
 The rule gates judge every rule document of a gated tool-pack (one upstream tool in one pack: `python/ruff`,
-`python/bandit`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
+`typescript/typescript-eslint`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
 of the pack contract (`test/engine/catalog/packs.test.ts`) and the conformance check; they do not replace either.
 Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Documents under `packs/<pack>/candidates/**`
 (except `candidates/probes/**`) go through the same gates and are only reported.
@@ -26,6 +26,8 @@ npm run gates                                   # every gated tool-pack, reports
 npm run gates -- --pack python --tool bandit    # one tool-pack
 npm run gates -- --no-cache                     # judge every rule again
 npm run gates -- --write                        # also write this run's golden promotions to goldens.tsv
+npm run gates -- --pack typescript --tool typescript-eslint --shard 2/6   # one shard: rules with sha256(id) mod 6 = 1
+npm run gates -- merge .rerail/reports/gates    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run gates -- summary .rerail/reports/gates --base <sha>
 ```
 
@@ -33,7 +35,8 @@ Exit 1 when a shipped rule fails (or the summary has a blocking failure), 2 on a
 native engine; it reads no upstream runtime. It fetches only the pinned corpora (catalog task files and the pack's
 `conformance.json` corpora), cached under `.rerail/gates/corpus/`.
 
-Per-rule results are cached under `.rerail/gates/results/<pack>/<tool>/<key>.json` (`--cache <dir>` moves the root).
+Per-rule results are cached under `.rerail/gates/results/<pack>/<tool>/<key>.json`, a shard's under
+`<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
 The key covers the gate code, the engine (tracked engine sources and the native binary), the tool-pack's `gates.yaml`,
 `gates.json` and `gates-corpus.json`, the corpus pins, and the rule's document, conformance entry, goldens and case
 sources. When every rule hits, nothing is fetched or evaluated.
@@ -57,10 +60,9 @@ complete. The report's method text says so.
 
 ## Packs that are not gated
 
-`pending.json` lists the ESLint-family tool-packs not yet recorded (javascript/eslint, javascript/eslint-plugin-unicorn,
-typescript/typescript-eslint, typescript/eslint-plugin-vitest, react/eslint-plugin-react,
-react/eslint-plugin-react-hooks): they are still validated in nera-rule-validation until their recordings land, are
-reported as pending and are not frozen.
+`pending.json` lists the ESLint-family tool-packs not gated yet. It is empty now that every one is recorded; a
+tool-pack listed there is still validated in nera-rule-validation until its recordings land, is reported as pending
+and is not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (blade, complexity,
 node, php). It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted

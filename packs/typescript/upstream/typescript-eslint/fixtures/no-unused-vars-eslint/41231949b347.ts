@@ -1,0 +1,6 @@
+
+function foo(a) {
+  a++;
+}
+foo();
+      
