@@ -9,7 +9,8 @@ name: Rule gates (record)
 # Started three ways:
 #   * workflow_dispatch, with a pack, a tool and the pull request to record for;
 #   * the `record-gates` label on a pull request (removed again when the job starts, so a second label re-runs it);
-#   * rule-gates-nightly.yml, with check: true, which reports drift on main and uploads nothing.
+#   * workflow_call, with check: true to report drift and upload nothing. (rule-gates-nightly.yml runs its own
+#     read-only copy of the check: calling this workflow would need the write permissions its jobs ask for.)
 #
 # How a recording reaches the pull request: the job pushes the manifest commit to the pull request's branch when it
 # can (a branch in this repository), and otherwise — a fork — pushes `gate-recordings/pr-<n>` here and says in a

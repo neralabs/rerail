@@ -177,9 +177,9 @@ branch**, reading only the pull request's pins and rule list. For a branch in th
 commit to that branch; for a fork, whose branch the default token cannot write to, it pushes
 `gate-recordings/pr-<n>` here and comments to say so.
 
-`rule-gates-nightly.yml` calls the same job with `check: true`, so it reports when a committed recording no longer
-matches the pinned upstream and uploads nothing, then judges every rule again (`--refresh-cache`) and saves the fresh
-results.
+`rule-gates-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
+committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
+(`--refresh-cache`) and saves the fresh results.
 
 Because the recordings are no longer in the diff, `gates:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed

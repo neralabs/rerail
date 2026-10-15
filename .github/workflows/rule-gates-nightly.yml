@@ -92,17 +92,84 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The drift check records through the same reusable job the on-demand recorder uses (rule-gates-record.yml): one
-  # place runs the upstream linters, one place uploads to the release. `check: true` makes it report drift and upload
-  # nothing, so the night tells main that upstream moved without quietly re-recording main behind the maintainers.
+  # The drift check runs the recorder as rule-gates-record.yml does, with --check: it reports when upstream moved and
+  # uploads nothing, so the night tells main without quietly re-recording main behind the maintainers. It is its own
+  # job rather than a call to that workflow because a called workflow's jobs may not ask for more than the caller
+  # grants, and the recorder's authorize and record jobs ask for write: GitHub would refuse the whole nightly run at
+  # startup, and granting write here would hand the scheduled run a write token while upstream linters run.
   record-check:
-    name: Recordings match upstream
+    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       contents: read
-    uses: ./.github/workflows/rule-gates-record.yml
-    with:
-      check: true
+    strategy:
+      fail-fast: false
+      # rule-gates-record.yml's matrix: every gated tool-pack.
+      matrix:
+        include:
+          - pack: python
+            tool: ruff
+          - pack: python
+            tool: bandit
+          - pack: react
+            tool: eslint-plugin-react
+          - pack: react
+            tool: eslint-plugin-react-hooks
+          - pack: javascript
+            tool: eslint
+          - pack: javascript
+            tool: eslint-plugin-unicorn
+          - pack: typescript
+            tool: typescript-eslint
+          - pack: typescript
+            tool: eslint-plugin-vitest
+          - pack: next
+            tool: eslint-plugin-next
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the package
+        run: npm run build:js
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      # The recorder's own cache, so a run on main warms what the next maintainer recording reads.
+      - name: Restore the upstream runtimes, checkouts, corpus and recordings
+        uses: actions/cache@v6
+        with:
+          path: |
+            .rerail/gates/runtimes
+            .rerail/gates/upstream
+            .rerail/gates/corpus
+            .rerail/gates/recordings
+          key: rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/gates/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/gates/corpus-tasks.json') }}
+          restore-keys: |
+            rule-gates-record-${{ matrix.pack }}-${{ matrix.tool }}-
+
+      - name: Fetch the recording the manifest names
+        continue-on-error: true
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run gates -- fetch --pack "$PACK" --tool "$TOOL"
+
+      - name: Report drift against the committed manifest
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: npm run gates:record -- --pack "$PACK" --tool "$TOOL" --check
 
   gates:
     name: Rule gates, uncached
