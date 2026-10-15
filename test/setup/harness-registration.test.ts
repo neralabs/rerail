@@ -728,8 +728,11 @@ describe("Claude Code commands", () => {
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
     const create = await read("rerail-create");
-    expect(create).toContain(`allowed-tools: Bash(${command} rules test *), Bash(${command} rules add *)\n`);
+    expect(create).toContain(
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules export *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+    );
     expect(create).toContain("\"$ARGUMENTS\"");
+    expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.
     const rageQuit = await read("rerail-rage-quit");
     expect(rageQuit).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} stop)\n`);

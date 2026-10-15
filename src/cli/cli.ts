@@ -47,6 +47,7 @@ import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
+import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -126,6 +127,7 @@ function usage(): string {
     "  rerail rules import <rules.json>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
+    "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail [--profile <name>] events",
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
@@ -544,6 +546,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "session") return await runSessionCommand(args);
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
+  if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);

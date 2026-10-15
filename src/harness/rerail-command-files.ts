@@ -149,7 +149,7 @@ function commandBody(agent: CommandFileAgent, name: RerailCommandName, context: 
         : `the words the person typed after ${sigil}rerail-create`;
       return {
         text: createRuleInstructions({ cli, packageRoot, request }),
-        allowed: [`${cli} rules test *`, `${cli} rules add *`],
+        allowed: [`${cli} rules evidence *`, `${cli} rules export *`, `${cli} rules test *`, `${cli} rules add *`],
       };
     }
     case "rerail-start":
