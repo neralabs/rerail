@@ -589,17 +589,22 @@ export function hasCompletedViolation(events: readonly { kind: string; payload: 
 export function watchForViolation(path: string): () => Promise<boolean> {
   let seen = false;
   let failure: unknown;
-  const check = async (): Promise<void> => {
+  const read = async (): Promise<void> => {
     try {
       if ((await unlessMissing(readFile(path, "utf8")))?.includes("cursor.execute")) seen = true;
     } catch (error) {
       failure ??= error;
     }
   };
-  const timer = setInterval(() => void check(), VIOLATION_POLL_MS);
+  // One read at a time, so stop can wait for the read in flight and lose neither its sighting nor its error.
+  let polling: Promise<void> | undefined;
+  const timer = setInterval(() => {
+    polling ??= read().finally(() => (polling = undefined));
+  }, VIOLATION_POLL_MS);
   return async () => {
     clearInterval(timer);
-    await check();
+    await polling;
+    await read();
     if (failure !== undefined) throw failure;
     return seen;
   };
@@ -821,7 +826,6 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
     const invocation = hostCommand(host, project, prompt);
     const stopWatching = watchForViolation(join(project, "api", "route.py"));
-    let violationSeen: boolean;
     try {
       result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
         cwd: project,
@@ -829,9 +833,12 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
         timeout: TIMEOUT_MS,
         jsonEvents: true,
       });
-    } finally {
-      violationSeen = await stopWatching();
+    } catch (error) {
+      // The harness failure is the one to report; the watcher only needs stopping.
+      await stopWatching().catch(() => undefined);
+      throw error;
     }
+    const violationSeen = await stopWatching();
     const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE);
     const passed = assertions.every((assertion) => assertion.passed);
     const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name).join(", ");
