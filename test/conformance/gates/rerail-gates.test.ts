@@ -102,6 +102,13 @@ describe("location-based blocking", () => {
     assert.equal(summary.pass, false);
   });
 
+  it("a candidate a failing tool-pack check blocks is not ready to promote, and says why", () => {
+    const blocked = { ...rule("b", "candidate"), pass: false, blockedBy: "bundled-load: Duplicate bundled rule id: x" };
+    const summary = summarize([report([blocked])], noUngated, []);
+    assert.deepEqual(summary.promotable, []);
+    assert.deepEqual(summary.candidateRows.map((row) => [row.rule, row.stoppedAt, row.why]), [["b", "Tool-pack checks", "bundled-load: Duplicate bundled rule id: x"]]);
+  });
+
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {
     const root = tempRoot();
     for (const path of ["packs/p/rules/a.json", "packs/p/candidates/rules/b.json", "packs/p/candidates/probes/c.json", "packs/p/candidates/conformance.json"]) write(root, path, {});

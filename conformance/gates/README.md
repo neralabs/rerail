@@ -55,9 +55,13 @@ packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-test
 ```
 
 `npm run gates:record -- --pack <id> --tool <tool>` (conformance/recorders/gates/) writes the recordings. A tool-pack
-check that fails (pins disagree between `gates.yaml`, `gates.json` and `conformance.json`; a runtime lockfile differs
-from the committed one; the kept LICENSE is not the recorded one; a rule is not recorded) fails every shipped rule of the
-tool-pack: the recording is stale.
+check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
+recording is stale when pins disagree between `gates.yaml`, `gates.json` and `conformance.json`, a runtime lockfile
+differs from the committed one, the kept LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and
+the recording checks). `corpus-complete` fails when a file `gates-corpus.json` answers for was not fetched with its
+recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
+the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
+duplicate id) fails it.
 
 Offline, `not-overfit` runs regexes over the committed case sources only, not every upstream test file; test words stay
 complete. The report's method text says so.

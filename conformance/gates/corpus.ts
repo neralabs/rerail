@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { runChecked, type CommandRunner } from "./process.js";
+import type { Check } from "./types.js";
 
 /**
  * The corpus `matches-real-code` reads: the code a SWE Atlas/Evo task ends with. For every pinned task
@@ -65,7 +66,12 @@ export interface CorpusTask {
   repository: string;
   baseSha: string;
   patchSha256: string | null;
-  status: "applied" | "skipped";
+  /**
+   * `skipped`: the task has nothing the linter reads, or its solution does not apply; the same on every run.
+   * `failed`: a pinned input could not be fetched (a download or git fetch failed, or the bytes differ from the pin), so
+   * this run lacks files a complete run has.
+   */
+  status: "applied" | "skipped" | "failed";
   reason: string;
   files: number;
 }
@@ -137,7 +143,9 @@ async function huggingFaceText(cacheRoot: string, cell: NonNullable<ReturnType<t
   return typeof value === "string" ? value : undefined;
 }
 
-async function referencePatch(cacheRoot: string, reference: NonNullable<PinnedTask["reference"]>): Promise<{ text: string; sha256: string } | string> {
+type Unfetched = { status: "skipped" | "failed"; reason: string };
+
+async function referencePatch(cacheRoot: string, reference: NonNullable<PinnedTask["reference"]>): Promise<{ text: string; sha256: string } | Unfetched> {
   const expected = reference.sha256;
   const cached = join(cacheRoot, "corpus", "patches", `${expected}.patch`);
   if (existsSync(cached)) {
@@ -150,16 +158,16 @@ async function referencePatch(cacheRoot: string, reference: NonNullable<PinnedTa
   let bytes: Buffer;
   if (github !== undefined) {
     const response = await fetch(github);
-    if (!response.ok) return `downloading its reference patch failed with HTTP ${response.status}`;
+    if (!response.ok) return { status: "failed", reason: `downloading its reference patch failed with HTTP ${response.status}` };
     bytes = Buffer.from(await response.arrayBuffer());
   } else if (cell !== undefined) {
     const text = await huggingFaceText(cacheRoot, cell);
-    if (text === undefined) return `its reference patch is not readable at ${locator}`;
+    if (text === undefined) return { status: "failed", reason: `its reference patch is not readable at ${locator}` };
     bytes = Buffer.from(text, "utf8");
   } else {
-    return `its reference patch is neither a pinned GitHub file nor a pinned Hugging Face dataset cell (${locator.split("#")[0]})`;
+    return { status: "skipped", reason: `its reference patch is neither a pinned GitHub file nor a pinned Hugging Face dataset cell (${locator.split("#")[0]})` };
   }
-  if (sha256(bytes) !== expected) return `its reference patch does not match the sha256 the catalog pins (${expected})`;
+  if (sha256(bytes) !== expected) return { status: "failed", reason: `its reference patch does not match the sha256 the catalog pins (${expected})` };
   await mkdir(join(cacheRoot, "corpus", "patches"), { recursive: true });
   await writeFile(cached, bytes);
   return { text: bytes.toString("utf8"), sha256: expected };
@@ -200,6 +208,9 @@ export async function checkoutPinned(repository: string, commit: string, directo
   return directory;
 }
 
+/** A reference solution that does not apply to its base commit: the same on every run, unlike a failed fetch. */
+class PatchDoesNotApply extends Error {}
+
 /**
  * The patched files of one task, read from a cached sparse checkout of its base commit with the patch applied. The
  * cache is reused only while every patched file still has the digest recorded when it was built.
@@ -233,11 +244,37 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
   // cannot drop the task.
   const kept = patchedPaths(patch.text).filter(({ after }) => after !== null && wanted.includes(after))
     .flatMap(({ before, after }) => [before, after]).filter((path): path is string => path !== null);
-  await runChecked(runner, ["git", "-C", directory, "apply", ...[...new Set(kept)].map((path) => `--include=${path}`), "-"], { input: patch.text });
+  try {
+    await runChecked(runner, ["git", "-C", directory, "apply", ...[...new Set(kept)].map((path) => `--include=${path}`), "-"], { input: patch.text });
+  } catch (error) {
+    throw new PatchDoesNotApply(error instanceof Error ? error.message : String(error));
+  }
   const files = new Map<string, string>();
   for (const path of wanted) files.set(path, await readFile(join(directory, path), "utf8"));
   await writeFile(record, `${JSON.stringify({ patchSha256: patch.sha256, baseSha, files: Object.fromEntries([...files].map(([path, text]) => [path, sha256(text)])) })}\n`);
   return files;
+}
+
+/**
+ * corpus-complete: every file `gates-corpus.json` holds upstream's answers for was fetched on this run with the bytes it
+ * was recorded on. A task that failed to fetch (a download, a git fetch) or a file whose bytes differ would otherwise
+ * drop out of matches-real-code without a word, and the rules judged on the rest would pass.
+ */
+export function corpusCompleteCheck(recorded: readonly { task: string; path: string; sha256: string }[], fetched: readonly CorpusFile[], tasks: readonly CorpusTask[]): Check {
+  const have = new Set(fetched.map((file) => `${file.task}\0${file.path}\0${file.sha256}`));
+  const missing = recorded.filter((file) => !have.has(`${file.task}\0${file.path}\0${file.sha256}`));
+  if (missing.length === 0) return { id: "corpus-complete", ok: true, detail: `all ${recorded.length} recorded corpus file(s) were fetched with their recorded sha256` };
+  const failed = tasks.filter((task) => task.status === "failed");
+  return {
+    id: "corpus-complete",
+    ok: false,
+    detail: `${missing.length} of ${recorded.length} recorded corpus file(s) were not fetched with their recorded sha256 (e.g. ${missing[0]!.task}: ${missing[0]!.path})${failed.length === 0 ? "" : `; ${failedTasksMessage(failed)}`}: run the gates again`,
+  };
+}
+
+/** The tasks a run failed to fetch, for an error or a check's detail. */
+export function failedTasksMessage(failed: readonly CorpusTask[]): string {
+  return `${failed.length} corpus task(s) could not be fetched (${failed.slice(0, 3).map((task) => `${task.task}: ${task.reason}`).join("; ")})`;
 }
 
 /** Build the corpus of files the pack's linter reads (`inCorpus`) from every pinned task's reference solution. */
@@ -251,8 +288,8 @@ export async function buildCorpus(cacheRoot: string, inCorpus: (path: string) =>
       continue;
     }
     const patch = await referencePatch(cacheRoot, reference);
-    if (typeof patch === "string") {
-      tasks.push({ ...entry, patchSha256: reference.sha256, status: "skipped", reason: patch, files: 0 });
+    if ("status" in patch) {
+      tasks.push({ ...entry, patchSha256: reference.sha256, ...patch, files: 0 });
       continue;
     }
     const wanted = patchedPaths(patch.text)
@@ -268,7 +305,10 @@ export async function buildCorpus(cacheRoot: string, inCorpus: (path: string) =>
       for (const [path, source] of patched) files.push({ task, repository, path, source, sha256: sha256(source) });
       tasks.push({ ...entry, patchSha256: patch.sha256, status: "applied", reason: "its solution applies to the base commit", files: patched.size });
     } catch (error) {
-      tasks.push({ ...entry, patchSha256: patch.sha256, status: "skipped", reason: `its solution does not apply: ${(error instanceof Error ? error.message : String(error)).split("\n").slice(-1)[0]}`, files: 0 });
+      const last = (error instanceof Error ? error.message : String(error)).split("\n").slice(-1)[0];
+      tasks.push(error instanceof PatchDoesNotApply
+        ? { ...entry, patchSha256: patch.sha256, status: "skipped", reason: `its solution does not apply: ${last}`, files: 0 }
+        : { ...entry, patchSha256: patch.sha256, status: "failed", reason: `fetching its base commit failed: ${last}`, files: 0 });
     }
   }
   return { tasks, files };

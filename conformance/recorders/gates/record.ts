@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 
-import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, readRerailCorpora, type CorpusFile } from "../../gates/corpus.js";
+import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, type CorpusFile, type RerailCorpus } from "../../gates/corpus.js";
 import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../gates/manifest.js";
 import type { CommandRunner } from "../../gates/process.js";
 import {
@@ -235,6 +235,17 @@ const spans = (found: Span[]): RecordedSpan[] => found.map(spanTuple).sort(compa
 /** A set id from its content, so a set several rules share is stored once and named the same on every machine. */
 const setId = (kind: string, value: unknown): string => `${kind}:${sha256(JSON.stringify(value)).slice(0, 16)}`;
 
+/**
+ * Every corpus file the linter reads. A task that could not be fetched throws: the recording would lack its answers, and
+ * the gates would then never ask for them.
+ */
+async function wholeCorpus(cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[]): Promise<CorpusFile[]> {
+  const catalog = await buildCorpus(cacheRoot, inCorpus, runner);
+  const failed = catalog.tasks.filter((task) => task.status === "failed");
+  if (failed.length > 0) throw new Error(`${failedTasksMessage(failed)}: the recording would lack their answers; record again`);
+  return [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner)).files];
+}
+
 /** Run the live adapter and build the recording; writes nothing. */
 export async function recordToolPack(options: RecordOptions): Promise<Recorded> {
   const { root, pack: packId, tool, cacheRoot, runner } = options;
@@ -366,9 +377,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   // Upstream's answers on the corpus: the pinned tasks' solutions and the corpora the pack pins.
   const inCorpus = (path: string) => adapter.inCorpus(path);
   const corpora = await readRerailCorpora(root, packId);
-  const fetched = options.corpusFiles !== undefined
-    ? await options.corpusFiles(inCorpus)
-    : [...(await buildCorpus(cacheRoot, inCorpus, runner)).files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner)).files];
+  const fetched = options.corpusFiles !== undefined ? await options.corpusFiles(inCorpus) : await wholeCorpus(cacheRoot, inCorpus, runner, corpora);
   const unique = new Map<string, CorpusFile>();
   for (const file of fetched) if (!unique.has(`${file.task}\0${file.path}`)) unique.set(`${file.task}\0${file.path}`, file);
   const corpusFiles = [...unique.keys()].sort(byText).map((key) => unique.get(key)!);

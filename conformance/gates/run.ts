@@ -10,7 +10,7 @@ import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js"
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { CASES_PER_KIND, differingFiles, MATCHES_REAL_CODE_METHOD, matchesRealCodeGate, type MatchesRealCodeResult, type RealCodeCase } from "./checks/matches-real-code.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, readPath, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineIdentity, loadEngine, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, promote, readGoldens, serializeGoldens, type Golden, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
@@ -65,7 +65,7 @@ export interface RuleReport {
   pass: boolean;
   /** The first blocking gate the rule failed; null when it passed them all. */
   stoppedAt: BlockingGateId | null;
-  /** Why the rule fails although no gate stopped it (a stale recording), or null. */
+  /** The failing tool-pack checks that fail the rule whatever its gates say (a stale recording, an incomplete corpus), or null. */
   blockedBy: string | null;
   /** upstream-status's call: on when it exists upstream, is stable and is recommended. */
   defaultOn: boolean;
@@ -466,7 +466,20 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const recordedPins = adapter.recordedCorpusPins;
   const corpusPinsOk = recordedPins !== null && recordedPins.tasks === sha256(corpusTasksText) && canonicalJson(recordedPins.corpora) === canonicalJson(corpora);
   pinChecks.push({ id: "corpus-pins", ok: corpusPinsOk, detail: corpusPinsOk ? "gates-corpus.json was recorded on this branch's pinned tasks and corpora" : `gates-corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` });
-  const toolPack = gate(pinChecks);
+
+  // bundled-load: rerail loads every document in the pack's rules/ together, whatever its upstream tool, so a conflict
+  // between them (a duplicate id) fails here, where each rule's own loads check reads one document. It runs on every
+  // run, cached or not.
+  const engine = loadEngine(root);
+  const shippedDocuments = documents.filter((document) => document.location === "shipped").map((document) => readRule(root, document.path, byPath.get(document.path)?.upstream.rule ?? ""));
+  await mkdir(join(cacheRoot, "tmp"), { recursive: true });
+  try {
+    const loaded = loadAsBundled(engine, join(cacheRoot, "tmp"), pack, shippedDocuments);
+    const ok = loaded.ids.length === shippedDocuments.length;
+    pinChecks.push({ id: "bundled-load", ok, detail: ok ? `rerail's bundled-rule loader loads all ${shippedDocuments.length} shipped document(s) of the pack together` : `the loader returned ${loaded.ids.length} rule(s) for ${shippedDocuments.length} shipped document(s)` });
+  } catch (error) {
+    pinChecks.push({ id: "bundled-load", ok: false, detail: `the pack's shipped rules do not load together through rerail's bundled-rule loader: ${error instanceof Error ? error.message : String(error)}` });
+  }
 
   const goldens = await readGoldens(directory);
   const committedGoldens = serializeGoldens(goldens);
@@ -519,13 +532,17 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       const result = cached.get(entry.key)!;
       promote(goldens, result.report.id, result.promoted);
     }
+    pinChecks.push({ id: "corpus-complete", ok: true, detail: "not fetched on this run: every result is cached from a run that fetched every recorded corpus file" });
   } else {
-    const engine = loadEngine(root);
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
     const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner);
     const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner);
     const corpusFiles = [...catalog.files, ...rerailCorpus.files];
+    const complete = corpusCompleteCheck(inputs.corpus?.files ?? [], corpusFiles, [...catalog.tasks, ...rerailCorpus.tasks]);
+    pinChecks.push(complete);
+    // Results judged on part of the corpus are reported (and fail through corpus-complete) but never cached.
+    const save = options.writeCache && complete.ok;
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
     const cases = new Map<string, UpstreamCase[]>(names.filter((name) => adapter.rule(name) !== undefined).map((name) => [name, adapter.cases(name)]));
@@ -534,11 +551,6 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     const scratch = mkdtempSync(join(cacheRoot, "tmp", "gates-"));
     const integrity = [...gaps.problems];
     try {
-      try {
-        loadAsBundled(engine, scratch, pack, rules.filter((entry) => entry.location === "shipped").map((entry) => entry.rule));
-      } catch (error) {
-        integrity.push(`the shipped rules do not load through RERAIL's bundled-rule loader: ${error instanceof Error ? error.message : String(error)}`);
-      }
       // Replay cached promotions first, so evaluated rules see the same goldens a full run would.
       for (const entry of judged) {
         const hit = cached.get(entry.key);
@@ -548,7 +560,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
-        if (options.writeCache) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
+        if (save) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
       }
     } finally {
       rmSync(scratch, { recursive: true, force: true });
@@ -566,15 +578,19 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
       knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
     };
-    if (options.writeCache) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
+    if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }
+
+  const toolPack = gate(pinChecks);
+  const blockedBy = toolPack.pass ? null : toolPack.checks.filter((check) => !check.ok).map((check) => `${check.id}: ${check.detail}`).join("; ");
 
   const reports = judged.map((entry) => {
     const report = structuredClone(results.get(entry.key)!.report);
-    // A stale recording fails every shipped rule, whatever its gates say.
-    if (!toolPack.pass && report.location === "shipped") {
+    // A failing tool-pack check (a stale recording, an incomplete corpus, shipped rules that do not load together) fails
+    // every rule, whatever its gates say: a shipped rule blocks, and a candidate is not ready to promote.
+    if (blockedBy !== null) {
       report.pass = false;
-      report.blockedBy = staleMessage(pack, tool);
+      report.blockedBy = blockedBy;
     }
     return report;
   }).sort((a, b) => byText(a.file, b.file));

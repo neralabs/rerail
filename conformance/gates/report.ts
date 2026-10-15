@@ -14,7 +14,7 @@ export function gateTitle(id: GateId): string {
   return GATES.find((gate) => gate.id === id)!.title;
 }
 
-/** The first failing blocking check of a rule, as [gate title, check id, detail]; or the tool-pack's stale recording. */
+/** The first failing blocking check of a rule, as [gate title, check id, detail]; or the failing tool-pack checks. */
 export function firstFailure(rule: RuleReport): { stoppedAt: string; check: string; why: string } | null {
   if (rule.stoppedAt !== null) {
     const failing = rule.gates[rule.stoppedAt].checks.find((check: Check) => !check.ok);
@@ -26,7 +26,7 @@ export function firstFailure(rule: RuleReport): { stoppedAt: string; check: stri
 
 function stoppedLabel(rule: RuleReport): string {
   if (rule.pass) return "passes";
-  if (rule.stoppedAt === null) return "stale recording";
+  if (rule.stoppedAt === null) return "blocked by the tool-pack checks";
   return `stops at ${rule.stoppedAt}`;
 }
 

@@ -23,6 +23,12 @@ report shows every failure, not only the first.
 | `matches-real-code` | The rule and upstream run on real code: the SWE Atlas and SWE-Evo tasks' reference solutions and the corpora the pack pins in `conformance.json`. It never stops a rule by itself; every file where they differ becomes a golden that `matches-upstream-tests` judges in the same run. | through goldens |
 | `upstream-status` | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
+Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
+and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
+when a corpus file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a
+failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
+loader (`bundled-load`, for example two documents with one id).
+
 Goldens: a golden is a real-code file where the rule and upstream once differed (`packs/<id>/upstream/<tool>/goldens.tsv`:
 the rule, the task or corpus, the path and the file's sha256). Goldens are never removed; they stay as regression
 tests. When the engine could not fully read a golden (a parse failure, or its work budget ran out), the difference is
