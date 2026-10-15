@@ -2,7 +2,7 @@
   {
     "rule": "n-prefer-promises-fs",
     "source": "fixtures",
-    "path": "prefer-promises/fs/invalid-040.mjs",
+    "path": "prefer-promises/fs/invalid-040.js",
     "line": 1,
     "kind": "upstream-wrong",
     "evidence": "Upstream reports `fs.watch('file', () => {})` and steers to `fs.promises.watch`, which is not a drop-in replacement: Node's fs/promises `watch(filename, options)` returns an AsyncIterator of `{ eventType, filename }` and takes no listener, while `fs.watch` returns an FSWatcher (an EventEmitter with close(), ref(), unref() and 'change'/'error' events) and calls the listener. Following the steer breaks every caller that keeps the watcher or passes a listener. Rerail does not report `watch` (NER-1834); every other fs callback method is still reported."
