@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import { SqliteSessionReader } from "../../src/runtime/index.js";
-import { CodeRuleBridge } from "../../src/engine/index.js";
+import { CodeRuleBridge, SqliteAuditStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {
@@ -216,6 +216,24 @@ describe("NativeSessionServer request boundary", () => {
         }
       } finally {
         restore();
+      }
+    }, 30_000);
+
+    it("ends the audits of the session it replaces at the replace, before the old open finishes", async () => {
+      const { opening, databasePath, session, restore } = await held();
+      const audits = new SqliteAuditStore(databasePath);
+      try {
+        await server!.handle({ ...session, operation: "initialize", entries: [] });
+        const orphan = audits.start({
+          sessionId: "s", workspaceRoot: root!, scope: "repository", mode: "log",
+          revision: 0, catalogRevision: null, ruleRevisions: [], paths: [],
+        });
+        await server!.handle({ ...session, operation: "initialize", entries: [], input: { rebuild: true } });
+        expect(audits.get(orphan)?.status).toBe("interrupted");
+      } finally {
+        audits.close();
+        restore();
+        opening.resolve();
       }
     }, 30_000);
   });

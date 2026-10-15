@@ -568,6 +568,55 @@ describe("source-scoped steers", () => {
     }
   });
 
+  it("leaves the audits of a session another runtime reopened alone when the evaluator the closed runtime left opening is released late", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const databasePath = join(root, "rerail.sqlite");
+    const attachments = gateStorageAttachments();
+    const firstClosed = Promise.withResolvers<void>();
+    let created = 0;
+    const runtimeOptions = {
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: (options: ConstructorParameters<typeof NativeCodeRuleEnforcer>[1]) => {
+        const evaluator = new NativeCodeRuleEnforcer(needleCatalog(), options);
+        if (created++ === 0) {
+          const close = evaluator.close.bind(evaluator);
+          evaluator.close = async (...args) => { await close(...args); firstClosed.resolve(); };
+        }
+        return evaluator;
+      },
+    };
+    // The daemon makes one runtime per initialize: the second owns the session id once the first has closed it.
+    const first = new RerailRuntime(runtimeOptions);
+    const second = new RerailRuntime(runtimeOptions);
+    const audits = new SqliteAuditStore(databasePath);
+    const session = { host: "omp" as const, sessionId: "reopened-elsewhere", cwd: root };
+    try {
+      await first.ingest({ kind: "session-start", eventId: "start-1", session });
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
+      // The first evaluator is still held in its storage attach; its runtime closes the session without waiting for it.
+      await first.closeSession(session.sessionId);
+      await second.ingest({ kind: "session-start", eventId: "start-2", session });
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+      attachments.workspaces[1]!.release();
+      // The second runtime's evaluator has opened and its repository audit waits for the gate.
+      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(3));
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
+      attachments.workspaces[0]!.release();
+      await firstClosed.promise;
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
+      attachments.workspaces[2]!.release();
+      await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
+        expect.objectContaining({ scope: "repository", status: "completed" }),
+      ]));
+    } finally {
+      for (const workspace of attachments.workspaces) workspace.release();
+      attachments.restore();
+      await first.dispose();
+      await second.dispose();
+      audits.close();
+    }
+  });
+
   describe("a code-rule boundary reached while the evaluator is still opening", () => {
     /** A runtime whose first evaluator is held in its storage attach, and a boundary waits for it only 50 ms. */
     async function openingFixture() {
