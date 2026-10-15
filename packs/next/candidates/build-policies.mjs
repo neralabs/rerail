@@ -6,7 +6,12 @@
 // regexes) and keeps the documents consistent. Run offline by a maintainer, never in CI; the output is deterministic.
 //
 // Usage (from the repository root): node packs/next/candidates/build-policies.mjs
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+//
+// Each violation names its rule under suppress.eslint and, for the rules oxlint 1.88.0's `nextjs` plugin implements
+// (OXLINT_NEXTJS_RULES), under suppress.oxlint. suppress.biome belongs to scripts/generate/packs/biome-suppression.mjs:
+// this script carries each violation's suppress.biome over from the committed document, and biome-suppression.mjs, run
+// after it, updates it. A document keeps its committed revision; one with no committed version starts at revision 1.
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -96,20 +101,47 @@ const someLocal = match => ({
 const defaultLocal = match => ({ has: { kind: "import_clause", has: { kind: "identifier", ...match } } });
 const FIRST_LOCAL_IS_N = firstLocal({ pattern: "$N" });
 
+// The rules this script ports that oxlint 1.88.0's `nextjs` plugin implements (`oxlint --rules --format json`, scope
+// `nextjs`; oxc tag oxlint_v1.88.0). Oxlint names them without the plugin in its suppression comments:
+// `@next/next/no-img-element` is `no-img-element`.
+const OXLINT_NEXTJS_RULES = new Set([
+  "google-font-display", "google-font-preconnect", "inline-script-id", "next-script-for-ga", "no-assign-module-variable",
+  "no-async-client-component", "no-before-interactive-script-outside-document", "no-css-tags", "no-document-import-in-page",
+  "no-duplicate-head", "no-head-element", "no-head-import-in-document", "no-html-link-for-pages", "no-img-element",
+  "no-page-custom-font", "no-script-component-in-head", "no-styled-jsx-in-document", "no-sync-scripts",
+  "no-title-in-document-head", "no-typos", "no-unwanted-polyfillio",
+]);
+
+/** The committed document of rule `rule`, wherever it lives now, or undefined. */
+function committedDocument(rule) {
+  for (const directory of [PACK_RULES, CANDIDATES]) {
+    const path = join(directory, `next-${rule}.json`);
+    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  }
+  return undefined;
+}
+
 const WRITTEN = [];
 function policy(rule, description, checks, { candidate = false } = {}) {
   const code = `@next/next/${rule}`;
+  const committed = committedDocument(rule);
+  const biome = new Map((committed?.clauses ?? []).filter(clause => clause.violation?.suppress?.biome !== undefined).map(clause => [clause.id, clause.violation.suppress.biome]));
+  const suppress = id => ({
+    eslint: { rules: [code] },
+    ...(OXLINT_NEXTJS_RULES.has(rule) ? { oxlint: { rules: [rule] } } : {}),
+    ...(biome.has(id) ? { biome: biome.get(id) } : {}),
+  });
   const document = {
     format: "rerail.policy/v1",
     id: `next-${rule}`,
-    revision: 1,
+    revision: committed?.revision ?? 1,
     mode: "steer",
     description: `@next/eslint-plugin-next 16.3.8 ${code}: ${description}`,
     scope: SCOPE,
     clauses: checks.map(({ id, ast, message, anchor = "witness.span", each }) => ({
       id,
       forbid: { ast: { language: "typescript", ...ast } },
-      violation: { anchor, code, message, ...(each === undefined ? {} : { each }), suppress: { eslint: { rules: [code] } } },
+      violation: { anchor, code, message, ...(each === undefined ? {} : { each }), suppress: suppress(id) },
     })),
   };
   const directory = candidate ? CANDIDATES : PACK_RULES;
@@ -524,7 +556,9 @@ const GOOGLE_FONT_LINK = { all: [OPEN, named("link"), hasAttribute("href", liter
 /** The ancestor no-page-custom-font accepts as the default-exported component. */
 const DEFAULT_COMPONENT = {
   any: [
-    { kind: "function_declaration", inside: { kind: "export_statement", regex: "^export\\s+default\\s" } },
+    // `export default function () {}` is a function_expression in the grammar; the plugin reads it as a
+    // FunctionDeclaration whose null id matches the null default-export id.
+    { any: [{ kind: "function_declaration" }, { kind: "function_expression" }], inside: { kind: "export_statement", regex: "^export\\s+default\\s" } },
     { all: [DOCUMENT_CLASS, { inside: { kind: "export_statement", regex: "^export\\s+default\\s" } }] },
     {
       all: [

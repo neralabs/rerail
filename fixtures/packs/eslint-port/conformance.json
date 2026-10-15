@@ -1,0 +1,30 @@
+{
+  "pack": "eslint-port",
+  "family": "ecma",
+  "capabilities": [
+    "syntax",
+    "suppression"
+  ],
+  "corpora": [],
+  "tools": [
+    {
+      "name": "eslint",
+      "version": "10.11.0"
+    }
+  ],
+  "rules": [
+    {
+      "id": "no-debugger",
+      "upstream": {
+        "tool": "eslint",
+        "rule": "no-debugger"
+      },
+      "policy": "rules/no-debugger.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    }
+  ]
+}

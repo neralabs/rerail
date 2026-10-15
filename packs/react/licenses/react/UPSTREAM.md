@@ -460,3 +460,4 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/d7a21fda2b0a.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/eaa7d8873215.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/fa4449ccccf7.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/gates.json` | `packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js`: the `code` of each RuleTester case | excerpts |

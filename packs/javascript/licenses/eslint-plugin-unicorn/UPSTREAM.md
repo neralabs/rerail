@@ -325,3 +325,4 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/063.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived |
+| `upstream/eslint-plugin-unicorn/gates.json` | `test/*.js`: the `code` of each RuleTester case | excerpts |

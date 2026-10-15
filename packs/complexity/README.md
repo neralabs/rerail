@@ -46,8 +46,8 @@ constructor and generator function:
 Each function is scored on its own: decisions inside a nested function do not count for the function around it. A
 class is not scored itself.
 
-Tree-sitter node kinds, from the grammars' `node-types.json` (tree-sitter-python and tree-sitter-typescript as vendored
-under `native/grammars/`, tree-sitter-javascript 0.25.0):
+Tree-sitter node kinds, from the grammars' `node-types.json` (tree-sitter-python, tree-sitter-typescript and
+tree-sitter-javascript as vendored under `native/grammars/`):
 
 | Language | Function boundary | Decision |
 |---|---|---|
@@ -91,9 +91,8 @@ lizard getting a function's range wrong (running past its end, ending it early, 
 literal), or to lizard reading a type as a function; none was a Rerail miscount. Not every difference was inspected
 one by one.
 
-The TypeScript grammar does not parse a few newer forms, such as `export type * from` and call signatures with type
-parameters in an interface. In such a file the functions outside the error regions are scored and the rest are left
-unknown, so they never report a guessed number (8 of hono's 165 files).
+Every file of hono 4.6.3's `src` parses. Where a file has syntax errors, the functions outside the error regions are
+scored and the rest are left unknown, so they never report a guessed number.
 
 ## Parity corpus
 

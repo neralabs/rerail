@@ -54,6 +54,28 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Herrington Darkholme", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# oxc's oxlint 1.88.0 disable directives, ported.
+[[annotations]]
+path = "native/src/code_rule_dsl/suppress/oxlint.rs"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# Biome 2.5.15's suppression comments, ported from crates/biome_suppression/src/lib.rs,
+# crates/biome_analyze/src/{lib.rs,suppressions.rs,matcher.rs}, crates/biome_js_syntax/src/lib.rs and
+# crates/biome_js_parser/src/lexer/mod.rs, with the test in crates/biome_js_analyze/src/suppressions.tests.rs; its
+# diagnostic categories, JavaScript analyzer registry and ESLint same-source mapping (crates/biome_analyze/src/rule.rs),
+# as written by scripts/generate/packs/biome-suppression.mjs.
+[[annotations]]
+path = [
+  "native/src/code_rule_dsl/suppress/biome.rs",
+  "native/src/code_rule_dsl/suppress/biome_registry.generated.rs",
+  "conformance/biome-same-sources.generated.ts",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["2023-present Biome Developers and Contributors", "2020-2023 Rome Tools, Inc. and its affiliates", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # typescript-estree 8.70.1 JSX entities, as written by scripts/generate/value/ecma-entities.mjs.
 [[annotations]]
 path = "native/src/code_rule_dsl/value/ecma/entities.generated.rs"
@@ -80,6 +102,14 @@ SPDX-License-Identifier = "MIT"
 path = "native/src/code_rule_dsl/blade/forte/directives/resources/*.json"
 precedence = "override"
 SPDX-FileCopyrightText = "Johnathon Koster"
+SPDX-License-Identifier = "MIT"
+
+# tree-sitter/tree-sitter-javascript 0.25.0, vendored with Rerail's patches
+# (native/grammars/tree-sitter-javascript/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-javascript/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
@@ -921,3 +951,42 @@ path = "packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# The rule gates' recordings that hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's
+# tests beside Rerail's recorded answers, listed in each upstream's UPSTREAM.md. The JavaScript pack's are annotated
+# with its fixtures above.
+
+# Ruff 0.16.9: test excerpts in the rule gates' recording (packs/python/licenses/ruff/UPSTREAM.md)
+[[annotations]]
+path = "packs/python/upstream/ruff/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# typescript-eslint 8.70.1: test excerpts in the rule gates' recording (packs/typescript/licenses/typescript-eslint/UPSTREAM.md)
+[[annotations]]
+path = "packs/typescript/upstream/typescript-eslint/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# @vitest/eslint-plugin 1.6.27: test excerpts in the rule gates' recording (packs/typescript/licenses/eslint-plugin-vitest/UPSTREAM.md)
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# eslint-plugin-react 7.37.5: test excerpts in the rule gates' recording (packs/react/licenses/eslint-plugin-react/UPSTREAM.md)
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Yannick Croissant", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# eslint-plugin-react-hooks 7.1.1: test excerpts in the rule gates' recording (packs/react/licenses/react/UPSTREAM.md)
+[[annotations]]
+path = "packs/react/upstream/eslint-plugin-react-hooks/gates.json"
+precedence = "override"
+SPDX-FileCopyrightText = ["Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT AND Apache-2.0"

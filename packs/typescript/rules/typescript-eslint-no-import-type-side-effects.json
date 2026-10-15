@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-import-type-side-effects",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-import-type-side-effects` rule (https://typescript-eslint.io/rules/no-import-type-side-effects). Flags an import whose specifiers are all inline `type` specifiers.",
   "scope": {
@@ -103,7 +103,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-import-type-side-effects",
-        "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import."
+        "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-import-type-side-effects"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-import-type-side-effects"
+            ]
+          }
+        }
       }
     },
     {
@@ -219,7 +231,19 @@
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-import-type-side-effects",
         "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
-        "fix": "import type { $A } from $S;"
+        "fix": "import type { $A } from $S;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-import-type-side-effects"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-import-type-side-effects"
+            ]
+          }
+        }
       }
     },
     {
@@ -329,7 +353,19 @@
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-import-type-side-effects",
         "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import.",
-        "fix": "import type { $A as $B } from $S;"
+        "fix": "import type { $A as $B } from $S;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-import-type-side-effects"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-import-type-side-effects"
+            ]
+          }
+        }
       }
     }
   ]

@@ -476,6 +476,16 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
   });
 
+  it("counts one steer per rule a receipt carried, so two rules in one edit read twice", async () => {
+    const { store, reader, session } = await hudFixture("per-rule");
+    store.openSession(session);
+    store.startHudTracking(session, true);
+    store.recordSteer(session, "two-rules", ["a:one", "a:two"]);
+    expect(reader.hud(session.sessionId).steeringCount).toBe(2);
+    store.recordSteer(session, "one-rule", ["a:one"]);
+    expect(reader.hud(session.sessionId).steeringCount).toBe(3);
+  });
+
   it("keeps untracked and reset totals unknown rather than counting only surviving receipts", async () => {
     const { path, repositoryId, store, reader, session } = await hudFixture("untracked");
     store.openSession(session);

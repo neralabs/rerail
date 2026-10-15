@@ -457,6 +457,40 @@ export function withUpstreamRows(text: string, tool: string, copies: CaseCopy[],
   return [...lines.slice(0, first), ...table, ...lines.slice(last + 1)].join("\n");
 }
 
+/**
+ * Where a recording's inline fixture texts come from: upstream test text that is not a file of its own (Ruff's test-module
+ * string literals, the `code` of ESLint's RuleTester cases), kept verbatim in gates.json.
+ */
+export function inlineTextsSource(manifest: GatesManifest): string {
+  if (manifest.adapter === "ruff") return "`crates/ruff_linter/src/rules/*/mod.rs`, `crates/ruff_linter/src/linter.rs`: their test modules' string literals";
+  if (manifest.eslint !== undefined) return `${manifest.eslint.tests.map((glob) => `\`${glob}\``).join(", ")}: the \`code\` of each RuleTester case`;
+  return "upstream's test files";
+}
+
+/**
+ * List the recording itself in UPSTREAM.md's file table when it holds upstream test text inline: gates.json is then
+ * partly upstream's material (excerpts), like a copied fixture. The row is replaced when it exists; a table sorted as
+ * text stays sorted, any other gets the row at its end.
+ */
+export function withRecordingRow(text: string, tool: string, source: string): string {
+  const lines = text.split("\n");
+  const row = `| \`upstream/${tool}/${GATES_RECORDING}\` | ${source} | excerpts |`;
+  const at = lines.findIndex((line) => line.startsWith(`| \`upstream/${tool}/${GATES_RECORDING}\` |`));
+  if (at >= 0) {
+    lines[at] = row;
+    return lines.join("\n");
+  }
+  const isRow = (line: string) => line.startsWith("| `upstream/");
+  const first = lines.findIndex(isRow);
+  if (first < 0) throw new Error("UPSTREAM.md has no file table to list the recording in");
+  let last = first;
+  while (last + 1 < lines.length && isRow(lines[last + 1]!)) last += 1;
+  const existing = lines.slice(first, last + 1);
+  const sorted = existing.every((line, index) => index === 0 || byText(existing[index - 1]!, line) <= 0);
+  const table = sorted ? [...existing, row].sort(byText) : [...existing, row];
+  return [...lines.slice(0, first), ...table, ...lines.slice(last + 1)].join("\n");
+}
+
 /** Write the recording and the missing case sources into the tool-pack directory, and list the copies in UPSTREAM.md. */
 export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded): Promise<RecordingDiff> {
   const directory = toolPackDirectory(root, pack, tool);
@@ -468,11 +502,14 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     await mkdir(dirname(join(directory, copy.file)), { recursive: true });
     await writeFile(join(directory, copy.file), copy.bytes);
   }
-  if (diff.missing.length > 0) {
+  const inline = recorded.recording.fixtureTexts?.inline.length ?? 0;
+  if (diff.missing.length > 0 || inline > 0) {
     const manifest = readGatesManifest(root, pack, tool);
-    const project = manifest.rerail.project;
-    const upstreamMd = join(root, "packs", pack, "licenses", project, "UPSTREAM.md");
-    await writeFile(upstreamMd, withUpstreamRows(await readFile(upstreamMd, "utf8"), tool, diff.missing, CASE_LAYOUTS[manifest.adapter]));
+    const upstreamMd = join(root, "packs", pack, "licenses", manifest.rerail.project, "UPSTREAM.md");
+    let text = await readFile(upstreamMd, "utf8");
+    if (diff.missing.length > 0) text = withUpstreamRows(text, tool, diff.missing, CASE_LAYOUTS[manifest.adapter]);
+    if (inline > 0) text = withRecordingRow(text, tool, inlineTextsSource(manifest));
+    await writeFile(upstreamMd, text);
   }
   return diff;
 }

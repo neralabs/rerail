@@ -278,7 +278,19 @@
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
-    "fix": "$OBJ"
+    "fix": "$OBJ",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   },
   {
@@ -552,7 +564,19 @@
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
-    "fix": "($OBJ)"
+    "fix": "($OBJ)",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   },
   {
@@ -856,7 +880,19 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
-    "message": "The function binding is unnecessary."
+    "message": "The function binding is unnecessary.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   }
  ]

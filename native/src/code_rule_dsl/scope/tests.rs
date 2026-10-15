@@ -580,6 +580,20 @@ fn typescript_var_hoists_and_let_is_block_scoped() {
 }
 
 #[test]
+fn javascript_using_declarations_are_block_scoped() {
+    check(
+        GrammarDialect::JavaScript,
+        "for (await using res = open(); ;) { res.close(); }\nres;\n{ using sub = open(); sub; }\nsub;\n",
+        &[
+            ("res", 1, Local),
+            ("res", 2, Global),
+            ("sub", 1, Local),
+            ("sub", 2, Global),
+        ],
+    );
+}
+
+#[test]
 fn typescript_blocks_are_scopes_only_from_es2015() {
     // eslint-scope nests block and switch scopes only for ecmaVersion 6 and later; a catch
     // clause is a scope either way.

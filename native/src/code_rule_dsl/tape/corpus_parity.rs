@@ -989,7 +989,14 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         let t = Instant::now();
         let native = match language {
             GrammarDialect::Blade => Native::Blade(BladeLang.doc(source.as_bytes())),
-            _ => Native::TreeSitter(StrDoc::new(&source, language)),
+            // The tree the workspace tapes: the family's parse input (a PHP file's view), whose
+            // nodes read the source.
+            _ => Native::TreeSitter({
+                let input = crate::code_rule_dsl::language::adapter::parse_input(language, &source);
+                let mut doc = StrDoc::new(&input, language);
+                doc.src = source.to_string();
+                doc
+            }),
         };
         let file_parse_ms = t.elapsed().as_secs_f64() * 1000.0;
         parse_ms += file_parse_ms;

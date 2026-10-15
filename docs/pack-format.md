@@ -103,12 +103,13 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools and public corpora, and for each ported rule the upstream tool and rule it reproduces,
-  how findings compare (`line` or `line+column`) and the capabilities it exercises. A port whose document is under
-  `candidates/` is scored and reported but never fails a check; it is scored on the fixtures, whose recording must
-  cover it, and on a corpus only where that corpus's recording covers it. A port may set `fixtures`, `path.matchesGlob`
-  patterns over the tool's fixture paths: it is then evaluated and scored only on the fixtures they match, the tests
-  its upstream configuration ran on. That is how a tool whose tests run each rule with several option sets is
-  scored: one document per option set, each on its own tests.
+  how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
+  ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
+  4). A port whose document is under `candidates/` is scored and reported but never fails a check; it is scored on the
+  fixtures, whose recording must cover it, and on a corpus only where that corpus's recording covers it. A port may
+  set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
+  the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
+  with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
   and on each pinned corpus, produced by the recorder in the same directory. Recorders are run by hand against the
   pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
@@ -149,7 +150,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
-| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption |
+| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
 
@@ -174,6 +175,38 @@ Precisely:
    negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.
    Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too; their false positives,
    false negatives and engine failures are reported and fail nothing.
+
+   Every port, candidates included, must also honour the suppression comments of its upstream tool, as the tool
+   does: each violation of its document carries the `suppress` key below naming the port's `upstream.rule`. The
+   data has to be in the document, because `conformance.json` never ships. A port of any other tool (Bladestan,
+   tlint, blade-parser, lizard) needs none.
+
+   | `upstream.tool` | The comment it honours | `violation.suppress` |
+   |---|---|---|
+   | `eslint`, `eslint-plugin-*`, `typescript-eslint` | `// eslint-disable-line <rule>` and the other `eslint-disable` forms | `eslint.rules` |
+   | `ruff` | `# noqa: <code>` | `noqa.codes` |
+   | `bandit` | `# nosec <id>` | `nosec.codes` |
+   | `phpstan` | `@phpstan-ignore <identifier>` | `phpstan.identifiers` |
+   | `psalm` | `@psalm-suppress <issue>` | `psalm.issues` |
+   | `phpcs` | `phpcs:ignore <sniff>` | `phpcs.sniffs`: the sniff or one of its message codes, `<sniff>.<code>` |
+
+   A port whose document does not model the comment is listed in `conformance.json` `suppressionExemptions`, as
+   `{ "rule": <port id>, "reason": … }`: one whose recording ran with the comments ignored (Bandit's `--ignore-nosec`),
+   or one with a clause the engine cannot suppress (it refuses `suppress` on a `regex` query). An exemption for a port
+   that carries the suppression on every violation, or whose tool honours no comment, fails as stale.
+
+   A port of a rule that Oxlint 1.88.0 also implements carries `oxlint.rules` too, with Oxlint's rule name without its
+   plugin (`rules-of-hooks`, `no-console`), so `oxlint-disable` comments silence it as they silence Oxlint's. The two
+   name the same rule and Oxlint reads `eslint-disable` comments as well, so once any violation of a document carries
+   `suppress.oxlint`, each violation that carries `suppress.eslint` must carry it, and none may carry it alone.
+
+   A port of a rule Biome 2.5.15 has a rule the same as (its `sources` mark the ESLint rule `.same()`, not
+   `.inspired()`: `useHookAtTopLevel` for `react-hooks/rules-of-hooks`) carries `biome.rules` too, with Biome's full
+   name (`lint/correctness/useHookAtTopLevel`), so `biome-ignore` comments naming it, its group or `lint` silence the
+   port as they silence Biome's rule. Each violation that carries `suppress.eslint` must carry the Biome rules the same
+   as the ESLint rules it names, and none may carry `suppress.biome` without `suppress.eslint`. The mapping,
+   `conformance/biome-same-sources.generated.ts`, is read from Biome's source by
+   `scripts/generate/packs/biome-suppression.mjs`, which also writes `suppress.biome` into the pack documents.
 5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
    repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,

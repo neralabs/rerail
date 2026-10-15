@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-continue",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Port of ESLint's `no-continue` rule (https://eslint.org/docs/latest/rules/no-continue). Reports every `continue` statement.",
   "scope": {
@@ -24,7 +24,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-continue",
-        "message": "Unexpected use of continue statement."
+        "message": "Unexpected use of continue statement.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-continue"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-continue"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noContinue"
+            ]
+          }
+        }
       }
     }
   ]

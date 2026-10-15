@@ -2532,3 +2532,4 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f6ce6116df2b.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f76bbef45753.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f87a7db315a4.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
+| `upstream/eslint-plugin-react/gates.json` | `tests/lib/rules/*.js`: the `code` of each RuleTester case | excerpts |

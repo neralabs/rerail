@@ -101,3 +101,4 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/018.test.ts` | `tests/no-focused-tests.test.ts` | derived |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/019.test.ts` | `tests/no-focused-tests.test.ts` | derived |
 | `upstream/eslint-plugin-vitest/fixtures/no-focused-tests/020.test.ts` | `tests/no-focused-tests.test.ts` | derived |
+| `upstream/eslint-plugin-vitest/gates.json` | `tests/*.test.ts`: the `code` of each RuleTester case | excerpts |

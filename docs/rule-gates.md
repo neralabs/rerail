@@ -107,9 +107,12 @@ npm run gates:record -- --pack python --tool ruff
 `rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
 matches the pinned upstream, then judges every rule again with the cache off.
 
-`not-overfit` runs a rule's regexes over every upstream test file, as V1 did. Those files are not copied into the pack:
-the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit (sparse,
-cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed.
+`not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
+the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
+(sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
+is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
+`gates.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material: the recorder lists it in
+the upstream's `UPSTREAM.md` as excerpts, and `REUSE.toml` annotates it under upstream's licence and Apache-2.0.
 
 ## CI
 
