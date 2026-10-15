@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +92,8 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const rule = recording.rules.B301!;
     assert.deepEqual(rule.spanParts, { endLine: false, endCol: true });
     assert.equal(rule.cases[0]!.file, "fixtures/pickle_deserialize.py");
+    // The bytes the case was recorded on, which case-sources checks the committed copy against.
+    assert.equal(rule.cases[0]!.sha256, createHash("sha256").update(SOURCE).digest("hex"));
     assert.deepEqual(spanOf(rule.cases[0]!.expected[0]!), span);
     const sets = [...rule.names.implementation.sets, ...rule.names.shared.sets].map((id) => recording.nameSets[id]!);
     assert.deepEqual(new Set([...rule.names.implementation.names, ...sets.flatMap((set) => set.names)]), new Set(["loads", "pickle", "qualname"]));

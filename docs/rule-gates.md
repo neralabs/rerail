@@ -28,7 +28,7 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a corpus file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a
+when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a corpus file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a
 failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
 

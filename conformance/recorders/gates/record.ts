@@ -316,6 +316,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
         expected: spans(testCase.expected),
         markup: testCase.markup === null ? null : spans(testCase.markup),
         file,
+        ...(file === null ? {} : { sha256: sha256(sources.get(file)!.bytes) }),
       };
     });
     rules[name] = {

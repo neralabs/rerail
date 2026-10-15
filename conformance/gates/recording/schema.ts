@@ -18,7 +18,7 @@
  *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
  *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
- *   each source read from its `file`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
+ *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
  *   `corpus`; lintCorpus → gates-corpus.json `files`; parserVerdicts → `parserVerdicts` here and gates-corpus.json
  *   `files[].verdicts`, looked up by path, script and the source's sha256.
  *
@@ -214,6 +214,11 @@ const caseSchema = z.strictObject({
    * upstream's; null only for a skipped case, whose source no gate reads.
    */
   file: relativePath.nullable(),
+  /**
+   * sha256 of `file`'s bytes as recorded, which the gates check the committed source against (`case-sources`); absent
+   * for a case with no `file`, and in an older recording, which that check reports as stale.
+   */
+  sha256: sha256.optional(),
 }).refine((testCase) => testCase.file !== null || testCase.skipped !== null, "only a skipped case has no committed source");
 
 const ruleSchema = z.strictObject({

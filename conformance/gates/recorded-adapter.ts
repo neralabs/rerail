@@ -156,8 +156,8 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
 /**
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, gates.json,
  * conformance.json), the runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the
- * kept LICENSE is the recorded one, and the recording covers every upstream rule the pack names. Any failure means
- * the recording is stale.
+ * kept LICENSE is the recorded one, every committed case source has its recorded sha256, and the recording covers every
+ * upstream rule the pack names. Any failure means the recording is stale.
  *
  * The pins and the runtime digests are read from `recording.lock`, which is committed, and the downloaded recording
  * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
@@ -204,6 +204,23 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
       ? `packs/${pack}/licenses/${manifest.rerail.project}/LICENSE is upstream's LICENSE at the pinned commit (sha256 ${licenseSha.slice(0, 12)})`
       : `packs/${pack}/licenses/${manifest.rerail.project}/LICENSE ${licenseSha === null ? "is missing" : `has sha256 ${licenseSha.slice(0, 12)}`}, upstream's recorded LICENSE ${recording.licenseSha256.slice(0, 12)}: ${stale}`,
   });
+
+  // Upstream's answers are pinned by the lock, so the sources they were recorded on must be too: an edited case source
+  // would be judged against answers upstream gave on other bytes.
+  const directory = toolPackDirectory(root, pack, tool);
+  const recordedDigests = new Map<string, Set<string | undefined>>();
+  for (const rule of Object.values(recording.rules)) {
+    for (const testCase of rule.cases) if (testCase.file !== null) recordedDigests.set(testCase.file, (recordedDigests.get(testCase.file) ?? new Set()).add(testCase.sha256));
+  }
+  const sourceMismatches: string[] = [];
+  for (const [file, digests] of [...recordedDigests].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const recorded = digests.size === 1 ? [...digests][0] : undefined;
+    const path = join(directory, file);
+    const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
+    if (recorded === undefined) sourceMismatches.push(`${file} ${digests.size > 1 ? "has cases that disagree about its sha256" : "has no recorded sha256"}`);
+    else if (actual !== recorded) sourceMismatches.push(`${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`}`);
+  }
+  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const absent = new Set(recording.absent);
   const unrecorded = [...new Set(names)].filter((name) => !(name in recording.rules) && !absent.has(name)).sort();
