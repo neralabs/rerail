@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkoutStatus,
   codeRuleSchema,
   defaultRerailDatabasePath,
+  getLibraryRule,
+  libraryRules,
   listLibraryRules,
   listRepositoryRules,
   loadBundledCatalog,
@@ -32,7 +34,8 @@ const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;
 
 afterEach(async () => {
-  process.env.RERAIL_HOME = fileRerailHome;
+  if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
+  else process.env.RERAIL_HOME = fileRerailHome;
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
@@ -44,6 +47,12 @@ async function repository(): Promise<string> {
   process.env.RERAIL_HOME = join(root, "home");
   mkdirSync(process.env.RERAIL_HOME);
   return join(root, "repo");
+}
+
+/** Another git repository beside `repo`, sharing its Rerail home. */
+function neighbour(repo: string): string {
+  execFileSync("git", ["init", "-q", "-b", "main", "neighbour"], { cwd: dirname(repo) });
+  return join(dirname(repo), "neighbour");
 }
 
 function run(args: string[]): { exit: number; stdout: string; stderr: string } {
@@ -155,6 +164,37 @@ describe("rerail show-me", () => {
     expect(readFileSync(file, "utf8")).toBe("export const mine = 1;\n");
   });
 
+  it("never writes through a dangling symlink at the demo path", async () => {
+    const repo = await repository();
+    setUpTestRepository(repo);
+    const file = join(repo, SHOW_ME_FILE);
+    symlinkSync(join(dirname(repo), "outside.js"), file);
+
+    const start = run(["--repo", repo]);
+    expect(start.exit).toBe(1);
+    expect(start.stderr).toContain("was not written by the demo");
+    expect(rulesOf(repo).library).toEqual([]);
+    expect(JSON.parse(run(["--cleanup", "--repo", repo, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: false });
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+  });
+
+  it("keeps a demo running in another repo when one repo starts and cleans up its own", async () => {
+    const first = await repository();
+    const second = neighbour(first);
+    setUpTestRepository(first);
+    setUpTestRepository(second);
+    expect(run(["--repo", first, "--json"]).exit).toBe(0);
+    expect(run(["--repo", second, "--json"]).exit).toBe(0);
+    expect(rulesOf(first).repository).toEqual([SHOW_ME_RULE_ID]);
+
+    expect(JSON.parse(run(["--cleanup", "--repo", second, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: true });
+    expect(rulesOf(second).repository).toEqual([]);
+    expect(rulesOf(first)).toMatchObject({ library: [SHOW_ME_RULE_ID], repository: [SHOW_ME_RULE_ID] });
+
+    expect(JSON.parse(run(["--cleanup", "--repo", first, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: true });
+    expect(rulesOf(first)).toMatchObject({ library: [], repository: [] });
+  });
+
   it("never replaces or removes a rule someone else gave the demo's id", async () => {
     const repo = await repository();
     setUpTestRepository(repo);
@@ -171,6 +211,32 @@ describe("rerail show-me", () => {
     expect(start.stderr).toContain("the demo did not add");
     expect(JSON.parse(run(["--cleanup", "--repo", repo, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: false });
     expect(rulesOf(repo).library).toEqual([SHOW_ME_RULE_ID]);
+  });
+
+  it("never replaces someone else's rule with the demo's id that can no longer be read back", async () => {
+    const repo = await repository();
+    setUpTestRepository(repo);
+    const document = { kind: "code", rule: { id: SHOW_ME_RULE_ID, description: "Mine.", clauses: "not a list" } };
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.insert(libraryRules).values({
+        ruleId: SHOW_ME_RULE_ID, kind: "code", document: document as never, revision: 1, payloadHash: "mine", createdAt: 1, updatedAt: 1,
+      }).run();
+      expect(getLibraryRule(database, SHOW_ME_RULE_ID)).toBeUndefined();
+    } finally {
+      database.$client.close();
+    }
+
+    const start = run(["--repo", repo]);
+    expect(start.exit).toBe(1);
+    expect(start.stderr).toContain("the demo did not add");
+    expect(JSON.parse(run(["--cleanup", "--repo", repo, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: false });
+    const after = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      expect(after.select().from(libraryRules).all().map(row => row.document)).toEqual([document]);
+    } finally {
+      after.$client.close();
+    }
   });
 });
 

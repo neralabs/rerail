@@ -6,13 +6,16 @@
  */
 import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { and, eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { recordCheckout } from "../engine/catalog/repository-registry.js";
-import { addAttachment } from "../engine/catalog/rule-configuration.js";
-import { getLibraryRule, removeLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import type { RepositoryKey } from "../engine/catalog/repository-model.js";
+import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { addAttachment, removeAttachment } from "../engine/catalog/rule-configuration.js";
+import { removeLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { libraryRules, ruleAttachments } from "../engine/storage/schema.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 
 export const SHOW_ME_RULE_ID = "local:rerail-show-me";
@@ -69,30 +72,49 @@ export interface ShowMeCleanup {
 
 /** Whether `file` is absent (`"absent"`), the demo's own (`"demo"`), or something else that must be left alone. */
 function fileOwner(file: string): "absent" | "demo" | "foreign" {
-  if (!existsSync(file)) return "absent";
-  if (!lstatSync(file).isFile()) return "foreign";
+  // Not followed: a symlink, even a dangling one, is someone else's, and writing through it would land outside the repo.
+  const stats = lstatSync(file, { throwIfNoEntry: false });
+  if (stats === undefined) return "absent";
+  if (!stats.isFile()) return "foreign";
   return readFileSync(file, "utf8").startsWith(SHOW_ME_MARKER) ? "demo" : "foreign";
 }
 
-/** Whether the library holds no demo rule, the demo's own, or a rule someone else gave the demo's id. */
+/**
+ * Whether the library holds no demo rule, the demo's own, or a rule someone else gave the demo's id. Judged on the
+ * stored row, so a row this build cannot read back (quarantined) is still someone else's unless it is the demo's.
+ */
 function ruleOwner(database: RerailDatabase): "absent" | "demo" | "foreign" {
-  const existing = getLibraryRule(database, SHOW_ME_RULE_ID);
-  if (existing === undefined) return "absent";
-  const { document } = existing;
-  return document.kind === "code" && document.rule.description === SHOW_ME_DESCRIPTION ? "demo" : "foreign";
+  const row = database.select().from(libraryRules).where(eq(libraryRules.ruleId, SHOW_ME_RULE_ID)).get();
+  if (row === undefined) return "absent";
+  const stored = row.document as { rule?: { description?: unknown } } | null;
+  return row.kind === "code" && stored?.rule?.description === SHOW_ME_DESCRIPTION ? "demo" : "foreign";
 }
 
-/** Remove what the demo left behind, only where it is the demo's own; anyone else's file or rule is left alone. */
-function removeDemoLeftovers(database: RerailDatabase | undefined, file: string): ShowMeCleanup {
-  const fileRemoved = fileOwner(file) === "demo";
-  if (fileRemoved) unlinkSync(file);
-  const ruleRemoved = database !== undefined && ruleOwner(database) === "demo" && removeLibraryRule(database, SHOW_ME_RULE_ID);
-  return { fileRemoved, ruleRemoved };
+/** Delete the demo file when it is the demo's own; anyone else's file is left alone. */
+function removeDemoFile(file: string): boolean {
+  const removed = fileOwner(file) === "demo";
+  if (removed) unlinkSync(file);
+  return removed;
 }
 
 /**
- * Add the demo rule to `repo`'s repository, after clearing what an interrupted demo left behind. Rerail must be on and
- * the repository set up there: the demo never starts Rerail or sets a repository up, so cleanup never has to undo that.
+ * Take the demo rule out of `repositoryKey`'s repository, and out of the library once no repository has it: the rule
+ * is one per machine, so a demo running in another repository keeps its rule.
+ */
+function removeDemoRule(database: RerailDatabase, repositoryKey: RepositoryKey | undefined): boolean {
+  if (ruleOwner(database) !== "demo") return false;
+  const detached = repositoryKey !== undefined
+    && removeAttachment(database, { repositoryKey, sourceKind: "library_rule", sourceId: SHOW_ME_RULE_ID, folder: "" });
+  const elsewhere = database.select({ key: ruleAttachments.repositoryKey }).from(ruleAttachments)
+    .where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, SHOW_ME_RULE_ID))).limit(1).get();
+  if (elsewhere !== undefined) return detached;
+  return removeLibraryRule(database, SHOW_ME_RULE_ID) || detached;
+}
+
+/**
+ * Add the demo rule to `repo`'s repository, after deleting a demo file an interrupted demo left behind. Rerail must be
+ * on and the repository set up there: the demo never starts Rerail or sets a repository up, so cleanup never has to
+ * undo that. A demo rule already there stays: adding it again changes nothing.
  */
 export function startShowMe(repo: string, databasePath = defaultRerailDatabasePath()): ShowMeStart {
   const workspace = resolve(repo);
@@ -105,7 +127,7 @@ export function startShowMe(repo: string, databasePath = defaultRerailDatabasePa
   try {
     if (fileOwner(file) === "foreign") throw new ShowMeError(`${file} was not written by the demo, so the demo left it alone. Move it, then try again.`);
     if (ruleOwner(database) === "foreign") throw new ShowMeError(`Your library has a rule ${SHOW_ME_RULE_ID} the demo did not add, so the demo left it alone.`);
-    removeDemoLeftovers(database, file);
+    removeDemoFile(file);
     const { repositoryKey } = recordCheckout(database, workspace);
     upsertLibraryRule(database, loadBundledCatalog(), SHOW_ME_RULE, "code");
     addAttachment(database, { repositoryKey, sourceKind: "library_rule", sourceId: SHOW_ME_RULE_ID, folder: "" });
@@ -123,13 +145,15 @@ export function startShowMe(repo: string, databasePath = defaultRerailDatabasePa
   };
 }
 
-/** Remove the demo file and the demo rule; with neither left, it changes nothing. */
+/** Remove the demo file, and the demo rule from this repository; with neither left, it changes nothing. */
 export function cleanUpShowMe(repo: string, databasePath = defaultRerailDatabasePath()): ShowMeCleanup {
-  const file = join(repositoryIdentityLocation(resolve(repo)).workspaceRoot, SHOW_ME_FILE);
-  if (!existsSync(databasePath)) return removeDemoLeftovers(undefined, file);
+  const workspace = resolve(repo);
+  const file = join(repositoryIdentityLocation(workspace).workspaceRoot, SHOW_ME_FILE);
+  const fileRemoved = removeDemoFile(file);
+  if (!existsSync(databasePath)) return { fileRemoved, ruleRemoved: false };
   const database = openRerailDatabase(databasePath);
   try {
-    return removeDemoLeftovers(database, file);
+    return { fileRemoved, ruleRemoved: removeDemoRule(database, lookupCheckout(database, workspace)?.repositoryKey) };
   } finally {
     database.$client.close();
   }
