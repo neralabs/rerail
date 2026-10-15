@@ -178,6 +178,40 @@ describe("checkout code-rule catalog", () => {
     }
   });
 
+  it("places where suppression comments are ignored, changing its version but not the compiled body", () => {
+    const { root, databasePath } = checkout();
+    const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
+    const key = setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:placed") }] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
+    try {
+      const catalog = catalogs.catalog(root);
+      const before = catalog.snapshot();
+      expect(before.codeRules[0]!.placement).toEqual([{ folder: "", mode: "block" }]);
+
+      const owner = { kind: "repository" as const, repositoryKey: key };
+      setRuleSetting(database, { owner, folder: "web", targetKind: "rule", targetId: "test:placed", on: null, mode: null, suppressions: "ignore" });
+      setRuleSetting(database, { owner, folder: "web/legacy", targetKind: "rule", targetId: "test:placed", on: false, mode: null });
+      setRuleSetting(database, { owner, folder: "web/vendor", targetKind: "rule", targetId: "test:placed", on: null, mode: null, suppressions: "honour" });
+      expect(catalog.refresh()).toBe(true);
+      const after = catalog.snapshot();
+      expect(after.codeRules[0]!.placement).toEqual([
+        { folder: "", mode: "block" },
+        { folder: "web", mode: "block", suppressions: "ignore" },
+        { folder: "web/legacy", mode: null, suppressions: "ignore" },
+        { folder: "web/vendor", mode: "block" },
+      ]);
+      expect(after.version).not.toBe(before.version);
+      expect(after.codeRules[0]!.executable).toBe(before.codeRules[0]!.executable);
+      expect(decisionFor({ ruleProvenance: [...after.provenance] }, { ruleId: "test:placed", path: "web/a.py" })).toMatchObject({
+        suppressions: "ignore", suppressionsFrom: { by: "repository", folder: "web", target: "rule" },
+      });
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
   it("quarantines a library rule the engine rejects while other rules stay executable", () => {
     const { root, databasePath } = checkout();
     const capabilitiesPath = writeCapabilities(temporaryRoot());
@@ -264,12 +298,16 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a non-boolean comments", ast({ kind: "identifier", layout: { after: { to: "token", comments: 1, breaks: { eq: 0 } } } }), /expected boolean/],
     ["an edge on a capture", ast({ pattern: "f($A)", layout: { after: { to: "capture.A", edge: true, breaks: { eq: 0 } } } }), /a capture names its node/],
     ["a layout inside a parsed tree", py({ kind: "string", parse: { grammar: "percentFormat", has: { kind: "placeholder", layout: { span: { eq: 0 } } } } }), /layout is not supported inside parse \(percentFormat trees\)/],
-    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, phpstan, psalm, or phpcs/],
+    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, or phpcs/],
     ["an unknown suppress key", ast({ kind: "identifier" }, {}, { suppress: { jshint: {} } }), /Unrecognized key: \\"jshint\\"/],
     ["an empty eslint rule list", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: [] } } }), /Too small/],
     ["an eslint rule name with a comma", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["a, b"] } } }), /Must be a rule name/],
+    ["an empty oxlint rule list", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: [] } } }), /Too small/],
+    ["an oxlint rule name with a plugin prefix", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["react-hooks/rules-of-hooks"] } } }), /Must be an oxlint rule name/],
+    ["a Biome rule name without its lint/ category", ast({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["correctness/useHookAtTopLevel"] } } }), /Must be a Biome lint rule name/],
     ["a lowercase noqa code", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["f401"] } } }), /Must be a rule code/],
     ["a noqa parent other than statement", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"], parent: "import" } } }), /Invalid input/],
+
     ["suppression on a regex query", document({ violation: { ...violation, suppress: { eslint: { rules: ["strict"] } } } }), /suppress removes an ast query's violations/],
     ["a cyclic transform", ast({ pattern: "f($A)" }, { transform: { B: { substring: { source: "$C" } }, C: { substring: { source: "$B" } } } }), /B has a cyclic dependency/],
     ["a transform in the string form", ast({ pattern: "f($A)" }, { transform: { B: "substring($A, startChar=1)" } }), /Invalid input/],
@@ -488,6 +526,8 @@ describe("code rule schema and engine agree on unsupported fields", () => {
 
   it.each([
     ["eslint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["strict"] } } }), /eslint-disable comments are ESLint's; a python query has none/],
+    ["oxlint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["no-console"] } } }), /oxlint-disable comments are Oxlint's; a python query has none/],
+    ["biome suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["lint/suspicious/noConsole"] } } }), /biome-ignore comments are Biome's; a python query has none/],
     ["noqa suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"] } } }), /noqa comments are Ruff's; a typescript query has none/],
     ["psalm suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { psalm: { issues: ["UndefinedVariable"] } } }), /@psalm-suppress tags are Psalm's; a python query has none/],
     ["phpcs suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } } }), /phpcs: annotations are PHP_CodeSniffer's; a typescript query has none/],
@@ -1254,15 +1294,27 @@ describe("compiled rule cache", () => {
     const cache = new CompiledRuleCache();
     const capabilities = loadCodeRuleCapabilities();
     const first = cachedRule("cache:a", 1);
-    const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest);
+    const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest, "null");
     expect(outcome.ok).toBe(true);
-    expect(cache.compile(capabilities, "cache:a", first.text, first.digest)).toBe(outcome);
+    expect(cache.compile(capabilities, "cache:a", first.text, first.digest, "null")).toBe(outcome);
     for (let revision = 2; revision <= 5; revision += 1) {
       const edited = cachedRule("cache:a", revision);
-      expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest).ok).toBe(true);
+      expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest, "null").ok).toBe(true);
     }
     const other = cachedRule("cache:b", 1);
-    cache.compile(capabilities, "cache:b", other.text, other.digest);
+    cache.compile(capabilities, "cache:b", other.text, other.digest, "null");
+    expect(cache.size).toBe(2);
+  });
+
+  it("keeps one compiled version per config of a rule, so two repositories configuring it differently do not recompile in turn", () => {
+    const cache = new CompiledRuleCache();
+    const capabilities = loadCodeRuleCapabilities();
+    const plain = cachedRule("cache:c", 1);
+    const configured = cachedRule("cache:c", 2);
+    const plainOutcome = cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null");
+    const configuredOutcome = cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}");
+    expect(cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null")).toBe(plainOutcome);
+    expect(cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}")).toBe(configuredOutcome);
     expect(cache.size).toBe(2);
   });
 });

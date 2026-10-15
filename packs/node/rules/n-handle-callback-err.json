@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-handle-callback-err",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/handle-callback-err (default \"err\"): a function whose first parameter variable is named `err` and has no reference (reads or writes); a method is reported at its parameter list, where its ESTree FunctionExpression starts.",
   "scope": {
@@ -171,6 +171,11 @@
           "eslint": {
             "rules": [
               "n/handle-callback-err"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "handle-callback-err"
             ]
           }
         }

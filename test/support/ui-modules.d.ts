@@ -63,10 +63,36 @@ declare module "*/ui/poll.js" {
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
+  export type Suppressions = "honour" | "ignore";
+  /** One folder's own on, mode and suppressions, what decided its suppressions, and what added the rule there. */
+  export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object; source: { kind: string; id: string } }
+  /** A rule as the page stores it from `GET /api/repository/rules`; only the fields the tests read. */
+  export interface StoredRule {
+    rule: { id: string; mode: string };
+    source: { kind: string; id: string };
+    enabled: boolean;
+    folders: string[];
+    folderStates: FolderState[];
+    mixed: boolean;
+    suppressions: Suppressions;
+    suppressionsSource: object;
+    config: Record<string, unknown> | null;
+    configSource: Record<string, object>;
+    /** Why the configured options don't apply; the rule then runs nowhere. */
+    configError: string | null;
+  }
+  export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
+  export function suppressionsText(stored: object, checkoutPath?: string): string;
+  export function nextSuppressions(stored: object): "honour" | "ignore";
+  export function optionsText(stored: object, checkoutPath?: string): string | null;
+  export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
+  export function onText(stored: object, checkoutPath?: string): string;
+  export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
+  export function inPack(rule: object, packId: string): boolean;
 }
 
 declare module "*/ui/state.js" {
@@ -81,13 +107,16 @@ declare module "*/ui/state.js" {
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
     repository: { setUp: boolean } | null;
+    checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
-  export function summary(): { logged: number; triggers: number };
+  export function summary(): { logged: number; triggers: number; on: unknown[] };
+  export function runningCount(): number;
+  export function matches(stored: object): boolean;
   export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
@@ -98,5 +127,14 @@ declare module "*/ui/attachments.js" {
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
     keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+  };
+}
+
+declare module "*/ui/settings-writes.js" {
+  /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
+  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
+    setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
+    setSuppressions(ids: readonly string[], suppressions: "honour" | "ignore", label: string): Promise<void>;
+    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
 }

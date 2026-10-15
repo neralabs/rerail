@@ -127,9 +127,11 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     Ok(limit.map_or(Ok(()), |limit| Err(Stopped::Limit(limit))))
 }
 
-/// `violation.each` at one root (`run_clause`'s `node`, its bindings `first`): the root is matched
-/// again with every binding of `name` recorded so far excluded, until a match binds nothing new or
-/// `room` matches were found. A match that leaves the capture unbound is kept only as the first.
+/// `violation.each` at one root (`run_clause`'s `node`, its bindings `first`): each match is passed
+/// to `visit`, then the root is matched again with every binding of `name` recorded so far
+/// excluded, until a match binds nothing new or `visit` returns false (which this returns). A match
+/// that leaves the capture unbound is visited only as the first. `visit` runs with nothing
+/// excluded: its own matching (a transform's) reads its bindings as a clause's does.
 pub(in crate::code_rule_dsl) fn enumerate<'f>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
@@ -137,21 +139,19 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
     first: MetaVarEnv<'f, TapeDoc>,
     work: &mut usize,
     name: &str,
-    room: usize,
-) -> Result<Vec<MetaVarEnv<'f, TapeDoc>>, Stopped> {
-    let mut found = Vec::new();
-    if room == 0 {
-        return Ok(found);
-    }
+    mut visit: impl FnMut(MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, Stopped>,
+) -> Result<bool, Stopped> {
     let scope = EachScope::start(name);
     let mut matched = first;
+    let mut visited = false;
     loop {
         let fresh = scope.record(&matched, name);
-        if fresh || found.is_empty() {
-            found.push(matched);
+        if (fresh || !visited) && !super::each::suspended(|| visit(matched, work))? {
+            return Ok(false);
         }
-        if !fresh || found.len() >= room {
-            return Ok(found);
+        visited = true;
+        if !fresh {
+            return Ok(true);
         }
         begin_clause(matcher, *work);
         let next = roots(file, matcher, Some(node), None)
@@ -164,7 +164,7 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
             return Err(Stopped::Limit(limit));
         }
         let Some(next) = next?.flatten() else {
-            return Ok(found);
+            return Ok(true);
         };
         matched = next;
     }

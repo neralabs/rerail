@@ -1,5 +1,5 @@
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
-import { folderContains, type Decider, type RepositoryKey, type RuleSourceKind } from "../catalog/repository-model.js";
+import { folderContains, type Decider, type RepositoryKey, type RuleSourceKind, type RuleSuppressions } from "../catalog/repository-model.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 export const AUDIT_SCOPES = ["repository", "touched-files", "ai-output"] as const;
@@ -19,13 +19,18 @@ export interface LegacyAuditRuleProvenance {
   origin: "user" | "rerail";
 }
 
-/** How a rule ran in one folder of its checkout, and which owner decided `on` and `mode` there. */
+/**
+ * How a rule ran in one folder of its checkout, and which owner decided `on`, `mode` and `suppressions` there.
+ * `suppressions` is absent from audits recorded before it existed (they honoured suppression comments).
+ */
 export interface RulePlacementDecision {
   folder: string;
   on: boolean;
   mode: RuleMode;
   onFrom: Decider;
   modeFrom: Decider;
+  suppressions?: RuleSuppressions;
+  suppressionsFrom?: Decider;
 }
 
 /** A rule a repository's configuration made present in the checkout the audit evaluated. */

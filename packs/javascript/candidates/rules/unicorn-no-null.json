@@ -80,6 +80,11 @@
             "rules": [
               "unicorn/no-null"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-null"
+            ]
           }
         }
       }

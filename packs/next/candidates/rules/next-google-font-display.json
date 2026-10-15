@@ -117,6 +117,16 @@
             "rules": [
               "@next/next/google-font-display"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "google-font-display"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useGoogleFontDisplay"
+            ]
           }
         }
       }

@@ -53,6 +53,11 @@
             "rules": [
               "react/no-find-dom-node"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-find-dom-node"
+            ]
           }
         }
       }

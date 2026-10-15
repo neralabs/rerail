@@ -26,9 +26,9 @@ export interface Migration {
   /**
    * Brings the file from the shape before this step to the shape after it, inside the open's write
    * transaction, where foreign keys are enforced and `PRAGMA foreign_keys` cannot change: a step that rebuilds a
-   * table others reference keeps them valid (or sets `PRAGMA defer_foreign_keys`). It must tolerate a table this
-   * step changes not existing yet: the generated DDL that runs after the steps creates it in its current shape.
-   * `addColumn` does both.
+   * table others reference keeps them valid (or sets `PRAGMA defer_foreign_keys`); `rebuildTable` is only for a
+   * table nothing references. It must tolerate a table this step changes not existing yet: the generated DDL that
+   * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both.
    */
   up(database: RerailDatabase): void;
 }
@@ -42,7 +42,42 @@ export interface Migration {
 export const RERAIL_BASELINE_SCHEMA_VERSION = 3;
 
 /** This build's steps, oldest first. Append only. */
-export const RERAIL_MIGRATIONS: readonly Migration[] = [];
+export const RERAIL_MIGRATIONS: readonly Migration[] = [
+  {
+    // Rule settings gain `suppressions` and `config_json`, and a row may set only those: the
+    // `rule_settings_value` CHECK changes, which SQLite can only do by rebuilding the table.
+    // No floor, by choice: builds at the baseline keep opening the file, so agent hosts on
+    // different installed versions keep sharing the one database. They read only `on` and
+    // `mode`: they ignore a row's `suppressions` and `config_json` (the rule runs with its
+    // default options and honours suppression comments), and when one resets that rule's or
+    // pack's on/off and mode, its `writeSetting` deletes the row and both values with it.
+    id: "rule-settings-suppressions-config",
+    up(database) {
+      rebuildTable(
+        database,
+        "rule_settings",
+        `CREATE TABLE \`rule_settings\` (
+	\`owner_kind\` text NOT NULL,
+	\`owner_id\` text NOT NULL,
+	\`folder\` text DEFAULT '' NOT NULL,
+	\`target_kind\` text NOT NULL,
+	\`target_id\` text NOT NULL,
+	\`on\` integer,
+	\`mode\` text,
+	\`suppressions\` text,
+	\`config_json\` text,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`owner_kind\`, \`owner_id\`, \`folder\`, \`target_kind\`, \`target_id\`),
+	CONSTRAINT "rule_settings_owner_kind" CHECK("rule_settings"."owner_kind" IN ('repository', 'checkout')),
+	CONSTRAINT "rule_settings_target_kind" CHECK("rule_settings"."target_kind" IN ('rule', 'pack')),
+	CONSTRAINT "rule_settings_mode" CHECK("rule_settings"."mode" IS NULL OR "rule_settings"."mode" IN ('log', 'steer', 'block')),
+	CONSTRAINT "rule_settings_suppressions" CHECK("rule_settings"."suppressions" IS NULL OR "rule_settings"."suppressions" IN ('honour', 'ignore')),
+	CONSTRAINT "rule_settings_value" CHECK("rule_settings"."on" IS NOT NULL OR "rule_settings"."mode" IS NOT NULL OR "rule_settings"."suppressions" IS NOT NULL OR "rule_settings"."config_json" IS NOT NULL)
+)`,
+      );
+    },
+  },
+];
 
 /** The schema version `migrations` leave a file at: the baseline, or the highest floor a step raises it to. */
 export function schemaVersionOf(migrations: readonly Migration[]): number {
@@ -77,6 +112,23 @@ export function pendingMigrations(database: RerailDatabase, migrations: readonly
     recordsMigrations ? database.select({ id: schemaMigrations.id }).from(schemaMigrations).all().map(row => row.id) : [],
   );
   return migrations.filter(migration => !applied.has(migration.id));
+}
+
+/**
+ * Replaces `table` with the one `ddl` creates (a `CREATE TABLE` under the same name, written out in the step so
+ * it never follows later schema changes) and copies every row, column by column, unless the table does not exist
+ * yet. A column the old table lacks takes its default. For a table with no indexes or triggers of its own and no
+ * foreign keys pointing at it: those would not survive the swap.
+ */
+export function rebuildTable(database: RerailDatabase, table: string, ddl: string): void {
+  const columns = database.all<{ name: string }>(sql`SELECT name FROM pragma_table_info(${table})`);
+  if (columns.length === 0) return;
+  const previous = `${table}_before_rebuild`;
+  database.run(sql.raw(`ALTER TABLE ${identifier(table)} RENAME TO ${identifier(previous)}`));
+  database.run(sql.raw(ddl));
+  const copied = columns.map(column => identifier(column.name)).join(", ");
+  database.run(sql.raw(`INSERT INTO ${identifier(table)} (${copied}) SELECT ${copied} FROM ${identifier(previous)}`));
+  database.run(sql.raw(`DROP TABLE ${identifier(previous)}`));
 }
 
 /**

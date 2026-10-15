@@ -256,6 +256,20 @@ export function renderReadRepoQuestion(input: ReadRepoInput, lane: SetupLane): s
 
 // ── T4 / C4 · Recommended rule packs and the confirm question ──────────────
 
+/** What set-up takes from the repository's own lint config: `repository-lint-config.ts`'s result. */
+export interface LintConfigInput {
+  /** Rules that start off (`on: false`) or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
+  readonly settings: readonly {
+    readonly ruleId: string;
+    readonly folder: string;
+    readonly on: false | null;
+    readonly config: Readonly<Record<string, unknown>> | null;
+    readonly because: string;
+  }[];
+  /** Files not read, options not mapped, conflicts. */
+  readonly notes: readonly string[];
+}
+
 export interface RecommendedPacksInput {
   readonly repoName: string;
   readonly repoPath: string;
@@ -263,6 +277,35 @@ export interface RecommendedPacksInput {
   readonly agentsFound: readonly CodingAgent[];
   readonly agentsNotFound: readonly CodingAgent[];
   readonly setupCommand?: string;
+  /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
+  readonly lintConfig?: LintConfigInput;
+}
+
+/** At most this many lint config lines; the rest are counted. */
+const MAX_LINT_CONFIG_LINES = 8;
+
+/** Which rules start off or configured from the repository's lint config, and what was not read. */
+function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
+  const settings = input.lintConfig?.settings ?? [];
+  const notes = input.lintConfig?.notes ?? [];
+  if (settings.length === 0 && notes.length === 0) return [];
+  // What was not read comes first: it can explain every setting after it (a config not statically readable starts
+  // every rule it ports off), and the rows are capped.
+  const rows = [
+    ...notes.map(note => `    ${style.dim(clean(note))}`),
+    ...settings.map(setting => {
+      const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
+      const change = setting.on === false ? (setting.folder === "" ? "starts off" : `starts off in ${clean(setting.folder)}/`) : `starts with ${options}`;
+      return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
+    }),
+  ];
+  const shown = rows.length > MAX_LINT_CONFIG_LINES ? rows.slice(0, MAX_LINT_CONFIG_LINES - 1) : rows;
+  const more = rows.length - shown.length;
+  return [
+    "  From your lint config (read as data, never run):",
+    ...shown,
+    ...(more === 0 ? [] : [`    …and ${more} more.`]),
+  ];
 }
 
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
@@ -287,6 +330,7 @@ function recommendationLines(input: RecommendedPacksInput, style: Style): string
   return [
     intro,
     ...(count === 0 ? [] : packTable(input.packs, style)),
+    ...lintConfigLines(input, style),
     labelled("Connected to", found, style, notFound),
     ...(count === 0 ? [] : [startModeLine(input.packs)]),
     "  More rule packs are in the dashboard, off until you turn them on.",
@@ -363,6 +407,7 @@ export function packReviewQuestion(input: PackReviewInput, lane: SetupLane): Que
   const lead = [
     bullet("Review the rule packs in the dashboard. Switch off any you don’t want, then come back here to start Rerail.", style),
     ...linkLines("Review", input.review, style),
+    ...lintConfigLines(input, style),
   ];
   return confirmQuestion(input, `Start Rerail in ${clean(input.repoName)} with the rule packs you kept on?`, lead);
 }

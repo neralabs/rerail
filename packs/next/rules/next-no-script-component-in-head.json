@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-script-component-in-head",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-script-component-in-head: a <Head> element with a direct <Script> element child, in a file that imports next/head.",
   "scope": {
@@ -93,6 +93,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-script-component-in-head"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-script-component-in-head"
             ]
           }
         }

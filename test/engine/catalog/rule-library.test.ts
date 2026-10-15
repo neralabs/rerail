@@ -163,6 +163,27 @@ describe("rules dump", () => {
     expect(target.select().from(ruleSettings).all().map(row => row.ownerKind)).toEqual(["repository"]);
   });
 
+  it("round-trips suppressions and config, writes neither when unset, and imports a setting from a dump that predates them", async () => {
+    const source = await repositoryWithLintPack(["web"]);
+    const owner = { kind: "repository" as const, repositoryKey: REPOSITORY };
+    setRuleSetting(source, { owner, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: null, suppressions: "ignore" });
+    setRuleSetting(source, { owner, folder: "", targetKind: "rule", targetId: "no-console", on: null, mode: "log", config: { word: "alert" } });
+    const exported = exportRulesDump(source, new Date(0));
+    expect(exported.repositories[0]!.settings).toEqual([
+      { folder: "", targetKind: "rule", targetId: "no-console", on: null, mode: "log", config: { word: "alert" } },
+      { folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: null, suppressions: "ignore" },
+    ]);
+
+    const target = await temporaryDatabase();
+    importRulesDump(target, bundle, JSON.parse(JSON.stringify(exported)) as unknown);
+    expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exported.repositories);
+
+    const older = { ...exported, repositories: [{ ...exported.repositories[0]!, settings: [{ folder: "web", targetKind: "pack", targetId: "lint", on: false, mode: null }] }] };
+    importRulesDump(target, bundle, JSON.parse(JSON.stringify(older)) as unknown);
+    expect(target.select({ suppressions: ruleSettings.suppressions, config: ruleSettings.config, on: ruleSettings.on }).from(ruleSettings).all())
+      .toEqual([{ suppressions: null, config: null, on: false }]);
+  });
+
   it("keeps a library rule that a later release bundles editable, and round-trips it through a dump", async () => {
     const source = await temporaryDatabase();
     writeLibraryRule(source, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) });
