@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "138 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "135 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -468,13 +468,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-f722-forward-annotation-syntax-error",
-      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
-      "title": "Ruff F722: Forward annotation syntax error",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-f822-undefined-export",
       "document": "rules/ruff-f822-undefined-export.json",
       "title": "Ruff F822: Undefined export",
@@ -831,12 +824,6 @@
       "group": "Bandit"
     },
     {
-      "id": "bandit-b406-import-xml-sax",
-      "document": "rules/bandit-b406-import-xml-sax.json",
-      "title": "Bandit B406: Import xml sax",
-      "group": "Bandit"
-    },
-    {
       "id": "bandit-b407-import-xml-expat",
       "document": "rules/bandit-b407-import-xml-expat.json",
       "title": "Bandit B407: Import xml expat",
@@ -894,12 +881,6 @@
       "id": "bandit-b606-start-process-with-no-shell",
       "document": "rules/bandit-b606-start-process-with-no-shell.json",
       "title": "Bandit B606: Start process with no shell",
-      "group": "Bandit"
-    },
-    {
-      "id": "bandit-b610-django-extra-used",
-      "document": "rules/bandit-b610-django-extra-used.json",
-      "title": "Bandit B610: Django extra used",
       "group": "Bandit"
     },
     {

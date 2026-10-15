@@ -1,10 +1,10 @@
 # Rerail rule pack: Python
 
-138 code rules for Python, ported from Ruff 0.16.9 (98 rules) and Bandit 1.9.4 (40 tests). Each is scored against the
+135 code rules for Python, ported from Ruff 0.16.9 (97 rules) and Bandit 1.9.4 (38 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
 disagreement declared in `divergences.json` (one today: ASYNC221 on a probe). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`).
-25 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
+24 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
 checked by `npx vitest run test/engine/catalog/packs.test.ts`.
@@ -17,7 +17,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (96 Ruff and Bandit ports): never shipped or listed in `pack.json`. 94 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
+| `candidates/rules/` | Ports still being evaluated (99 Ruff and Bandit ports): never shipped or listed in `pack.json`. 97 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
 
 Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
 install, on CPython 3.13):
