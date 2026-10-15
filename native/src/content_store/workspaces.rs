@@ -4,9 +4,9 @@
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
 use super::{
-    ContentStore, HashKey, MAX_PUBLICATION_BATCH, STRING_OWNER, STRING_PATH, STRING_REPOSITORY,
-    SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects, StoredSourceObjects, TapeId,
-    WorkspaceId, WorkspaceRegistration,
+    ContentStore, HASH_SHA256, HashKey, MAX_PUBLICATION_BATCH, STRING_OWNER, STRING_PATH,
+    STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
+    StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
 #[cfg(test)]
 use rusqlite::OptionalExtension;
@@ -123,24 +123,20 @@ impl ContentStore {
         for path in paths {
             validate_relative_path(path)?;
         }
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for path in paths {
-            let path_id = intern_path(&transaction, path)?;
-            transaction.execute(
-                "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
-                 SELECT ?1,path_id,source_id,tape_id FROM workspace_overlay \
-                 WHERE workspace_id=?2 AND path_id=?3 \
-                 ON CONFLICT(snapshot_id,path_id) DO UPDATE SET \
-                 source_id=excluded.source_id,tape_id=excluded.tape_id",
-                params![snapshot_id.0, workspace_id.0, path_id],
-            )?;
-        }
-        transaction.commit()?;
-        Ok(())
+        self.immediate_transaction(|transaction| {
+            for path in paths {
+                let path_id = intern_path(transaction, path)?;
+                transaction.execute(
+                    "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
+                     SELECT ?1,path_id,source_id,tape_id FROM workspace_overlay \
+                     WHERE workspace_id=?2 AND path_id=?3 \
+                     ON CONFLICT(snapshot_id,path_id) DO UPDATE SET \
+                     source_id=excluded.source_id,tape_id=excluded.tape_id",
+                    params![snapshot_id.0, workspace_id.0, path_id],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     #[cfg(test)]
@@ -176,23 +172,23 @@ impl ContentStore {
         workspace_id: WorkspaceId,
         paths: &[String],
     ) -> StoreResult<()> {
-        if paths.is_empty() {
-            return Ok(());
+        match overlay_removal(workspace_id, paths)? {
+            Some(delete) => self.immediate_transaction(delete),
+            None => Ok(()),
         }
-        for path in paths {
-            validate_relative_path(path)?;
+    }
+
+    /// `remove_overlay_files` that makes one attempt and never waits for another writer: `Busy`
+    /// if one holds the store now.
+    pub fn remove_overlay_files_no_wait(
+        &self,
+        workspace_id: WorkspaceId,
+        paths: &[String],
+    ) -> StoreResult<()> {
+        match overlay_removal(workspace_id, paths)? {
+            Some(delete) => self.immediate_transaction_no_wait(delete),
+            None => Ok(()),
         }
-        let encoded =
-            serde_json::to_string(paths).map_err(|error| StoreError::Invalid(error.to_string()))?;
-        self.immediate_transaction(|transaction| {
-            transaction.execute(
-                "DELETE FROM workspace_overlay WHERE workspace_id=?1 AND path_id IN (\
-                 SELECT p.path_id FROM json_each(?2) i JOIN strings s ON s.domain_id=?3 AND s.value=i.value \
-                 JOIN paths p ON p.string_id=s.string_id)",
-                params![workspace_id.0, encoded, STRING_PATH],
-            )?;
-            Ok(())
-        })
     }
 
     #[cfg(test)]
@@ -291,7 +287,7 @@ impl ContentStore {
         owner: &str,
         lease_until: i64,
     ) -> StoreResult<()> {
-        let changed = self.renew_workspace_leases(&[(workspace_id, owner)], lease_until)?;
+        let changed = self.renew_leases(&[(workspace_id, owner)], lease_until, true)?;
         if changed != 1 {
             return Err(StoreError::Invalid(
                 "workspace lease owner does not match".to_owned(),
@@ -300,10 +296,23 @@ impl ContentStore {
         Ok(())
     }
 
+    /// Renews the leases of `workspaces` in a single attempt: the maintenance thread renews them
+    /// again on its next wake, and closing the last workspace joins that thread, so it never
+    /// waits out other writers (`retry_busy`).
     pub fn renew_workspace_leases(
         &self,
         workspaces: &[(WorkspaceId, &str)],
         lease_until: i64,
+    ) -> StoreResult<usize> {
+        self.renew_leases(workspaces, lease_until, false)
+    }
+
+    /// Renews the leases of `workspaces`, retried under `retry_busy` when `retried`.
+    fn renew_leases(
+        &self,
+        workspaces: &[(WorkspaceId, &str)],
+        lease_until: i64,
+        retried: bool,
     ) -> StoreResult<usize> {
         if lease_until <= 0 || workspaces.iter().any(|(_, owner)| owner.is_empty()) {
             return Err(StoreError::Invalid("workspace lease is invalid".to_owned()));
@@ -318,7 +327,7 @@ impl ContentStore {
         let encoded = serde_json::to_string(&input).map_err(|error| {
             StoreError::Invalid(format!("workspace leases cannot be encoded: {error}"))
         })?;
-        self.immediate_transaction(|transaction| {
+        let renew = |transaction: &Transaction<'_>| {
             transaction
                 .prepare_cached(
                     "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) workspace_id, \
@@ -329,7 +338,12 @@ impl ContentStore {
                 )?
                 .execute(params![encoded, lease_until, STRING_OWNER])
                 .map_err(StoreError::from)
-        })
+        };
+        if retried {
+            self.immediate_transaction(renew)
+        } else {
+            self.immediate_transaction_once(renew)
+        }
     }
 
     pub fn retire_workspace(&self, workspace_id: WorkspaceId) -> StoreResult<()> {
@@ -343,4 +357,39 @@ impl ContentStore {
         )?;
         Ok(())
     }
+}
+
+/// The transaction body that deletes `paths`' overlay rows of `workspace_id`; `None` for no
+/// paths. Paths resolve through their hashes (`strings_by_hash`), never by comparing every path.
+fn overlay_removal(
+    workspace_id: WorkspaceId,
+    paths: &[String],
+) -> StoreResult<Option<impl Fn(&Transaction<'_>) -> StoreResult<()>>> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    for path in paths {
+        validate_relative_path(path)?;
+    }
+    let encoded = serde_json::to_string(
+        &paths
+            .iter()
+            .map(|path| (path, HashKey::sha256(path.as_bytes()).lanes))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    Ok(Some(move |transaction: &Transaction<'_>| {
+        transaction.execute(
+            "DELETE FROM workspace_overlay WHERE workspace_id=?1 AND path_id IN (\
+             SELECT p.path_id FROM json_each(?2) i \
+             CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=?4 \
+             AND h.lane0=json_extract(i.value,'$[1][0]') AND h.lane1=json_extract(i.value,'$[1][1]') \
+             AND h.lane2=json_extract(i.value,'$[1][2]') AND h.lane3=json_extract(i.value,'$[1][3]') \
+             CROSS JOIN strings s INDEXED BY strings_by_hash ON s.domain_id=?3 \
+             AND s.content_hash_id=h.hash_id AND s.value=json_extract(i.value,'$[0]') \
+             JOIN paths p ON p.string_id=s.string_id)",
+            params![workspace_id.0, encoded, STRING_PATH, HASH_SHA256],
+        )?;
+        Ok(())
+    }))
 }

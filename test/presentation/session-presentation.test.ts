@@ -109,6 +109,8 @@ describe("installed session presentation", () => {
     response.context!.daemon.native.ok = false;
     response.context!.session!.audit = { workspaceRoot: cwd, scope: "touched-files", mode: "steer", status: "failed", violationCount: 0, failureCount: 1 };
     expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable · audit failed");
+    response.context!.session!.audit = { workspaceRoot: cwd, scope: "repository", mode: "log", status: "completed", violationCount: 4, failureCount: 3 };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable");
   });
 
   it("honors silent without session/history reads but exposes on-demand counts", async () => {

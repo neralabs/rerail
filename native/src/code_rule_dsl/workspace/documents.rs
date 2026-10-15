@@ -201,7 +201,9 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
         .ok_or_else(|| invalid(format!("{path} has no tape grammar")))?;
     let grammar = tape::Grammar::new(language).map_err(invalid)?;
     let resident = state.files.get(path).filter(|file| {
-        FileVersion::of(file) == version && (file.stored.is_none() || !file.input.source.is_empty())
+        FileVersion::of(file) == version
+            && !file.results_only
+            && (file.stored.is_none() || !file.input.source.is_empty())
     });
     let (source, image) = if let Some(file) = resident {
         state.documents.loads.resident += 1;
@@ -210,6 +212,10 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
             _ => parse(&file.input.source, &grammar)?,
         };
         (Arc::clone(&file.input.source), image)
+    } else if let Some(source) = released_source(state, path, &version) {
+        state.documents.loads.parsed += 1;
+        let image = parse(&source, &grammar)?;
+        (source, image)
     } else {
         let storage = state.storage.as_ref().ok_or_else(|| {
             invalid(format!(
@@ -260,6 +266,33 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
         .documents
         .insert(version.clone(), Arc::clone(&document));
     Ok((version, document))
+}
+
+/// The source of a file whose source was freed while the store was busy (`results_only`), read
+/// back from the worktree when it still hashes to the version the file was evaluated at. `None`
+/// for any other file, outside a Git worktree, or when the worktree's copy changed: the store is
+/// asked then, and a version nobody holds is an error, never a different version.
+fn released_source(
+    state: &WorkspaceState,
+    path: &str,
+    version: &FileVersion,
+) -> Option<Arc<String>> {
+    state
+        .files
+        .get(path)
+        .filter(|file| file.results_only && FileVersion::of(file) == *version)?;
+    let storage = state.storage.as_ref()?;
+    let repository = storage.repository.as_ref()?;
+    let bytes = std::fs::read(
+        repository
+            .worktree_root
+            .join(format!("{}{path}", storage.repository_prefix)),
+    )
+    .ok()?;
+    if HashKey::sha256(&bytes) != version.source {
+        return None;
+    }
+    String::from_utf8(bytes).ok().map(Arc::new)
 }
 
 fn parse(source: &str, grammar: &Arc<tape::Grammar>) -> Result<tape::TapeImage> {

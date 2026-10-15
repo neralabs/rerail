@@ -30,7 +30,7 @@ import {
   type ConversationRule,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
-import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
+import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -501,5 +501,45 @@ describe("Pi conversation-rules extension", () => {
     await harness.handlers.get("input")!({ type: "input", text: "hello" }, next);
     expect(requests.at(-1)).toEqual({ operation: "ingest", sessionId: "pi-next-session" });
     vi.useRealTimers();
+  });
+
+  it("keeps a closing client's final gap marker out of the session Pi switched to", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    // Where Pi's appendEntry lands: the session that is current, as the last session start delivered it.
+    const markers = new Map<string, unknown[]>();
+    let live = "pi-test-session";
+    harness.pi.appendEntry = (customType: string, data: unknown) => {
+      if (customType === EVENTS_DROPPED_ENTRY_TYPE) markers.set(live, [...markers.get(live) ?? [], data]);
+    };
+    // The daemon refuses the session's events (not its start), so the attached client's gap opens and stays open.
+    const state = { down: false };
+    const requests: Array<{ operation: string; sessionId: string }> = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { operation: string; sessionId: string };
+      requests.push({ operation: request.operation, sessionId: request.sessionId });
+      if (state.down && (request.operation === "ingest" || request.operation === "poll")) throw new TypeError("fetch failed");
+      return Response.json({ result: null, deliveries: [], entries: [] });
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await install(harness);
+    const next = { ...harness.context, sessionManager: { getSessionId: () => "pi-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+    state.down = true;
+    await harness.handlers.get("input")!({ type: "input", text: "first" }, harness.context);
+    await harness.handlers.get("input")!({ type: "input", text: "second" }, harness.context);
+
+    // Pi asks before it leaves the session, while appending still lands in that session.
+    await harness.handlers.get("session_before_switch")!({ type: "session_before_switch", reason: "resume" }, harness.context);
+    // It switches before the old client is retired, which writes its closing marker.
+    live = "pi-next-session";
+    await harness.handlers.get("session_start")!({ type: "session_start", reason: "resume" }, next);
+
+    expect(markers.get("pi-test-session")?.at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: false }));
+    expect(markers.get("pi-next-session") ?? []).toEqual([]);
+    await vi.waitFor(() => expect(requests).toContainEqual({ operation: "record-gap", sessionId: "pi-test-session" }));
   });
 });

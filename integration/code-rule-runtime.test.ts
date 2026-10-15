@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NativeCodeRuleEnforcer,
   type AuditRecorder,
@@ -120,6 +120,7 @@ async function fixture(
     scope?: "repository" | "touched-files" | "ai-output";
     mode?: "steer" | "log";
     audits?: AuditRecorder;
+    timingLog?: (line: string) => void;
   } = {},
   limits: Partial<{ maxSourceBytes: number; maxVisitedNodes: number }> = {},
   codeRule: unknown = printCodeRule,
@@ -380,7 +381,7 @@ describe("Rerail code rule runtime", () => {
     }
   });
 
-  it("caps AST budget errors returned by a repository audit", async () => {
+  it("caps AST budget errors returned by a repository audit, without claiming a scan that read every file stopped", async () => {
     const root = await rootDirectory();
     await Promise.all(Array.from({ length: 24 }, (_, index) =>
       writeFile(join(root, "api", `complex-${index}.py`), "print('one')\nprint('two')\n"),
@@ -397,22 +398,16 @@ describe("Rerail code rule runtime", () => {
       await enforcer.openWorkspace("bounded-ast-audit");
       await enforcer.audit("bounded-ast-audit", { scope: "repository", mode: "log" });
       expect(audits[0]?.result?.failures).toEqual([
-        ...Array.from({ length: 20 }, () => expect.objectContaining({
-          code: "budget-exceeded",
-          stage: "evaluate",
-        })),
-        expect.objectContaining({
-          clauseId: "scan",
-          code: "budget-exceeded",
-          stage: "scan",
-        }),
+        ...Array.from({ length: 20 }, () => expect.objectContaining({ code: "budget-exceeded", stage: "evaluate" })),
+        { clauseId: "scan", code: "budget-exceeded", stage: "scan", message: "4 further failures not recorded" },
       ]);
+      expect(audits[0]?.result?.status).toBe("failed");
     } finally {
       await enforcer.close();
     }
   });
 
-  it("caps failures persisted through result pages", async () => {
+  it("caps failures persisted through result pages, without claiming a scan that read every file stopped", async () => {
     const root = await rootDirectory();
     await Promise.all(Array.from({ length: 24 }, (_, index) =>
       writeFile(join(root, "api", `complex-paged-${index}.py`), "print('one')\nprint('two')\n"),
@@ -432,17 +427,52 @@ describe("Rerail code rule runtime", () => {
       await enforcer.openWorkspace("paged-bounded-audit");
       await enforcer.audit("paged-bounded-audit", { scope: "repository", mode: "log" });
       expect(pages.flatMap((page) => page.failures ?? [])).toEqual([
-        ...Array.from({ length: 20 }, () => expect.objectContaining({
-          code: "budget-exceeded",
-          stage: "evaluate",
-        })),
-        expect.objectContaining({
-          clauseId: "scan",
-          code: "budget-exceeded",
-          stage: "scan",
-        }),
+        ...Array.from({ length: 20 }, () => expect.objectContaining({ code: "budget-exceeded", stage: "evaluate" })),
+        { clauseId: "scan", code: "budget-exceeded", stage: "scan", message: "4 further failures not recorded" },
       ]);
     } finally {
+      await enforcer.close();
+    }
+  });
+
+  it("completes a paged repository audit whose only failures are files with syntax errors, listing at most 20 of them", async () => {
+    const root = await rootDirectory();
+    await Promise.all(Array.from({ length: 24 }, (_, index) =>
+      writeFile(join(root, "api", `broken-${String(index).padStart(2, "0")}.py`), "def f(:\n    pass\nprint('x')\n"),
+    ));
+    await writeFile(join(root, "api", "zz_clean.py"), "print('clean')\n");
+    const pages: Array<Pick<AuditResult, "violations" | "failures">> = [];
+    const statuses: string[] = [];
+    const recorder: AuditRecorder = {
+      supportsResultPages: true,
+      start() { return "paged"; },
+      finish() { throw new Error("paged recorder must finish pages"); },
+      progress() {},
+      appendResultPage(_auditId, _pageIndex, result) { pages.push(result); },
+      finishResultPages(_auditId, status) { statuses.push(status); },
+      interrupt() {},
+    };
+    const timing: string[] = [];
+    const { enforcer } = await fixture(root, { audits: recorder, timingLog: line => timing.push(line) });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await enforcer.openWorkspace("paged-syntax-audit");
+      await enforcer.audit("paged-syntax-audit", { scope: "repository", mode: "log" });
+      // The daemon log counts every violation and failure of a paged audit, though none are kept in memory.
+      const violationCount = pages.flatMap((page) => page.violations ?? []).length;
+      expect(violationCount).toBeGreaterThan(0);
+      expect(timing.join(""))
+        .toMatch(new RegExp(`repository audit completed in \\d+ ms .*: \\d+ files, ${violationCount} violations, 24 failures`));
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).not.toContain("repository audit");
+      expect(statuses).toEqual(["completed"]);
+      expect(pages.flatMap((page) => page.violations ?? []).map((violation) => violation.path)).toContain("api/zz_clean.py");
+      expect(pages.flatMap((page) => page.failures ?? [])).toEqual([
+        ...Array.from({ length: 20 }, () => expect.objectContaining({ code: "source-partial", stage: "evaluate" })),
+        // The cap says what it dropped, and that never fails an audit that only read files in part.
+        { clauseId: "scan", code: "budget-exceeded", stage: "scan", message: "4 further failures not recorded" },
+      ]);
+    } finally {
+      stderr.mockRestore();
       await enforcer.close();
     }
   });

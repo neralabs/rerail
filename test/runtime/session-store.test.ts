@@ -566,6 +566,8 @@ describe("SQLite session persistence", () => {
       runtime.recordSteer(legacy.sessionId, "new-only");
       expect(reader.hud(legacy.sessionId).steeringCount).toBeNull();
       await runtime.ingest({ kind: "session-start", session, eventId: "start" });
+      // The evaluator, whose catalog the coverage reads, opens behind the session start; a turn boundary waits for it.
+      await runtime.ingest({ kind: "turn-end", sessionId: session.sessionId, eventId: "opened", text: "" });
       expect(reader.hud(session.sessionId).steeringCount).toBe(0);
       const baseline = reader.hud(session.sessionId).activeRuleCount;
       expect(baseline).not.toBeNull();

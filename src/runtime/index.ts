@@ -31,7 +31,7 @@ export {
   workspaceStartState,
 } from "./repository-start.js";
 export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
-export { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "./session-state.js";
+export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE, type DroppedEvents } from "./session-state.js";
 export {
   SESSION_EVENT_PAGE_LIMIT,
   type SessionEventRecord,

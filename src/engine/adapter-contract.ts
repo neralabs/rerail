@@ -189,6 +189,15 @@ export function assistantAbortEvent(sessionId: string, eventId: string, messageI
   return { kind: "assistant-abort", eventId, sessionId, messageId };
 }
 
+export function assistantMessageEvent(sessionId: string, eventId: string, messageId: string, text: string): AdapterEvent {
+  return { kind: "assistant-message", eventId, sessionId, messageId, text };
+}
+
+/** Whether a message ended without finishing: its stream is abandoned rather than completed. */
+export function assistantAborted(stopReason: string | undefined): boolean {
+  return stopReason === "aborted" || stopReason === "error";
+}
+
 export function assistantCompletionEvent(
   sessionId: string,
   messageId: string,
@@ -197,7 +206,7 @@ export function assistantCompletionEvent(
   stopReason: string | undefined,
   nonce: string,
 ): AdapterEvent {
-  if (stopReason === "aborted" || stopReason === "error") {
+  if (assistantAborted(stopReason)) {
     return assistantAbortEvent(sessionId, `assistant-abort:${nonce}`, messageId);
   }
   return assistantDeltaEvent(sessionId, `assistant-final:${nonce}`, messageId, streamed ? "" : text(), true);

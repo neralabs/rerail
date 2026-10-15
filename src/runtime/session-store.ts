@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import type { AdapterSession } from "../engine/adapter-contract.js";
+import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import type { DroppedEvents } from "./session-state.js";
+
+/** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
+export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
 
 export interface SessionEvent {
   sessionId: string;
@@ -193,6 +198,35 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /** Marks the session's history incomplete over a stretch of events its host never delivered. */
+  recordDroppedEvents(session: AdapterSession, dropped: DroppedEvents, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `events-dropped:${dropped.id}`,
+      kind: "events-dropped",
+      payload: dropped,
+    }, session, attribution);
+  }
+
+  /** Marks a boundary answered before its shell-write check finished: what that check finds reaches a later boundary. */
+  recordDiscoveryPending(session: AdapterSession, boundary: DiscoveryPendingBoundary, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `source-discovery-pending:${randomUUID()}`,
+      kind: "source-discovery-pending",
+      payload: { boundary },
+    }, session, attribution);
+  }
+
+  /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
+  recordCodeRulesPending(session: AdapterSession, boundary: CodeRulesPendingBoundary, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `code-rules-pending:${randomUUID()}`,
+      kind: "code-rules-pending",
+      payload: { boundary },
+    }, session, attribution);
+  }
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
     const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
