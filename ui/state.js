@@ -3,7 +3,7 @@
  * `app.js` (user actions) and `poll.js` (fetches) write. Rules are keyed by id so a poll can
  * patch the row that changed and nothing else.
  */
-import { isLog, isByRerail, ruleTitle, rulePrefix, scopeText, categoryLabel } from "./derive.js";
+import { isLog, isByRerail, isRunning, ruleTitle, rulePrefix, scopeText, categoryLabel } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -220,8 +220,8 @@ export function matches(stored) {
   const f = ui.filter;
   if (f === "mine" && isByRerail(stored)) return false;
   if (f === "rerail" && !isByRerail(stored)) return false;
-  if (f === "on" && !stored.enabled) return false;
-  if (f === "off" && stored.enabled) return false;
+  if (f === "on" && !isRunning(stored)) return false;
+  if (f === "off" && isRunning(stored)) return false;
   if (f === "fired" && fires(id) === 0) return false;
   if (ui.query && !searchText(stored).includes(ui.query)) return false;
   return true;
@@ -274,10 +274,13 @@ export function ruleSections() {
   return sections;
 }
 
+/** How many of the repository's rules run: switched on, with options that apply. */
+export const runningCount = () => [...data.rules.values()].filter(isRunning).length;
+
 /** Every per-render aggregate, computed once. */
 export function summary() {
   const rules = rulesArray();
-  const on = rules.filter(r => r.enabled);
+  const on = rules.filter(isRunning);
   let triggers = 0, rerailTotal = 0, steerRules = 0, firedN = 0, firedOn = 0, logged = 0;
   let maxRuleSessions = 0;
   for (const r of rules) {
@@ -287,7 +290,7 @@ export function summary() {
     // Counted by the mode recorded with each violation; the rule may have changed mode since.
     if (isMeasured(id)) logged += a.loggedViolations ?? 0;
     if (a.rerails > 0) steerRules += 1;
-    if (f > 0) { firedN += 1; if (r.enabled) firedOn += 1; }
+    if (f > 0) { firedN += 1; if (isRunning(r)) firedOn += 1; }
     if (a.sessions > maxRuleSessions) maxRuleSessions = a.sessions;
   }
   const since = sinceFor();

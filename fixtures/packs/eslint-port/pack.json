@@ -1,0 +1,26 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "eslint-port",
+  "name": "ESLint port",
+  "category": "language",
+  "covers": "A fixture pack that ports one ESLint rule, honouring ESLint's suppression comments.",
+  "reason": "matches JavaScript",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.js"
+        ],
+        "label": "*.js files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "no-debugger",
+      "document": "rules/no-debugger.json",
+      "title": "ESLint no-debugger: Unexpected 'debugger' statement",
+      "group": "ESLint"
+    }
+  ]
+}

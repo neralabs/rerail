@@ -1245,6 +1245,72 @@ fn select_when_leaves_never_restore_each_others_results() {
     restarted.close();
 }
 
+/// A budget row a `rerail-ignore` covers is stored marked: restored from the content store, a
+/// row after the first still counts (the group stays over its maximum, reported at its first row)
+/// and a marked first row still silences the group's violation.
+#[test]
+fn restored_budget_rows_keep_their_rerail_ignore_marks() {
+    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let code_rule = compile(
+        "budget-marks",
+        json!([{
+            "id": "budget", "violation": { "anchor": "witness.span", "code": "OVER",
+                "message": "too many debugger statements" },
+            "budget": {
+                "query": { "evidence": {
+                    "as": "usage",
+                    "query": { "ast": { "language": "typescript", "rule": {
+                        "kind": "debugger_statement" } } },
+                    "project": { "directory": "file.directory" }
+                } },
+                "group_by": ["usage.directory"],
+                "count": { "lte": 1 }
+            }
+        }]),
+    );
+    let ignored = "// rerail-ignore budget-marks\ndebugger;\n";
+    let reported = vec![("src/a.ts".to_owned(), "budget".to_owned(), 0)];
+    for (tag, first, second, expected) in [
+        ("later-row", "debugger;\n", ignored, reported),
+        ("reported-row", ignored, "debugger;\n", vec![]),
+    ] {
+        let directory = TempDir::new(&format!("budget-marks-{tag}"));
+        let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+        let files = json!([
+            { "path": "src/a.ts", "language": "typescript", "source": first },
+            { "path": "src/b.ts", "language": "typescript", "source": second },
+        ]);
+        let cold = stored_workspace(&store, "/budget-marks", &code_rule);
+        let result = apply_json(&cold, 1, files.clone());
+        assert_eq!(
+            result["evaluation"]["failures"],
+            json!([]),
+            "{tag}: {result}"
+        );
+        assert_eq!(
+            located(&result["evaluation"]["violations"]),
+            expected,
+            "{tag}: cold"
+        );
+        cold.close();
+
+        let restarted = stored_workspace(&store, "/budget-marks", &code_rule);
+        let warm = apply_json(&restarted, 1, files);
+        assert_eq!(
+            restored_results(&restarted),
+            2,
+            "{tag}: both files' rows come from the store"
+        );
+        assert_eq!(warm["evaluation"]["failures"], json!([]), "{tag}: {warm}");
+        assert_eq!(
+            located(&warm["evaluation"]["violations"]),
+            expected,
+            "{tag}: restored"
+        );
+        restarted.close();
+    }
+}
+
 #[test]
 fn transient_timeouts_are_retried_and_never_persisted() {
     let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();

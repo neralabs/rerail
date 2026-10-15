@@ -117,6 +117,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@babel/parser": "^7.29.9",
     "@hono/node-server": "^2.1.1",
     "@hono/zod-openapi": "^1.6.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -132,6 +133,7 @@
   },
   "devDependencies": {
     "@ast-grep/cli": "0.45.3",
+    "@babel/types": "^7.29.8",
     "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "0.85.1",
     "@earendil-works/pi-ai": "1.1.0",

@@ -584,6 +584,57 @@ mod tests {
         );
     }
 
+    /// A violation with `suppress` reads past bindings a comment suppresses, yet the enumeration
+    /// still stops once the unsuppressed witnesses overflow the allowance: here none is
+    /// suppressed, so it reads three of the 500 bindings, as it does without `suppress`.
+    #[test]
+    fn each_with_suppress_stops_enumerating_at_the_witness_overflow() {
+        const BINDINGS: usize = 500;
+        let source = format!(
+            "f({});\n",
+            (0..BINDINGS)
+                .map(|index| format!("x{index}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let rule = json!({
+            "kind": "call_expression",
+            "has": {
+                "kind": "arguments",
+                "has": { "kind": "identifier", "pattern": "$X" }
+            }
+        });
+        let capabilities = capabilities_with(|capabilities| {
+            capabilities["limits"]["maxWitnesses"] = json!(2);
+        });
+        for suppress in [None, Some(json!({ "eslint": { "rules": ["no-undef"] } }))] {
+            let mut violation = violation();
+            violation["each"] = json!("X");
+            if let Some(suppress) = &suppress {
+                violation["suppress"] = suppress.clone();
+            }
+            let compiled = compile_document_with(
+                clause_document(json!({ "id": "c", "forbid": { "ast": {
+                    "language": "typescript", "rule": rule } }, "violation": violation })),
+                &capabilities,
+            )
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+            super::EXCLUSION_PROBES.set(0);
+            let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
+            assert_eq!(result["violations"], json!([]), "{suppress:?}: {result}");
+            assert_eq!(
+                result["failures"][0]["code"], "budget-exceeded",
+                "{suppress:?}: {result}"
+            );
+            // Three rounds (the allowance and its overflow), each probing the bindings before it.
+            let probes = super::EXCLUSION_PROBES.get();
+            assert!(
+                probes <= 3 * 4 / 2 + 2 * 4,
+                "{suppress:?}: the enumeration read past the overflow: {probes} probes"
+            );
+        }
+    }
+
     #[test]
     fn each_reuses_capture_text_shared_by_every_regex_group_result() {
         const ITEMS: usize = 500;
@@ -610,12 +661,16 @@ mod tests {
             .find(|node| node.kind() == "comment")
             .expect("comment");
         let matched = ast_grep_core::NodeMatch::new(comment, MetaVarEnv::new());
-        let sets = violations::node_group_sets(
+        let mut sets = Vec::new();
+        violations::each_node_group_set(
             &compiled.inner.clauses[0].violation,
             GrammarDialect::TypeScript,
             &matched,
-            ITEMS + 1,
             || false,
+            |groups| {
+                sets.push(groups);
+                true
+            },
         );
         assert_eq!(sets.len(), ITEMS);
         let whole = |set: &[violations::NodeGroup]| {
@@ -805,12 +860,16 @@ mod tests {
             polls.set(polls.get() + 1);
             false
         };
-        let sets = violations::node_group_sets(
+        let mut sets = Vec::new();
+        violations::each_node_group_set(
             violation,
             GrammarDialect::TypeScript,
             &matched,
-            ITEMS + 1,
             poll,
+            |groups| {
+                sets.push(groups);
+                true
+            },
         );
         assert_eq!(sets.len(), ITEMS);
         // The budget is spent just after every result is enumerated: the results' transforms are
@@ -839,6 +898,7 @@ mod tests {
                 end_byte: end,
                 ..Default::default()
             },
+            |_| true,
         );
         let Ok(witnesses) = witnesses else {
             panic!("a spent budget cuts the results short; it is no witness error");

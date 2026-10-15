@@ -199,6 +199,11 @@
             "rules": [
               "@typescript-eslint/no-this-alias"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-this-alias"
+            ]
           }
         }
       }
@@ -276,6 +281,11 @@
           "eslint": {
             "rules": [
               "@typescript-eslint/no-this-alias"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-this-alias"
             ]
           }
         }

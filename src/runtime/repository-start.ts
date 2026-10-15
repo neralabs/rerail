@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -15,7 +15,7 @@ import {
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
-import { checkouts, repositories } from "../engine/storage/schema.js";
+import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -177,6 +177,11 @@ export interface RepositorySetupIo {
 export interface RepositoryStopOptions {
   databasePath?: string;
   repository?: boolean;
+  /**
+   * The coding agent `/rerail-stop` was typed in, which decides the command sigil (`$` in Codex), and its session when
+   * known, so the reply names the rules that steered it. Absent from a terminal; Cursor cannot name its session.
+   */
+  session?: { host: RerailHost; sessionId?: string };
 }
 
 /** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
@@ -262,6 +267,36 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
 }
 
 /**
+ * The rules whose violations `session` was steered about, each once, in the order they first steered: the
+ * `ruleIds` of its `steering-delivered` receipts, as the footer's steered count reads those receipts. A session
+ * recorded under another host is not the caller's, so it names none.
+ */
+function sessionSteeredRules(database: RerailDatabase, host: RerailHost, sessionId: string): string[] {
+  const receipts = database.select({ ruleIds: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleIds')` })
+    .from(events).innerJoin(sessions, eq(sessions.sessionId, events.sessionId))
+    .where(and(eq(events.sessionId, sessionId), eq(sessions.host, host), eq(events.kind, "steering-delivered")))
+    .orderBy(asc(events.sequence)).all();
+  return [...new Set(receipts.flatMap(({ ruleIds }) => (ruleIds === null ? [] : JSON.parse(ruleIds) as string[])))];
+}
+
+/** `a`, `a and b`, `a, b and c`: the design's list, without an Oxford comma. */
+const listed = (items: readonly string[]): string =>
+  items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)!}`;
+
+/**
+ * Design N9's second group, for the coding agent to relay: the rules that steered this session, then how to turn off
+ * one rule instead of all of them. It names rules, not violations: one rule may have steered many times. With exactly
+ * one such rule, "that rule" is the one just named.
+ */
+function turnOffOneRuleLines(steered: readonly string[]): string[] {
+  if (steered.length === 0) return ["  To turn off only one rule instead, say “turn that rule off”."];
+  if (steered.length === 1) {
+    return [`  Rerail steered this session on one rule, ${steered[0]!}.`, "  To turn off only that rule, say “turn that rule off”."];
+  }
+  return [`  Rerail steered this session on ${listed(steered)}.`, "  To turn off only one rule instead, say “turn that rule off”."];
+}
+
+/**
  * Stop Rerail in the checkout `workspace` is in and the worktrees inside it, or with `repository` in every
  * checkout of its repository. Rules and history are kept. Returns the state before.
  */
@@ -269,9 +304,11 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const wholeRepository = options.repository === true;
   const name = checkoutName(workspace, wholeRepository);
-  const startCommand = io.lane === "terminal" ? "rerail start" : "/rerail-start";
+  const sigil = options.session?.host === "codex" ? "$" : "/";
+  const startCommand = io.lane === "terminal" ? "rerail start" : `${sigil}rerail-start`;
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
+  let steered: readonly string[];
   try {
     const known = lookupCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, known));
@@ -280,13 +317,16 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
       return previous;
     }
     setStarted(database, recordCheckout(database, workspace), false, wholeRepository);
+    const session = options.session;
+    steered = session?.sessionId === undefined ? [] : sessionSteeredRules(database, session.host, session.sessionId);
   } finally {
     database.$client.close();
   }
   io.say([
     `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
     `  Start it again with ${startCommand}.`,
-    ...(io.lane === "agent" ? ["  To turn off only one rule instead, say “turn that rule off”."] : []),
+    // Turning off one rule is something the person says to the coding agent, so a terminal is not offered it.
+    ...(io.lane === "agent" ? ["", ...turnOffOneRuleLines(steered)] : []),
   ].join("\n"));
   return previous;
 }

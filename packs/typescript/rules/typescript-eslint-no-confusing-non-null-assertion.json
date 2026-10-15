@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "typescript-eslint-no-confusing-non-null-assertion",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Port of typescript-eslint's `no-confusing-non-null-assertion` rule (https://typescript-eslint.io/rules/no-confusing-non-null-assertion). Flags `=`, `==`, `===`, `in` and `instanceof` expressions whose left operand ends in a non-null assertion `!` (outside parentheses).",
  "scope": {
@@ -66,7 +66,19 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`."
+    "message": "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "@typescript-eslint/no-confusing-non-null-assertion"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-confusing-non-null-assertion"
+      ]
+     }
+    }
    }
   },
   {
@@ -124,7 +136,19 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`."
+    "message": "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "@typescript-eslint/no-confusing-non-null-assertion"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-confusing-non-null-assertion"
+      ]
+     }
+    }
    }
   },
   {
@@ -183,7 +207,19 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-confusing-non-null-assertion",
-    "message": "Confusing combination of non-null assertion and `$OP` operator like `a! $OP b`, which might be misinterpreted as `!(a $OP b)`."
+    "message": "Confusing combination of non-null assertion and `$OP` operator like `a! $OP b`, which might be misinterpreted as `!(a $OP b)`.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "@typescript-eslint/no-confusing-non-null-assertion"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-confusing-non-null-assertion"
+      ]
+     }
+    }
    }
   }
  ]

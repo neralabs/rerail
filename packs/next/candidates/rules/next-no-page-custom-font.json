@@ -94,6 +94,11 @@
             "rules": [
               "@next/next/no-page-custom-font"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-page-custom-font"
+            ]
           }
         }
       }
@@ -322,6 +327,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-page-custom-font"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-page-custom-font"
             ]
           }
         }

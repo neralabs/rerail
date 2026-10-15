@@ -163,6 +163,16 @@
             "rules": [
               "no-eval"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
+            ]
           }
         }
       }
@@ -231,6 +241,16 @@
           "eslint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }
@@ -329,6 +349,16 @@
           "eslint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }
@@ -1089,6 +1119,16 @@
           "eslint": {
             "rules": [
               "no-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
             ]
           }
         }

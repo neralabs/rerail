@@ -54,6 +54,16 @@
             "rules": [
               "react/jsx-no-duplicate-props"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-no-duplicate-props"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDuplicateJsxProps"
+            ]
           }
         }
       }

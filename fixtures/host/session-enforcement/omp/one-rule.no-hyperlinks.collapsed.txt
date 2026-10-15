@@ -1,0 +1,1 @@
+ <accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>typescript-eslint-no-explicit-any  <accent>steered</accent><dim>  ·  </dim><mdLink>why?</mdLink><dim> → </dim><mdLinkUrl>http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any</mdLinkUrl>

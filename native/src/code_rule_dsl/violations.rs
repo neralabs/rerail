@@ -42,7 +42,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
-pub(super) use suppression::suppresses;
+pub(super) use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
 
 #[cfg(test)]
 thread_local! {
@@ -635,7 +635,7 @@ pub(super) fn bind(
 }
 
 /// `each` names a single capture of the query: a metavariable, or a named group of a regex that
-/// tests the witness node itself (whose every match enumerates, `node_group_sets`).
+/// tests the witness node itself (whose every match enumerates, `each_node_group_set`).
 fn check_each(
     each: &str,
     matchers: &[GrammarMatcher],
@@ -738,23 +738,25 @@ pub(super) fn node_groups<D: Doc>(
     groups
 }
 
-/// The node groups of each violation one ast match reports: one set, `node_groups`', unless
-/// `violation.each` names a regex group no metavariable shadows. Then each match of each same-node
-/// regex holding that group (in order, non-overlapping, as `captures_iter` walks the witness
-/// text) that binds it to a range not seen yet is one set: that match's groups, then the other
-/// regexes' as `node_groups` reads them. A witness where no match binds it has none: it reports
-/// nothing, as the linter reports nothing where no run is found.
-pub(super) fn node_group_sets<D: Doc>(
+/// The node groups of each violation one ast match reports, passed to `visit` in order until it
+/// returns false: one set, `node_groups`', unless `violation.each` names a regex group no
+/// metavariable shadows. Then each match of each same-node regex holding that group (in order,
+/// non-overlapping, as `captures_iter` walks the witness text) that binds it to a range not seen
+/// yet is one set: that match's groups, then the other regexes' as `node_groups` reads them. A
+/// witness where no match binds it has none: it reports nothing, as the linter reports nothing
+/// where no run is found. `cancelled` is polled before each match; once it holds, the walk ends.
+pub(super) fn each_node_group_set<D: Doc>(
     violation: &ViolationSpec,
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
-    room: usize,
     cancelled: impl Fn() -> bool,
-) -> Vec<Vec<NodeGroup>> {
+    mut visit: impl FnMut(Vec<NodeGroup>) -> bool,
+) {
     let node = matched.get_node();
     let first = node_groups(violation, language, node);
     let Some(each) = violation.each.as_deref() else {
-        return vec![first];
+        visit(first);
+        return;
     };
     let env = matched.get_env();
     let bound = env.get_match(each).is_some()
@@ -771,16 +773,16 @@ pub(super) fn node_group_sets<D: Doc>(
         .filter(|regex| regex.capture_names().flatten().any(|name| name == each))
         .collect::<Vec<_>>();
     if bound || holding.is_empty() {
-        return vec![first];
+        visit(first);
+        return;
     }
     let text = node.text();
     let start = node.range().start;
     let mut seen = BTreeSet::new();
-    let mut sets = Vec::new();
     for regex in holding {
         for found in regex.captures_iter(&text) {
-            if cancelled() || sets.len() >= room {
-                return sets;
+            if cancelled() {
+                return;
             }
             #[cfg(test)]
             NODE_GROUP_ENUMERATIONS.with(|count| count.set(count.get() + 1));
@@ -810,10 +812,11 @@ pub(super) fn node_group_sets<D: Doc>(
                     groups.push(other.clone());
                 }
             }
-            sets.push(groups);
+            if !visit(groups) {
+                return;
+            }
         }
     }
-    sets
 }
 
 /// The interpolated message and suggested fix for an ast witness; `(None, None)` when the
@@ -918,6 +921,9 @@ pub(crate) struct Witness {
     pub(crate) message: Option<String>,
     /// The suggested fix: `{ span, text }` replacing the witness span.
     pub(crate) fix: Option<Value>,
+    /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
+    /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
+    pub(crate) ignored: bool,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
@@ -1041,6 +1047,7 @@ pub(super) fn regex_witness(
         captures: Captures::from_spans(captures),
         message,
         fix,
+        ignored: false,
     }
 }
 
@@ -1812,8 +1819,9 @@ mod each_limit_tests {
     use super::*;
     use crate::code_rule_dsl::CodeRuleDslRuntime;
 
-    #[test]
-    fn same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
+    /// Evaluates `source` as `a.ts` under the one clause `clause` of a code rule `bounded-each`,
+    /// with a one-witness allowance.
+    fn evaluate_bounded(clause: Value, source: &str) -> Value {
         let mut capabilities: Value =
             serde_json::from_str(include_str!("capabilities.json")).expect("capabilities");
         capabilities["limits"]["maxWitnesses"] = json!(1);
@@ -1823,27 +1831,13 @@ mod each_limit_tests {
                 "id": "bounded-each",
                 "revision": 1,
                 "mode": "steer",
-                "clauses": [{
-                    "id": "comment-characters",
-                    "forbid": { "ast": { "language": "typescript", "rule": {
-                        "kind": "comment",
-                        "regex": "(?<X>a)"
-                    } } },
-                    "violation": {
-                        "anchor": "capture.X",
-                        "code": "E",
-                        "message": "$X",
-                        "each": "X"
-                    }
-                }]
+                "clauses": [clause]
             })
             .to_string(),
             "json".to_owned(),
             capabilities.to_string(),
         )
         .expect("policy compiles");
-        let source = format!("//{}\n", "a".repeat(50_000));
-        reset_node_group_enumerations();
         let output = compiled
             .evaluate(
                 json!({
@@ -1860,10 +1854,100 @@ mod each_limit_tests {
                 "report".to_owned(),
             )
             .expect("evaluation succeeds");
-        let result: Value = serde_json::from_str(&output).expect("evaluation JSON");
+        serde_json::from_str(&output).expect("evaluation JSON")
+    }
+
+    /// One witness per `a` of a comment, with `suppress` where given.
+    fn comment_characters(suppress: Option<Value>) -> Value {
+        let mut violation = json!({
+            "anchor": "capture.X",
+            "code": "E",
+            "message": "$X",
+            "each": "X"
+        });
+        if let Some(suppress) = suppress {
+            violation["suppress"] = suppress;
+        }
+        json!({
+            "id": "comment-characters",
+            "forbid": { "ast": { "language": "typescript", "rule": {
+                "kind": "comment",
+                "regex": "(?<X>a)"
+            } } },
+            "violation": violation
+        })
+    }
+
+    #[test]
+    fn same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
+        let source = format!("//{}\n", "a".repeat(50_000));
+        reset_node_group_enumerations();
+        let result = evaluate_bounded(comment_characters(None), &source);
         assert_eq!(node_group_enumerations(), 2, "{result}");
         assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
         assert_eq!(result["violations"], json!([]), "{result}");
         assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+    }
+
+    /// A violation whose `suppress` a comment may answer reads past suppressed witnesses, yet
+    /// still stops once the unsuppressed ones overflow the allowance: none of these 50,000 groups
+    /// is suppressed, so the second ends the enumeration.
+    #[test]
+    fn suppressible_same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
+        let source = format!("//{}\n", "a".repeat(50_000));
+        let suppress = json!({ "eslint": { "rules": ["no-warning-comments"] } });
+        reset_node_group_enumerations();
+        let result = evaluate_bounded(comment_characters(Some(suppress)), &source);
+        assert_eq!(node_group_enumerations(), 2, "{result}");
+        assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
+        assert_eq!(result["violations"], json!([]), "{result}");
+        assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+    }
+
+    /// A binding a comment suppresses spends none of the one-witness allowance: the enumeration
+    /// reads past two suppressed bindings to the third, which is reported, whether a
+    /// `rerail-ignore` or a linter directive the violation opts into silences them.
+    #[test]
+    fn each_reads_past_suppressed_bindings_under_a_one_witness_allowance() {
+        for (directive, suppress) in [
+            ("// rerail-ignore bounded-each", None),
+            (
+                "// eslint-disable-line no-console",
+                Some(json!({ "eslint": { "rules": ["no-console"] } })),
+            ),
+        ] {
+            let mut violation = json!({
+                "anchor": "capture.X",
+                "code": "E",
+                "message": "statement",
+                "each": "X"
+            });
+            if let Some(suppress) = suppress {
+                violation["suppress"] = suppress;
+            }
+            // Statements only: `$X` alone also binds the comments, which no directive covers.
+            let clause = json!({
+                "id": "statement",
+                "forbid": { "ast": { "language": "typescript", "rule": {
+                    "kind": "program",
+                    "has": { "kind": "expression_statement", "pattern": "$X" }
+                } } },
+                "violation": violation
+            });
+            let source = format!("first; {directive}\nsecond; {directive}\nthird;\n");
+            let result = evaluate_bounded(clause, &source);
+            assert_eq!(result["failures"], json!([]), "{directive}: {result}");
+            let reported = result["violations"]
+                .as_array()
+                .expect("violations")
+                .iter()
+                .map(|violation| {
+                    let start = violation["span"]["startByte"].as_u64().expect("start");
+                    let end = violation["span"]["endByte"].as_u64().expect("end");
+                    &source[start as usize..end as usize]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(reported, ["third;"], "{directive}: {result}");
+        }
     }
 }

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-sync-scripts",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-sync-scripts: a <script> opening element with a src attribute and neither async nor defer.",
   "scope": {
@@ -97,6 +97,16 @@
           "eslint": {
             "rules": [
               "@next/next/no-sync-scripts"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync-scripts"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/performance/noSyncScripts"
             ]
           }
         }

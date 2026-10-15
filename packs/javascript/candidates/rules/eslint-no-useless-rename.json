@@ -187,6 +187,16 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -242,6 +252,16 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -294,6 +314,16 @@
           "eslint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }
@@ -350,6 +380,16 @@
             "rules": [
               "no-useless-rename"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
+            ]
           }
         }
       }
@@ -402,6 +442,16 @@
           "eslint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }
@@ -457,6 +507,16 @@
           "eslint": {
             "rules": [
               "no-useless-rename"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-useless-rename"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessRename"
             ]
           }
         }
