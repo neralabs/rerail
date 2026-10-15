@@ -751,6 +751,11 @@ fn typescript_declare_global_does_not_shadow() {
         "declare module \"m\" { const inner: number; }\ninner;\ndeclare const outer: number;\nouter;\n",
         &[("inner", 1, Global), ("outer", 1, Local)],
     );
+    // `global { }` without `declare` augments the global scope too, and binds no `global`.
+    typescript(
+        "declare module \"m\" {\n  global { interface Bag {} var gg: Bag; }\n  const g = global;\n  gg;\n}\n",
+        &[("Bag", 1, Global), ("global", 1, Global), ("gg", 1, Global)],
+    );
 }
 
 #[test]

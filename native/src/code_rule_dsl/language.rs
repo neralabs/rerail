@@ -2542,7 +2542,8 @@ mod tests {
         for root in typescript_and_tsx(
             "declare module 'x' { global { interface String {} } }\nglobal { interface Array<T> {} }\n\
              declare global { interface Window {} }\nglobal.process = 1;\nconst g = global;\n\
-             function f(global: number) {}\nglobal: for (;;) { break global; }\n",
+             function f(global: number) {}\nglobal: for (;;) { break global; }\no.global;\n\
+             const p = { global: 1 };\nclass K { global() {} }\n",
         ) {
             let modules = root
                 .root()
@@ -2579,8 +2580,47 @@ mod tests {
                     "identifier<required_parameter",
                     "statement_identifier<labeled_statement",
                     "statement_identifier<break_statement",
+                    "property_identifier<member_expression",
+                    "property_identifier<pair",
+                    "property_identifier<method_definition",
                 ]
             );
+        }
+        // Unlike TypeScript, `global` with `{` on the next line is an expression and a block.
+        for root in typescript_and_tsx("declare module 'x' { global\n{ } }\n") {
+            let modules = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "internal_module")
+                .count();
+            assert_eq!(modules, 0);
+        }
+    }
+
+    /// The shipped `no-namespace` rule reports `namespace` and `module` blocks but not a `global`
+    /// augmentation, with or without `declare`, as typescript-eslint's `[global!=true]` selector.
+    #[test]
+    fn no_namespace_skips_a_global_augmentation_without_declare() {
+        let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+            include_str!("../../../packs/typescript/rules/typescript-eslint-no-namespace.json")
+                .to_owned(),
+            "json".to_owned(),
+            crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        for (source, expected) in [
+            ("declare module 'x' { global { interface String {} } }\n", 0),
+            ("declare global { interface String {} }\n", 0),
+            ("namespace N {}\ndeclare module 'x' { global {} }\n", 1),
+            ("module M {}\n", 1),
+        ] {
+            let result = crate::code_rule_dsl::test_support::evaluate_file(
+                &compiled,
+                "typescript",
+                "src/a.ts",
+                source,
+            );
+            crate::code_rule_dsl::test_support::assert_violations(&result, expected);
         }
     }
 }
