@@ -24,7 +24,7 @@ fix belongs in the engine (NER-1764).
 ## Where the code comes from
 
 The gates and the recorder's adapters are adapted, not copied, from nera-rule-validation (NRV,
-`https://github.com/neralabs/nera-rule-validation`, `src/validation/`): NRV `main` at
+`https://github.com/neralabs/nera-rule-validation`, `src/validation/` and `src/common/`): NRV `main` at
 `e8727c77d0464bd33b1890e56dcf322119911a34`, plus two commits made on its `dbf1a0cdf733b6b6da0ed709b644afbe715ae9b4`,
 `690f7223f7d62d23cb2c1cdfc2e910969b18d1e5` (Gate 6 skips type-checked rules, and a file that changed is a new golden)
 and `77c266a2545c3fb39c4f9707c0c1c95f20d82cf2` (a golden the engine could not fully read is an engine gap; here the
@@ -36,6 +36,13 @@ were made in; until they are pushed, NRV `main` is the nearest public base.
 | `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `real-code.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `matches-real-code.ts`, `upstream-status.ts` |
 | `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/gates/adapters/` (`eslint_*` files are `eslint-*`), `languages/`, `runtimes.ts` |
 | `pack.ts`; `cli.ts`, `corpus.ts`, `engine.ts`, `goldens.ts`, `policy-literals.ts`, `report.ts`, `run.ts`, `spans.ts`, `types.ts` | `manifest.ts`; the file of the same name, most of them rewritten |
+| `rerail.ts` | none: the gates read this checkout, not a pinned rerail commit |
+
+| NRV `src/common/` | Here |
+| --- | --- |
+| `process.ts` | `process.ts`, which also catches EPIPE on a child's stdin |
+| `digest.ts` | `canonicalJson` in `checks/compact.ts`; `sha256` defined in each file that needs it |
+| `manifest.ts` | none: `manifest.ts` validates `gates.yaml` with zod |
 
 Only `policy-literals.ts` and `adapters/ruff-tests.ts` are unchanged. Every import points into this tree, and the checks
 read rerail's layout. `upstream-status` is `provenance.ts` without its pack precondition: the kept LICENSE's sha256 is a
