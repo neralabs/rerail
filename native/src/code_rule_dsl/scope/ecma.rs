@@ -1034,8 +1034,22 @@ impl Visitor<'_, '_> {
     }
 
     /// `namespace A.B { }` binds `A`; `declare module "m" { }` binds nothing. The body is a scope.
+    /// `global { }` with no `namespace` or `module` keyword, as inside `declare module "m" { }`, is a
+    /// global augmentation like `declare global { }`: it binds no name, nor do its declarations.
     fn module<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
+        let keyword = node.children().any(|child| {
+            !child.is_named() && matches!(child.kind().as_ref(), "namespace" | "module")
+        });
+        if !keyword {
+            self.builder
+                .push(ScopeKind::GlobalAugmentation, node.range());
+            if let Some(body) = field(node, fields.body) {
+                self.children(&body)?;
+            }
+            self.builder.pop();
+            return Ok(());
+        }
         let name = field(node, fields.name);
         if let Some(name) = &name {
             let mut head = name.clone();
