@@ -7,7 +7,9 @@ but its results are only reported, so CI shows how far each candidate got and wh
 The gates sit on top of the [pack validation contract](pack-format.md#the-validation-contract) (checks 1 to 6) and the
 conformance check (`npm run test:conformance`), which stay as they are. They are the V1 validation gates that
 nera-rule-validation ran by hand (its ADR 0006), brought into rerail so that nobody needs a second repository to
-validate a rule. The gates' code is NRV's, ported as it was; what changed is where it runs and what it reads.
+validate a rule. The gates' code and the recorder's adapters are adapted from NRV's, not copied: they read rerail's
+layout, and the gates answer from recordings instead of running upstream. The NRV commits they come from, and what
+changed, are in [`conformance/gates/README.md`](../conformance/gates/README.md#where-the-code-comes-from).
 
 ## The gates
 

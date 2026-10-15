@@ -21,6 +21,31 @@ A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` i
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine (NER-1764).
 
+## Where the code comes from
+
+The gates and the recorder's adapters are adapted, not copied, from nera-rule-validation (NRV,
+`https://github.com/neralabs/nera-rule-validation`, `src/validation/`): NRV `main` at
+`e8727c77d0464bd33b1890e56dcf322119911a34`, plus two commits made on its `dbf1a0cdf733b6b6da0ed709b644afbe715ae9b4`,
+`690f7223f7d62d23cb2c1cdfc2e910969b18d1e5` (Gate 6 skips type-checked rules, and a file that changed is a new golden)
+and `77c266a2545c3fb39c4f9707c0c1c95f20d82cf2` (a golden the engine could not fully read is an engine gap; here the
+blocking `engine-reads-goldens`). Those two are not in NRV's GitHub repository, so they resolve only in the clone they
+were made in; until they are pushed, NRV `main` is the nearest public base.
+
+| NRV `src/validation/` | Here |
+| --- | --- |
+| `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `real-code.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `matches-real-code.ts`, `upstream-status.ts` |
+| `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/gates/adapters/` (`eslint_*` files are `eslint-*`), `languages/`, `runtimes.ts` |
+| `pack.ts`; `cli.ts`, `corpus.ts`, `engine.ts`, `goldens.ts`, `policy-literals.ts`, `report.ts`, `run.ts`, `spans.ts`, `types.ts` | `manifest.ts`; the file of the same name, most of them rewritten |
+
+Only `policy-literals.ts` and `adapters/ruff-tests.ts` are unchanged. Every import points into this tree, and the checks
+read rerail's layout. `upstream-status` is `provenance.ts` without its pack precondition: the kept LICENSE's sha256 is a
+tool-pack check here, and the pack contract's checks 5 and 6 cover the rest. The adapters record upstream instead of
+answering the gates live, so each also lists the sources of its case texts (`fixtureTextSources`: a file's path and
+sha256, or the inline text); their span code moved to `span-units/`, which the gates read without them; their
+runtimes come from `conformance/recorders/gates/runtimes/` instead of an NRV checkout; Ruff reads the engine's scope
+options from this checkout instead of a pinned engine; Bandit's driver runs under `python -I`; and ESLint's recordings
+write `/rerail-gates-cache` for the recorder's cache directory.
+
 ## Running
 
 ```sh
