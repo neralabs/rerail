@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-prototype-builtins",
- "revision": 1,
+ "revision": 3,
  "mode": "steer",
  "description": "Port of ESLint's `no-prototype-builtins` rule (https://eslint.org/docs/latest/rules/no-prototype-builtins). Flags calling hasOwnProperty, isPrototypeOf or propertyIsEnumerable as a method of an object, reported at the property. Scope only matters to ESLint's suggestion, which is not a fix.",
  "scope": {
@@ -47,7 +47,24 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$PROP' from target object."
+    "message": "Do not access Object.prototype method '$PROP' from target object.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-prototype-builtins"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-prototype-builtins"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/suspicious/noPrototypeBuiltins"
+      ]
+     }
+    }
    }
   },
   {
@@ -102,7 +119,24 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$NAME' from target object."
+    "message": "Do not access Object.prototype method '$NAME' from target object.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-prototype-builtins"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-prototype-builtins"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/suspicious/noPrototypeBuiltins"
+      ]
+     }
+    }
    }
   }
  ]

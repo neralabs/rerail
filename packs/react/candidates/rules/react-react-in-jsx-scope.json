@@ -207,6 +207,11 @@
             "rules": [
               "react/react-in-jsx-scope"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "react-in-jsx-scope"
+            ]
           }
         }
       }

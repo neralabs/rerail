@@ -22,6 +22,9 @@ enum TokenType {
     ARROW_BODY_END,
     // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
     JSX_CLOSING_TAG_LT,
+    // Never returned: valid right after `return` and `yield`, where ECMAScript allows no line terminator before the
+    // operand (see scan_after_line_terminator).
+    NO_LINE_TERMINATOR_HERE,
 };
 
 void *tree_sitter_javascript_external_scanner_create() { return NULL; }
@@ -97,6 +100,8 @@ typedef enum {
     REJECT,     // Semicolon is illegal, ie a syntax error occurred
     NO_NEWLINE, // Unclear if semicolon will be legal, continue
     ACCEPT,     // Semicolon is legal, assuming a comment was encountered
+    // A block comment holding a line terminator, which ECMAScript reads as one: semicolon legal as after a line break.
+    BLOCK_LINE_TERMINATOR,
 } WhitespaceResult;
 
 /**
@@ -129,7 +134,7 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
                             *scanned_comment = true;
 
                             if (lexer->lookahead != '/' && !consume) {
-                                return saw_block_newline ? ACCEPT : NO_NEWLINE;
+                                return saw_block_newline ? BLOCK_LINE_TERMINATOR : NO_NEWLINE;
                             }
 
                             break;
@@ -152,6 +157,8 @@ static WhitespaceResult scan_whitespace_and_comments(TSLexer *lexer, bool *scann
 
 static bool is_identifier_char(int32_t c) { return iswalnum(c) || c == '_' || c == '$'; }
 
+static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment);
+
 static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
     bool comment_condition = !valid_symbols[LOGICAL_OR];
     lexer->result_symbol = AUTOMATIC_SEMICOLON;
@@ -168,8 +175,16 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
                 return false;
             }
 
-            if (result == ACCEPT && comment_condition && lexer->lookahead != ',' && lexer->lookahead != '=') {
+            bool block_line_terminator = result == BLOCK_LINE_TERMINATOR;
+            if ((result == ACCEPT || block_line_terminator) && comment_condition && lexer->lookahead != ',' &&
+                lexer->lookahead != '=') {
                 return true;
+            }
+
+            // A block comment holding a line terminator is one, as ECMAScript reads it (`a = 1 /*⏎*/ b = 2`): the line
+            // ends there. (After a `//` comment, the scanner is called again at the line break it ends at.)
+            if (block_line_terminator) {
+                return scan_after_line_terminator(lexer, valid_symbols, scanned_comment);
             }
         }
 
@@ -193,9 +208,19 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
     }
 
     skip(lexer);
+    return scan_after_line_terminator(lexer, valid_symbols, scanned_comment);
+}
+
+// After a line terminator: whether the token starting the next line ends the statement before it.
+static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
+    // After `return` or `yield`, ECMAScript allows no line terminator before the operand: a line break there ends the
+    // statement before any token that can start an expression (`return⏎[a]`, `yield⏎(a)`, `return⏎/a/`). A token that
+    // cannot (`,`, `;`, `=`, a binary operator) goes on as before.
+    bool restricted = valid_symbols[NO_LINE_TERMINATOR_HERE];
 
     if (scan_whitespace_and_comments(lexer, scanned_comment, true) == REJECT) {
-        return false;
+        // A `/` that starts no comment: a regular expression where an operand may start.
+        return restricted;
     }
 
     // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
@@ -206,13 +231,11 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
     }
 
     switch (lexer->lookahead) {
-        case '`':
         case ',':
         case ':':
         case ';':
         case '%':
         case '>':
-        case '<':
         case '=':
         case '?':
         case '^':
@@ -221,14 +244,19 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
         case '/':
             return false;
 
+        // A template or a JSX element starts an operand.
+        case '`':
+        case '<':
+            return restricted;
+
         // Insert a semicolon before a token that cannot continue the statement, as ECMAScript does:
         // `var a⏎[b] = c`, a class field `a⏎*g() {}`. Where the token can, the line continues the statement.
         case '[':
-            return !valid_symbols[LEFT_BRACKET];
+            return restricted || !valid_symbols[LEFT_BRACKET];
         case '(':
-            return !valid_symbols[LEFT_PAREN];
+            return restricted || !valid_symbols[LEFT_PAREN];
         case '*':
-            return !valid_symbols[STAR];
+            return restricted || !valid_symbols[STAR];
 
         // Insert a semicolon before decimals literals but not otherwise.
         case '.':
@@ -236,13 +264,13 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
             return iswdigit(lexer->lookahead);
 
         // Insert a semicolon before `--` and `++`, and before a `+` or `-` that cannot continue the statement
-        // (`var a⏎+b`), but not before binary `+` or `-`.
+        // (`var a⏎+b`) or starts a restricted operand (`return⏎-1`), but not before binary `+` or `-`.
         case '+':
             skip(lexer);
-            return lexer->lookahead == '+' || !valid_symbols[PLUS];
+            return lexer->lookahead == '+' || restricted || !valid_symbols[PLUS];
         case '-':
             skip(lexer);
-            return lexer->lookahead == '-' || !valid_symbols[MINUS];
+            return lexer->lookahead == '-' || restricted || !valid_symbols[MINUS];
 
         // Don't insert a semicolon before `!=`, but do insert one before a unary `!`.
         case '!':

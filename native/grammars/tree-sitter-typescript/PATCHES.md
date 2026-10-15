@@ -10,7 +10,7 @@ fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `common/scanner.h` | upstream with Patches 6, 7, 12, 13, 20 and 21 |
+| `common/scanner.h` | upstream with Patches 6, 7, 12, 13, 20, 21, 23 and 24 |
 | `typescript/src/scanner.c`, `tsx/src/scanner.c` | upstream, verbatim |
 | `common/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 (one copy for both grammars) |
 | `typescript/src/grammar.json`, `tsx/src/grammar.json` | regenerated from the patched `common/define-grammar.js` |
@@ -1540,7 +1540,226 @@ in the C locale as in a UTF-8 one. The TypeScript and TSX files of those corpora
 truncated fixtures (vscode's copilot simulation and prompt-selection fixtures, and an 8 MiB copy of TypeScript's
 checker cut off mid-expression).
 
-## Patch 23: a class declares a static index signature
+## Patch 23: a `<` after a line break starts the next type member
+
+Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD `75b3874`.
+
+Why: a call or construct signature with type parameters may follow another member on the next line of an interface
+or an object type, with no `;` or `,` between them:
+
+```ts
+interface ParseBody {
+  (request: HonoRequest): Promise<T>
+  <T extends BodyData>(request: HonoRequest, options?: Partial<ParseBodyOptions>): Promise<T>
+}
+```
+
+TypeScript ends the member at the line break: its type references take type arguments only on the same line
+(`parseTypeReference` tests `!scanner.hasPrecedingLineBreak()`), so `Promise<T>⏎<T extends BodyData>(…)` is two
+members, and `a: Foo⏎<T>(x: T): void`, `(): void⏎<T>(): T` and `m(): void⏎<T>(): T` are too. The scanner never
+inserted a semicolon before a `<`, so the grammar read the next line as type arguments of the type before it, and each
+of these is a parse error that takes the interface with it (hono 4.6.3's `src/utils/body.ts`,
+`src/helper/ssg/middleware.ts`, `src/context.ts`, `src/types.ts`, `src/helper/factory/index.ts` and
+`src/jsx/hooks/index.ts`). A construct signature (`new <T>(): T`) on the next line already parsed.
+
+```diff
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -180,7 +180,6 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+         case ';':
+         case '%':
+         case '>':
+-        case '<':
+         case '=':
+         case '?':
+         case '^':
+@@ -190,6 +189,13 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+         case ':':
+             return false;
+ 
++            // A `<` after a line break never takes type arguments, as TypeScript reads it (its type references take
++            // them only on the same line): where no binary operator can come next, as after a type, it starts the
++            // next member or statement (`a: Promise<T>⏎<U>(x: U): U`). After an expression it is a comparison or a
++            // generic call, and the line goes on.
++        case '<':
++            return !valid_symbols[LOGICAL_OR];
++
+         case '{':
+             if (valid_symbols[FUNCTION_SIGNATURE_AUTOMATIC_SEMICOLON]) {
+                 return false;
+```
+
+Where no binary operator can come next (the `||` token is not valid, as the scanner tests before `(`, `[` and `*`),
+the line before ended a type or a declarator, so a `<` on the next line starts a member or a statement, as in
+TypeScript: `let x: Foo⏎<T>y` is a declaration and a type assertion. Where a binary operator can come next, the line
+goes on as before: `a⏎< b` compares and `foo⏎<T>(x)` is a generic call. `a: Foo<⏎T>` keeps its type arguments: the
+line break is inside them. In TSX, a line starting `<T>y` after a declaration is a JSX element, a parse error in
+`tsc` too. `x = a as Foo⏎<T>(y)`, which TypeScript reads as comparisons after `a as Foo`, is still a generic call: an
+operator may follow `as Foo` there, so the scanner cannot tell.
+
+Node kinds and field names are unchanged, and so are both grammars' `grammar.json`.
+
+## Patch 24: `return` and `yield` take no operand after a line break, and a block comment holding one is one
+
+Upstream issue: none open. Present at tag `v0.23.2` and at upstream HEAD. The same change as Patches 14 and 15 in
+`grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: ECMAScript's restricted productions allow no line terminator between `yield` and its operand, so
+`yield⏎(a)`, `yield⏎[a]` and `yield⏎-a` are a bare `yield` and a statement after it. The scanner read the next line
+as the operand, with no error. (`return⏎[a]`, `return⏎(a)` and `a⏎++b` already split, as no binary operator can
+follow `return`.) And a block comment that holds a line terminator counts as one, as in TypeScript, but the scanner
+looked for a line break only in whitespace: `a = 1 /*⏎*/ b = 2` is a parse error, and `return /*⏎*/ a` and
+`yield /*⏎*/ a` returned and yielded `a`, and `break /*⏎*/ label` broke to `label`.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -11,6 +11,8 @@ module.exports = function defineGrammar(dialect) {
+       $._arrow_body_end,
+       // The `<` of a JSX closing tag whose `/` a comment follows (see jsx_closing_element).
+       $._jsx_closing_tag_lt,
++      // Never returned: valid right after `return` and `yield` (see return_statement, yield_expression).
++      $._no_line_terminator_here,
+     ]),
+ 
+     supertypes: ($, previous) => previous.concat([
+@@ -184,6 +186,15 @@ module.exports = function defineGrammar(dialect) {
+         field('body', $.statement_block),
+       ),
+ 
++      // `return` takes no operand after a line break (ECMAScript's restricted production): `return⏎[a]` returns
++      // nothing. `_no_line_terminator_here` marks the place for the scanner.
++      return_statement: $ => seq(
++        'return',
++        optional($._no_line_terminator_here),
++        optional($._expressions),
++        $._semicolon,
++      ),
++
+       // A `{` that starts a statement or an arrow function's body opens a block, never an object (ECMAScript's
+       // ExpressionStatement and ConciseBody lookahead restrictions): `if (a) { b: 1 }` and `() => { b: 1 }` hold a
+       // labeled statement. Where only an object parses, as in `{ a: 1, b: 2 }`, GLR keeps the object.
+@@ -305,7 +316,8 @@ module.exports = function defineGrammar(dialect) {
+ 
+       yield_expression: $ => prec.right(choice(
+         // A `yield` with an operand outweighs a `yield` name before `++` or `--`: `yield++⏎x` is `yield ++x`.
+-        prec.dynamic(3, seq('yield', choice(seq('*', $.expression), $.expression))),
++        // `yield` takes no operand after a line break either: `yield⏎(a)` yields nothing.
++        prec.dynamic(3, seq('yield', optional($._no_line_terminator_here), choice(seq('*', $.expression), $.expression))),
+         'yield',
+       )),
+ 
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -17,6 +17,8 @@ enum TokenType {
+     ARROW_BODY_END,
+     // The `<` of a JSX closing tag whose `/` a comment follows: `<></* c *//>`.
+     JSX_CLOSING_TAG_LT,
++    // Never returned: valid right after `return` and `yield`, which take no operand after a line break.
++    NO_LINE_TERMINATOR_HERE,
+ };
+ 
+ static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+@@ -130,6 +132,30 @@ static bool scan_member_name_end(TSLexer *lexer) {
+     return lexer->lookahead == ':' || lexer->lookahead == '?';
+ }
+ 
++// At a `/` on the statement's line: whether a block comment starts here, ends, and holds a line terminator, which
++// ECMAScript reads as one (`a = 1 /*⏎*/ b = 2`, `return /*⏎*/ a`). Consumes the comment if so.
++static bool scan_block_comment_line_terminator(TSLexer *lexer) {
++    skip(lexer);
++    if (lexer->lookahead != '*') {
++        return false;
++    }
++    skip(lexer);
++    bool saw_line_terminator = false;
++    while (lexer->lookahead != 0) {
++        if (lexer->lookahead == '*') {
++            skip(lexer);
++            if (lexer->lookahead == '/') {
++                skip(lexer);
++                return saw_line_terminator;
++            }
++        } else {
++            saw_line_terminator |= is_line_terminator(lexer->lookahead);
++            skip(lexer);
++        }
++    }
++    return false;
++}
++
+ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, bool *scanned_comment) {
+     lexer->result_symbol = AUTOMATIC_SEMICOLON;
+     lexer->mark_end(lexer);
+@@ -151,19 +177,45 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols,
+             }
+             return true;
+         }
++        if (lexer->lookahead == '/') {
++            if (!scan_block_comment_line_terminator(lexer)) {
++                return false;
++            }
++            *scanned_comment = true;
++            break;
++        }
+         if (!is_space(lexer->lookahead)) {
+             return false;
+         }
+         if (is_line_terminator(lexer->lookahead)) {
++            skip(lexer);
+             break;
+         }
+         skip(lexer);
+     }
+ 
+-    skip(lexer);
++    // `return` and `yield` take no operand after a line break (ECMAScript's restricted productions), so there the
++    // statement ends before the tokens that would otherwise continue it as an operand: `return⏎[a]`, `yield⏎(a)`,
++    // `yield⏎/a/`. Before `,`, `;`, `=`, a binary operator or `?` it goes on, as before.
++    bool restricted = valid_symbols[NO_LINE_TERMINATOR_HERE];
+ 
+     if (!scan_whitespace_and_comments(lexer, scanned_comment)) {
+-        return false;
++        return restricted;
++    }
++
++    if (restricted) {
++        switch (lexer->lookahead) {
++            case '`':
++            case '<':
++            case '[':
++            case '(':
++            case '*':
++            case '+':
++            case '-':
++                return true;
++            default:
++                break;
++        }
+     }
+ 
+     // An arrow function is no operand: after its block body, a line that does not go on with a list, a ternary's
+```
+
+The never-returned marker `_no_line_terminator_here` follows `return` and `yield`, so the scanner knows when it scans
+after one. There, after a line break, it ends the statement before the tokens that could otherwise continue it as an
+operand (`` ` ``, `<`, `[`, `(`, `*`, `+`, `-` and a regular expression's `/`); before `,`, `;`, `=`, a binary
+operator or `?` the line goes on as before (`f(yield⏎, a)`, `return⏎;`). A block comment on the statement's line that
+holds a line terminator now stands for the line break: what follows it is scanned as the next line, so
+`x = a /*⏎*/ + b` and `x = a /*⏎*/ (b)` still continue the expression, as in TypeScript. A `//` comment keeps its
+path: the scanner is called again at its line break.
+
+Node kinds and field names are unchanged. A comment between two statements is now a sibling of both rather than part
+of the statement before it (tree-sitter-javascript 0.23.1's `Comments with asterisks` case, a method's block before a
+comment that spans lines, now ends at its `}`). Each generated parser has 22 more states (5,905 for TypeScript, 6,191
+for TSX).
+
+With Patches 23 and 24, upstream's corpus parses as before (136 of 137 with two added cases; the one failure patch 1's
+`foo++!`). Over the 26,252 TypeScript and TSX files above and hono 4.6.3's 271 (`src/`), in the C locale, the six hono
+files above that had syntax errors parse (TypeScript reports no syntax error in any of them), none gains an error, and
+every other tree is unchanged; every hono file parses.
+
+## Patch 25: a class declares a static index signature
 
 Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
 
@@ -1551,7 +1770,7 @@ typescript-eslint's `member-ordering` invalid\[44\] failed on it.
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -621,6 +621,7 @@ module.exports = function defineGrammar(dialect) {
+@@ -633,6 +633,7 @@ module.exports = function defineGrammar(dialect) {
              choice(
                $.abstract_method_signature,
                $.index_signature,
@@ -1559,7 +1778,7 @@ typescript-eslint's `member-ordering` invalid\[44\] failed on it.
                $.method_signature,
                $.public_field_definition,
              ),
-@@ -1230,6 +1231,17 @@ module.exports = function defineGrammar(dialect) {
+@@ -1242,6 +1243,17 @@ module.exports = function defineGrammar(dialect) {
              'readonly',
            ),
          ),
@@ -1585,7 +1804,7 @@ Node kinds and field names are unchanged: the node is an `index_signature` with 
 `index_type`, `type`, `sign`), and `static` is an anonymous token in it. `_index_signature_body` is hidden, so its
 fields stay on the `index_signature`.
 
-## Patch 24: `global { … }` without `declare` is a global augmentation
+## Patch 26: `global { … }` without `declare` is a global augmentation
 
 Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
 WillBooster/tree-sitter-typescript reads it as an `internal_module` named `global`, the shape used here.
@@ -1597,7 +1816,7 @@ as a `ModuleDeclaration` named `global`. Upstream accepts `global` only after `d
 ```diff
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
-@@ -651,6 +651,7 @@ module.exports = function defineGrammar(dialect) {
+@@ -663,6 +663,7 @@ module.exports = function defineGrammar(dialect) {
          $.abstract_class_declaration,
          $.module,
          prec('declaration', $.internal_module),
@@ -1605,7 +1824,7 @@ as a `ModuleDeclaration` named `global`. Upstream accepts `global` only after `d
          $.type_alias_declaration,
          $.enum_declaration,
          $.interface_declaration,
-@@ -757,6 +758,13 @@ module.exports = function defineGrammar(dialect) {
+@@ -769,6 +770,13 @@ module.exports = function defineGrammar(dialect) {
          $._module,
        ),
  
@@ -1619,7 +1838,7 @@ as a `ModuleDeclaration` named `global`. Upstream accepts `global` only after `d
        _module: $ => prec.right(seq(
          field('name', choice($.string, $.identifier, $.nested_identifier)),
          // On .d.ts files "declare module foo" desugars to "declare module foo {}",
-@@ -1293,6 +1301,7 @@ module.exports = function defineGrammar(dialect) {
+@@ -1305,6 +1313,7 @@ module.exports = function defineGrammar(dialect) {
          'override',
          'readonly',
          'module',
@@ -1630,15 +1849,17 @@ as a `ModuleDeclaration` named `global`. Upstream accepts `global` only after `d
 ```
 
 `declare global { … }` stays an `ambient_declaration`; the lower precedence keeps that reading where both apply.
-`global` joins the reserved identifiers, so `global.process`, `const g = global`, a parameter, a label or a member
-named `global` stay identifiers or property identifiers. One difference from TypeScript remains: `global` followed by
-`{` on the next line reads as an expression statement and a block here, an augmentation in TypeScript. The fork
-reads it with its external scanner.
+`global` joins the reserved identifiers, so `global.process`, `const g = global`, a parameter, a label, a member
+(`o.global`, `{ global: 1 }`, `class K { global() {} }`) and a namespace (`namespace global {}`) named `global` stay
+identifiers or property identifiers. One difference from TypeScript remains: `global` followed by `{` on the next line
+reads as an expression statement and a block here, an augmentation in TypeScript. The fork reads it with its external
+scanner.
 
 Node kinds and field names are unchanged: the augmentation is an `internal_module` with `name` (an `identifier`,
-`global`) and `body`. Each generated parser has fewer states (5,878 for TypeScript and 6,165 for TSX, from 5,883
-and 6,169).
+`global`) and `body`, and with no `namespace` keyword, which is how a rule or the scope model tells it from
+`namespace global {}`. The scope model reads it as it reads `declare global { … }`: it binds no name, nor do its
+declarations. Each generated parser has fewer states (5,900 for TypeScript and 6,187 for TSX, from 5,905 and 6,191).
 
-With Patches 23 and 24, upstream's corpus parses as before (111 of its 112 cases; the one failure patch 1's
-`foo++!`). Over 5,766 TypeScript and TSX files (rerail and nera-landing), no file gains an error and every tree is
-unchanged but for these two constructs.
+With Patches 25 and 26, upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's
+`foo++!`). Over 20,235 TypeScript and TSX files (vscode's, nera-landing's and this repository's, packs' upstream
+sources and fixtures included), in the C locale, every tree is unchanged, so no file gains an error.
