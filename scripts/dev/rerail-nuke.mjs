@@ -13,7 +13,7 @@ import { BACKUP_PREFIX, BACKUP_RERAIL_HOME, launcherPath, loadSqlite, processAli
 /** The coding agents `rerail install` registers with, and the config directory whose presence selects each. */
 export const HARNESS_CONFIG_DIRS = { omp: join(".omp", "agent"), pi: join(".pi", "agent"), "claude-code": ".claude", codex: ".codex", cursor: ".cursor" };
 /** The Rerail command set (`src/harness/rerail-commands.ts`): command files for Claude Code and Cursor, skills for Codex. */
-export const RERAIL_COMMAND_NAMES = ["rerail", "rerail-ui", "rerail-create", "rerail-start", "rerail-stop", "rerail-update", "rerail-rage-quit"];
+export const RERAIL_COMMAND_NAMES = ["rerail", "rerail-ui", "rerail-create", "rerail-start", "rerail-stop", "rerail-update", "rerail-rage-quit", "rerail-show-me"];
 /** Plus `/rerail-session`, which an earlier version wrote. */
 export const CLAUDE_COMMANDS = [...RERAIL_COMMAND_NAMES.map(name => `${name}.md`), "rerail-session.md"];
 export const CURSOR_COMMANDS = RERAIL_COMMAND_NAMES.map(name => `${name}.md`);

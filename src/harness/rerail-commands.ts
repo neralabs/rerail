@@ -12,7 +12,8 @@ export type RerailCommandName =
   | "rerail-stop"
   | "rerail-start"
   | "rerail-update"
-  | "rerail-rage-quit";
+  | "rerail-rage-quit"
+  | "rerail-show-me";
 
 export interface RerailCommand {
   name: RerailCommandName;
@@ -30,6 +31,7 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },
   { name: "rerail-rage-quit", description: "Remove Rerail from this computer; rules and history are kept in a backup", summary: "remove Rerail from this computer" },
+  { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
 ];
 
 /** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
@@ -167,5 +169,74 @@ export function rageQuitInstructions(cli: string, sigil: CommandSigil): string {
     "",
     `If the person picks 2, run \`${cli} stop\` and report its output. If they pick 3 or anything else, change nothing.`,
     "Never run the removal without the person's explicit yes in this session.",
+  ].join("\n");
+}
+
+export interface ShowMeInstructionsInput {
+  /** The shell-quoted launcher the agent runs. */
+  cli: string;
+  sigil: CommandSigil;
+  /**
+   * How the agent writes the demo file. Codex's hooks see a write made through its shell tool, not through
+   * apply_patch, so Codex writes with one shell command; every other agent uses its own edit tool.
+   */
+  write: "edit-tool" | "shell";
+}
+
+/**
+ * `/rerail-show-me`: `rerail show-me` adds a demo rule scoped to one demo file; the agent breaks it on purpose, reads
+ * the file straight after so the steer reaches it (Claude Code and Cursor deliver it with the next tool call), fixes
+ * it, and always runs `rerail show-me --cleanup`. The steer is recognised by the rule id, never faked.
+ */
+export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInput): string {
+  const how = write === "shell"
+    ? "with one shell command, not a file-change, edit, write or apply_patch tool (for example `cat > '<file>' <<'EOF'` … `EOF`)"
+    : "with your file edit or write tool";
+  return [
+    "Show the person how Rerail works, on this repo, in under a minute: add a demo rule, break it on purpose, let Rerail",
+    "steer you to the fix, then clean up.",
+    "",
+    "1. Run exactly this and read its JSON output:",
+    "",
+    "```sh",
+    `${cli} show-me --json`,
+    "```",
+    "",
+    `   If it fails, show its message and stop; where Rerail is not on or the repo is not set up, tell the person to type ${sigil}rerail-start first.`,
+    "   The output names the demo rule (`ruleId`), the demo file (`file`, and `path` in this repo), what to write first",
+    "   (`violating`), the fix (`fixed`) and the rule's `message`.",
+    "",
+    "2. Tell the person, in one line: \"I'll add a demo rule, break it on purpose, and let Rerail steer me. Then I'll clean up.\"",
+    "",
+    `3. Create \`file\` containing exactly the \`violating\` text, ${how}. Touch no other file.`,
+    "",
+    "4. Do not end your turn or say that you are waiting. Straight after the write, make a separate read-only tool call that",
+    "   reads `file`: Rerail's steer comes with the write's result or with that read, and names the rule `ruleId`.",
+    "   If it has not come by then, read `file` once more.",
+    "",
+    "5. When the steer arrives, fix `file` as its message says, the same way you wrote it: its content becomes exactly the",
+    "   `fixed` text. If no steer arrived by the end of the second read, fix nothing and never pretend one came.",
+    "",
+    "6. Always clean up, whatever happened. Run exactly this:",
+    "",
+    "```sh",
+    `${cli} show-me --cleanup`,
+    "```",
+    "",
+    "7. Reply with this, filled in:",
+    "",
+    "```text",
+    "● That was Rerail.",
+    "  The rule     <message>",
+    "  Broken       <path>, on purpose",
+    "  Steered      Rerail told me as I worked, and I fixed it. I wasn't stopped.",
+    "  Cleaned up   the demo file and the demo rule are gone",
+    `  Your turn    ${sigil}rerail-create  create a rule, in your own words`,
+    "```",
+    "",
+    `   Without a steer, the Steered row reads "No steer arrived, so nothing was fixed. Type ${sigil}rerail to see what Rerail is doing here."`,
+    "   If the cleanup failed, the Cleaned up row shows its error instead.",
+    "",
+    "Never edit any file but the demo file. Never write instruction files.",
   ].join("\n");
 }

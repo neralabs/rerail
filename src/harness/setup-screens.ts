@@ -449,6 +449,7 @@ function linkLines(label: string, link: DashboardLink, style: Style): string[] {
 }
 
 const YOUR_OWN_HINT = "create a rule in your own words, in a session";
+const SHOW_ME_HINT = "see Rerail catch and fix a broken rule";
 
 export interface SummaryInput {
   readonly repoName: string;
@@ -482,7 +483,7 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
     labelled("Your own", "/rerail-create", style, YOUR_OWN_HINT),
     otherReposLine(input.otherStartedRepos ?? [], style),
     labelled("Connected", connectedText(input.connected), style),
-    labelled("Next", "Open a new session when you’re ready.", style, "Rerail starts there"),
+    labelled("Next", "Open a new session and type /rerail-show-me.", style, SHOW_ME_HINT),
     ...linkLines("Manage rules", input.dashboard, style),
   ];
 }
@@ -513,6 +514,7 @@ const TIP_LINES: readonly string[] = [
   "  Each rule starts in Steer or Log, as its rule pack says. See each rule in the dashboard.",
   `  ${"/rerail".padEnd(COMMAND_WIDTH)}see what Rerail is doing, and every command`,
   `  ${"/rerail-create".padEnd(COMMAND_WIDTH)}create a rule, in your own words`,
+  `  ${"/rerail-show-me".padEnd(COMMAND_WIDTH)}${SHOW_ME_HINT}, on this repo`,
   `  ${"/rerail-stop".padEnd(COMMAND_WIDTH)}stop Rerail in this repo, straight away`,
   "  Rerail never edits your instruction files.",
 ];
@@ -616,6 +618,7 @@ export function renderPickedMyself(input: PickedMyselfInput, lane: SetupLane): s
     labelled("Connected", connectedText(input.connected), style),
     labelled("Your own", "/rerail-create", style, YOUR_OWN_HINT),
     labelled("Next", "Turn on the rule packs you want.", style, "then open a new session"),
+    labelled("Try it", "/rerail-show-me", style, `in a new session: ${SHOW_ME_HINT}`),
     ...linkLines("Manage rules", input.dashboard, style),
     "  Rerail did not read this repo. Changed your mind? Ask it to recommend rule packs, in the dashboard.",
   ];

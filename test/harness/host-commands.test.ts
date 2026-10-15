@@ -197,6 +197,19 @@ describe("/rerail-create", () => {
   });
 });
 
+describe("/rerail-show-me", () => {
+  it("hands the coding agent the demo steps, starting and cleaning up through the session's own launcher", async () => {
+    const { run, sent, notices } = commandHarness();
+    await run("rerail-show-me");
+    expect(notices).toEqual([]);
+    expect(sent).toHaveLength(1);
+    const cli = join(resolve("."), "dist", "cli", "cli.js");
+    expect(sent[0]).toContain(`${cli}' show-me --json`);
+    expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
+    expect(sent[0]).toContain("with your file edit or write tool");
+  });
+});
+
 describe("/rerail-rage-quit", () => {
   it("asks once and changes nothing unless the person says yes", async () => {
     const detach = vi.fn();
