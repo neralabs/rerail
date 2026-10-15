@@ -10,7 +10,7 @@ import { packConformance, passesConformanceChecks } from "./checks/passes-confor
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { CASES_PER_KIND, differingFiles, MATCHES_REAL_CODE_METHOD, matchesRealCodeGate, type MatchesRealCodeResult, type RealCodeCase } from "./checks/matches-real-code.js";
-import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, readPath, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
+import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
 import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, promote, readGoldens, serializeGoldens, type Golden, type Goldens } from "./goldens.js";
@@ -328,7 +328,7 @@ async function gapReports(adapter: PackAdapter, files: UnparsedFile[]): Promise<
 
 /** Evaluate one rule through every gate. */
 async function evaluateRule(
-  context: { engine: Engine; adapter: PackAdapter; pack: string; scratch: string; goldens: Goldens; upstreamFiles: UpstreamFile[]; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: ReturnType<typeof provenGaps> },
+  context: { engine: Engine; adapter: PackAdapter; pack: string; scratch: string; goldens: Goldens; upstreamFiles: UpstreamFile[]; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: Awaited<ReturnType<typeof provenGaps>> },
   rule: PackRule,
   location: Location,
   on: boolean | null,
@@ -561,7 +561,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
     const cases = new Map<string, UpstreamCase[]>(names.filter((name) => adapter.rule(name) !== undefined).map((name) => [name, adapter.cases(name)]));
-    const gaps = provenGaps(engine, manifest.known_gaps, new Map([...cases.values()].flat().map((testCase) => [testCase.fixture, readPath(testCase)])));
+    const gaps = await provenGaps(engine, manifest.known_gaps, [...cases.values()].flat(), (files) => adapter.parserVerdicts(files));
     await mkdir(join(cacheRoot, "tmp"), { recursive: true });
     const scratch = mkdtempSync(join(cacheRoot, "tmp", "gates-"));
     const integrity = [...gaps.problems];
@@ -585,12 +585,9 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     for (const gap of manifest.known_gaps) {
       if (gaps.proven.has(gap.id) && (gapUses[gap.id] ?? 0) === 0) integrity.push(unusedGapLine(gap.id));
     }
-    const probes = [...gaps.proven.values()];
-    const probeVerdicts = await adapter.parserVerdicts(probes.map(({ gap, probePath }) => ({ path: probePath, source: gap.probe })));
-    const kinds = new Map(probes.map(({ gap }, index) => [gap.id, (probeVerdicts[index]?.length ?? 0) === 0 ? "not-recorded" as const : classifyParsers(probeVerdicts[index]!)]));
     packResult = {
       integrity,
-      knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
+      knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: gaps.kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
       corpusComplete: complete,
     };

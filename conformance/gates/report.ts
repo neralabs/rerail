@@ -187,7 +187,7 @@ export function renderMarkdown(report: GatesReport): string {
     "",
     "## Parser gaps",
     "",
-    ...list(report.knownGaps.map((gap) => `${gap.id}: ${gap.proven ? `reproduces (${gap.kind})` : "does not reproduce"}, excused ${gap.excused} file(s)`), "No known gaps are listed."),
+    ...list(report.knownGaps.map((gap) => `${gap.id}: ${gap.proven ? `holds (${gap.kind})` : `does not hold${gap.kind === null ? "" : ` (${gap.kind})`}`}, excused ${gap.excused} file(s)`), "No known gaps are listed."),
     "",
     ...gapCandidateTable(report),
     "",

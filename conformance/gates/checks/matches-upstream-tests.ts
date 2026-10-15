@@ -12,7 +12,7 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences",
   identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports (start and end, in upstream's coordinates); messages are not compared",
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
-  excused: "a differing file is excused only when a listed known gap that still reproduces names it and the engine reported a parse failure on it; nothing else excuses a difference",
+  excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
   "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file, a golden, or one of matches-real-code's negative files: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
   goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv (each a real-code file where matches-real-code once found the rule and upstream differ, read from the pinned corpus and checked against its sha256), compared as upstream's test files are; a golden whose corpus file is gone from the pinned corpus fails",
@@ -137,28 +137,44 @@ export function engineRejects(engine: Engine, path: string, source: string): boo
 /** A listed gap this run proved again: the engine still fails to parse its probe, as the file type its fixtures share. */
 export interface ProvenGap {
   gap: KnownGap;
-  /** The path the probe was parsed as; run.ts asks independent parsers about the probe under it. */
+  /** The path the probe was parsed as, by the engine and by the independent parsers. */
   probePath: string;
 }
 
 /**
- * Re-prove every listed gap on this engine: the engine must still fail to parse its probe, under the file type
- * of the upstream test files it names (`casePaths` maps each upstream test file to the path the engine evaluates). A
- * gap that no longer reproduces excuses nothing.
+ * Re-prove every listed gap on this engine: its probe must occur in every case of the upstream test files it names
+ * (`cases`), the engine must still fail to parse the probe under the file type those files share, and the independent
+ * parsers' verdicts on the probe (`parserVerdicts`, recorded as the gates recorder read it) must be valid source, so the
+ * failure is the engine's. A gap that does not hold excuses nothing; `kinds` is each judged probe's parser verdict.
  */
-export function provenGaps(engine: Engine, gaps: KnownGap[], casePaths: Map<string, string>): { proven: Map<string, ProvenGap>; problems: string[] } {
+export async function provenGaps(
+  engine: Engine,
+  gaps: KnownGap[],
+  cases: Pick<UpstreamCase, "fixture" | "path" | "parsedAs" | "source" | "script">[],
+  parserVerdicts: PackAdapter["parserVerdicts"],
+): Promise<{ proven: Map<string, ProvenGap>; problems: string[]; kinds: Map<string, GapCandidate["verdict"] | "not-recorded"> }> {
   const proven = new Map<string, ProvenGap>();
   const problems: string[] = [];
+  const kinds = new Map<string, GapCandidate["verdict"] | "not-recorded">();
+  const byFixture = new Map<string, typeof cases>();
+  for (const testCase of cases) byFixture.set(testCase.fixture, [...(byFixture.get(testCase.fixture) ?? []), testCase]);
   for (const gap of gaps) {
-    const unknown = gap.fixtures.filter((fixture) => !casePaths.has(fixture));
+    const unknown = gap.fixtures.filter((fixture) => !byFixture.has(fixture));
     if (unknown.length > 0) {
       problems.push(`known gap ${gap.id}: ${unknown[0]} is not an upstream test file of the pack`);
       continue;
     }
+    const named = gap.fixtures.flatMap((fixture) => byFixture.get(fixture)!);
     // A gap is proven under the file type of the fixtures it names: a JSX probe means nothing parsed as plain TypeScript.
-    const extensions = [...new Set(gap.fixtures.map((fixture) => extname(casePaths.get(fixture)!)))];
+    const extensions = [...new Set(named.map((testCase) => extname(readPath(testCase))))];
     if (extensions.length !== 1 || extensions[0] === "") {
       problems.push(`known gap ${gap.id}: its fixtures must share one file type, found ${extensions.join(", ") || "none"}`);
+      continue;
+    }
+    // The probe is the source the engine cannot parse in each file the gap excuses, so it must be in each of them.
+    const without = named.find((testCase) => !testCase.source.includes(gap.probe));
+    if (without !== undefined) {
+      problems.push(`known gap ${gap.id}: the probe does not occur in ${without.fixture}`);
       continue;
     }
     const probePath = `probe${extensions[0]}`;
@@ -166,9 +182,19 @@ export function provenGaps(engine: Engine, gaps: KnownGap[], casePaths: Map<stri
       problems.push(`known gap ${gap.id}: the engine parses the probe as ${extensions[0]}, so the gap is closed`);
       continue;
     }
+    // Read as the gates recorder read it: a script only when every case it names is one.
+    const verdicts = (await parserVerdicts([{ path: probePath, source: gap.probe, script: named.every((testCase) => testCase.script === true) }]))[0] ?? [];
+    const kind = verdicts.length === 0 ? "not-recorded" : classifyParsers(verdicts);
+    kinds.set(gap.id, kind);
+    if (kind !== "valid-source") {
+      problems.push(kind === "not-recorded"
+        ? `known gap ${gap.id}: no independent parser verdict on the probe is recorded; record the tool-pack again`
+        : `known gap ${gap.id}: independent parsers do not read the probe as valid source (${kind}), so the parse failure is not the engine's`);
+      continue;
+    }
     proven.set(gap.id, { gap, probePath });
   }
-  return { proven, problems };
+  return { proven, problems, kinds };
 }
 
 /**

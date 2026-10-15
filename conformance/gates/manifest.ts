@@ -30,7 +30,10 @@ function unique<T extends z.ZodType>(item: T) {
 
 const knownGapSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
-  /** Source the engine cannot parse, in the file type the gap's fixtures share; every run proves the gap again with it. */
+  /**
+   * Source the engine cannot parse and independent parsers read as valid source, in the file type the gap's fixtures
+   * share, occurring in each of them; every run proves the gap again with it.
+   */
   probe: nonEmpty,
   /** The upstream test files (cases' `fixture`) the gap excuses, and only where the engine reported a parse failure. */
   fixtures: unique(nonEmpty).min(1),
@@ -39,8 +42,9 @@ const knownGapSchema = z.strictObject({
 
 /**
  * Listed engine parser gaps: source the engine cannot parse in upstream's test files. Every run proves each gap again
- * with its probe and records whether independent parsers accept the probe. A gap excuses `matches-upstream-tests`
- * mismatches only in the fixtures it names, and only where the engine reported a parse failure.
+ * with its probe and requires independent parsers to accept the probe. A gap excuses `matches-upstream-tests`
+ * mismatches only in the fixtures it names, and only where the engine reported a parse failure; a gap that does not
+ * hold, or excuses nothing, fails the run.
  */
 export type KnownGap = z.infer<typeof knownGapSchema>;
 

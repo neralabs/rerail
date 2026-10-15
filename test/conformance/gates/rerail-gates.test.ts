@@ -110,6 +110,21 @@ describe("location-based blocking", () => {
     assert.deepEqual(summary.candidateRows.map((row) => [row.rule, row.stoppedAt, row.why]), [["b", "Tool-pack checks", "bundled-load: Duplicate bundled rule id: x"]]);
   });
 
+  it("a listed known gap that does not hold, or excused nothing, blocks", () => {
+    const knownGaps: GatesReport["knownGaps"] = [
+      { id: "used", proven: true, kind: "valid-source", excused: 2 },
+      { id: "unused", proven: true, kind: "valid-source", excused: 0 },
+      { id: "not-source", proven: false, kind: "invalid-source", excused: 0 },
+    ];
+    const summary = summarize([{ ...report([rule("a", "shipped")]), knownGaps }], noUngated, []);
+    assert.deepEqual(summary.blocking.map((row) => [row.pack, row.stoppedAt, row.check, row.why]), [
+      ["python/bandit", "Known gaps", "known-gap", "known gap unused excused no mismatch; remove it or correct its fixtures"],
+      ["python/bandit", "Known gaps", "known-gap", "known gap not-source does not hold (the report's run integrity says why); remove it or correct it"],
+    ]);
+    assert.equal(summary.pass, false);
+    assert.equal(summarize([{ ...report([rule("a", "shipped")]), knownGaps: knownGaps.slice(0, 1) }], noUngated, []).pass, true);
+  });
+
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {
     const root = tempRoot();
     for (const path of ["packs/p/rules/a.json", "packs/p/candidates/rules/b.json", "packs/p/candidates/probes/c.json", "packs/p/candidates/conformance.json"]) write(root, path, {});

@@ -36,6 +36,11 @@ tests. When the engine could not fully read a golden (a parse failure, or its wo
 an engine gap, not the rule's: the rule still fails, through `engine-reads-goldens`, and the report lists it under
 "Blocked by engine gaps" so the fix goes to the engine (NER-1764), not the rule.
 
+Known parser gaps (`known_gaps` in `gates.yaml`) excuse an upstream test file that differs where the engine reported a
+parse failure on it, and nothing else. A gap holds when its probe occurs in every file it names, the engine still fails
+to parse the probe, and the recorded independent parsers read the probe as valid source. A listed gap that does not
+hold, or excuses no file, is a blocking failure until it is removed or corrected.
+
 Each check's detail says why it failed, in a sentence: the first differing upstream test file and positions, the words
 `not-overfit` found, the size metrics.
 
@@ -111,7 +116,8 @@ the earlier comments as outdated, so the pull request keeps its history. The com
 shortening long lists; the job summary and the uploaded reports have everything. The job summary reads top to bottom:
 
 1. The headline: shipped rules passing, blocking failures, candidates passing every gate.
-2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why.
+2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why, and each listed
+   known parser gap that does not hold or excuses nothing.
 3. **Blocked by engine gaps:** shipped rules that fail only because the engine could not read a golden.
 4. **Not gated and pending** packs, and any new or stale entry.
 5. **Candidates:** where candidates stop, gate by gate, and why each one stopped. Candidates that pass every gate are

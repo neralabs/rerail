@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { renderComment } from "./comment.js";
 import type { CommandRunner } from "./process.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
-import { blockingFailures, gatedToolPacks, REPORT_FORMAT, type GatesReport } from "./run.js";
+import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
 import { BLOCKING_GATES } from "./types.js";
 import { ungatedChecks, type UngatedResult } from "./ungated.js";
 
@@ -66,6 +66,10 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     for (const rule of report.rules.filter((item) => item.location === "shipped" && !item.pass)) {
       const failure = firstFailure(rule)!;
       blocking.push({ pack: report.toolPack, rule: rule.id, ...failure });
+    }
+    // A listed known gap that does not hold, or excused nothing across every shard, is a stale gates.yaml entry.
+    for (const gap of report.knownGaps.filter((entry) => !entry.proven || entry.excused === 0)) {
+      blocking.push({ pack: report.toolPack, rule: "-", stoppedAt: "Known gaps", check: "known-gap", why: gap.proven ? unusedGapLine(gap.id) : `known gap ${gap.id} does not hold (the report's run integrity says why); remove it or correct it` });
     }
   }
   for (const toolPack of missingReports) blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "report", why: "the gated tool-pack has no report in the directory" });

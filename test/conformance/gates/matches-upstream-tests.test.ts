@@ -113,22 +113,25 @@ test("upstream findings in a file the rule cannot reach are a difference, not a 
   assert.equal(result.checks[0]!.ok, false);
 });
 
-test("a known gap is proven under the file type of the fixtures it names", () => {
-  // This engine fails to parse anything as .ts and parses everything as .tsx.
-  const probing = {
-    rerail: { dialectForPath: (path: string) => (path.endsWith(".tsx") ? "tsx" : path.endsWith(".ts") ? "typescript" : undefined) },
-    compile: () => ({
-      evaluateFile: (_path: string, language: string) => ({ status: "failed", violations: [], failures: language === "typescript" ? [partial] : [] }),
-    }),
-  } as unknown as Engine;
+// This engine fails to parse anything as .ts and parses everything as .tsx.
+const probing = {
+  rerail: { dialectForPath: (path: string) => (path.endsWith(".tsx") ? "tsx" : path.endsWith(".ts") ? "typescript" : undefined) },
+  compile: () => ({
+    evaluateFile: (_path: string, language: string) => ({ status: "failed", violations: [], failures: language === "typescript" ? [partial] : [] }),
+  }),
+} as unknown as Engine;
+const parsersAccept = async (files: unknown[]) => files.map(() => [{ parser: "ts", syntax: [], grammar: [] }, { parser: "babel", syntax: [], grammar: [] }]);
+
+test("a known gap is proven under the file type of the fixtures it names", async () => {
   const gap = (fixtures: string[]): KnownGap => ({ id: "jsx", probe: "<a b='c' />", fixtures, reason: "tree-sitter" });
-  const casePaths = new Map([["test/rules/q/x.ts.lint", "q/x.ts"], ["test/rules/q/x.tsx.lint", "q/x.tsx"]]);
-  const proven = provenGaps(probing, [
+  const source = "const a = <a b='c' />;";
+  const cases = [{ fixture: "test/rules/q/x.ts.lint", path: "q/x.ts", source }, { fixture: "test/rules/q/x.tsx.lint", path: "q/x.tsx", source }];
+  const proven = await provenGaps(probing, [
     gap(["test/rules/q/x.ts.lint"]),
     { ...gap(["test/rules/q/x.tsx.lint"]), id: "tsx" },
     { ...gap(["test/rules/q/x.ts.lint", "test/rules/q/x.tsx.lint"]), id: "mixed" },
     { ...gap(["test/rules/q/elsewhere.ts.lint"]), id: "stray" },
-  ], casePaths);
+  ], cases, parsersAccept);
   assert.deepEqual([...proven.proven.keys()], ["jsx"]);
   assert.equal(proven.proven.get("jsx")!.probePath, "probe.ts");
   assert.deepEqual(proven.problems, [
@@ -136,6 +139,40 @@ test("a known gap is proven under the file type of the fixtures it names", () =>
     "known gap mixed: its fixtures must share one file type, found .ts, .tsx",
     "known gap stray: test/rules/q/elsewhere.ts.lint is not an upstream test file of the pack",
   ]);
+});
+
+test("a known gap holds only when its probe is in every file it names and independent parsers read the probe as valid source", async () => {
+  const gap = (id: string, probe: string, fixtures = ["test/rules/q/a.ts.lint"]): KnownGap => ({ id, probe, fixtures, reason: "tree-sitter" });
+  const cases = [
+    { fixture: "test/rules/q/a.ts.lint", path: "q/a.ts", source: "[(a)] = []; f(x)));", script: true },
+    { fixture: "test/rules/q/b.ts.lint", path: "q/b.ts", source: "let b = 1;", script: true },
+  ];
+  const asked: { path: string; source: string; script?: boolean }[] = [];
+  const verdicts: Record<string, ParserVerdict[]> = {
+    "[(a)] = [];": [{ parser: "ts", syntax: [], grammar: [] }, { parser: "babel", syntax: [], grammar: [] }],
+    ")))": [{ parser: "ts", syntax: ["TS1128 Declaration or statement expected."], grammar: [] }, { parser: "babel", syntax: ["Unexpected token"], grammar: [] }],
+    "f(x)": [{ parser: "ts", syntax: [], grammar: [] }, { parser: "babel", syntax: ["Unexpected token"], grammar: [] }],
+  };
+  const proven = await provenGaps(probing, [
+    gap("paren-target", "[(a)] = [];"),
+    gap("elsewhere", "[(a)] = [];", ["test/rules/q/a.ts.lint", "test/rules/q/b.ts.lint"]),
+    gap("not-source", ")))"),
+    gap("disputed", "f(x)"),
+    gap("unrecorded", "f(x)));"),
+  ], cases, async (files) => files.map((file) => {
+    asked.push(file);
+    return verdicts[file.source] ?? [];
+  }));
+  assert.deepEqual([...proven.proven.keys()], ["paren-target"]);
+  assert.deepEqual(proven.problems, [
+    "known gap elsewhere: the probe does not occur in test/rules/q/b.ts.lint",
+    "known gap not-source: independent parsers do not read the probe as valid source (invalid-source), so the parse failure is not the engine's",
+    "known gap disputed: independent parsers do not read the probe as valid source (parsers-disagree), so the parse failure is not the engine's",
+    "known gap unrecorded: no independent parser verdict on the probe is recorded; record the tool-pack again",
+  ]);
+  assert.deepEqual(Object.fromEntries(proven.kinds), { "paren-target": "valid-source", "not-source": "invalid-source", disputed: "parsers-disagree", unrecorded: "not-recorded" });
+  // The probe is read as the gates recorder read it: under the fixtures' file type, as a script when they all are.
+  assert.deepEqual(asked[0], { path: "probe.ts", source: "[(a)] = [];", script: true });
 });
 
 test("a file is invalid source only when every independent parser reports a syntax or grammar error", () => {
