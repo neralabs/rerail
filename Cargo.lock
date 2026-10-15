@@ -48,18 +48,6 @@ dependencies = [
 
 [[package]]
 name = "ast-grep-core"
-version = "0.45.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af0513e0a025ce1ebbbdbf00e81ca84c29f26b33a6e1e0dd877945ceef75042"
-dependencies = [
- "bit-set 0.11.1",
- "regex",
- "thiserror",
- "tree-sitter",
-]
-
-[[package]]
-name = "ast-grep-core"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "293d10e919afafbe2a6f9551de33e464cbd2aaff6cb81e7885d74bf08f82592b"
@@ -76,7 +64,7 @@ version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7f52d71a3972507f829ae1101f75d1549a9719170c9d6f6b52a153c670b103c"
 dependencies = [
- "ast-grep-core 0.50.0",
+ "ast-grep-core",
  "ignore",
  "serde",
  "tree-sitter",
@@ -1225,7 +1213,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c91d8cffac8849493a82233811bd02b2b183b8cf39bf704de0fa0841b737595"
 dependencies = [
  "bstr",
- "hashbrown 0.17.1",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -2437,7 +2425,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
- "ast-grep-core 0.45.3",
+ "ast-grep-core",
  "ast-grep-language",
  "cc",
  "fancy-regex 0.17.0",
@@ -2772,7 +2760,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
