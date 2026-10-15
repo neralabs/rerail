@@ -35,7 +35,7 @@ export interface PythonToolkit {
 export async function createPythonToolkit(cacheRoot: string, runner: CommandRunner): Promise<PythonToolkit> {
   const runtime = await uvRuntime("python", cacheRoot, runner);
   const ask = async <T>(request: object): Promise<T> =>
-    JSON.parse(await runChecked(runner, [runtime.python, WORKER], { input: JSON.stringify(request) })) as T;
+    JSON.parse(await runChecked(runner, [runtime.python, "-I", WORKER], { input: JSON.stringify(request) })) as T;
   return {
     version: runtime.version,
     keywords: new Set(await ask<string[]>({ op: "keywords" })),
