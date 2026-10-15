@@ -17,11 +17,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
-import { repositoryPath } from "../../support/oracles.js";
+import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
+import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { repositoryPath } from "../../../support/oracles.js";
 
-const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
+const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
@@ -88,6 +88,8 @@ const B610: readonly Case[] = [
     [3, 5],
   ],
   ["self in a Manager subclass", py("class M(BaseUserManager):", "    def f(self, w):", "        return self.extra(where=w)"), [3]],
+  ["self in a custom QuerySet subclass", py("class A(SoftDeleteQuerySet):", "    def f(self, w):", "        return self.extra(where=w)"), [3]],
+  ["self in a dotted third-party QuerySet subclass", py("class T(mptt.querysets.TreeQuerySet):", "    def f(self, w):", "        return super().extra(where=w)"), [3]],
   ["self in a class whose base only ends in Manager", py("class S(contextlib.AbstractContextManager):", "    def f(self, w):", "        return self.extra(where=w)"), []],
   ["self in a class whose bare base only ends in Manager", py("class P(Base, PluginManager):", "    def f(self, w):", "        return self.extra(where=w)"), []],
 ];
