@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -194,6 +194,30 @@ describe("/rerail-create", () => {
     expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules test <draft.json> --json`);
     expect(sent[0]).toContain("Add this rule?");
     expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules add <draft.json>`);
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules evidence --json`);
+    expect(sent[0]).toContain(`Read ${resolve(".")}/skills/rerail-create/SKILL.md and follow it.`);
+  });
+
+  it("points the coding agent at a skill the package ships", async () => {
+    const { run, sent } = commandHarness();
+    await run("rerail-create", "");
+    expect(sent[0]).toContain("The person's words: (none given)");
+    const path = /Read (\S+SKILL\.md) and follow it\./u.exec(sent[0]!)?.[1];
+    expect(path).toBeDefined();
+    await expect(readFile(path!, "utf8")).resolves.toMatch(/^---\nname: rerail-create\n/u);
+  });
+});
+
+describe("/rerail-show-me", () => {
+  it("hands the coding agent the demo steps, starting and cleaning up through the session's own launcher", async () => {
+    const { run, sent, notices } = commandHarness();
+    await run("rerail-show-me");
+    expect(notices).toEqual([]);
+    expect(sent).toHaveLength(1);
+    const cli = join(resolve("."), "dist", "cli", "cli.js");
+    expect(sent[0]).toContain(`${cli}' show-me --json`);
+    expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
+    expect(sent[0]).toContain("with your file edit or write tool");
   });
 });
 

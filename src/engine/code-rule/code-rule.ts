@@ -615,9 +615,18 @@ export interface CodeRuleDslLayout {
  * the format; `missing` is matched on the placeholders numbering a variable past the last passed, `unused` on the
  * variables no placeholder assigns (a gap `%2$s` leaves included), both a `ValueError` in PHP; with no variable the
  * call returns an array and nothing is missing or unused.
+ *
+ * Style `rust` (rust) reads a `format_args!`-family macro call (`format!`, `print!`, `println!`, `eprint!`,
+ * `eprintln!`, `write!`, `writeln!`, `panic!`, `assert!`, `assert_eq!`, `unreachable!`, `todo!`, ... by their bare or
+ * `std::`/`core::`/`alloc::` paths) as rustc 1.99.0 binds it: `string` captures the template, a string literal token
+ * of the macro's token tree (parsed by `rustFormat`); `args` captures the arguments after it (`$$$A`), split at the
+ * token tree's top-level commas. `unused` is matched on the first token of each argument no field, width or precision
+ * reads (rustc's "argument never used"); `missing` on the fields that read an index past the last argument (rustc's
+ * "invalid reference to positional argument"). A field naming no argument captures a variable, which `resolves`
+ * reads. A positional argument after a named one, and a template rustc refuses, are unknown.
  */
 export interface CodeRuleDslFormatArgs {
-  style: "brace" | "percent" | "printf" | "scanf";
+  style: "brace" | "percent" | "printf" | "scanf" | "rust";
   /** The capture holding the template: a string literal, or for PHP any format expression (A-Z, 0-9, _, without `$`). */
   string: string;
   /** The capture holding the arguments. */
@@ -627,7 +636,7 @@ export interface CodeRuleDslFormatArgs {
 }
 
 /** The sub-grammars `parse` applies (the engine's `literal::Grammar`). */
-export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc";
+export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat";
 
 /**
  * A string literal parsed by a sub-grammar, and a rule of that grammar's kinds matched on the parsed tree's root: the
@@ -690,6 +699,11 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  *   `invalid_tag_value` (a type alias's type an `invalid_type`) valued by the parser's message. Each node maps to its
  *   exact source in the comment; nesting past 256 levels is unknown. It reads the comment alone: sound in files with
  *   syntax errors.
+ * - `rustFormat` (rust): a `format_args!` template as rustc 1.99.0's `rustc_parse_format` reads it, on a
+ *   `string_literal` or `raw_string_literal` decoded as rustc decodes it (not a byte or C string): `format` holds
+ *   `literal` and `field`; a field (valued by the argument it names: an explicit index or a name; none for `{}`) holds
+ *   `auto` (zero width), `index` or `name`, then its `format_spec` (valued by its text) with the `type` of the trait it
+ *   names (`?`, `x?`, `e`, `x`, ...). Each node maps to its source (an escape to the whole escape).
  *
  * A literal a text grammar refuses is a `format` root holding one `error` node whose value is Ruff's message (PHP's
  * `ValueError` message for `printfFormat`). Inside,

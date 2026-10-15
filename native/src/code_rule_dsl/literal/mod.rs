@@ -11,6 +11,7 @@ pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
+pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
 
@@ -45,6 +46,8 @@ pub(crate) enum Grammar {
     Scanf,
     /// PHP doc comments as PHPStan's phpdoc-parser reads them (`phpDoc`).
     PhpDoc,
+    /// Rust's `format_args!` templates as rustc reads them (`rustFormat`).
+    RustFormat,
     /// Test-only: every decoded character is a `char` node under a `text` root.
     #[cfg(test)]
     Chars,
@@ -62,6 +65,8 @@ pub(crate) enum LiteralHost {
     PhpString,
     /// PHP doc comments (`comment` nodes PHP lexes as `T_DOC_COMMENT`).
     PhpComment,
+    /// Rust `str` literals (`string_literal`, `raw_string_literal`), decoded as rustc reads them.
+    RustString,
 }
 
 impl Grammar {
@@ -74,6 +79,7 @@ impl Grammar {
         Self::Printf,
         Self::Scanf,
         Self::PhpDoc,
+        Self::RustFormat,
         #[cfg(test)]
         Self::Chars,
     ];
@@ -93,6 +99,7 @@ impl Grammar {
             "printfFormat" => Some(Self::Printf),
             "scanfFormat" => Some(Self::Scanf),
             "phpDoc" => Some(Self::PhpDoc),
+            "rustFormat" => Some(Self::RustFormat),
             #[cfg(test)]
             "testChars" => Some(Self::Chars),
             _ => None,
@@ -108,6 +115,7 @@ impl Grammar {
             Self::Printf => "printfFormat",
             Self::Scanf => "scanfFormat",
             Self::PhpDoc => "phpDoc",
+            Self::RustFormat => "rustFormat",
             #[cfg(test)]
             Self::Chars => "testChars",
         }
@@ -124,6 +132,7 @@ impl Grammar {
             Self::Printf => printf::KINDS,
             Self::Scanf => scanf::KINDS,
             Self::PhpDoc => phpdoc::KINDS,
+            Self::RustFormat => rust_format::KINDS,
             #[cfg(test)]
             Self::Chars => &["text", "char", "error"],
         }
@@ -136,6 +145,7 @@ impl Grammar {
             Self::EslintDirective => LiteralHost::EcmaComment,
             Self::Printf | Self::Scanf => LiteralHost::PhpString,
             Self::PhpDoc => LiteralHost::PhpComment,
+            Self::RustFormat => LiteralHost::RustString,
             #[cfg(test)]
             Self::Chars => LiteralHost::PythonString,
         }
@@ -147,6 +157,7 @@ impl Grammar {
             LiteralHost::PythonString => GrammarDialect::Python,
             LiteralHost::EcmaComment => GrammarDialect::TypeScript,
             LiteralHost::PhpString | LiteralHost::PhpComment => GrammarDialect::Php,
+            LiteralHost::RustString => GrammarDialect::Rust,
         }
     }
 
@@ -157,6 +168,7 @@ impl Grammar {
             LiteralHost::EcmaComment => "TypeScript comments",
             LiteralHost::PhpString => "PHP strings",
             LiteralHost::PhpComment => "PHP doc comments",
+            LiteralHost::RustString => "Rust strings",
         }
     }
 
@@ -193,6 +205,7 @@ impl Grammar {
             Self::Brace => brace::parse(text),
             Self::Printf => printf::parse(text),
             Self::Scanf => scanf::parse(text),
+            Self::RustFormat => rust_format::tree(text),
             // Past the nesting bound an error root (`parse_php_comment` reads it as unknown).
             Self::PhpDoc => phpdoc::parse(text).unwrap_or_else(|| {
                 let mut root = PNode::new(self, "php_doc", 0, text.len());
@@ -733,6 +746,35 @@ pub(crate) fn parse_string<D: Doc>(
     spend: &mut dyn FnMut(usize) -> bool,
 ) -> Option<Parsed> {
     let decoded = match offsets::decode_python(node) {
+        offsets::Decode::Known(decoded) => decoded,
+        offsets::Decode::Unknown => return Some(Parsed::Unknown),
+        offsets::Decode::NotString => return Some(Parsed::NotString),
+    };
+    if !spend(decoded.text.len() + 1) {
+        return None;
+    }
+    let root = grammar.parse(&decoded.text);
+    if !spend(root.size()) {
+        return None;
+    }
+    let text = decoded.text.clone();
+    Some(Parsed::Tree(Arc::new(SubTree::new(
+        grammar,
+        text,
+        0,
+        root,
+        HostMap::Spans(decoded),
+    ))))
+}
+
+/// Parses a Rust `str` literal with a text grammar (`rustFormat`). Spends one step of `spend` per
+/// byte and tree node; `None` when the budget ran out.
+pub(crate) fn parse_rust_string<D: Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    grammar: Grammar,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<Parsed> {
+    let decoded = match rust_format::decode(node) {
         offsets::Decode::Known(decoded) => decoded,
         offsets::Decode::Unknown => return Some(Parsed::Unknown),
         offsets::Decode::NotString => return Some(Parsed::NotString),

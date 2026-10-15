@@ -1,0 +1,19 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rust",
+  "name": "Rust",
+  "category": "language",
+  "covers": "No rules yet: its 34 Clippy 0.1.99 ports are candidates until they pass the V1 rule validation gates.",
+  "reason": "matches Rust",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.rs"
+        ],
+        "label": "*.rs files"
+      }
+    ]
+  },
+  "rules": []
+}

@@ -1,6 +1,6 @@
 use super::resolve::{
-    ValueKey, binding_value, constant_value, memoize_structure, memoize_value, memoized_structure,
-    memoized_value, unshadowed_global,
+    ValueKey, binding_value, constant_value, followed_table, memoize_structure, memoize_value,
+    memoized_structure, memoized_value, unshadowed_global,
 };
 use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
@@ -134,11 +134,20 @@ impl Reading {
             )
         };
         let mut constant = |target| constant_value(node, target, self.language);
+        let mut table = || {
+            followed_table(
+                node,
+                self.language,
+                self.options.as_deref(),
+                self.python.as_deref(),
+            )
+        };
         let mut context = Context::with_globals(&mut spend, &mut global);
         if self.follow {
             context = context
                 .following(&mut binding)
-                .following_constants(&mut constant);
+                .following_constants(&mut constant)
+                .following_table(&mut table);
         }
         let decoded = with_adapter!(
             self.family,

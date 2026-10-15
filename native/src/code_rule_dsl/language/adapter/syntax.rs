@@ -74,7 +74,9 @@ impl SyntaxRules for Python {
             SyntaxFeature::LanguageOptions => Ok(()),
             SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
                 LiteralHost::PythonString => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::PhpComment => unhosted(grammar, ""),
+                LiteralHost::EcmaComment | LiteralHost::PhpComment | LiteralHost::RustString => {
+                    unhosted(grammar, "")
+                }
                 LiteralHost::PhpString => match grammar {
                     Grammar::Scanf => unhosted(grammar, "; Python has no scanf formats"),
                     _ => unhosted(grammar, "; Python's printf formats are `percentFormat`"),
@@ -116,9 +118,10 @@ impl SyntaxRules for Ecma {
             SyntaxFeature::LanguageOptions => Ok(()),
             SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
                 LiteralHost::EcmaComment => Ok(()),
-                LiteralHost::PythonString | LiteralHost::PhpString | LiteralHost::PhpComment => {
-                    unhosted(grammar, "")
-                }
+                LiteralHost::PythonString
+                | LiteralHost::PhpString
+                | LiteralHost::PhpComment
+                | LiteralHost::RustString => unhosted(grammar, ""),
             },
         }
     }
@@ -158,7 +161,7 @@ impl SyntaxRules for Php {
             }
             SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
                 LiteralHost::PhpString | LiteralHost::PhpComment => Ok(()),
-                LiteralHost::EcmaComment => unhosted(grammar, ""),
+                LiteralHost::EcmaComment | LiteralHost::RustString => unhosted(grammar, ""),
                 LiteralHost::PythonString => match grammar {
                     Grammar::Percent => {
                         unhosted(grammar, "; PHP's printf formats are `printfFormat`")
@@ -212,7 +215,7 @@ impl SyntaxRules for Blade {
             }
             SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
                 LiteralHost::PhpString | LiteralHost::PhpComment => Ok(()),
-                LiteralHost::EcmaComment => unhosted(grammar, ""),
+                LiteralHost::EcmaComment | LiteralHost::RustString => unhosted(grammar, ""),
                 LiteralHost::PythonString => match grammar {
                     Grammar::Percent => unhosted(
                         grammar,
@@ -279,7 +282,7 @@ pub(super) mod kit {
         pub(in super::super) when: &'static [(&'static str, Result<bool, &'static str>)],
         /// The refusals of `parse` with each grammar, in `Grammar::ALL`'s order; `None` where
         /// the family's literals host it.
-        pub(in super::super) parse: [Option<&'static str>; 7],
+        pub(in super::super) parse: [Option<&'static str>; 8],
         /// Patterns' texts, and whether each is the embedded language's.
         pub(in super::super) embeds: &'static [(&'static str, bool)],
         /// A document, and how many of its `comment` nodes are PHP comments.
@@ -336,6 +339,7 @@ pub(super) mod kit {
             Grammar::Printf,
             Grammar::Scanf,
             Grammar::PhpDoc,
+            Grammar::RustFormat,
         ]
         .map(|grammar| refusal(A::feature(SyntaxFeature::Parse(grammar))));
         assert_eq!(parse, expect.parse.map(|m| m.map(str::to_owned)));

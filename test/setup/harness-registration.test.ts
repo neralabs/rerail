@@ -728,12 +728,18 @@ describe("Claude Code commands", () => {
     expect(ui).toContain(`allowed-tools: Bash(${command} ui --print), Bash(${command} ui)\n`);
     expect(ui).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} ui\`.`);
     const create = await read("rerail-create");
-    expect(create).toContain(`allowed-tools: Bash(${command} rules test *), Bash(${command} rules add *)\n`);
+    expect(create).toContain(
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+    );
     expect(create).toContain("\"$ARGUMENTS\"");
+    expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.
     const rageQuit = await read("rerail-rage-quit");
     expect(rageQuit).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} stop)\n`);
     expect(rageQuit).toContain(`\n${command} install --remove\n`);
+    const showMe = await read("rerail-show-me");
+    expect(showMe).toContain(`allowed-tools: Bash(${command} show-me --json), Bash(${command} show-me --cleanup)\n`);
+    expect(showMe).toContain("with your file edit or write tool");
 
     const second = await registerHarnesses({ root, home, nodePath, harnesses: options });
     for (const file of commandFiles) expect(change(second.changes, "claude-code", file).action).toBe("unchanged");
@@ -1057,6 +1063,8 @@ describe("Codex Rerail skills", () => {
       expect(text).toContain(`---\nname: ${name}\ndescription: ${description}.\n---\n`);
       expect(text).toContain("require_escalated");
     }
+    // Codex's hooks see a shell write, not apply_patch, so its demo writes the file with one shell command.
+    expect(await readFile(skillPath(options.home, "rerail-show-me"), "utf8")).toContain("with one shell command");
     expect(await readFile(path, "utf8")).toContain(`\n${options.nodePath} ${join(options.root, "dist", "cli", "cli.js")} session\n`);
     await registerHarnesses({ ...options, harnesses: ["codex"] });
     expect(await backups(path)).toEqual([]);

@@ -86,11 +86,12 @@ impl RerailIgnores {
 }
 
 /// Comment kinds across Rerail's grammars: every grammar's `comment` (a Blade template's
-/// `<!-- -->` and its embedded PHP's), a script's `html_comment` and Blade's `{{-- --}}`.
+/// `<!-- -->` and its embedded PHP's), a script's `html_comment`, Blade's `{{-- --}}` and Rust's
+/// `line_comment` and `block_comment`.
 fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
     matches!(
         node.kind().as_ref(),
-        "comment" | "html_comment" | "blade_comment"
+        "comment" | "html_comment" | "blade_comment" | "line_comment" | "block_comment"
     )
 }
 
@@ -423,6 +424,15 @@ mod tests {
         );
         let top = format!("{{{{-- rerail-ignore calls --}}}}\n{blade}");
         assert!(reported(blade_rule, "blade", "a.blade.php", &top).is_empty());
+
+        let rust = "fn f() {\n    a();\n}\n// rerail-ignore calls\nfn g() {\n    b();\n    c();\n}\nfn h() {\n    d(); /* rerail-ignore calls */\n    e(); // rerail-ignore other\n    let s = \"// rerail-ignore calls\";\n}\n";
+        let rust_rule = rule("calls", "rust", "call_expression", None);
+        assert_eq!(
+            reported(rust_rule.clone(), "rust", "a.rs", rust),
+            ["a()", "e()"]
+        );
+        let top = format!("// rerail-ignore calls\n{rust}");
+        assert!(reported(rust_rule, "rust", "a.rs", &top).is_empty());
     }
 
     /// A trailing directive after a list element's `,` or a class field's `;` covers that element

@@ -86,16 +86,19 @@ fn names<'a>(value: &'a Value, path: &str, dotted: bool) -> Result<Vec<&'a str>>
             let name = item
                 .as_str()
                 .ok_or_else(|| invalid(format!("{path}/{index} must be a string")))?;
-            // A dotted name is Python's; PHP names are labels joined by `\`, fully qualified or
-            // not. Each family refuses the other's shape when the rule compiles.
+            // A dotted name is Python's; a path whose identifiers `::` joins, Rust's; PHP names are
+            // labels joined by `\`, fully qualified or not. Each family refuses the others' shapes
+            // when the rule compiles.
             let valid = if dotted {
-                name.split('.').all(is_identifier) || is_php_name(name)
+                name.split('.').all(is_identifier)
+                    || name.split("::").all(is_identifier)
+                    || is_php_name(name)
             } else {
                 is_identifier(name)
             };
             if !valid || name.len() > MAX_RESOLVE_NAME_BYTES {
                 let shape = if dotted {
-                    "a dotted name (identifiers joined by `.`) or a PHP name (labels joined by `\\`)"
+                    "a dotted name (identifiers joined by `.`), a Rust path (identifiers joined by `::`) or a PHP name (labels joined by `\\`)"
                 } else {
                     "an identifier"
                 };
@@ -550,17 +553,48 @@ fn compile_lexical_resolves<S: ScopeRules>(
             continue;
         };
         gate(&format!("{path}/{key}"), S::feature(ScopeFeature::Imports))?;
-        if let Some((index, name)) = listed
+        if S::IMPORT_PATHS && key == "imported" {
+            return Err(invalid(format!(
+                "{path}/imported: `imported` matches the names Python's import statements write; a Rust `use` path is no read, and `import` lists the paths reads name through it"
+            )));
+        }
+        for (index, name) in listed
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
             .enumerate()
-            .find(|(_, name)| name.contains('\\'))
         {
-            return Err(invalid(format!(
-                "{path}/{key}/{index}: `{name}` is a PHP name; Python imports are dotted names"
-            )));
+            let refusal = if S::IMPORT_PATHS {
+                if name.contains('\\') {
+                    Some(format!(
+                        "`{name}` is a PHP name; Rust paths join identifiers with `::`"
+                    ))
+                } else if name.contains('.') {
+                    Some(format!(
+                        "`{name}` is a dotted name; Rust paths join identifiers with `::`"
+                    ))
+                } else if matches!(name.split("::").next(), Some("self" | "super")) {
+                    Some(format!(
+                        "`{name}` starts at a module; a listed path starts at a crate (`crate::`, `std::`), and reads through `self::` and `super::` are normalised to `crate::` paths"
+                    ))
+                } else {
+                    None
+                }
+            } else if name.contains('\\') {
+                Some(format!(
+                    "`{name}` is a PHP name; Python imports are dotted names"
+                ))
+            } else if name.contains("::") {
+                Some(format!(
+                    "`{name}` is a Rust path; Python imports are dotted names"
+                ))
+            } else {
+                None
+            };
+            if let Some(refusal) = refusal {
+                return Err(invalid(format!("{path}/{key}/{index}: {refusal}")));
+            }
         }
     }
     let imported = value
@@ -595,7 +629,11 @@ fn compile_lexical_resolves<S: ScopeRules>(
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
-    let attribute_kinds = kind_ids(language, &["attribute"]);
+    let attribute_kinds = if S::IMPORT_PATHS {
+        kind_ids(language, &["scoped_identifier", "scoped_type_identifier"])
+    } else {
+        kind_ids(language, &["attribute"])
+    };
     // An import resolves a read's attribute chain too.
     let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
     if !imports.is_empty() || import_any {
@@ -722,10 +760,15 @@ fn compile_php_resolves<S: ScopeRules>(
         if let Some((index, name)) = listed
             .iter()
             .enumerate()
-            .find(|(_, name)| name.contains('.'))
+            .find(|(_, name)| name.contains('.') || name.contains("::"))
         {
+            let shape = if name.contains('.') {
+                "a dotted name"
+            } else {
+                "a Rust path"
+            };
             return Err(invalid(format!(
-                "{path}/{key}/{index}: `{name}` is a dotted name; PHP names join labels with `\\`"
+                "{path}/{key}/{index}: `{name}` is {shape}; PHP names join labels with `\\`"
             )));
         }
         Ok(listed.into_iter().map(str::to_owned).collect())

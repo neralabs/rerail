@@ -8,6 +8,7 @@ pub(crate) mod php;
 pub(crate) mod php_compare;
 pub(crate) mod php_structure;
 pub(crate) mod python;
+pub(crate) mod rust;
 pub(crate) mod sql;
 pub(crate) mod structure;
 pub(crate) mod text_regex;
@@ -162,6 +163,11 @@ pub(crate) type BindingLookup<'a> = dyn FnMut(Range<usize>, &str) -> Option<Foll
 /// declares it (`value.follow`).
 pub(crate) type ConstantLookup<'a> = dyn FnMut(NodeRef) -> Option<NodeRef> + 'a;
 
+/// The scope table of the file a node is in, where a family's values follow names through it
+/// (`value.follow`: Rust's `const` items).
+pub(crate) type TableLookup<'a> =
+    dyn FnMut() -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> + 'a;
+
 /// A binding's value node, whether a reference mutates a property of the value (TypeScript), and
 /// whether the value is an element of the site's value (a destructured or unpacked name) rather
 /// than all of it.
@@ -182,6 +188,7 @@ pub(crate) struct Context<'a> {
     global: Option<&'a mut GlobalLookup<'a>>,
     binding: Option<&'a mut BindingLookup<'a>>,
     constant: Option<&'a mut ConstantLookup<'a>>,
+    table: Option<&'a mut TableLookup<'a>>,
     hops: usize,
     exhausted: bool,
 }
@@ -195,6 +202,7 @@ impl<'a> Context<'a> {
             global: None,
             binding: None,
             constant: None,
+            table: None,
             hops: 0,
             exhausted: false,
         }
@@ -210,6 +218,7 @@ impl<'a> Context<'a> {
             global: Some(global),
             binding: None,
             constant: None,
+            table: None,
             hops: 0,
             exhausted: false,
         }
@@ -225,6 +234,19 @@ impl<'a> Context<'a> {
     pub(crate) fn following_constants(mut self, constant: &'a mut ConstantLookup<'a>) -> Self {
         self.constant = Some(constant);
         self
+    }
+
+    /// Follows names through the file's scope table (`value.follow`).
+    pub(crate) fn following_table(mut self, table: &'a mut TableLookup<'a>) -> Self {
+        self.table = Some(table);
+        self
+    }
+
+    /// The file's scope table, where the decode follows names through it.
+    pub(crate) fn table(
+        &mut self,
+    ) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
+        self.table.as_mut()?()
     }
 
     /// Whether `name` at `range` is the unshadowed builtin or global.
@@ -353,6 +375,20 @@ pub(crate) enum Value {
         /// Whether it has an element; known for a literal with one element that is not a splat.
         nonempty: Option<bool>,
     },
+    /// A Rust integer, with its type where a suffix or a declaration gives it.
+    RustInt {
+        value: BigInt,
+        ty: Option<rust::IntTy>,
+    },
+    /// A Rust float, with its type where a suffix or a declaration gives it.
+    RustFloat {
+        value: f64,
+        ty: Option<rust::FloatTy>,
+    },
+    /// A Rust `char`.
+    Char(char),
+    /// A Rust C string literal's bytes, without the terminating NUL.
+    CStr(Vec<u8>),
 }
 
 impl Value {
@@ -405,7 +441,12 @@ impl Value {
                 ..
             } => true,
             Self::Container { nonempty, .. } => return *nonempty,
-            Self::PhpStr(_) | Self::PhpArray(_) => return None,
+            Self::PhpStr(_)
+            | Self::PhpArray(_)
+            | Self::RustInt { .. }
+            | Self::RustFloat { .. }
+            | Self::Char(_)
+            | Self::CStr(_) => return None,
         })
     }
 
@@ -434,7 +475,12 @@ impl Value {
             Self::Tuple(_) => "tuple",
             Self::Array(_) => "array",
             Self::RegExp(_) => "regexp",
-            Self::PhpStr(_) | Self::PhpArray(_) => return None,
+            Self::PhpStr(_)
+            | Self::PhpArray(_)
+            | Self::RustInt { .. }
+            | Self::RustFloat { .. }
+            | Self::Char(_)
+            | Self::CStr(_) => return None,
             Self::Container { kind, .. } => match kind {
                 ContainerKind::Tuple => "tuple",
                 ContainerKind::List => "list",

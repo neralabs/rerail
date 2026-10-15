@@ -5,6 +5,7 @@
 
 mod ecma;
 mod php;
+mod rust;
 
 use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
@@ -246,6 +247,29 @@ impl Usage {
             occurrences: built.occurrences,
             privates: built.privates,
             private_names,
+            before_local: Vec::new(),
+            cost: steps.cost,
+        })
+    }
+
+    /// Rust's index: the reads rustc's unused lints count, with what macros may read unknown
+    /// (`rust`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn rust<D: Doc>(
+        table: &ScopeTable,
+        root: &Node<'_, D>,
+        steps: &mut Steps<'_>,
+    ) -> Result<Self, BuildError> {
+        let (facts, occurrences) = rust::build(table, root, steps)?;
+        let sites = name_sites(table, steps)?;
+        Ok(Self {
+            facts,
+            sites,
+            exports: Vec::new(),
+            comment_exports: BTreeSet::new(),
+            occurrences,
+            privates: Vec::new(),
+            private_names: Vec::new(),
             before_local: Vec::new(),
             cost: steps.cost,
         })

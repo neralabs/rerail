@@ -366,6 +366,9 @@ pub(super) fn compile_parse(
                 .into_iter()
                 .filter(|id| <A as SyntaxRules>::php_comment(language, *id))
                 .collect()),
+            LiteralHost::RustString => {
+                kind_ids(language, &["string_literal", "raw_string_literal"])
+            }
         }),
         reading: table_reading(utils.options.as_deref(), utils.python.as_deref()),
     }))))

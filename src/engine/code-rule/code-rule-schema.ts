@@ -148,7 +148,7 @@ export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
 const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
   percentFormat: ["format", "literal", "placeholder", "mapping_key", "flags", "width", "precision", "star", "length", "conversion", "error"],
   braceFormat: [
@@ -253,6 +253,7 @@ export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[num
     "variable",
     "description",
   ],
+  rustFormat: ["format", "literal", "field", "auto", "index", "name", "format_spec", "type", "error"],
 };
 /** The keys a rule over a parsed tree may use; one over an annotation, whose nodes are Python's, also these. */
 const PARSE_RULE_KEYS: readonly string[] = ["kind", "regex", "all", "any", "not", "inside", "has", "precedes", "follows", "count", "compare", "value", "capture", "host"];
@@ -482,19 +483,21 @@ const CODE_RULE_GLOBAL_SETTINGS = ["readonly", "writable", "off", "readable", "w
 /** An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit (the engine's check). */
 const resolveIdentifier = z.string().max(256).regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "Must be an identifier (A-Z, a-z, 0-9, _, $).");
 /**
- * A Python dotted name, or a PHP name: labels (a letter, `_` or any non-ASCII character, then those or digits:
- * the engine's `php_names::is_label`) joined by single `\`, optionally fully qualified. The engine refuses each
- * family the other's shape. It reads Unicode scalar values (no lone surrogate) and bounds a name's UTF-8 bytes.
+ * A Python dotted name, a Rust path (identifiers joined by `::`), or a PHP name: labels (a letter, `_` or any
+ * non-ASCII character, then those or digits: the engine's `php_names::is_label`) joined by single `\`, optionally
+ * fully qualified. The engine refuses each family the others' shapes. It reads Unicode scalar values (no lone
+ * surrogate) and bounds a name's UTF-8 bytes.
  */
 const RESOLVE_DOTTED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+const RESOLVE_RUST_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(::[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 const PHP_LABEL = String.raw`[A-Za-z_\u0080-\ud7ff\ue000-\u{10ffff}][A-Za-z0-9_\u0080-\ud7ff\ue000-\u{10ffff}]*`;
 const RESOLVE_PHP_NAME = new RegExp(String.raw`^\\?${PHP_LABEL}(?:\\${PHP_LABEL})*$`, "u");
 const UTF8 = new TextEncoder();
 const resolveDottedName = z
   .string()
   .max(256)
-  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
-    message: String.raw`Must be a dotted name (identifiers joined by .) or a PHP name (labels joined by \) of at most 256 bytes.`,
+  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_RUST_PATH.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
+    message: String.raw`Must be a dotted name (identifiers joined by .), a Rust path (identifiers joined by ::) or a PHP name (labels joined by \) of at most 256 bytes.`,
   });
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");
@@ -839,7 +842,7 @@ export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
 export const codeRuleFormatArgsSchema: z.ZodType<CodeRuleDslFormatArgs> = z.lazy(() =>
   z
     .object({
-      style: z.enum(["brace", "percent", "printf", "scanf"]),
+      style: z.enum(["brace", "percent", "printf", "scanf", "rust"]),
       string: metavariableName,
       args: metavariableName,
       unused: codeRuleAstRuleSchema.optional(),
@@ -1006,7 +1009,13 @@ function visitParse(rule: CodeRuleDslAstRule, path: RulePath, visit: AstRuleVisi
   if (CODE_RULE_PARSE_GRAMMARS.includes(grammar)) visit(rule.parse, [...path, "parse"], grammar);
 }
 
-const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = { brace: "braceFormat", percent: "percentFormat", printf: "printfFormat", scanf: "scanfFormat" };
+const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = {
+  brace: "braceFormat",
+  percent: "percentFormat",
+  printf: "printfFormat",
+  scanf: "scanfFormat",
+  rust: "rustFormat",
+};
 
 /** `formatArgs`: its unused arguments are the host's nodes, its missing fields nodes of the format's tree. */
 function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, visit: AstRuleVisit): void {
