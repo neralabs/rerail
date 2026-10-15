@@ -130,7 +130,8 @@ jobs:
         with:
           built: "true"
 
-      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed lockfiles.
+      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed pins. No lockfile
+      # is committed, so a transitive release that changes upstream's answers fails --check here: pin that package too.
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
 

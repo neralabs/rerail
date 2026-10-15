@@ -10,7 +10,7 @@
 // It may live only under `fixtures/` or `packs/<id>/upstream/` (a pack's tool recordings and their inputs). Declared
 // exemptions: `packs/<id>/candidates/` (ports still scored, never shipped, with their hand-labelled probe packs: pack
 // data), `gate-pins` (the rule gates' pinned inputs and workers: `conformance/gates/*.json`, the task list and pack lists
-// the gates read; `conformance/recorders/gates/runtimes/**`, the lockfiles that pin each upstream runtime; and the Python
+// the gates read; `conformance/recorders/gates/runtimes/**`, the manifests that pin each upstream runtime; and the Python
 // workers under `conformance/recorders/gates/`, code the recorder runs inside those runtimes) and, for code-rule
 // documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
 //

@@ -9,6 +9,5 @@ packs/*/upstream/**/*.expected.json linguist-generated=true
 packs/*/upstream/*/gates.json linguist-generated=true
 packs/*/upstream/*/gates-corpus.json linguist-generated=true
 packs/*/upstream/*/goldens.tsv linguist-generated=true
-conformance/recorders/gates/runtimes/** linguist-generated=true
 packs/*/upstream/*/fixtures/** linguist-vendored=true
 packs/*/upstream/*/tests/** linguist-vendored=true

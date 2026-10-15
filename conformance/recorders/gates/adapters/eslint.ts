@@ -509,7 +509,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   const upstream = await checkoutUpstream(cacheRoot, repositoryName, pack.upstream, setup.release.tag, setup.release.path, setup.checkout, runner);
   const runtime = await npmRuntime(pack.upstream.runtime, cacheRoot, runner);
   await linkRuntime(upstream.directory, runtime);
-  // Independent parsers for a second opinion on source the engine cannot parse, from runtimes/parsers/package-lock.json.
+  // Independent parsers for a second opinion on source the engine cannot parse, from runtimes/parsers/package.json.
   const parsers = createRequire(join(await npmRuntime("parsers", cacheRoot, runner), "package.json"));
   const environmentRuntime = setup.environment === undefined ? null : await npmRuntime(setup.environment.runtime, cacheRoot, runner);
   const require = createRequire(join(runtime, "package.json"));

@@ -117,6 +117,12 @@ npm run gates:record -- --pack python --tool ruff
 `rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
 matches the pinned upstream, then judges every rule again (`--refresh-cache`) and saves the fresh results.
 
+Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
+(the recorder refuses a range), and no lockfile is committed (they are git-ignored), so the runtimes add nothing for
+Dependabot to update. Transitive packages resolve when a runtime is installed. When one of them changes what upstream
+answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
+`package.json`, or a direct `==` dependency in `pyproject.toml`) and record again.
+
 `not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that

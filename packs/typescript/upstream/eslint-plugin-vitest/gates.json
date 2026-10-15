@@ -11868,11 +11868,9 @@
   },
   "runtimes": {
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     },
     "vitest-eslint-plugin-1.6.27": {
-      "package-lock.json": "627bad45bae6dbdc4631e57e0919c4d96857669429eca929d130167404c51519",
       "package.json": "330781d754621f5f382cd2a309eed181523ebd58b72913dbe993695554b583dd"
     }
   },

@@ -146243,11 +146243,9 @@
   },
   "runtimes": {
     "eslint-plugin-unicorn-76.0.0": {
-      "package-lock.json": "b7d9cde5bb19be15ddb2ef065622cd8a7d2572e04fc569f2de8290fda2a1b372",
       "package.json": "d73863bb1335ec88a1a15f912a587498fd70742f1c729c5811c53d401eb3b334"
     },
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     }
   },

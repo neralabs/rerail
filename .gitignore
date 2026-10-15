@@ -10,3 +10,8 @@ coverage/
 .DS_Store
 .rerail/
 /tmp/
+
+# The rule gates' upstream runtimes are pinned by their manifests alone (conformance/recorders/gates/runtimes.ts):
+# installs resolve in .rerail/gates/runtimes/, and a lockfile here would only feed Dependabot.
+conformance/recorders/gates/runtimes/*/package-lock.json
+conformance/recorders/gates/runtimes/*/uv.lock

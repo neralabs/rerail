@@ -498524,11 +498524,9 @@
   },
   "runtimes": {
     "eslint-10.11.0": {
-      "package-lock.json": "7c0497013b893fdde10af0f98dc9f57531784cc09ca5c2c5e2a7e9eb7d343895",
       "package.json": "618eca35e3784c421a513f258fd4f8cf863695f826ced18db31c8da6e1a55923"
     },
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     }
   },

@@ -20,7 +20,7 @@ import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../gates/
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createEslintAdapter } from "./adapters/eslint.js";
 import { createRuffAdapter } from "./adapters/ruff.js";
-import { runtimeLockfileDigests } from "./runtimes.js";
+import { runtimePinDigests } from "./runtimes.js";
 
 export type AdapterFactory = (pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner) => Promise<PackAdapter>;
 
@@ -190,7 +190,7 @@ export interface RecordOptions {
   corpusFiles?: (inCorpus: (path: string) => boolean) => Promise<CorpusFile[]>;
   /** sha256 of corpus-tasks.json; defaults to the committed file's. */
   tasksSha256?: string;
-  /** Lockfile digests of a runtime; defaults to the committed lockfiles'. */
+  /** Pin file digests of a runtime; defaults to the committed pin files'. */
   runtimeDigests?: (runtime: string) => Record<string, string>;
 }
 
@@ -349,7 +349,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const fixtureTexts = recordFixtureTexts(adapter, cacheRoot, manifest.upstream);
 
   const extensions = PROBED_EXTENSIONS.filter((extension) => adapter.inCorpus(`src/example${extension}`));
-  const runtimeDigests = options.runtimeDigests ?? ((runtime: string) => runtimeLockfileDigests(runtime));
+  const runtimeDigests = options.runtimeDigests ?? ((runtime: string) => runtimePinDigests(runtime));
   const recording = gatesRecordingSchema.parse({
     format: GATES_RECORDING_FORMAT,
     tool,

@@ -279,7 +279,7 @@ export function gatedToolPacks(root: string): { pack: string; tool: string }[] {
 function method(manifest: PackManifest): GatesReport["method"] {
   return {
     "tool-pack": {
-      pins: "gates.yaml upstream.version, gates.json pins and conformance.json tools[].version agree, and every runtime lockfile the recording names has the committed lockfile's sha256",
+      pins: "gates.yaml upstream.version, gates.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version) has the committed file's sha256",
       license: "the kept licenses/<project>/LICENSE has the sha256 of upstream's LICENSE at the pinned commit, as recorded (rerail's pack checks 5 and 6 cover the rest of the licence contract)",
       effect: "a failing tool-pack check fails every shipped rule of the tool-pack: the recording is stale",
     },

@@ -207,8 +207,8 @@ export const gatesRecordingSchema = z.strictObject({
   }),
   /**
    * Every runtime the recorder ran (upstream's, an ESLint environment's, the independent parsers', the Python
-   * toolkit's), by its directory under conformance/recorders/gates/runtimes/: each lockfile's sha256 by file name. The
-   * pins-agree check compares them with the committed lockfiles.
+   * toolkit's), by its directory under conformance/recorders/gates/runtimes/: each pin file's sha256 by file name
+   * (package.json; pyproject.toml and .python-version). The runtime-pins check compares them with the committed files.
    */
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), sha256)),
   /**

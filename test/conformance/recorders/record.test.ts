@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
@@ -8,6 +8,7 @@ import type { CorpusFile } from "../../../conformance/gates/corpus.js";
 import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/gates/recording.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/gates/types.js";
 import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/gates/record.js";
+import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/gates/runtimes.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -71,7 +72,7 @@ test("a fake adapter's answers are recorded in the form recording.ts reads, and 
       upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
       corpusFiles: async () => [corpusFile],
       tasksSha256: "c".repeat(64),
-      runtimeDigests: () => ({ "uv.lock": "d".repeat(64) }),
+      runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
     };
     const recorded = await recordToolPack(options);
     await writeRecording(root, "demo", "bandit", recorded);
@@ -131,5 +132,21 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a runtime's manifest pins every direct dependency at an exact version", () => {
+  assert.deepEqual(unpinnedNpmDependencies({ dependencies: { eslint: "10.11.0", "eslint-v9": "npm:eslint@9.39.5", "@scope/parser-v2": "npm:@typescript-eslint/parser@2.34.0", beta: "1.0.0-rc.1" } }), []);
+  assert.deepEqual(unpinnedNpmDependencies({ dependencies: { a: "^1.2.3", b: "~1.2.3", c: "1.x", d: "latest", e: "npm:x@^1.0.0" } }), ["a@^1.2.3", "b@~1.2.3", "c@1.x", "d@latest", "e@npm:x@^1.0.0"]);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["bandit==1.9.4", "libcst==1.9.0"]\n'), []);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["ruff>=0.16", "libcst~=1.9", "x"]\n'), ["ruff>=0.16", "libcst~=1.9", "x"]);
+});
+
+test("every committed runtime pins its direct dependencies exactly, and has no lockfile", () => {
+  for (const runtime of readdirSync(RUNTIMES_DIRECTORY, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)) {
+    const directory = join(RUNTIMES_DIRECTORY, runtime);
+    for (const lockfile of ["package-lock.json", "uv.lock"]) assert.ok(!existsSync(join(directory, lockfile)), `${runtime}/${lockfile}`);
+    if (existsSync(join(directory, "package.json"))) assert.deepEqual(unpinnedNpmDependencies(JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { dependencies?: Record<string, string> }), [], runtime);
+    if (existsSync(join(directory, "pyproject.toml"))) assert.deepEqual(unpinnedPythonDependencies(readFileSync(join(directory, "pyproject.toml"), "utf8")), [], runtime);
   }
 });
