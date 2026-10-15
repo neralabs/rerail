@@ -37,9 +37,17 @@ jobs:
         # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml. A tool-pack
         # too slow for one leg runs in `shards` legs, one per `shard` (1 to shards), each judging the rules whose
         # sha256(id) mod shards is shard - 1; the report job merges them (docs/rule-gates.md, "Sharding").
+        # Pull request runs never save results, so a change to the gate code or the engine judges every rule cold on each
+        # push: Ruff (31 min cold) and javascript/eslint (over an hour cold) are sharded to keep those runs short.
         include:
           - pack: python
             tool: ruff
+            shard: 1
+            shards: 2
+          - pack: python
+            tool: ruff
+            shard: 2
+            shards: 2
           - pack: python
             tool: bandit
           - pack: react
@@ -48,6 +56,20 @@ jobs:
             tool: eslint-plugin-react-hooks
           - pack: javascript
             tool: eslint
+            shard: 1
+            shards: 4
+          - pack: javascript
+            tool: eslint
+            shard: 2
+            shards: 4
+          - pack: javascript
+            tool: eslint
+            shard: 3
+            shards: 4
+          - pack: javascript
+            tool: eslint
+            shard: 4
+            shards: 4
           - pack: javascript
             tool: eslint-plugin-unicorn
           # 47 rules on vscode's 10,176 files: one leg would run about two hours.
