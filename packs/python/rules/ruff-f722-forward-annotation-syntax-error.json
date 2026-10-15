@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f722-forward-annotation-syntax-error",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `\"...\"` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function (\"`await` statement outside of a function\": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `\"...\"` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function (\"`await` statement outside of a function\": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it. Divergence: a string after the first element of a subscript whose generic resolves to a jaxtyping import (`Float[Array, \"b n\"]`, `jaxtyping.Float[...]`, `jt.Shaped[...]`) is a jaxtyping shape, which jaxtyping parses with its own grammar, not a forward annotation, so it is not reported. Ruff 0.16.9 reports it (NER-1827). A shape inside a string annotation (`\"Float[Array, 'b n']\"`) is still reported.",
   "scope": {
     "include": [
       "**/*"
@@ -64,6 +64,72 @@
                   ]
                 }
               }
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
@@ -94,36 +160,43 @@
               }
             ],
             "not": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "function_definition",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "decorated_definition",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "decorator",
-                    "has": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
                       "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "identifier"
-                        },
-                        {
-                          "kind": "attribute"
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
                         }
-                      ],
-                      "resolves": {
-                        "import": [
-                          "typing.no_type_check",
-                          "_typeshed.no_type_check",
-                          "typing_extensions.no_type_check"
-                        ]
                       }
                     }
                   }
+                },
+                {
+                  "matches": "jaxtyping-shape"
                 }
-              }
+              ]
             }
           }
         }
@@ -186,6 +259,72 @@
                   "matches": "semantic-error-within"
                 }
               ]
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
@@ -205,36 +344,43 @@
               }
             ],
             "not": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "function_definition",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "decorated_definition",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "decorator",
-                    "has": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
                       "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "identifier"
-                        },
-                        {
-                          "kind": "attribute"
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
                         }
-                      ],
-                      "resolves": {
-                        "import": [
-                          "typing.no_type_check",
-                          "_typeshed.no_type_check",
-                          "typing_extensions.no_type_check"
-                        ]
                       }
                     }
                   }
+                },
+                {
+                  "matches": "jaxtyping-shape"
                 }
-              }
+              ]
             }
           }
         }
@@ -353,6 +499,72 @@
                   }
                 }
               ]
+            },
+            "jaxtyping-shape": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "jaxtyping"
+                        ],
+                        "prefix": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "jaxtyping"
+                            ],
+                            "prefix": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
@@ -383,36 +595,43 @@
               }
             ],
             "not": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "function_definition",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "decorated_definition",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "decorator",
-                    "has": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition",
+                    "inside": {
                       "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "identifier"
-                        },
-                        {
-                          "kind": "attribute"
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.no_type_check",
+                              "_typeshed.no_type_check",
+                              "typing_extensions.no_type_check"
+                            ]
+                          }
                         }
-                      ],
-                      "resolves": {
-                        "import": [
-                          "typing.no_type_check",
-                          "_typeshed.no_type_check",
-                          "typing_extensions.no_type_check"
-                        ]
                       }
                     }
                   }
+                },
+                {
+                  "matches": "jaxtyping-shape"
                 }
-              }
+              ]
             }
           }
         }

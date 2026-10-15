@@ -146,7 +146,7 @@
     "@oh-my-pi/pi-ai": "18.0.4",
     "@oh-my-pi/pi-coding-agent": "18.0.4",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "24.10.0",
+    "@types/node": "26.6.5",
     "@vitest/coverage-v8": "^5.0.0",
     "apache-arrow": "21.2.0",
     "drizzle-kit": "^0.31.11",

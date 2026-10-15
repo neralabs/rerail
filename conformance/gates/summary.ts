@@ -179,7 +179,7 @@ export function renderSummary(summary: Summary): string {
     ...summary.toolPacks.flatMap((entry) => [
       `<details><summary>${entry.toolPack}: shipped ${entry.shipped}, candidates ${entry.candidates}</summary>`,
       "",
-      `- Tool-pack checks: ${entry.toolPackChecks ? "pass" : "**fail** (stale recording)"}`,
+      `- Tool-pack checks: ${entry.toolPackChecks ? "pass" : "**fail**: every rule of it is blocked (see the report's tool-pack checks)"}`,
       ...BLOCKING_GATES.map((gate) => `- ${gateTitle(gate.id)}: ${entry.failedGate[gate.id]} fail`),
       `- Gap candidates: ${entry.gapCandidates}`,
       `- Run integrity: ${entry.integrity.length === 0 ? "no problems" : entry.integrity.slice(0, 10).map(cell).join("; ")}`,

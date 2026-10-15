@@ -97,7 +97,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/077/src/foo/FooBar.something.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/078/src/foo/FooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/079/src/foo/BaRbAz.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/07e696467d6d.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/080/index.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/081/index.mjs` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/082/index.cjs` | `test/filename-case.js` | derived |
@@ -180,7 +179,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/156/src/foo-js/.spec.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/157/foo.SPEC.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/158/.SPEC.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/2d161c9e2a58.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/2d26e87a0a23.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/33f30d1bf742.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/39b635d302fe.vue` | `test/filename-case.js` | derived |
@@ -197,11 +195,13 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/8c46ea638bb7.tsx` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/8e49ed877feb.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/97a4a593102b` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/a7e0a6633b8a.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/b261ff7fac00.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/b66dfd152690.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/b69aa47eecea.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/bb9f2aa9a984.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/bf6345e9bb57.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/c125bff6c234.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/001.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/002.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/003.js` | `test/no-null.js` | derived |

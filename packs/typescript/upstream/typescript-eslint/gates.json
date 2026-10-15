@@ -210400,11 +210400,9 @@
   },
   "runtimes": {
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     },
     "typescript-eslint-8.70.1": {
-      "package-lock.json": "637e5f2f90cc7dc7203792834bfeb553432292fff8b917bf73d65d3b3df66b54",
       "package.json": "2e9dae127d9609a02aaf3b2504e1e77f5c23ef196f6cdabc7d320d5086b347e4"
     }
   },

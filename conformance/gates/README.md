@@ -24,7 +24,8 @@ fix belongs in the engine (NER-1764).
 ```sh
 npm run gates                                   # every gated tool-pack, reports in .rerail/reports/gates/
 npm run gates -- --pack python --tool bandit    # one tool-pack
-npm run gates -- --no-cache                     # judge every rule again
+npm run gates -- --no-cache                     # judge every rule again; read and save no results
+npm run gates -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
 npm run gates -- --write                        # also write this run's golden promotions to goldens.tsv
 npm run gates -- --pack typescript --tool typescript-eslint --shard 2/6   # one shard: rules with sha256(id) mod 6 = 1
 npm run gates -- merge .rerail/reports/gates    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
@@ -37,9 +38,12 @@ native engine; it reads no upstream runtime. It fetches only the pinned corpora 
 
 Per-rule results are cached under `.rerail/gates/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
-The key covers the gate code, the engine (tracked engine sources and the native binary), the tool-pack's `gates.yaml`,
-`gates.json` and `gates-corpus.json`, the corpus pins, and the rule's document, conformance entry, goldens and case
-sources. When every rule hits, nothing is fetched or evaluated.
+The key covers the gate code and its dependencies (`package.json`, `package-lock.json`), the engine (tracked engine
+sources and the native binary), the tool-pack's `gates.yaml`, `gates.json` and `gates-corpus.json`, the corpus pins, and
+the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
+evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
+or names another document is a miss. In CI, pull request runs only read the cache; pushes to main and the nightly save
+it, so nothing a pull request's code computes is replayed later.
 
 ## Data
 
@@ -51,9 +55,13 @@ packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-test
 ```
 
 `npm run gates:record -- --pack <id> --tool <tool>` (conformance/recorders/gates/) writes the recordings. A tool-pack
-check that fails (pins disagree between `gates.yaml`, `gates.json` and `conformance.json`; a runtime lockfile differs
-from the committed one; the kept LICENSE is not the recorded one; a rule is not recorded) fails every shipped rule of the
-tool-pack: the recording is stale.
+check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
+recording is stale when pins disagree between `gates.yaml`, `gates.json` and `conformance.json`, a runtime's pins
+(`package.json`, `pyproject.toml`, `.python-version`) differ from the recorded ones, the kept LICENSE is not the
+recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `gates-corpus.json` answers for was not fetched with its
+recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
+the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
+duplicate id) fails it.
 
 Offline, `not-overfit` runs regexes over the committed case sources only, not every upstream test file; test words stay
 complete. The report's method text says so.
@@ -66,7 +74,10 @@ and is not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (blade, complexity,
 node, php). It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted
-`rules[].id` of each of those packs' `pack.json`. A shipped rule there that is not listed fails ("keep it in
-candidates/ until the pack has an adapter"); a listed rule no longer shipped fails ("remove it from the list"). With
+`rules[].id` of each of those packs' `pack.json`. Gating is decided per (pack, tool), by each shipped rule's
+`conformance.json` entry: a rule of a tool with a `gates.yaml` is judged, a rule of a pending tool is pending, and any
+other shipped rule, in a gated pack too, must be on the frozen list. A shipped rule that must be and is not listed fails
+("keep it in candidates/ until the tool has a gates.yaml"); a listed rule no longer shipped, or whose tool is gated or
+pending now, fails ("remove it from the list"). With
 `--base <sha>`, both files may only shrink against the base commit's (a base without the file skips the guard; a base
 that cannot be fetched or read fails closed).

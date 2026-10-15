@@ -1,8 +1,9 @@
 name: Rule gates (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
-# no longer matches the pinned upstream (gates:record --check), then judges every rule again with the result cache
-# off. Pull requests judge rules against the committed recordings (rule-gates.yml); this job keeps them honest.
+# no longer matches the pinned upstream (gates:record --check), then judges every rule again and saves the fresh
+# results for pull requests to read. Pull requests judge rules against the committed recordings (rule-gates.yml); this
+# job keeps them honest.
 
 on:
   schedule:
@@ -54,7 +55,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
@@ -131,7 +132,8 @@ jobs:
         with:
           built: "true"
 
-      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed lockfiles.
+      # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed pins. No lockfile
+      # is committed, so a transitive release that changes upstream's answers fails --check here: pin that package too.
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
 

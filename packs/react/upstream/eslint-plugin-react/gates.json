@@ -123139,11 +123139,9 @@
   },
   "runtimes": {
     "eslint-plugin-react-7.37.5": {
-      "package-lock.json": "be4c6527860d0a15837237477aab9505e7a254237d692f09f6d792cda1c86bef",
       "package.json": "ded4b1bcd5e8a303f35b96731275b8fa3806dd3b7d0467d8cae8f55f92ccb92a"
     },
     "parsers": {
-      "package-lock.json": "f213ea02775983a8251b7034caaa925be02ded90c6af8a830fca06741f2771e5",
       "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
     }
   },

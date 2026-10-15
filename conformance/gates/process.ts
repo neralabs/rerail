@@ -47,7 +47,11 @@ export class ProcessCommandRunner implements CommandRunner {
           stderr: Buffer.concat(stderr).toString("utf8"),
         });
       });
-      if (options.input !== undefined) child.stdin!.end(options.input);
+      if (options.input !== undefined) {
+        // A child that exits before reading its input fails the write with EPIPE; uncaught, that would end the process.
+        child.stdin!.once("error", reject);
+        child.stdin!.end(options.input);
+      }
     });
   }
 }

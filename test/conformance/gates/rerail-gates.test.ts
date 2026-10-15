@@ -5,11 +5,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
-import { ruleKey, type SharedKeyInputs } from "../../../conformance/gates/cache.js";
+import { CACHE_FORMAT, readCached, resultPath, ruleKey, writeCached, type SharedKeyInputs } from "../../../conformance/gates/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/gates/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/gates/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/gates/process.js";
-import { blockingFailures, packDocuments, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
+import { blockingFailures, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/gates/run.js";
 import { summarize } from "../../../conformance/gates/summary.js";
 import { ungatedChecks } from "../../../conformance/gates/ungated.js";
 
@@ -102,6 +102,13 @@ describe("location-based blocking", () => {
     assert.equal(summary.pass, false);
   });
 
+  it("a candidate a failing tool-pack check blocks is not ready to promote, and says why", () => {
+    const blocked = { ...rule("b", "candidate"), pass: false, blockedBy: "bundled-load: Duplicate bundled rule id: x" };
+    const summary = summarize([report([blocked])], noUngated, []);
+    assert.deepEqual(summary.promotable, []);
+    assert.deepEqual(summary.candidateRows.map((row) => [row.rule, row.stoppedAt, row.why]), [["b", "Tool-pack checks", "bundled-load: Duplicate bundled rule id: x"]]);
+  });
+
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {
     const root = tempRoot();
     for (const path of ["packs/p/rules/a.json", "packs/p/candidates/rules/b.json", "packs/p/candidates/probes/c.json", "packs/p/candidates/conformance.json"]) write(root, path, {});
@@ -139,7 +146,7 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", engine: "e", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", engine: "e", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
   const rules = {
     a: { document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
     b: { document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
@@ -158,11 +165,37 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("an engine, gate-code or recording change changes every key", () => {
-    for (const part of ["engine", "gateCode", "gatesJson", "gatesCorpus"] as const) {
+  it("an engine, gate-code, dependency or recording change changes every key", () => {
+    for (const part of ["engine", "gateCode", "dependencies", "gatesJson", "gatesCorpus"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
+    }
+  });
+});
+
+describe("cached results", () => {
+  const result = {
+    report: { id: "a", file: "packs/p/rules/a.json", location: "shipped", pass: true, gates: {} },
+    promoted: [],
+    gapUses: {},
+    integrity: [],
+    gapCandidates: [],
+  } as unknown as CachedRule;
+
+  it("reads back what it wrote", async () => {
+    const cache = tempRoot();
+    await writeCached(cache, "p", "t", "k", result);
+    assert.deepEqual(await readCached(cache, "p", "t", "k", isCachedRule), result);
+  });
+
+  it("an entry of another layout, the wrong shape or not JSON is a miss, never a verdict", async () => {
+    const cache = tempRoot();
+    const path = resultPath(cache, "p", "t", "k");
+    mkdirSync(join(path, ".."), { recursive: true });
+    for (const text of [JSON.stringify(result), JSON.stringify({ format: CACHE_FORMAT, value: { report: { pass: true } } }), "{"]) {
+      writeFileSync(path, text);
+      assert.equal(await readCached(cache, "p", "t", "k", isCachedRule), undefined, text);
     }
   });
 });
@@ -201,6 +234,35 @@ describe("not gated and pending", () => {
     const result = await ungatedChecks(fixture({ node: ["n1", "n2", "n3"] }), { runner: noGit });
     assert.deepEqual(failing(result.checks), ["frozen-list:node"]);
     assert.match(result.checks.find((check) => !check.ok)!.detail, /remove it from the list/u);
+  });
+
+  it("gating is decided per tool: a gated pack's rule of a tool with no gates.yaml must be frozen", async () => {
+    const root = fixture({ node: ["n1", "n2"] });
+    write(root, "packs/python/pack.json", { rules: [{ id: "p1" }, { id: "p2" }] });
+    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }, { name: "flake8" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }, { id: "p2", upstream: { tool: "flake8" } }] });
+    const blocked = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(blocked.checks), ["not-gated:python"]);
+    assert.match(blocked.checks.find((check) => !check.ok)!.detail, /p2 of flake8/u);
+    write(root, "conformance/gates/ungated-rules.json", { node: ["n1", "n2"], python: ["p2"] });
+    const frozen = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(frozen.checks), []);
+    assert.deepEqual(frozen.notGated, [{ pack: "node", rules: 2 }, { pack: "python", rules: 1 }]);
+  });
+
+  it("a pending tool covers only its own rules: another tool's rule in the same pack must be frozen", async () => {
+    const root = fixture({ node: ["n1", "n2"] });
+    write(root, "packs/javascript/pack.json", { rules: [{ id: "j1" }, { id: "j2" }] });
+    write(root, "packs/javascript/conformance.json", { tools: [{ name: "eslint" }, { name: "eslint-plugin-unicorn" }], rules: [{ id: "j1", upstream: { tool: "eslint" } }, { id: "j2", upstream: { tool: "eslint-plugin-unicorn" } }] });
+    const result = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(result.checks), ["not-gated:javascript"]);
+    assert.deepEqual(result.pending, [{ toolPack: "javascript/eslint", reason: "still validated in nera-rule-validation", rules: 1 }]);
+  });
+
+  it("a frozen rule whose tool is gated now is stale", async () => {
+    const root = fixture({ node: ["n1", "n2"], python: ["p1"] });
+    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }] });
+    const result = await ungatedChecks(root, { runner: noGit });
+    assert.deepEqual(failing(result.checks), ["frozen-list:python"]);
   });
 
   const base = "a".repeat(40);

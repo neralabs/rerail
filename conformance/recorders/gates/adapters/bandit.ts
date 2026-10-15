@@ -43,7 +43,7 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
   const runtime = await uvRuntime(pack.upstream.runtime, cacheRoot, runner);
   const python = await createPythonToolkit(cacheRoot, runner);
   const ask = async <T>(request: object): Promise<T> =>
-    JSON.parse(await runChecked(runner, [runtime.python, DRIVER], { input: JSON.stringify(request), cwd: cacheRoot })) as T;
+    JSON.parse(await runChecked(runner, [runtime.python, "-I", DRIVER], { input: JSON.stringify(request), cwd: cacheRoot })) as T;
   const facts = await ask<Facts>({ op: "facts" });
   const installed = join(dirname(dirname(facts.rules.B101?.file ?? Object.values(facts.rules)[0]!.file)));
   const withoutCaches = (directory: string) => treeDigest(directory, (path) => !path.includes("__pycache__"));

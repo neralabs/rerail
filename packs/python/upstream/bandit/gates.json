@@ -75006,13 +75006,11 @@
   "runtimes": {
     "bandit-1.9.4": {
       ".python-version": "40411dc2c2726b4c7024d38318dd8df45c528b49491efb45939dd4a829847d94",
-      "pyproject.toml": "4c716d3ae0833463d6f3cb8c98ce8ebe6dfe89553c8b459f44a5ccdc1691563d",
-      "uv.lock": "8120970dcf297c202c8332786f53e6dd9fd34853194f1e2ace65e1264fd7dee4"
+      "pyproject.toml": "4c716d3ae0833463d6f3cb8c98ce8ebe6dfe89553c8b459f44a5ccdc1691563d"
     },
     "python": {
       ".python-version": "5abd4dc1efa09469b88916c8e4e027a8c266a9b6d06f43ac9da3e30cd00b4ab5",
-      "pyproject.toml": "d1ccc38ce69e8173f9d9d7aff7a3f648e92492a3501c7457601a74affd8e2bf8",
-      "uv.lock": "69cac5a8baca385d36b13278c0d8603c5a52456aef9151f45375b133121fe150"
+      "pyproject.toml": "d1ccc38ce69e8173f9d9d7aff7a3f648e92492a3501c7457601a74affd8e2bf8"
     }
   },
   "tool": "bandit"

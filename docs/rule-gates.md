@@ -23,6 +23,12 @@ report shows every failure, not only the first.
 | `matches-real-code` | The rule and upstream run on real code: the SWE Atlas and SWE-Evo tasks' reference solutions and the corpora the pack pins in `conformance.json`. It never stops a rule by itself; every file where they differ becomes a golden that `matches-upstream-tests` judges in the same run. | through goldens |
 | `upstream-status` | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
+Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
+and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
+when a corpus file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a
+failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
+loader (`bundled-load`, for example two documents with one id).
+
 Goldens: a golden is a real-code file where the rule and upstream once differed (`packs/<id>/upstream/<tool>/goldens.tsv`:
 the rule, the task or corpus, the path and the file's sha256). Goldens are never removed; they stay as regression
 tests. When the engine could not fully read a golden (a parse failure, or its work budget ran out), the difference is
@@ -47,7 +53,9 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
 - **Not gated:** packs with no upstream adapter (node, php, blade, complexity). Their current shipped rules are frozen in
   `conformance/gates/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
-  pack has an adapter. Both lists may only shrink: CI compares them with the pull request's base.
+  pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
+  `gates.yaml` and is not pending is frozen the same way. Both lists may only shrink: CI compares them with the pull
+  request's base.
 
 Each rule's upstream rule comes from the pack's `conformance.json`. A shipped rule missing from it fails.
 
@@ -61,7 +69,8 @@ npm run gates -- summary .rerail/reports/gates # the merged summary CI writes
 
 The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code corpus into
 `.rerail/gates/` (pinned, about 400 MB); later runs reuse it and the results of every rule whose inputs did not change.
-`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
+`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does. In CI, pull request
+runs read the cached results that pushes to main and the nightly saved, and save none of their own.
 
 ## Read the report
 
@@ -105,7 +114,13 @@ npm run gates:record -- --pack python --tool ruff
 ```
 
 `rule-gates-nightly.yml` runs `gates:record -- --check` every night and fails when a committed recording no longer
-matches the pinned upstream, then judges every rule again with the cache off.
+matches the pinned upstream, then judges every rule again (`--refresh-cache`) and saves the fresh results.
+
+Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
+(the recorder refuses a range), and no lockfile is committed (they are git-ignored), so the runtimes add nothing for
+Dependabot to update. Transitive packages resolve when a runtime is installed. When one of them changes what upstream
+answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
+`package.json`, or a direct `==` dependency in `pyproject.toml`) and record again.
 
 `not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit

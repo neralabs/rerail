@@ -13,7 +13,7 @@ import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, 
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
-/** Where the recorder's runtimes and their lockfiles are committed, relative to the repository root. */
+/** Where the recorder's runtimes and their pins are committed, relative to the repository root. */
 export const RUNTIMES_DIRECTORY = "conformance/recorders/gates/runtimes";
 
 /** What a failing tool-pack check tells the reader to do. */
@@ -130,7 +130,7 @@ export function readRecordedInputs(root: string, pack: string, tool: string, nam
 
 /**
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, gates.json, conformance.json), the
- * runtimes' lockfiles are the committed ones, the kept LICENSE is the recorded one, and the recording covers every
+ * runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the kept LICENSE is the recorded one, and the recording covers every
  * upstream rule the pack names. Any failure means the recording is stale.
  */
 export function toolPackChecks(inputs: RecordedInputs): Check[] {
@@ -150,15 +150,15 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
   ];
   checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${recording.pins.version} at ${recording.pins.commit} in gates.yaml, gates.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
 
-  const lockMismatches: string[] = [];
+  const pinFileMismatches: string[] = [];
   for (const [runtime, files] of Object.entries(recording.runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
     for (const [file, digest] of Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))) {
       const path = join(root, RUNTIMES_DIRECTORY, runtime, file);
       const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
-      if (actual !== digest) lockMismatches.push(`${runtime}/${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}`}`);
+      if (actual !== digest) pinFileMismatches.push(`${runtime}/${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}`}`);
     }
   }
-  checks.push({ id: "runtime-lockfiles", ok: lockMismatches.length === 0, detail: lockMismatches.length === 0 ? `${Object.keys(recording.runtimes).length} runtime(s) match their committed lockfiles` : `${lockMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${Object.keys(recording.runtimes).length} runtime(s) match their committed pins` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const licensePath = join(root, "packs", pack, "licenses", manifest.rerail.project, "LICENSE");
   const licenseSha = existsSync(licensePath) ? sha256(readFileSync(licensePath)) : null;

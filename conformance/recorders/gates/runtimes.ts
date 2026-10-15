@@ -9,11 +9,14 @@ import type { Check } from "../../gates/types.js";
 
 /**
  * Pinned inputs an adapter runs upstream with: a sparse checkout of upstream's repository at the pinned commit, and
- * runtimes installed exactly from lockfiles committed under `runtimes/<runtime>/` beside this module. Every cached tree
- * is reused only while it is unmodified, so editing the cache never changes a result.
+ * runtimes installed from the manifests committed under `runtimes/<runtime>/` beside this module. A manifest pins every
+ * direct dependency at an exact version; transitive packages resolve at install time and no lockfile is committed, so
+ * nothing here feeds Dependabot. When a transitive release changes what upstream answers, `gates:record --check` (the
+ * nightly) fails, and the fix is to pin that package too (`overrides`). Every cached tree is reused only while it is
+ * unmodified, so editing the cache never changes a result.
  */
 
-/** The committed runtimes: one directory per runtime, holding its npm or uv lockfiles. */
+/** The committed runtimes: one directory per runtime, holding its npm or uv manifest. */
 export const RUNTIMES_DIRECTORY = fileURLToPath(new URL("./runtimes/", import.meta.url));
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -108,31 +111,52 @@ async function cachedInstall(directory: string, tree: string, install: () => Pro
   await writeFile(record, `${treeDigest(tree)}\n`);
 }
 
-/** The lockfiles a runtime of each kind pins itself with. */
-export const NPM_LOCKFILES = ["package.json", "package-lock.json"] as const;
-export const UV_LOCKFILES = ["pyproject.toml", "uv.lock", ".python-version"] as const;
+/** The files a runtime of each kind is pinned by: its manifest, and for Python the exact interpreter. */
+export const NPM_PINS = ["package.json"] as const;
+export const UV_PINS = ["pyproject.toml", ".python-version"] as const;
 
-/** The sha256 of each lockfile of `runtimes/<runtime>/` that the directory has, by file name: what a recording pins. */
-export function runtimeLockfileDigests(runtime: string, directory: string = RUNTIMES_DIRECTORY): Record<string, string> {
+/** The sha256 of each pin file of `runtimes/<runtime>/` that the directory has, by file name: what a recording pins. */
+export function runtimePinDigests(runtime: string, directory: string = RUNTIMES_DIRECTORY): Record<string, string> {
   const source = join(directory, runtime);
-  return Object.fromEntries([...NPM_LOCKFILES, ...UV_LOCKFILES].filter((file) => existsSync(join(source, file))).sort()
+  return Object.fromEntries([...NPM_PINS, ...UV_PINS].filter((file) => existsSync(join(source, file))).sort()
     .map((file) => [file, sha256(readFileSync(join(source, file)))]));
 }
 
-/** The lockfiles of `runtimes/<runtime>/`, and a cache directory keyed by their digest. */
-async function lockedDirectory(runtime: string, files: readonly string[], cacheRoot: string): Promise<{ source: string; directory: string }> {
+/** An exact npm version, or an alias to one (`npm:<name>@<version>`). */
+const EXACT_NPM = /^(?:npm:(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+@)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+
+/** The direct dependencies of a runtime's package.json that are not pinned at an exact version. */
+export function unpinnedNpmDependencies(manifest: { dependencies?: Record<string, string> }): string[] {
+  return Object.entries(manifest.dependencies ?? {}).filter(([, version]) => !EXACT_NPM.test(version)).map(([name, version]) => `${name}@${version}`);
+}
+
+/** The dependencies of a runtime's pyproject.toml that are not pinned with `==` at an exact version. */
+export function unpinnedPythonDependencies(pyproject: string): string[] {
+  const list = /^dependencies\s*=\s*\[([^\]]*)\]/mu.exec(pyproject)?.[1] ?? "";
+  return [...list.matchAll(/"([^"]+)"/gu)].map((match) => match[1]!).filter((requirement) => !/^[A-Za-z0-9._-]+==\d+(?:\.\d+)*$/u.test(requirement));
+}
+
+/** The pin files of `runtimes/<runtime>/`, and a cache directory keyed by their digest. */
+async function pinnedDirectory(runtime: string, files: readonly string[], cacheRoot: string): Promise<{ source: string; directory: string }> {
   const source = join(RUNTIMES_DIRECTORY, runtime);
   const digest = sha256((await Promise.all(files.map(async (file) => `${file}\0${sha256(await readFile(join(source, file)))}`))).join("\n"));
   return { source, directory: resolve(cacheRoot, "runtimes", runtime, digest.slice(0, 16)) };
 }
 
-/** A Node runtime installed with `npm ci` from `runtimes/<runtime>/package-lock.json`. Returns its directory. */
+/**
+ * A Node runtime installed with `npm install --ignore-scripts` from `runtimes/<runtime>/package.json`, every direct
+ * dependency at an exact version. The tree it resolved is in the cache directory's package-lock.json. Returns its directory.
+ */
 export async function npmRuntime(runtime: string, cacheRoot: string, runner: CommandRunner): Promise<string> {
-  const files = NPM_LOCKFILES;
-  const { source, directory } = await lockedDirectory(runtime, files, cacheRoot);
+  const files = NPM_PINS;
+  const { source, directory } = await pinnedDirectory(runtime, files, cacheRoot);
+  const unpinned = unpinnedNpmDependencies(JSON.parse(await readFile(join(source, "package.json"), "utf8")) as { dependencies?: Record<string, string> });
+  if (unpinned.length > 0) throw new Error(`runtimes/${runtime}/package.json must pin every dependency at an exact version: ${unpinned.join(", ")}`);
   await cachedInstall(directory, join(directory, "node_modules"), async () => {
     for (const file of files) await copyFile(join(source, file), join(directory, file));
-    await runChecked(runner, ["npm", "ci", "--no-audit", "--no-fund"], { cwd: directory });
+    // No install scripts: transitive packages are not locked, and none of the runtimes needs one (esbuild and
+    // unrs-resolver ship their binaries as platform packages).
+    await runChecked(runner, ["npm", "install", "--no-audit", "--no-fund", "--ignore-scripts"], { cwd: directory });
   });
   return directory;
 }
@@ -148,19 +172,22 @@ export interface PythonRuntime {
 }
 
 /**
- * A Python environment installed with `uv sync --frozen` from `runtimes/<runtime>/` (pyproject.toml, uv.lock and
- * .python-version, which pins the interpreter). uv fetches the interpreter on first use.
+ * A Python environment installed with `uv sync` from `runtimes/<runtime>/` (pyproject.toml, every dependency `==` an
+ * exact version, and .python-version, which pins the interpreter). uv fetches the interpreter on first use. The tree it
+ * resolved is in the cache directory's uv.lock.
  */
 export async function uvRuntime(runtime: string, cacheRoot: string, runner: CommandRunner): Promise<PythonRuntime> {
-  const files = UV_LOCKFILES;
-  const { source, directory } = await lockedDirectory(runtime, files, cacheRoot);
+  const files = UV_PINS;
+  const { source, directory } = await pinnedDirectory(runtime, files, cacheRoot);
+  const unpinned = unpinnedPythonDependencies(await readFile(join(source, "pyproject.toml"), "utf8"));
+  if (unpinned.length > 0) throw new Error(`runtimes/${runtime}/pyproject.toml must pin every dependency with == at an exact version: ${unpinned.join(", ")}`);
   const environment = join(directory, ".venv");
   await cachedInstall(directory, join(environment, "lib"), async () => {
     for (const file of files) await copyFile(join(source, file), join(directory, file));
     // Only uv's own interpreter builds: a system or Homebrew Python of the same minor version is not the pinned one.
     const env: NodeJS.ProcessEnv = { ...process.env, UV_PROJECT_ENVIRONMENT: environment, UV_PYTHON_PREFERENCE: "only-managed" };
     delete env.VIRTUAL_ENV;
-    await runChecked(runner, ["uv", "sync", "--frozen", "--no-install-project", "--quiet"], { cwd: directory, env });
+    await runChecked(runner, ["uv", "sync", "--no-install-project", "--quiet"], { cwd: directory, env });
   });
   const python = join(environment, "bin", "python");
   const version = (await runChecked(runner, [python, "--version"])).trim();

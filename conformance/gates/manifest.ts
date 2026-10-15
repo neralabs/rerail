@@ -20,7 +20,7 @@ const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
 const githubRepository = z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u, "a https://github.com/<owner>/<name> URL");
 const repositoryPath = z.string().regex(/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/u, "a path relative to the repository");
 const npmPackage = z.string().regex(/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/u, "an npm package name");
-/** A directory under conformance/recorders/gates/runtimes/ that pins a runtime by its npm or uv lockfile. */
+/** A directory under conformance/recorders/gates/runtimes/ that pins a runtime by its package.json or pyproject.toml. */
 const runtimeDirectory = z.string().regex(/^[a-z0-9._-]+$/u, "a directory under conformance/recorders/gates/runtimes/");
 
 /** A list whose items are all different. */
@@ -92,7 +92,7 @@ const eslintSchema = z.strictObject({
    * The shareable configuration whose environment the pack is linted in, when the approved configurations are only the
    * plugin's rules (eslint-config-next for the Next.js and React packs): its file globs, parsers and globals come before
    * the approved configurations for upstream's test cases and the corpus; its plugins, rules and settings are not the
-   * pack's. `runtime` pins it by npm lockfile; `source` is where the published package is built from.
+   * pack's. `runtime` pins it by package.json; `source` is where the published package is built from.
    */
   environment: z.strictObject({
     package: nonEmpty,

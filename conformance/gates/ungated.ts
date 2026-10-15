@@ -13,9 +13,9 @@ const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export interface UngatedResult {
   checks: Check[];
-  /** Packs neither gated nor pending, with their shipped rule count. */
+  /** Packs with shipped rules whose upstream tool is neither gated nor pending, with the count of those rules. */
   notGated: { pack: string; rules: number }[];
-  /** Pending tool-packs, with the reason and the pack's shipped rule count. */
+  /** Pending tool-packs, with the reason and the count of shipped rules of that tool. */
   pending: { toolPack: string; reason: string; rules: number }[];
 }
 
@@ -23,8 +23,20 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-/** Every pack under `root` with its tools (conformance.json tools[]), its shipped rule ids and whether a tool is gated. */
-export function packStates(root: string): { pack: string; tools: string[]; shipped: string[]; gated: boolean }[] {
+export interface PackState {
+  pack: string;
+  /** The pack's upstream tools (conformance.json tools[]). */
+  tools: string[];
+  /** The ids of the rules pack.json ships. */
+  shipped: string[];
+  /** The tools with a gates.yaml: their rules are judged by the gates. */
+  gatedTools: string[];
+  /** Each shipped rule's upstream tool, from its conformance.json entry; absent when it has none. */
+  toolOf: Map<string, string>;
+}
+
+/** Every pack under `root` with its tools, its shipped rule ids, its gated tools and each shipped rule's tool. */
+export function packStates(root: string): PackState[] {
   const packs = join(root, "packs");
   return readdirSync(packs, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(packs, entry.name, "pack.json")))
@@ -32,15 +44,17 @@ export function packStates(root: string): { pack: string; tools: string[]; shipp
     .sort(byText)
     .map((pack) => {
       const conformance = join(packs, pack, "conformance.json");
-      const tools = existsSync(conformance) ? (readJson<{ tools?: { name: string }[] }>(conformance).tools ?? []).map((tool) => tool.name) : [];
+      const manifest = existsSync(conformance) ? readJson<{ tools?: { name: string }[]; rules?: { id: string; upstream?: { tool?: string } }[] }>(conformance) : {};
+      const tools = (manifest.tools ?? []).map((tool) => tool.name);
       const shipped = (readJson<{ rules?: { id: string }[] }>(join(packs, pack, "pack.json")).rules ?? []).map((rule) => rule.id).sort(byText);
-      const gated = tools.some((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
-      return { pack, tools, shipped, gated };
+      const gatedTools = tools.filter((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
+      const toolOf = new Map((manifest.rules ?? []).filter((rule) => typeof rule.upstream?.tool === "string").map((rule) => [rule.id, rule.upstream!.tool!]));
+      return { pack, tools, shipped, gatedTools, toolOf };
     });
 }
 
 type Frozen = Record<string, string[]>;
-type Pending = Record<string, string>;
+export type Pending = Record<string, string>;
 
 /**
  * What the base commit holds at `path`: `missing` when the file is not there (the guard is skipped), its parsed JSON,
@@ -66,9 +80,28 @@ export async function readAtBase(root: string, base: string, path: string, runne
 }
 
 /**
- * The not-gated and pending checks: every shipped rule of a pack neither gated nor pending is on the frozen list (a new
- * one is blocked), every listed rule still ships (a stale entry is removed), every pending tool-pack is not gated yet,
- * and, with `base`, both lists only shrink against the base commit's.
+ * How the gates treat one shipped rule, by its upstream tool: `gated` when the tool has a gates.yaml (the tool-pack run
+ * judges it; a rule with no conformance entry in a gated pack is reported there as unmapped), `pending` when pending.json
+ * names the tool, else `frozen`: it must be on the frozen list. Decided per (pack, tool), so a gated pack's rule of
+ * another tool is never waved through.
+ */
+export function shippedRuleTreatment(state: PackState, id: string, pending: Pending): { kind: "gated" | "frozen" } | { kind: "pending"; toolPack: string } {
+  const tool = state.toolOf.get(id);
+  if (tool === undefined) {
+    // No conformance entry: a gated tool-pack run reports it as unmapped; in a pack only pending, its tool decides later.
+    if (state.gatedTools.length > 0) return { kind: "gated" };
+    const pendingTool = state.tools.find((name) => `${state.pack}/${name}` in pending);
+    return pendingTool === undefined ? { kind: "frozen" } : { kind: "pending", toolPack: `${state.pack}/${pendingTool}` };
+  }
+  if (state.gatedTools.includes(tool)) return { kind: "gated" };
+  if (`${state.pack}/${tool}` in pending) return { kind: "pending", toolPack: `${state.pack}/${tool}` };
+  return { kind: "frozen" };
+}
+
+/**
+ * The not-gated and pending checks: every shipped rule whose tool is neither gated nor pending is on the frozen list (a
+ * new one is blocked), every listed rule still ships ungated (a stale entry is removed), every pending tool-pack is not
+ * gated yet, and, with `base`, both lists only shrink against the base commit's.
  */
 export async function ungatedChecks(root: string, options: { base?: string; runner: CommandRunner }): Promise<UngatedResult> {
   const frozen = readJson<Frozen>(join(root, UNGATED_RULES));
@@ -77,34 +110,40 @@ export async function ungatedChecks(root: string, options: { base?: string; runn
   const checks: Check[] = [];
   const notGated: UngatedResult["notGated"] = [];
   const pendingOut: UngatedResult["pending"] = [];
-  const pendingPacks = new Set(Object.keys(pending).map((toolPack) => toolPack.split("/")[0]!));
+  const ungatedBy = new Map<string, Set<string>>();
 
   for (const state of states) {
-    if (state.gated) continue;
-    if (pendingPacks.has(state.pack)) {
-      for (const tool of state.tools.filter((name) => `${state.pack}/${name}` in pending)) pendingOut.push({ toolPack: `${state.pack}/${tool}`, reason: pending[`${state.pack}/${tool}`]!, rules: state.shipped.length });
-      continue;
+    const ungated: string[] = [];
+    const pendingRules = new Map<string, number>();
+    for (const id of state.shipped) {
+      const treatment = shippedRuleTreatment(state, id, pending);
+      if (treatment.kind === "frozen") ungated.push(id);
+      else if (treatment.kind === "pending") pendingRules.set(treatment.toolPack, (pendingRules.get(treatment.toolPack) ?? 0) + 1);
     }
-    notGated.push({ pack: state.pack, rules: state.shipped.length });
+    ungatedBy.set(state.pack, new Set(ungated));
+    for (const tool of state.tools.filter((name) => `${state.pack}/${name}` in pending)) {
+      const toolPack = `${state.pack}/${tool}`;
+      pendingOut.push({ toolPack, reason: pending[toolPack]!, rules: pendingRules.get(toolPack) ?? 0 });
+    }
+    if (ungated.length === 0 && !(state.pack in frozen)) continue;
+    notGated.push({ pack: state.pack, rules: ungated.length });
     const listed = new Set(frozen[state.pack] ?? []);
-    const added = state.shipped.filter((id) => !listed.has(id));
+    const added = ungated.filter((id) => !listed.has(id));
     checks.push({
       id: `not-gated:${state.pack}`,
       ok: added.length === 0,
       detail: added.length === 0
-        ? `${state.shipped.length} shipped rule(s), all on the frozen list`
-        : `${added.length} new shipped rule(s) (${added.slice(0, 5).join(", ")}): this pack has no upstream adapter, so a new rule cannot be gated; keep it in candidates/ until the pack has one`,
+        ? `${ungated.length} shipped rule(s) whose upstream tool has no adapter, all on the frozen list`
+        : `${added.length} new shipped rule(s) (${added.slice(0, 5).map((id) => `${id}${state.toolOf.has(id) ? ` of ${state.toolOf.get(id)}` : ""}`).join(", ")}) whose upstream tool is neither gated nor pending, so the rule cannot be gated: keep it in candidates/ until the tool has a gates.yaml`,
     });
   }
-  const shippedBy = new Map(states.map((state) => [state.pack, new Set(state.shipped)]));
-  const notGatedPacks = new Set(notGated.map((entry) => entry.pack));
   for (const [pack, ids] of Object.entries(frozen).sort(([a], [b]) => byText(a, b))) {
-    const shipped = shippedBy.get(pack) ?? new Set<string>();
-    const stale = notGatedPacks.has(pack) ? ids.filter((id) => !shipped.has(id)) : ids;
+    const ungated = ungatedBy.get(pack) ?? new Set<string>();
+    const stale = ids.filter((id) => !ungated.has(id));
     checks.push({
       id: `frozen-list:${pack}`,
       ok: stale.length === 0,
-      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped` : `${stale.length} listed rule(s) no longer shipped in a not-gated pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
+      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, or now gated or pending (${stale.slice(0, 5).join(", ")}): remove it from the list`,
     });
   }
   for (const toolPack of Object.keys(pending).sort(byText)) {
