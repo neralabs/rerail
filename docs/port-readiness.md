@@ -270,9 +270,9 @@ which the gates have no verdict and draw no conclusion.
 
 ## CI
 
-`ci.yml` calls `port-readiness.yml` after its build job when a pull request touches `packs/`, `conformance/`, the engine
-or the workflows, and on every push to main: one job per gated tool-pack, then a report job that writes the summary
-and fails when anything blocking failed.
+`ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
+`conformance/`, the engine, the root package files or the workflows: one job per gated tool-pack, then a report job
+that writes the summary and fails when anything blocking failed.
 
 ### Sharding
 
