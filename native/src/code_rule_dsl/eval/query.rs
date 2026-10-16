@@ -484,9 +484,18 @@ impl<'a> Leaf<'a> {
                     {
                         return Ok(FileStep::Failed(Some(detail)));
                     }
-                    if errors.incomplete(grammar) {
-                        return Ok(FileStep::Failed(None));
-                    }
+                }
+                // A clause reads around its document's errors, or, crossing to the file's other
+                // document, every document's.
+                let file_errors;
+                let read = if grammar.crosses {
+                    file_errors = SyntaxErrors::of_file(&host);
+                    &file_errors
+                } else {
+                    &errors
+                };
+                if read.incomplete(grammar) {
+                    return Ok(FileStep::Failed(None));
                 }
                 // A file read around syntax errors in any of its documents reports the first
                 // document's on its clauses, as the workspace does (`FileState::syntax`).
@@ -510,7 +519,7 @@ impl<'a> Leaf<'a> {
                     grammar,
                     file,
                     doc,
-                    &errors,
+                    read,
                     metrics,
                     self.limits,
                     decision,

@@ -10,7 +10,7 @@ use super::refuse_unavailable_semantics;
 use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
 use crate::code_rule_dsl::language::{CodeRuleLanguage, GrammarDialect};
-use crate::code_rule_dsl::matcher::UtilTable;
+use crate::code_rule_dsl::matcher::{AstMatcher, UtilTable};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
 use serde_json::Value;
@@ -204,7 +204,16 @@ fn check_dialects<'u>(
                 .iter()
                 .map(|(id, util)| {
                     let gaps = gaps.entry(id.as_str()).or_default();
-                    compile_ast_rule(util.rule, *grammar, &util.rule_path, gaps, &scope)
+                    match compile_ast_rule(util.rule, *grammar, &util.rule_path, gaps, &scope) {
+                        // A utility of a language that embeds a program may be written for the
+                        // other document: what this one refuses (a `parse` its grammar hosts no
+                        // literal for) is a gap here, as an unknown kind is.
+                        Err(error) if embedding.is_some() => {
+                            gaps.push(error.reason);
+                            Ok(AstMatcher::Never)
+                        }
+                        compiled => compiled,
+                    }
                 })
                 .collect::<Result<Vec<_>>>()
         };

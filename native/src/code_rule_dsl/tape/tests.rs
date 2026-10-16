@@ -1410,3 +1410,31 @@ fn a_taped_lookup_reads_no_wide_child_list_child_by_child() {
     assert!(missing.find_near(root.root(), first).is_none());
     assert_eq!(LINEAR_CHILDREN.get(), 0, "a miss read children one by one");
 }
+
+/// A Blade tape's ERROR leaves are the template's syntax errors as Blade reads them: arguments
+/// Forte read after a line break are text to Blade, so an unclosed string in them is no error of
+/// the template's, with or without a view.
+#[test]
+fn a_blade_tapes_errors_are_blades_reading() {
+    for source in [
+        "@csrf\n(it's required)\n<p>{{ $x }}</p>\n",
+        "@csrf\n(it's required)\n<p>x</p>\n",
+    ] {
+        let tree = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes());
+        assert!(
+            !tree.error_ranges().is_empty(),
+            "Forte reads the parenthesis as arguments: {source:?}"
+        );
+        let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .expect("parses")
+            .expect("encodes");
+        let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+            .expect("restores");
+        assert_eq!(
+            tape.syntax_error_ranges(),
+            Vec::<Range<usize>>::new(),
+            "{source:?}"
+        );
+    }
+}

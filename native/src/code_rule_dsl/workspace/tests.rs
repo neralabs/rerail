@@ -1863,6 +1863,65 @@ fn a_vue_template_error_leaves_program_clauses_complete() {
     }
 }
 
+/// A file's syntax errors are its documents' together: a document no clause reads still leaves the
+/// file read around its errors, and a clause crossing between the documents (`embedded`) reads
+/// around both's.
+#[test]
+fn every_document_of_a_vue_file_has_its_errors_read() {
+    let vue = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+        })
+    };
+    // Only the program is read; the template's error still makes the file partial.
+    let script = || {
+        vec![vue(
+            "script",
+            json!({ "language": "vue", "embedded": "script-block", "rule": { "kind": "lexical_declaration" } }),
+        )]
+    };
+    let template_error =
+        "<script setup>\nconst a = 1\n</script>\n<template>\n  <div>{{ a </div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "T.vue", "source": template_error }]);
+    for evaluation in [
+        apply_clauses(script(), files.clone()),
+        stateless(script(), files),
+    ] {
+        assert_eq!(
+            evaluation["violations"].as_array().map(Vec::len),
+            Some(1),
+            "{evaluation}"
+        );
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("script".to_owned(), "source-partial".to_owned())],
+            "{evaluation}"
+        );
+    }
+    // The template is clean and the program broken: a template clause reaching the program
+    // (`embedded`, unsound under errors) is incomplete.
+    let crossing = || {
+        vec![vue(
+            "crossing",
+            json!({ "language": "vue", "rule": { "kind": "interpolation", "embedded": { "kind": "identifier" } } }),
+        )]
+    };
+    let script_error = "<script setup>\nconst a = 1\nfunction (\n</script>\n<template>\n  <div>{{ a }}</div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "S.vue", "source": script_error }]);
+    for evaluation in [
+        apply_clauses(crossing(), files.clone()),
+        stateless(crossing(), files),
+    ] {
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("crossing".to_owned(), "source-incomplete".to_owned())],
+            "{evaluation}"
+        );
+    }
+}
+
 #[test]
 fn anchor_selection_keeps_witnesses_beside_error_subtrees() {
     // A pattern with an exact terminal is anchored; its postings come from the whole tree,

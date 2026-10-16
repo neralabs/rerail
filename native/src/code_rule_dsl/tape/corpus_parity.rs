@@ -457,16 +457,17 @@ fn forte_records(
 }
 
 /// A restored Blade tape against the template's Forte tree and the view built from it: the host
-/// tape is exactly the template's tree, its syntax errors ERROR leaves; its guest, exactly the
-/// view's tree over the view's text, read through the template's errors as Blade reads them.
+/// tape is exactly the template's tree, its syntax errors as Blade reads them ERROR leaves; its
+/// guest, exactly the view's tree over the view's text, read through those errors.
 /// Returns the template's node count and the view's.
 fn blade_tree_parity(
     tree: &BladeTree,
     source: &str,
     tape: &TapeDoc,
 ) -> Result<(usize, usize), String> {
-    let mut placed = tree
-        .error_ranges()
+    let read = View::read(tree, source, &|| false)?;
+    let mut placed = read
+        .syntax_errors
         .iter()
         .map(|error| {
             let (node, before) = super::error_place(tree.root(), error);
@@ -478,16 +479,15 @@ fn blade_tree_parity(
     forte_records(tree.root(), source, None, &placed, &mut expected);
     let template = expected.len();
     compare_records(&expected, &tape_records(tape), "template")?;
-    let mut errors = tree.error_ranges().to_vec();
-    errors.sort_by_key(|range| (range.start, range.end));
-    if errors != tape.syntax_error_ranges() {
+    let errors = &read.syntax_errors;
+    if *errors != tape.syntax_error_ranges() {
         return Err(format!(
             "template syntax error mismatch: expected={errors:?}, actual={:?}",
             tape.syntax_error_ranges()
         ));
     }
     let guests = tape.guests().ok_or("the host owns its guests")?;
-    let Some(view) = View::build(tree, source, &|| false)? else {
+    let Some(view) = read.view else {
         return match guests.as_slice() {
             [] => Ok((template, 0)),
             _ => Err("a guest without a view".into()),

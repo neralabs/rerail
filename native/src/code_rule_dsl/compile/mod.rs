@@ -737,7 +737,7 @@ fn compile_query_as(
             }
             reject_util_cycles(&utils)?;
             // Which document each rule reads, and each utility from where it is reached.
-            let reached = {
+            let documents::Sides { reached, crosses } = {
                 let roots = std::iter::once((rule, rule_path.clone()))
                     .chain(constraints.iter().map(|(name, constraint)| {
                         (*constraint, format!("{constraints_path}/{name}"))
@@ -875,7 +875,7 @@ fn compile_query_as(
                 // A utility compiles in the tables of the documents it is reached from, and one
                 // reached from none in the clause's own (so its errors are reported). Where the
                 // language embeds a program, one reached from none may be written for either
-                // document: its gaps in this one are no gaps of the query.
+                // document: its gaps and refusals in this one are none of the query's.
                 let compile_utils = |scope: &UtilScope,
                                      dialect: GrammarDialect,
                                      gaps: &mut Vec<String>| {
@@ -888,13 +888,14 @@ fn compile_query_as(
                             None if scope.side == side && embedding.is_none() => {
                                 compile_ast_rule(util.rule, dialect, &util.rule_path, gaps, scope)
                             }
-                            None if scope.side == side => compile_ast_rule(
+                            None if scope.side == side => Ok(compile_ast_rule(
                                 util.rule,
                                 dialect,
                                 &util.rule_path,
                                 &mut Vec::new(),
                                 scope,
-                            ),
+                            )
+                            .unwrap_or(AstMatcher::Never)),
                             _ => Ok(AstMatcher::Never),
                         })
                         .collect::<Result<Vec<_>>>()
@@ -986,6 +987,7 @@ fn compile_query_as(
                             .then(|| embedding.as_ref().map(|embedding| embedding.via))
                             .flatten(),
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
+                        crosses,
                         sound_under_errors: sound_under_errors(&matcher),
                         three_valued,
                         matcher,

@@ -62,8 +62,9 @@ pub(super) fn region_bytes(source: &str, regions: &Json) -> (BTreeSet<usize>, BT
             }),
     );
     let tree = super::forte::tree::parse_tree(source.as_bytes());
-    let rerail = View::build(&tree, source, &|| false)
+    let rerail = View::read(&tree, source, &|| false)
         .expect("an unbounded budget")
+        .view
         .map(|view| code_bytes(source, view.copied()))
         .unwrap_or_default();
     (blade, rerail)

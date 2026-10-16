@@ -584,18 +584,19 @@ fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) {
 }
 
 /// Appends a Blade template's tree (`blade::forte::tree`) to `nodes` in preorder, its kinds and
-/// fields the tree's, and its syntax errors as ERROR leaves (`error_place`).
+/// fields the tree's, and its syntax errors `errors` (as Blade reads them, `View::read`) as ERROR
+/// leaves (`error_place`).
 fn encode_blade_tree(
     nodes: &mut Vec<Pending>,
     tree: &BladeTree,
+    errors: &[Range<usize>],
     budget: &impl Fn() -> bool,
 ) -> Result<(), String> {
     enum Item<'t> {
         Node(BladeNode<'t>),
         Error(Range<usize>),
     }
-    let mut errors = tree
-        .error_ranges()
+    let mut errors = errors
         .iter()
         .map(|error| {
             let (node, before) = error_place(tree.root(), error);
@@ -1063,10 +1064,12 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
+        // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
+        let read = View::read(tree, source, budget)?;
         let mut nodes = Vec::<Pending>::new();
-        encode_blade_tree(&mut nodes, tree, budget)?;
+        encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
         let mut image = Self::finish(nodes, grammar, source, budget)?;
-        if let Some(view) = View::build(tree, source, budget)? {
+        if let Some(view) = read.view {
             image.guests.push(GuestImage::encode(
                 Via::CompiledView,
                 view.into_program(),
@@ -1370,6 +1373,9 @@ impl TapeDoc {
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         let grammar = Grammar::embedded(guest.tape.language)?;
+        // Positions read through the segments slice both texts: a map that does not fit them is
+        // refused here, so the tape is encoded again, never read wrong.
+        guest.segments.check(&guest.text, &host.source)?;
         let lines = Arc::new(LineTable::new(&guest.text, Terminators::of(grammar.lang)));
         let mut doc =
             Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;

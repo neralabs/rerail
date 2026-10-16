@@ -273,15 +273,24 @@ pub(crate) fn compiles(name: &str) -> bool {
         .any(|directive| directive.eq_ignore_ascii_case(name))
 }
 
+/// A template as Blade reads it (`View::read`).
+pub(crate) struct Read {
+    /// Its syntax errors: Forte's, except in the arguments Forte read after a line break, which
+    /// Blade reads as text: there, that text's (`syntax_errors`).
+    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The program it embeds; `None` where it embeds none.
+    pub(crate) view: Option<View>,
+}
+
 impl View {
-    /// The program the template `tree` embeds, as Blade reads it; `None` where it embeds none.
-    /// `Err` where `budget` interrupted it (polled before each sub-template is parsed,
+    /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds. `Err`
+    /// where `budget` interrupted it (polled before each sub-template is parsed,
     /// `Emitter::template`).
-    pub(crate) fn build(
+    pub(crate) fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
-    ) -> Result<Option<Self>, String> {
+    ) -> Result<Read, String> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
@@ -301,28 +310,32 @@ impl View {
         if emitter.interrupted {
             return Err("tape operation interrupted".into());
         }
-        if emitter.segments.is_empty() {
-            return Ok(None);
-        }
         let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
-        let mut parser = Parser::new();
-        if parser
-            .set_language(&GrammarDialect::Php.get_ts_language())
-            .is_err()
-        {
-            return Ok(None);
+        if emitter.segments.is_empty() {
+            return Ok(Read {
+                syntax_errors,
+                view: None,
+            });
         }
-        let Some(program) = parser.parse(&emitter.out, None) else {
-            return Ok(None);
-        };
-        let mut segments = emitter.segments;
-        segments.index();
-        Ok(Some(Self {
-            text: emitter.out,
-            segments,
-            tree: program,
+        let mut parser = Parser::new();
+        let program = parser
+            .set_language(&GrammarDialect::Php.get_ts_language())
+            .ok()
+            .and_then(|()| parser.parse(&emitter.out, None));
+        let view = program.map(|program| {
+            let mut segments = emitter.segments;
+            segments.index();
+            Self {
+                text: emitter.out,
+                segments,
+                tree: program,
+                syntax_errors: syntax_errors.clone(),
+            }
+        });
+        Ok(Read {
             syntax_errors,
-        }))
+            view,
+        })
     }
 
     /// The view as the template's embedded program (`compiled-view`): PHP, read through the

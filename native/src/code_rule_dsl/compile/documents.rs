@@ -40,9 +40,18 @@ const SEMANTIC_KEYS: &[&str] = &[
     "formatArgs",
 ];
 
+/// Where a query's rules read (`check_sides`).
+pub(super) struct Sides {
+    /// The sides each utility is reached from.
+    pub(super) reached: BTreeMap<String, BTreeSet<Side>>,
+    /// Whether some rule crosses to the file's other document (`embedded`, or `host` outside a
+    /// parse): that document's syntax errors bear on the query too.
+    pub(super) crosses: bool,
+}
+
 /// Checks where `embedded` and `host` stand in a query of `language` that starts on `start`
 /// (`embedded`: the guest of the via the language embeds, if any), and that no semantic key reads
-/// the host of a language that embeds a program; returns the sides each utility is reached from.
+/// the host of a language that embeds a program.
 pub(super) fn check_sides(
     roots: &[(&Value, String)],
     utils: &BTreeMap<String, UtilDef>,
@@ -50,18 +59,22 @@ pub(super) fn check_sides(
     start: Side,
     language: &str,
     embeds: bool,
-) -> Result<BTreeMap<String, BTreeSet<Side>>> {
+) -> Result<Sides> {
     let mut walk = Walk {
         utils,
         ids,
         language,
         embeds,
         reached: BTreeMap::new(),
+        crosses: false,
     };
     for (rule, path) in roots {
         walk.rule(rule, path, start, false)?;
     }
-    Ok(walk.reached)
+    Ok(Sides {
+        reached: walk.reached,
+        crosses: walk.crosses,
+    })
 }
 
 struct Walk<'a, 'u> {
@@ -70,6 +83,7 @@ struct Walk<'a, 'u> {
     language: &'a str,
     embeds: bool,
     reached: BTreeMap<String, BTreeSet<Side>>,
+    crosses: bool,
 }
 
 impl Walk<'_, '_> {
@@ -102,6 +116,7 @@ impl Walk<'_, '_> {
                                     "{at}: this rule already reads the embedded program; reach the host's node with host first"
                                 )));
                             }
+                            self.crosses = true;
                             self.rule(child, &at, Side::Guest, false)?;
                         }
                         "host" if in_parse => self.rule(child, &at, side, false)?,
@@ -117,6 +132,7 @@ impl Walk<'_, '_> {
                                     )
                                 }));
                             }
+                            self.crosses = true;
                             self.rule(child, &at, Side::Host, false)?;
                         }
                         "parse" => self.rule(child, &at, side, true)?,

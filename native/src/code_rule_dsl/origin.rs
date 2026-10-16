@@ -145,7 +145,7 @@ impl<'t> InFile<'t> {
 
     /// The file's text a node of the document stands for.
     pub(crate) fn text<D: Doc>(&self, node: &Node<'_, D>) -> &'t str {
-        &self.source[self.node(node)]
+        self.source.get(self.node(node)).unwrap_or_default()
     }
 
     /// The diagnostic span of file bytes `range`.

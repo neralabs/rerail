@@ -102,6 +102,9 @@ pub(super) struct GrammarMatcher {
     /// `utils` does the clause's own: their rules reach them only weakly (`UtilRef`).
     #[allow(dead_code)]
     pub(super) other_utils: Vec<Arc<UtilTable>>,
+    /// Whether the rule crosses to the file's other document (`embedded`, `host`): the syntax
+    /// errors of every document of the file then bear on it, not its own document's alone.
+    pub(super) crosses: bool,
     pub(super) matcher: AstMatcher,
     pub(super) anchors: Arc<anchors::AnchorPlan>,
     /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
