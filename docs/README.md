@@ -21,6 +21,8 @@
 ## Design notes
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
-- [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
-  [transducer-design.md](transducer-design.md): the tape transducer language
+- [sql-rerailer-revival-design.md](sql-rerailer-revival-design.md): the active SQL rule-engine design
+- [ner-1562-landing-pad.md](ner-1562-landing-pad.md): the packed executor port boundary and source refs
+- [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md): history of the deleted callback-shaped SQL engine
+- [transducer-design.md](transducer-design.md): the tape transducer language
 - [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
