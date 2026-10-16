@@ -70,7 +70,8 @@ person says yes.
    the review) are attached to the repository, and the repository is started:
    every checkout of it, the one set-up ran in included, that has not been
    stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
-   `~/.rerail/current` so future updates never touch coding agent config:
+   `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
+   again only with the coding agents already connected, to bring its new commands and skills:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
    - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
@@ -293,8 +294,11 @@ Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
 `/rerail-uninstall`, `/rerail-help` and `/rerail-show-me` (`$rerail`,
 `$rerail-manage`, and so on in Codex). `rerail install` also removes the
-`rerail-ui` and `rerail-rage-quit` files an earlier build wrote; `rerail update`
-does not rewrite command files, so run `rerail install` after updating.
+`rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
+then runs `rerail install --refresh` from the version it activated: every coding
+agent already connected gets that version's commands, skills and hooks, and loses
+the ones it retired; a coding agent never connected is left alone. Command files
+and skills Rerail generated are replaced without a `.bak` copy.
 Settings, scans, status, update checks, rollback and reset are the CLI
 commands above.
 Restart the coding agent after installing or rebuilding to load the commands.

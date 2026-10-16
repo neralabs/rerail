@@ -164,3 +164,60 @@ describe("rerail install --root", () => {
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
   });
 });
+
+describe("rerail install --refresh", () => {
+  function captureOutput(): { stdout: () => string; stderr: () => string } {
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation(chunk => (out.push(String(chunk)), true));
+    vi.spyOn(process.stderr, "write").mockImplementation(chunk => (err.push(String(chunk)), true));
+    return { stdout: () => out.join(""), stderr: () => err.join("") };
+  }
+
+  it("brings back a command a connected agent lacks and leaves an agent it never connected alone", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const showMe = join(hostConfigHome, ".claude", "commands", "rerail-show-me.md");
+    await rm(showMe);
+    await mkdir(join(hostConfigHome, ".cursor"));
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(showMe, "utf8")).toContain(join(context.updater.currentLink, "dist", "cli", "cli.js"));
+    expect(await readdir(join(hostConfigHome, ".cursor"))).toEqual([]);
+    expect(output.stdout()).toContain("Claude Code");
+    expect(output.stdout()).toContain(showMe);
+    // Only what changed is listed, not every file already in place.
+    expect(output.stdout()).not.toContain(join(hostConfigHome, ".claude", "commands", "rerail.md"));
+  });
+
+  it("says so and writes nothing when no coding agent is connected", async () => {
+    const { context, hostConfigHome } = await fixture();
+    const output = captureOutput();
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+    expect(output.stdout()).toContain("No coding agents are connected");
+    expect(await readdir(join(hostConfigHome, ".claude"))).toEqual([]);
+  });
+
+  it("fails naming the agent whose configuration it cannot read, after refreshing the others", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await mkdir(join(hostConfigHome, ".codex"));
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code,codex"], context);
+    await rm(join(hostConfigHome, ".claude", "commands", "rerail-show-me.md"));
+    await writeFile(join(hostConfigHome, ".codex", "hooks.json"), "{ not json");
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(1);
+
+    expect(existsSync(join(hostConfigHome, ".claude", "commands", "rerail-show-me.md"))).toBe(true);
+    expect(output.stderr()).toContain("Codex");
+    expect(output.stderr()).toContain(join(hostConfigHome, ".codex", "hooks.json"));
+    expect(output.stderr()).toContain("rerail install --refresh");
+  });
+
+  it.each([[["--agents", "claude-code"]], [["--root", "."]], [["--remove"]], [["--dry-run"]]])("refuses --refresh with %j", async flag => {
+    const { context } = await fixture();
+    await expect(runInstallCommand(["--refresh", ...flag], context)).rejects.toThrow("--refresh");
+  });
+});

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
@@ -146,10 +146,16 @@ describe("Rerail managed launcher", () => {
     const rejected = await createPackageFixture(launcherRoot, join(root, "registry"), rejectedVersion, false);
     const bin = await createLocalRegistry(root);
     const home = join(root, "home");
+    const userHome = join(root, "user");
+    await mkdir(join(userHome, ".claude"), { recursive: true });
+    await mkdir(join(userHome, ".cursor"));
     const marker = join(root, "launched-version");
     const environment = {
       ...process.env,
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      // The coding agents' config: Claude Code connected below, Cursor present but never connected.
+      HOME: userHome,
+      RERAIL_DEVICE_SECRET_STORE: "file",
       RERAIL_HOME: home,
       RERAIL_ACCEPTED_VERSION: acceptedVersion,
       RERAIL_ACCEPTED_PACKAGE: accepted,
@@ -158,10 +164,25 @@ describe("Rerail managed launcher", () => {
       RERAIL_REJECTED_VERSION: rejectedVersion,
     };
     const entrypoint = join(launcherRoot, "dist", "cli", "cli.js");
+    const connected = await run(["node", entrypoint, "install", "--root", launcherRoot, "--agents", "claude-code"], environment, root);
+    expect(connected.exitCode).toBe(0);
+    const commands = join(userHome, ".claude", "commands");
+    const showMe = join(commands, "rerail-show-me.md");
+    // A command this version adds that the connected Claude Code lacks, as after updating from one without it.
+    await rm(showMe);
 
     const update = await run(["node", entrypoint, "update"], environment);
     expect(update).toMatchObject({ exitCode: 0, stderr: "" });
     expect(update.stdout).toContain(`${acceptedVersion}; new harness sessions will use it.`);
+    expect(update.stdout).toContain(`Refreshed Rerail in Claude Code:`);
+    expect(await readFile(showMe, "utf8")).toContain(join(home, "current", "dist", "cli", "cli.js"));
+    expect(await readdir(join(userHome, ".cursor"))).toEqual([]);
+
+    // With nothing newer, update still refreshes the connected coding agents.
+    await rm(showMe);
+    const current = await run(["node", entrypoint, "update"], environment);
+    expect(current).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(await readdir(commands)).toContain("rerail-show-me.md");
     const acceptedState = JSON.parse(await readFile(join(home, "update-state.json"), "utf8")) as Record<string, unknown>;
     expect(acceptedState).toMatchObject({
       current: { version: acceptedVersion },
@@ -187,6 +208,15 @@ describe("Rerail managed launcher", () => {
       current: { version: acceptedVersion },
       previous: { version: manifest.version },
     });
+
+    // A coding agent configuration registration cannot read fails the update, which keeps the version it activated.
+    // The rejected update above left its channel selected; back on latest, nothing is newer and only the refresh runs.
+    await writeFile(join(userHome, ".claude", "settings.json"), "{ not json");
+    const unreadable = await run(["node", entrypoint, "update", "--channel", "latest"], environment);
+    expect(unreadable.exitCode).toBe(1);
+    expect(unreadable.stderr).toContain(join(userHome, ".claude", "settings.json"));
+    expect(unreadable.stderr).toContain("rerail install --refresh");
+    expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
   }, 60_000);
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {

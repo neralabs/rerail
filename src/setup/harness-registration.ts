@@ -393,15 +393,18 @@ async function resolveWriteTarget(path: string): Promise<string> {
   throw new Error(`Too many levels of symbolic links resolving ${path}`);
 }
 
-/** Backs up the file behind `path` (only when it already exists) and replaces it via temp file + rename beside it. */
-async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }): Promise<void> {
+/**
+ * Replaces the file behind `path` via temp file + rename beside it, first backing it up when it exists and `backup`:
+ * a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
+ */
+async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }, backup = true): Promise<void> {
   const target = await resolveWriteTarget(path);
   const directory = dirname(target);
   await mkdir(directory, { recursive: true });
-  if (existing.exists) {
-    const backup = `${target}.${new Date().toISOString().replace(/[:.]/g, "-")}.${randomUUID()}.bak`;
-    await copyFile(target, backup, constants.COPYFILE_EXCL);
-    await chmod(backup, 0o600);
+  if (existing.exists && backup) {
+    const backupPath = `${target}.${new Date().toISOString().replace(/[:.]/g, "-")}.${randomUUID()}.bak`;
+    await copyFile(target, backupPath, constants.COPYFILE_EXCL);
+    await chmod(backupPath, 0o600);
   }
   const temp = join(directory, `.${randomUUID()}.tmp`);
   await writeFile(temp, text, { mode: existing.mode });
@@ -708,13 +711,13 @@ function planCursor(context: Context): Promise<Plan> {
       : "remove rerail hooks from Cursor hooks.json";
   return planJsonFile("cursor", path, context, detail, async (value) => {
     const hooks = await stripHookEvents(hooksObject(value, path), context, ENTRY_POINTS.cursorHook, false);
-    if (context.mode === "register") {
-      for (const event of CURSOR_HOOK_EVENTS) {
-        const entries = hooks[event] ?? [];
-        if (!Array.isArray(entries))
-          throw new Error(`Cannot register rerail hooks: hooks.${event} in ${path} is not an array`);
-        hooks[event] = [...entries, { command }];
-      }
+    // Removal changes only what it removes: a file without Rerail's hooks stays as it is, or absent.
+    if (context.mode === "unregister") return withHooks(value, hooks);
+    for (const event of CURSOR_HOOK_EVENTS) {
+      const entries = hooks[event] ?? [];
+      if (!Array.isArray(entries))
+        throw new Error(`Cannot register rerail hooks: hooks.${event} in ${path} is not an array`);
+      hooks[event] = [...entries, { command }];
     }
     return { ...value, version: typeof value.version === "number" ? value.version : 1, hooks };
   });
@@ -895,8 +898,9 @@ async function planCodexSkill(context: Context, name: RerailCommandName): Promis
   if (context.mode === "unregister") return planCodexSkillRemoval(context, name, path, existing);
   const text = commandFileText("codex", name, commandContext(context));
   if (existing.text === text) return { change: { harness: "codex", path, action: "unchanged", detail: `$${name} skill: already in place` } };
+  // Only a skill carrying Rerail's marker gets here: Rerail generated it, so it is not backed up.
   return planMutation(context, "codex", path, existing.exists ? "updated" : "created", `register the $${name} skill`,
-    () => writeTextFile(path, text, existing));
+    () => writeTextFile(path, text, existing, false));
 }
 
 function promptCommandPath(context: Context, harness: PromptCommandHarness, name: string): string {
@@ -937,8 +941,10 @@ async function planPromptCommand(context: Context, harness: PromptCommandHarness
   if (context.mode === "unregister") return planPromptCommandRemoval(context, harness, name, path, existing);
   const text = commandFileText(harness, name, commandContext(context));
   if (existing.exists && existing.text === text) return { change: { harness, path, action: "unchanged", detail: `/${name} command: already in place` } };
+  // A command file of this package (`runsPackageCli`) is generated whole; anyone else's is backed up before it goes.
+  const backup = existing.exists && !(await runsPackageCli(context, existing.text));
   return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
-    () => writeTextFile(path, text, existing));
+    () => writeTextFile(path, text, existing, backup));
 }
 
 /** The Rerail commands of one coding agent, plus removal of the ones earlier versions installed. */
@@ -1042,7 +1048,9 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   if (changes.some((change) => change.action === "created" || change.action === "updated")) {
     notes.push("Harness sessions pick up registration changes when they next start.");
   }
-  if (mode === "register" && selected.has("codex")) {
+  // Codex asks to trust a hook again only when its command changes.
+  const codexHooks = join(home, ".codex", "hooks.json");
+  if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
     notes.push("Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.");
   }
   return { changes, notes };

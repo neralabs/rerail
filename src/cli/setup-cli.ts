@@ -5,7 +5,13 @@ import { join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
-import { codingAgentHome, connectedCodingAgents, registrationRoot as packageRegistrationRoot } from "../setup/coding-agents.js";
+import {
+  CODING_AGENT_NAMES,
+  codingAgentHome,
+  connectedCodingAgents,
+  refreshCodingAgents,
+  registrationRoot as packageRegistrationRoot,
+} from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { daemonUsesPackageRoot, lookupDaemon, openDashboard, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
 import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
@@ -159,12 +165,42 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
 }
 
+/**
+ * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
+ * install, so commands it added arrive and ones it retired go; `rerail update` runs it from the version it activated.
+ * Coding agents never connected stay untouched. Exits 1 when a coding agent's configuration could not be refreshed.
+ */
+async function runRefresh(context: SetupContext): Promise<number> {
+  const root = registrationRoot(context);
+  const result = await refreshCodingAgents(root, codingAgentHome());
+  if (result.agents.length === 0 && result.failures.length === 0) {
+    process.stdout.write(`No coding agents are connected to ${root}; nothing to refresh.\n`);
+    return 0;
+  }
+  if (result.agents.length > 0) {
+    const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
+    const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
+    process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
+    printReport({ changes: changed, notes: changed.length === 0 ? [] : result.notes }, false);
+  }
+  for (const { agent, message } of result.failures) {
+    process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
+  }
+  if (result.failures.length === 0) return 0;
+  process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
+  return 1;
+}
+
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dry-run", "--remove"], options: ["--root", "--agents"] },
+    { flags: ["--dry-run", "--remove", "--refresh"], options: ["--root", "--agents"] },
     argument => `Unknown install option: ${argument}`,
   );
+  if (flags.has("--refresh")) {
+    if (flags.size > 1 || options.size > 0) throw new Error("install --refresh takes no other options");
+    return await runRefresh(context);
+  }
   const parsed = registrationArguments(options, flags);
   const rootArgument = options.get("--root");
   const explicitRoot = rootArgument === undefined ? undefined : resolve(rootArgument);
