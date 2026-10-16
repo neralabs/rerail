@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
-import { CODEX_HOOK_EVENTS } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -208,7 +207,7 @@ describe("rerail install --refresh", () => {
     await rm(join(hostConfigHome, ".claude", "commands", "rerail-show-me.md"));
     const codexHooks = join(hostConfigHome, ".codex", "hooks.json");
     const config = JSON.parse(await readFile(codexHooks, "utf8")) as { hooks: Record<string, unknown> };
-    config.hooks[CODEX_HOOK_EVENTS[0]!] = "not a list";
+    config.hooks.SessionStart = "not a list";
     await writeFile(codexHooks, JSON.stringify(config));
     const output = captureOutput();
 
