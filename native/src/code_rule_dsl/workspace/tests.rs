@@ -1545,6 +1545,26 @@ fn compile_clauses(clauses: Vec<Value>) -> CompiledCodeRuleDsl {
 fn sqlite_engine_runs_a_workspace_end_to_end() {
     let clauses = vec![
         clause("debugger", json!({ "kind": "debugger_statement" })),
+        clause(
+            "global-alert",
+            json!({ "kind": "identifier", "resolves": { "global": ["alert"] } }),
+        ),
+        json!({
+            "id": "call-arguments",
+            "forbid": { "ast": {
+                "language": "typescript",
+                "rule": {
+                    "kind": "call_expression",
+                    "has": { "kind": "identifier", "pattern": "$A" }
+                }
+            } },
+            "violation": {
+                "anchor": "capture.A",
+                "code": "CALL_ARGUMENT",
+                "each": "A",
+                "message": "$A"
+            },
+        }),
         json!({
             "id": "secret",
             "forbid": { "regex": { "source": "file.content", "pattern": "secret" } },
@@ -1573,7 +1593,7 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
                     "source": if index == 0 {
                         "debugger; const value = 'secret';\n"
                     } else {
-                        "function f() { debugger; }\n"
+                        "alert(one, two); function f(alert) { alert(); debugger; }\n"
                     },
                 })
             })

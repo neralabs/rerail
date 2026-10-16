@@ -17,12 +17,13 @@ This restriction prevents a rejected terminal from spending another file's work 
 Shared AST and text batches run each required terminal once across their files.
 Each file retains its own deadline, completion state, scope cache, and witness limits.
 Each text terminal now returns every file's rows through one statement per batch.
-AST clause statements still run once for each file-clause pair.
-Clause-major AST execution remains the next execution-shape change.
+Each AST clause also runs as one ordered statement across every compatible file.
+A scoped file switch preserves each file's matcher work, deadline, semantic caches, adapter context,
+and selected roots while SQLite advances through that statement.
 
 Profile output now reports SQLite batches, registered files, statement executions, result rows,
-terminal executions, and virtual-table filters. These counters measure the remaining file-clause
-statement shape without retaining raw benchmark output.
+terminal executions, and virtual-table filters. These counters measure the new clause-major shape
+without retaining raw benchmark output.
 
 ## Evidence
 
@@ -43,10 +44,9 @@ New counters must quantify each family before an optimization changes it.
 The workspace prepares files in parallel worker-local chunks.
 It registers compatible prepared AST files through `SqlPlans::with_files()`.
 
-The batch then evaluates one file at a time.
-`evaluate_statements()` loops over each candidate clause for that file.
-It calls `QueryBatch::run_while()` once for each clause.
-Therefore, statement execution still scales with file-clause pairs.
+The batch evaluates clauses in clause-major order.
+`QueryBatch::run_batch_while()` executes one statement for a clause across all compatible files.
+Therefore, statement execution scales with clauses and compatibility partitions.
 
 Each clause is one large SQL expression.
 The expression calls Rust scalar functions for matcher terms and state changes.
@@ -58,12 +58,13 @@ The effective loop is:
 
 ```text
 worker
-  -> file
+  -> compatibility batch
     -> clause statement
-      -> candidate root
-        -> matcher term callback
-          -> relation candidate or semantic fact
-            -> more callbacks or a nested statement
+      -> file
+        -> candidate root
+          -> matcher term callback
+            -> relation candidate or semantic fact
+              -> more callbacks or a nested statement
 ```
 
 SQLite controls this loop, but SQLite cannot inspect most of its work.
@@ -71,34 +72,25 @@ The expensive operations remain behind callbacks and integer handles.
 
 ## Problems and corrections
 
-### 1. Batching does not include clause statements
+### 1. Clause-major batching
 
-Production now registers every compatible file in one immutable batch.
+Production registers every compatible file in one immutable batch.
 Language and candidate-clause differences can produce separate batches.
-The `OnceLock` terminal cache processes all files in each batch.
+The terminal cache processes all files in each batch.
 
-The AST clause statements still run separately for each file.
-Text terminals now use one all-file statement, but AST statement duplication remains.
+Text terminals and AST clauses now use all-file statements.
+A 600-file end-to-end test verifies that the workspace keeps one compatible batch.
+Query parity tests verify that each compiled AST plan executes once across its files.
 
-**Correction:** Run a clause plan over all eligible files in one batch.
-Partition a batch only for a measured memory or backend limit.
+**Status:** Corrected. Statement executions scale with clauses and partitions.
 
-**Gate:** Statement executions must scale with clauses and partitions.
-They must not scale with file-clause pairs.
+### 2. The loop order is clause-major
 
-### 2. The loop order is file-major
+`run_batch_while()` loops over compatible files inside one clause statement.
+The statement carries explicit file, root, and output order columns.
+Per-file selected roots remain a keyed batch relation.
 
-`evaluate_statements()` loops over all candidate clauses inside one file evaluation.
-This order repeats SQLite setup and plan traversal for every file.
-
-The statement cache prevents repeated preparation in the common case.
-It does not remove repeated execution or virtual-table setup.
-
-**Correction:** Schedule work by clause and batch partition.
-Pass candidate roots as a relation keyed by clause and file.
-Keep explicit file, clause, root, and output order columns.
-
-**Gate:** Reversing physical batch order must not change canonical results.
+**Status:** Corrected. Matcher parity and workspace ordering tests remain the semantic gate.
 
 ### 3. Matcher terms are scalar callbacks
 
@@ -264,7 +256,7 @@ The matcher remains the semantic oracle after every commit.
 1. Add counters without changing execution.
 2. Freeze the data-layer workload and a smaller diagnostic workload.
 3. Measure callback, statement, walk, environment, fact, and memory counts.
-4. Change to real multi-file batches and clause-major scheduling.
+4. Change to real multi-file batches and clause-major scheduling. **Complete.**
 5. Move structural pattern work to bulk terminal relations.
 6. Select a measured physical form for node and candidate relations.
 7. Move semantic facts to bulk producers.

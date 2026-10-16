@@ -22,7 +22,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileScopeSlot, FileScopes, GrammarMatcher, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, RegexSource,
@@ -93,6 +93,14 @@ struct PreparedAst {
 struct PreparedSqlFile {
     ast: Option<PreparedAst>,
     lines: Option<Arc<LineTable>>,
+}
+
+struct ActiveSqlFile {
+    batch_index: usize,
+    budget: MatchBudget,
+    scopes: FileScopeSlot,
+    consumer: Option<crate::code_rule_dsl::calls::FileCallsSlot>,
+    clause_started: bool,
 }
 
 struct PendingSqlJob {
@@ -450,31 +458,24 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 })
                 .collect();
             let outcome = sql.with_files(batch_files, |batch| {
-                for (batch_index, &job_index) in batch_jobs.iter().enumerate() {
+                #[cfg(feature = "code-rule-profile")]
+                let _worker_profile = profile::WorkerProfile::start();
+                #[cfg(feature = "code-rule-profile")]
+                let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
+                execute_prepared_ast_batch(
+                    &mut pending,
+                    &batch_jobs,
+                    context.code_rules,
+                    sql,
+                    batch,
+                );
+                for &job_index in &batch_jobs {
                     let job = &mut pending[job_index];
-                    #[cfg(feature = "code-rule-profile")]
-                    let _worker_profile = profile::WorkerProfile::start();
-                    #[cfg(feature = "code-rule-profile")]
-                    let _doc_owner = profile::DocOwner::start();
-                    let _budget = MatchBudget::resume(job.deadline.clone());
-                    let _consumer = CrossFileScheduler::install(job.crossfile.clone());
-                    let prepared = job
+                    job.restored = job
                         .prepared
-                        .as_mut()
-                        .and_then(|prepared| prepared.ast.take())
-                        .expect("batched AST file");
-                    match execute_prepared_ast_file(
-                        &mut job.file,
-                        context.code_rules,
-                        &mut job.metrics,
-                        prepared,
-                        Some(sql),
-                        Some((batch, batch_index)),
-                    ) {
-                        Ok(doc) => job.restored = Some(doc),
-                        Err(error) => job.error = Some(error),
-                    }
-                    job.file.transient_failure = job.deadline.observed();
+                        .as_ref()
+                        .and_then(|prepared| prepared.ast.as_ref())
+                        .map(|prepared| prepared.doc.clone());
                 }
                 let counters = batch.execution_counters();
                 record_query_counters(
@@ -1100,6 +1101,354 @@ fn prepare_ast_file(
             util_work,
             max_nodes,
         }))
+    }
+}
+
+/// Runs each AST clause as one statement over every compatible file in a batch.
+fn execute_prepared_ast_batch(
+    pending: &mut Vec<PendingSqlJob>,
+    batch_jobs: &[usize],
+    code_rules: &[Arc<CompiledCodeRule>],
+    plans: &query::SqlPlans,
+    batch: &query::QueryBatch<'_>,
+) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let mut scope_states = batch_jobs
+        .iter()
+        .map(|&job_index| {
+            let job = &pending[job_index];
+            let prepared = job
+                .prepared
+                .as_ref()
+                .and_then(|prepared| prepared.ast.as_ref())
+                .expect("batched AST file");
+            FileScopeSlot::install(
+                job.file
+                    .scopes
+                    .as_ref()
+                    .filter(|(revision, _)| *revision == job.file.source_revision)
+                    .map(|(_, tables)| tables.clone())
+                    .unwrap_or_default(),
+                job.file.input.module.clone(),
+                !prepared.errors.is_empty(),
+            )
+            .path(&job.file.input.path)
+            .suspend()
+        })
+        .map(Some)
+        .collect::<Vec<Option<FileScopes>>>();
+    let pending_ptr = pending as *mut Vec<PendingSqlJob>;
+    let states_ptr = &mut scope_states as *mut Vec<Option<FileScopes>>;
+
+    let match_started = Instant::now();
+    for slot in 0..pending[batch_jobs[0]].file.candidates.ast.len() {
+        let id = pending[batch_jobs[0]].file.candidates.ast[slot];
+        let code_rule = &code_rules[id.0];
+        let grammar = candidate_grammar(code_rule, id.1, &pending[batch_jobs[0]].file.input);
+        let Some(plan) = plans.plan(id.0, id.1, grammar.language) else {
+            for &job_index in batch_jobs {
+                pending[job_index]
+                    .file
+                    .failures
+                    .insert(id, ("adapter-error", "query statement is unavailable"));
+            }
+            continue;
+        };
+        let violation = &code_rule.clauses[id.1].violation;
+        let decision = code_rule.clauses[id.1].decision;
+        let each = violation.each.as_deref();
+        let limits = &code_rule.capabilities.limits;
+        let skipped = Rc::new(RefCell::new(
+            batch_jobs
+                .iter()
+                .map(|&job_index| pending[job_index].file.failures.contains_key(&id))
+                .collect::<Vec<_>>(),
+        ));
+        let active = Rc::new(RefCell::new(None::<ActiveSqlFile>));
+        let active_for_enter = Rc::clone(&active);
+        let skipped_for_enter = Rc::clone(&skipped);
+        let mut enter = |file: i64| -> rusqlite::Result<bool> {
+            let finish = |active: ActiveSqlFile| {
+                // SAFETY: both pointers name the inputs borrowed for this synchronous statement.
+                let pending = unsafe { &mut *pending_ptr };
+                let states = unsafe { &mut *states_ptr };
+                let job_index = batch_jobs[active.batch_index];
+                if active.clause_started {
+                    let (left, limit) = crate::code_rule_dsl::matcher::end_clause();
+                    pending[job_index]
+                        .prepared
+                        .as_mut()
+                        .and_then(|prepared| prepared.ast.as_mut())
+                        .expect("batched AST file")
+                        .util_work[slot] = left;
+                    if let Some(limit) = limit {
+                        pending[job_index]
+                            .file
+                            .failures
+                            .insert(id, ("budget-exceeded", limit.message()));
+                        skipped_for_enter.borrow_mut()[active.batch_index] = true;
+                    }
+                }
+                states[active.batch_index] = Some(active.scopes.suspend());
+                drop(active.consumer);
+                drop(active.budget);
+            };
+            if file < 0 {
+                if let Some(active) = active_for_enter.borrow_mut().take() {
+                    finish(active);
+                }
+                return Ok(false);
+            }
+            let batch_index = usize::try_from(file)
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, -1))?;
+            if active_for_enter
+                .borrow()
+                .as_ref()
+                .is_some_and(|active| active.batch_index == batch_index)
+            {
+                let mut active = active_for_enter.borrow_mut();
+                let active = active.as_mut().expect("active file");
+                if skipped_for_enter.borrow()[batch_index] {
+                    return Ok(false);
+                }
+                if !active.clause_started {
+                    // SAFETY: the pending jobs live for this synchronous statement.
+                    let pending = unsafe { &mut *pending_ptr };
+                    let work = pending[batch_jobs[batch_index]]
+                        .prepared
+                        .as_ref()
+                        .and_then(|prepared| prepared.ast.as_ref())
+                        .expect("batched AST file")
+                        .util_work[slot];
+                    crate::code_rule_dsl::matcher::begin_clause(grammar, work);
+                    active.clause_started = true;
+                }
+                return Ok(true);
+            }
+            if let Some(active) = active_for_enter.borrow_mut().take() {
+                finish(active);
+            }
+            if skipped_for_enter.borrow()[batch_index] {
+                return Ok(false);
+            }
+            // SAFETY: the pending jobs and scope states live for this synchronous statement.
+            let pending = unsafe { &mut *pending_ptr };
+            let states = unsafe { &mut *states_ptr };
+            let job_index = batch_jobs[batch_index];
+            let budget = MatchBudget::resume(pending[job_index].deadline.clone());
+            let scopes = FileScopeSlot::install_state(
+                states[batch_index].take().expect("suspended file scopes"),
+            );
+            let consumer = CrossFileScheduler::install(pending[job_index].crossfile.clone());
+            let work = pending[job_index]
+                .prepared
+                .as_ref()
+                .and_then(|prepared| prepared.ast.as_ref())
+                .expect("batched AST file")
+                .util_work[slot];
+            crate::code_rule_dsl::matcher::begin_clause(grammar, work);
+            *active_for_enter.borrow_mut() = Some(ActiveSqlFile {
+                batch_index,
+                budget,
+                scopes,
+                consumer,
+                clause_started: true,
+            });
+            Ok(true)
+        };
+        let roots = batch_jobs
+            .iter()
+            .map(|&job_index| {
+                pending[job_index]
+                    .prepared
+                    .as_ref()
+                    .and_then(|prepared| prepared.ast.as_ref())
+                    .expect("batched AST file")
+                    .roots[slot]
+                    .clone()
+            })
+            .collect();
+        let target = batch.view();
+        let skipped_for_visit = Rc::clone(&skipped);
+        let active_for_visit = Rc::clone(&active);
+        let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
+        let result = batch.run_batch_while(plan, roots, &mut enter, |batch_index, node, first| {
+            let job_index = batch_jobs[batch_index];
+            // SAFETY: this callback runs synchronously while `pending` remains borrowed.
+            let pending = unsafe { &mut *pending_ptr };
+            let job = &mut pending[job_index];
+            let prepared = job
+                .prepared
+                .as_mut()
+                .and_then(|prepared| prepared.ast.as_mut())
+                .expect("batched AST file");
+            let active = &mut *active_for_visit.borrow_mut();
+            let active = active.as_mut().expect("row has active file context");
+            let (left, limit) = crate::code_rule_dsl::matcher::end_clause();
+            prepared.util_work[slot] = left;
+            active.clause_started = false;
+            if let Some(limit) = limit {
+                job.file
+                    .failures
+                    .insert(id, ("budget-exceeded", limit.message()));
+                skipped_for_visit.borrow_mut()[batch_index] = true;
+                return Ok(true);
+            }
+            if node as usize + 1 > limits.max_visited_nodes {
+                skipped_for_visit.borrow_mut()[batch_index] = true;
+                return Ok(true);
+            }
+            job.metrics.ast_matcher_calls += 1;
+            let matches = match each {
+                Some(name) => {
+                    let room = if violation.suppress.is_some() {
+                        usize::MAX
+                    } else {
+                        (limits.max_witnesses + 1)
+                            .saturating_sub(job.file.witnesses.get(&id).map_or(0, Vec::len))
+                    };
+                    batch.enumerate(
+                        plan,
+                        batch_index,
+                        node,
+                        first,
+                        grammar,
+                        &mut prepared.util_work[slot],
+                        name,
+                        room,
+                    )?
+                }
+                None => vec![first],
+            };
+            let file_target = target.file(batch_index as i64).expect("batched file");
+            for env in matches {
+                let mut matched =
+                    ast_grep_core::NodeMatch::new(file_target.node(node), env.to_meta(file_target));
+                if let Some(transform) = &grammar.transform {
+                    crate::code_rule_dsl::matcher::begin_clause(grammar, prepared.util_work[slot]);
+                    if transform.apply(matched.get_env_mut()).is_err() {
+                        prepared.util_work[slot] = crate::code_rule_dsl::matcher::end_clause().0;
+                        job.file
+                            .failures
+                            .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
+                        skipped_for_visit.borrow_mut()[batch_index] = true;
+                        return Ok(true);
+                    }
+                    prepared.util_work[slot] = crate::code_rule_dsl::matcher::end_clause().0;
+                }
+                if prepared.errors.overlaps(&matched.get_node().range()) {
+                    continue;
+                }
+                let room = (limits.max_witnesses + 1)
+                    .saturating_sub(job.file.witnesses.get(&id).map_or(0, Vec::len));
+                let found = if each.is_some() {
+                    witnesses_from_match(
+                        &job.file.input,
+                        &matched,
+                        grammar.language,
+                        violation,
+                        room,
+                        matcher_budget_exhausted,
+                        |start, end| prepared.lines.span(start, end),
+                    )
+                } else {
+                    witness_from_match(
+                        &job.file.input,
+                        &matched,
+                        grammar.language,
+                        Some(violation),
+                        |start, end| prepared.lines.span(start, end),
+                    )
+                    .map(|witness| vec![witness])
+                };
+                let found = match found {
+                    Ok(found) => found,
+                    Err(WitnessError::TransformLimit) => {
+                        job.file
+                            .failures
+                            .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
+                        skipped_for_visit.borrow_mut()[batch_index] = true;
+                        return Ok(true);
+                    }
+                };
+                for witness in found {
+                    if violations::suppresses(Some(violation), matched.get_node(), &witness) {
+                        continue;
+                    }
+                    let witnesses = job.file.witnesses.get_mut(&id).expect("eligible clause");
+                    if witnesses.len() >= limits.max_witnesses {
+                        job.file
+                            .failures
+                            .insert(id, ("budget-exceeded", "file witness budget exceeded"));
+                        skipped_for_visit.borrow_mut()[batch_index] = true;
+                        return Ok(true);
+                    }
+                    witnesses.push(witness);
+                    job.metrics.witnesses += 1;
+                    if decision {
+                        skipped_for_visit.borrow_mut()[batch_index] = true;
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(true)
+        });
+        let _ = enter(-1);
+        match result {
+            Ok(()) => {}
+            Err(error) => {
+                let message = error.to_string();
+                let failure = [
+                    UtilLimit::Depth,
+                    UtilLimit::Work,
+                    UtilLimit::Scope,
+                    UtilLimit::Value,
+                ]
+                .into_iter()
+                .find(|limit| message.contains(limit.message()))
+                .map_or(("adapter-error", "query statement failed"), |limit| {
+                    ("budget-exceeded", limit.message())
+                });
+                for &job_index in batch_jobs {
+                    if !pending[job_index].deadline.observed() {
+                        pending[job_index].file.failures.insert(id, failure);
+                    }
+                }
+            }
+        }
+    }
+    let elapsed = match_started.elapsed().as_nanos() as u64;
+    if let Some(&job_index) = batch_jobs.first() {
+        pending[job_index].metrics.ast_match_nanoseconds += elapsed;
+    }
+    for (batch_index, &job_index) in batch_jobs.iter().enumerate() {
+        let candidates = pending[job_index].file.candidates.ast.clone();
+        for id in candidates {
+            let limits = &code_rules[id.0].capabilities.limits;
+            if pending[job_index].file.input.source.len() > limits.max_source_bytes
+                || limits.max_files == 0
+            {
+                continue;
+            }
+            if pending[job_index].deadline.observed()
+                || pending[job_index].metrics.visited_nodes > limits.max_visited_nodes
+            {
+                pending[job_index]
+                    .file
+                    .failures
+                    .insert(id, ("budget-exceeded", "file AST work budget exceeded"));
+            }
+        }
+        if let Some(state) = scope_states[batch_index].take() {
+            let tables = state.tables();
+            if !tables.is_empty() {
+                pending[job_index].file.scopes =
+                    Some((pending[job_index].file.source_revision, tables));
+            }
+        }
+        pending[job_index].file.transient_failure = pending[job_index].deadline.observed();
     }
 }
 

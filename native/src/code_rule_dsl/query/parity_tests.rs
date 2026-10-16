@@ -112,6 +112,44 @@ pub(super) fn compare(matchers: &[(String, GrammarMatcher)], files: &[(String, S
     let connection = QueryConnection::open().unwrap();
     let batch = connection.register(Arc::clone(&terminals), batch_files, Arc::clone(&catalog));
     let view = connection.registry.files(batch.token()).unwrap();
+    for (index, plan) in &plans {
+        let (_, matcher) = &matchers[*index];
+        let roots = view
+            .files()
+            .iter()
+            .map(|file| {
+                (*file.tape().get_lang() != matcher.language).then(|| Arc::<[u32]>::from([]))
+            })
+            .collect::<Vec<_>>();
+        let mut work = vec![usize::MAX; view.files().len()];
+        let mut active = None;
+        {
+            let mut enter = |file: i64| {
+                let file = usize::try_from(file)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, -1))?;
+                if active == Some(file) {
+                    return Ok(true);
+                }
+                if let Some(previous) = active.replace(file) {
+                    work[previous] = crate::code_rule_dsl::matcher::end_clause().0;
+                }
+                crate::code_rule_dsl::matcher::begin_clause(matcher, work[file]);
+                Ok(true)
+            };
+            let statements_before = batch.execution_counters().statements;
+            batch
+                .run_batch_while(plan, roots, &mut enter, |_, _, _| Ok(true))
+                .unwrap_or_else(|error| panic!("all-file statement: {error}\n{}", plan.batch_sql));
+            assert_eq!(
+                batch.execution_counters().statements - statements_before,
+                1,
+                "one statement executes the clause across all files"
+            );
+        }
+        if let Some(previous) = active {
+            work[previous] = crate::code_rule_dsl::matcher::end_clause().0;
+        }
+    }
     for (file_index, file) in view.files().iter().enumerate() {
         let language = *file.tape().get_lang();
         let root = AstGrep::doc(file.tape().clone());

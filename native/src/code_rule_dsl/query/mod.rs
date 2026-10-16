@@ -84,6 +84,7 @@ pub(super) struct BatchState {
     /// The roots an anchor index selected for the statement running now (`rerail_nodes`'
     /// `selected = 1`); `None` when it selected every root.
     roots: std::sync::Mutex<Option<Arc<[u32]>>>,
+    batch_roots: std::sync::Mutex<Vec<Option<Arc<[u32]>>>>,
     /// The literals parsed so far, as documents past the batch's files (`docs`).
     derived: std::sync::Mutex<Vec<Arc<docs::Derived>>>,
     /// Each predicate's facts, by node and environment (`rerail_facts`).
@@ -104,6 +105,18 @@ impl BatchState {
             .lock()
             .expect("root selection mutex poisoned")
             .clone()
+    }
+
+    fn root_selected(&self, file: usize, node: u32) -> bool {
+        self.batch_roots
+            .lock()
+            .expect("batch root selection mutex poisoned")
+            .get(file)
+            .is_none_or(|roots| {
+                roots
+                    .as_deref()
+                    .is_none_or(|roots| roots.binary_search(&node).is_ok())
+            })
     }
 }
 
@@ -169,6 +182,7 @@ impl QueryConnection {
             text_rows: std::sync::Mutex::default(),
             util_memo: std::sync::Mutex::default(),
             roots: std::sync::Mutex::new(None),
+            batch_roots: std::sync::Mutex::default(),
             derived: std::sync::Mutex::new(Vec::new()),
             facts: std::sync::Mutex::default(),
             structure: std::sync::Mutex::default(),
@@ -291,6 +305,56 @@ impl QueryBatch<'_> {
             (Ok(_), Some(limit)) => Err(rusqlite::Error::UserFunctionError(limit.message().into())),
             (result, _) => result,
         }
+    }
+
+    /// Runs one clause once across every file in this batch. The caller switches matcher, budget,
+    /// scope, and adapter context in `enter` before SQLite evaluates a file's first root.
+    pub(super) fn run_batch_while(
+        &self,
+        plan: &ClausePlan,
+        roots: Vec<Option<Arc<[u32]>>>,
+        mut enter: impl FnMut(i64) -> rusqlite::Result<bool>,
+        mut visit: impl FnMut(usize, u32, Arc<Env>) -> rusqlite::Result<bool>,
+    ) -> rusqlite::Result<()> {
+        use std::sync::atomic::Ordering;
+        *self
+            .state
+            .batch_roots
+            .lock()
+            .expect("batch root selection mutex poisoned") = roots;
+        self.state
+            .statement_executions
+            .fetch_add(1, Ordering::Relaxed);
+        let result = functions::with_file_hook(&mut enter, || {
+            let mut statement = self.owner.connection.prepare_cached(&plan.batch_sql)?;
+            let mut rows = statement.query((self.token,))?;
+            while let Some(row) = rows.next()? {
+                self.state.rows.fetch_add(1, Ordering::Relaxed);
+                let Some(env) = row.get::<_, Option<i64>>(2)? else {
+                    continue;
+                };
+                if env < 0 {
+                    continue;
+                }
+                let file = usize::try_from(row.get::<_, i64>(0)?)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, -1))?;
+                let node = u32::try_from(row.get::<_, i64>(1)?)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, -1))?;
+                let env = self.state.envs.get(env).ok_or_else(|| {
+                    rusqlite::Error::ModuleError("statement returned an unknown environment".into())
+                })?;
+                if !visit(file, node, env)? {
+                    break;
+                }
+            }
+            Ok(())
+        });
+        self.state
+            .batch_roots
+            .lock()
+            .expect("batch root selection mutex poisoned")
+            .clear();
+        result
     }
 
     #[cfg(test)]

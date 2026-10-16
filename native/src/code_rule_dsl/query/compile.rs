@@ -45,13 +45,19 @@ type Compiled = Result<String, Unsupported>;
 pub(in crate::code_rule_dsl) struct ClausePlan {
     pub(super) sql: String,
     pub(super) selected_sql: String,
+    pub(super) batch_sql: String,
     pub(super) root_sql: String,
 }
 
 impl ClausePlan {
     /// Its statements' SQL.
-    pub(super) fn statements(&self) -> [&str; 3] {
-        [&self.sql, &self.selected_sql, &self.root_sql]
+    pub(super) fn statements(&self) -> [&str; 4] {
+        [
+            &self.sql,
+            &self.selected_sql,
+            &self.batch_sql,
+            &self.root_sql,
+        ]
     }
 }
 
@@ -114,9 +120,18 @@ pub(in crate::code_rule_dsl) fn compile_clause(
         "SELECT r.node, {root} FROM rerail_nodes r \
          WHERE r.batch = ?1 AND r.file_index = ?2 AND r.axis = 'all'{kinds}"
     );
+    let batch_sql = format!(
+        "SELECT r.file_index, r.node, \
+         CASE WHEN tq_enter_file(r.file_index) THEN {root} END \
+         FROM rerail_files f JOIN rerail_nodes r ON \
+         r.batch = ?1 AND r.file_index = f.file_index AND r.axis = 'all'{kinds} \
+         WHERE f.batch = ?1 AND tq_selected(?1, r.file_index, r.node) \
+         ORDER BY r.file_index, r.pos"
+    );
     Ok(ClausePlan {
         root_sql: format!("{select} AND r.node = ?3"),
         selected_sql: format!("{select} AND r.selected = 1"),
+        batch_sql,
         sql: select,
     })
 }

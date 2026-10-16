@@ -57,7 +57,7 @@ pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 pub(super) use relation::{set_answers_off, set_same_key_off};
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+pub(super) use resolve::{FileScopeSlot, FileScopes, Resolves, Unresolved};
 pub(crate) use resolve::{
     calls_tables, file_eslint_directives, file_lines, file_module, file_noqa, file_nosec,
     file_phpcs, file_phpstan, file_psalm, table_reading,

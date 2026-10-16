@@ -19,7 +19,15 @@ fn user_error(message: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.into().into())
 }
 
+#[derive(Clone, Copy)]
+struct FileHook {
+    data: *mut (),
+    call: unsafe fn(*mut (), i64) -> SqlResult<bool>,
+}
+
 thread_local! {
+    static FILE_HOOK: std::cell::Cell<Option<FileHook>> = const { std::cell::Cell::new(None) };
+
     /// The batch this thread's statements last named: `(registry, token, view)`. SQLite's
     /// per-argument auxiliary data would do the same, but it keeps one entry per call site and
     /// looks them up linearly, which dominates large statements.
@@ -30,6 +38,34 @@ thread_local! {
 /// Forgets this thread's cached batch view, releasing the batch it holds.
 pub(super) fn forget_batch() {
     CURRENT.with(|current| current.borrow_mut().take());
+}
+
+/// Installs the file-context switch used by one synchronous all-file statement.
+pub(super) fn with_file_hook<F, T>(hook: &mut F, run: impl FnOnce() -> T) -> T
+where
+    F: FnMut(i64) -> SqlResult<bool>,
+{
+    unsafe fn call<F>(data: *mut (), file: i64) -> SqlResult<bool>
+    where
+        F: FnMut(i64) -> SqlResult<bool>,
+    {
+        // SAFETY: `with_file_hook` keeps `hook` borrowed until `run` returns, and SQLite invokes
+        // the function synchronously on this thread.
+        unsafe { (&mut *data.cast::<F>())(file) }
+    }
+    let installed = FileHook {
+        data: (hook as *mut F).cast(),
+        call: call::<F>,
+    };
+    let previous = FILE_HOOK.replace(Some(installed));
+    struct Restore(Option<FileHook>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FILE_HOOK.set(self.0.take());
+        }
+    }
+    let _restore = Restore(previous);
+    run()
 }
 
 /// The batch named by argument 0.
@@ -1263,6 +1299,26 @@ fn register_any_and_steps(connection: &Connection) -> SqlResult<()> {
 
 pub(super) fn register(connection: &Connection, registry: &Arc<MatchRegistry>) -> SqlResult<()> {
     let flags = FunctionFlags::SQLITE_UTF8;
+    connection.create_scalar_function("tq_enter_file", 1, flags, |context| {
+        let file = context.get::<i64>(0)?;
+        FILE_HOOK.with(|hook| match hook.get() {
+            Some(hook) => {
+                // SAFETY: the scoped installer keeps the callback alive during this statement.
+                unsafe { (hook.call)(hook.data, file) }
+            }
+            None => Err(user_error("all-file statement has no file context")),
+        })
+    })?;
+    let owner = Arc::clone(registry);
+    connection.create_scalar_function("tq_selected", 3, flags, move |context| {
+        let view = batch(context, &owner)?;
+        let state = state(&view)?;
+        let file = usize::try_from(context.get::<i64>(1)?)
+            .map_err(|_| user_error("selected root file is invalid"))?;
+        let node = u32::try_from(context.get::<i64>(2)?)
+            .map_err(|_| user_error("selected root node is invalid"))?;
+        Ok(state.root_selected(file, node))
+    })?;
     let owner = Arc::clone(registry);
     connection.create_scalar_function("tq_pattern", 5, flags, move |context| {
         pattern(context, &owner)

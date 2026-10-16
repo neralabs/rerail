@@ -848,7 +848,7 @@ impl Drop for SubTables {
     }
 }
 
-struct FileScopes {
+pub(crate) struct FileScopes {
     /// The tables built or reused so far: at most one per grammar and reading.
     tables: Vec<Arc<ScopeTable>>,
     /// The file's Python module path, which qualifies its definitions and relative imports.
@@ -901,6 +901,12 @@ struct FileScopes {
 /// be confused after an allocator reuses an address.
 pub(super) type ValueKey = (usize, usize);
 
+impl FileScopes {
+    pub(crate) fn tables(&self) -> Vec<Arc<ScopeTable>> {
+        self.tables.clone()
+    }
+}
+
 /// Holds the file's scope table while its roots are matched: built by the first `resolves` that
 /// needs it, shared by every clause on the file, and handed back for caching by `table`.
 pub(crate) struct FileScopeSlot {
@@ -908,6 +914,11 @@ pub(crate) struct FileScopeSlot {
 }
 
 impl FileScopeSlot {
+    pub(crate) fn install_state(state: FileScopes) -> Self {
+        let previous = FILE_SCOPES.replace(Some(state));
+        Self { previous }
+    }
+
     pub(crate) fn install(
         cached: Vec<Arc<ScopeTable>>,
         module: Option<Arc<ModulePath>>,
@@ -949,6 +960,12 @@ impl FileScopeSlot {
             }
         });
         self
+    }
+
+    pub(crate) fn suspend(mut self) -> FileScopes {
+        FILE_SCOPES
+            .replace(self.previous.take())
+            .expect("file scope state is installed")
     }
 
     /// The tables built or reused so far.
