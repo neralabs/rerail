@@ -121,21 +121,35 @@ export const ENGINE_SOURCES = ["native", "languages", "src/engine", "Cargo.lock"
 
 /**
  * Engine source files only one language family can reach, by family (`languages/*.json`'s `family`: `ecma` for
- * JavaScript and TypeScript, `python` for Python). A rule of one family keys on these and the shared files alone, so a
- * change to Python support leaves every ECMAScript rule's cached verdict standing. An entry is a tracked file, or a
- * directory with a trailing `/`.
+ * JavaScript and TypeScript, `python` for Python, `rust` for Rust). A rule of one family keys on these and the shared
+ * files alone, so a change to Python support leaves every ECMAScript rule's cached verdict standing. An entry is a
+ * tracked file, or a directory with a trailing `/`.
  *
- * The list is a ledger of what the engine's own dispatch already decides, never a second opinion on it: the language
+ * A family earns a list when the gates judge it, so its rules key narrowly, or when its files would otherwise sit in
+ * every gated rule's key, as Rust's would: unlisted, a change to Rust support alone would re-judge every rule.
+ *
+ * A file is listed only when it is reachable through its family's adapter alone (`with_adapter!` maps each family to
+ * its own), or through a style, grammar or suppression every other family refuses when the rule compiles. The list is
+ * thus a ledger of what the engine's own dispatch already decides, never a second opinion on it: the language
  * registry says which families honour which suppressions (`noqa` and `nosec`, read by `suppress/noqa.rs` and
- * `suppress/nosec.rs`, are listed by `languages/python.json` alone), `literal/mod.rs` hosts `eslintDirective` on ECMA
- * comments only, and the rest are each family's vendored grammars, its registry entries and the scope and value
- * modules named for it. `suppress/eslint.rs` is the one entry a family outside its list reads: `languages/vue.json`
- * honours `eslint` too, and a Vue rule belongs to no listed family, so it keys on the whole engine regardless.
+ * `suppress/nosec.rs`, are listed by `languages/python.json` alone, `clippy` by `languages/rust.json`),
+ * `literal/mod.rs` hosts `eslintDirective` on ECMA comments only and `rustFormat` on Rust strings only, `formatArgs`
+ * style `rust` is refused by every other family, and the rest are each family's vendored grammars, its registry
+ * entries and the modules named for it. What another family's rule can still read of a listed file is the wording of
+ * a compile error, never whether the rule compiles: a suppression's spec is parsed before the family refuses it,
+ * `compile/binds.rs` checks a binding filter's `form` and `scope` names against every family's (Rust's are in
+ * `language/adapter/rust.rs`) before the rule's own family narrows them, and `compile/parse.rs` checks a `parse` or
+ * `formatArgs` sub-rule's `kind` against its grammar's kinds (`rustFormat`'s are in `literal/rust_format.rs`) before
+ * the family refuses the grammar or style. `suppress/eslint.rs` is the one entry a family outside its list reads to
+ * decide a verdict: `languages/vue.json` honours `eslint` too, and a Vue rule belongs to no listed family, so it keys
+ * on the whole engine regardless.
  *
- * Only the families the gates judge earn a list; every other engine file, a `matcher/`, `compile/`, `workspace/` or
- * `language/adapter/` one included, is shared and so part of every rule's key. That is the direction this list fails
- * in: a file nobody listed costs one cold re-judge of everything, never a stale verdict. Adding an entry is therefore
- * the edit to justify, and `test/conformance/port-readiness/engine.test.ts` fails when one matches no engine source at all.
+ * `matcher/`, `compile/`, `workspace/` and `language/adapter/` are shared, `language/adapter.rs` and its concern files
+ * included, with three exceptions, all Rust's: `language/adapter/rust.rs`, the adapter itself, and
+ * `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter and style `rust` call. Every
+ * engine file no list names is shared and so part of every rule's key. That is the direction this list fails in: a
+ * file nobody listed costs one cold re-judge of everything, never a stale verdict. Adding an entry is therefore the
+ * edit to justify, and `test/conformance/port-readiness/engine.test.ts` fails when one matches no engine source at all.
  */
 export const FAMILY_SOURCES: Readonly<Record<string, readonly string[]>> = {
   ecma: [
@@ -165,6 +179,18 @@ export const FAMILY_SOURCES: Readonly<Record<string, readonly string[]>> = {
     "native/src/code_rule_dsl/suppress/nosec.rs",
     "native/src/code_rule_dsl/value/python.rs",
     "native/src/code_rule_dsl/value/python/",
+  ],
+  rust: [
+    "languages/rust.json",
+    "native/src/code_rule_dsl/calls/rust.rs",
+    "native/src/code_rule_dsl/language/adapter/rust.rs",
+    "native/src/code_rule_dsl/literal/rust_format.rs",
+    "native/src/code_rule_dsl/matcher/arguments/rust.rs",
+    "native/src/code_rule_dsl/matcher/format_args/rust.rs",
+    "native/src/code_rule_dsl/scope/rust.rs",
+    "native/src/code_rule_dsl/scope/usage/rust.rs",
+    "native/src/code_rule_dsl/suppress/clippy.rs",
+    "native/src/code_rule_dsl/value/rust.rs",
   ],
 } as const;
 

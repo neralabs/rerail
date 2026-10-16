@@ -53,21 +53,42 @@ describe("the engine sources a rule's key covers", () => {
       "native/src/code_rule_dsl/value/python.rs",
       "native/src/code_rule_dsl/value/python/ops.rs",
     ]);
+    assert.deepEqual(split.families.rust, [
+      "languages/rust.json",
+      "native/src/code_rule_dsl/calls/rust.rs",
+      "native/src/code_rule_dsl/language/adapter/rust.rs",
+      "native/src/code_rule_dsl/literal/rust_format.rs",
+      "native/src/code_rule_dsl/matcher/arguments/rust.rs",
+      "native/src/code_rule_dsl/matcher/format_args/rust.rs",
+      "native/src/code_rule_dsl/scope/rust.rs",
+      "native/src/code_rule_dsl/scope/usage/rust.rs",
+      "native/src/code_rule_dsl/suppress/clippy.rs",
+      "native/src/code_rule_dsl/value/rust.rs",
+    ]);
     for (const path of ["languages/javascript.json", "languages/typescript.json", "native/src/code_rule_dsl/scope/ecma.rs", "native/src/code_rule_dsl/value/ecma/ops.rs"]) {
       assert.ok(split.families.ecma!.includes(path), `${path} is not ecma's`);
     }
   });
 
+  /** The only family files under the directories every language reads: Rust's adapter and two matchers only it calls. */
+  const RUST_UNDER_SHARED = new Set([
+    "native/src/code_rule_dsl/language/adapter/rust.rs",
+    "native/src/code_rule_dsl/matcher/arguments/rust.rs",
+    "native/src/code_rule_dsl/matcher/format_args/rust.rs",
+  ]);
+
   // The engine code every language reads: a change to it can move any verdict, so it must re-judge every rule.
   test("the engine every language reads is shared", () => {
     const shared = new Set(split.shared);
+    for (const path of RUST_UNDER_SHARED) assert.ok(split.families.rust!.includes(path), `${path} is not rust's`);
     for (const prefix of ["native/src/code_rule_dsl/matcher/", "native/src/code_rule_dsl/compile/", "native/src/code_rule_dsl/workspace/", "native/src/code_rule_dsl/language/adapter/"]) {
-      const listed = [...keyed].filter((path) => path.startsWith(prefix));
+      const listed = [...keyed].filter((path) => path.startsWith(prefix) && !RUST_UNDER_SHARED.has(path));
       assert.ok(listed.length > 0, `no engine source under ${prefix}`);
       for (const path of listed) assert.ok(shared.has(path), `${path} is not shared`);
     }
-    // The lockfile, the manifests, the host's TypeScript engine and the language registry's generator are shared too.
-    for (const path of ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "native/build.rs", "native/src/build_languages.rs", "src/engine/index.ts"]) {
+    // The adapter seam, the lockfile, the manifests, the host's TypeScript engine and the language registry's generator
+    // are shared too.
+    for (const path of ["native/src/code_rule_dsl/language/adapter.rs", "Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "native/build.rs", "native/src/build_languages.rs", "src/engine/index.ts"]) {
       assert.ok(shared.has(path), `${path} is not shared`);
     }
   });
@@ -113,6 +134,7 @@ describe("a rule's engine key", () => {
   const sources = {
     "native/src/code_rule_dsl/scope/python.rs": "// python scope\n",
     "native/src/code_rule_dsl/scope/ecma.rs": "// ecma scope\n",
+    "native/src/code_rule_dsl/scope/rust.rs": "// rust scope\n",
     "native/src/code_rule_dsl/matcher/mod.rs": "// every language's matcher\n",
   };
   const before = engineIdentity(checkout(sources));
@@ -126,6 +148,20 @@ describe("a rule's engine key", () => {
     assert.equal(engineKey(after, ["ecma"]), engineKey(before, ["ecma"]));
     // The whole engine moved, so a rule the gates cannot place in a family is judged again.
     assert.notEqual(after.sha256, before.sha256);
+  });
+
+  // No Rust rule is gated, so a change to Rust support alone must leave every gated family's results standing.
+  test("a Rust-only change moves no gated family's key", () => {
+    const after = engineIdentity(checkout({ ...sources, "native/src/code_rule_dsl/scope/rust.rs": "// rust scope, fixed\n" }));
+    assert.equal(after.shared, before.shared);
+    assert.equal(after.families.ecma, before.families.ecma);
+    assert.equal(after.families.python, before.families.python);
+    assert.equal(engineKey(after, ["ecma"]), engineKey(before, ["ecma"]));
+    assert.equal(engineKey(after, ["python"]), engineKey(before, ["python"]));
+    assert.notEqual(after.families.rust, before.families.rust);
+    // A rule of no family keys on every family's files, Rust's included.
+    assert.notEqual(after.sha256, before.sha256);
+    assert.notEqual(engineKey(after, []), engineKey(before, []));
   });
 
   test("a change to the shared engine moves every key", () => {
@@ -167,7 +203,8 @@ describe("a rule's engine key", () => {
   test("a rule of no family, or of one with no sources of its own, keys on the whole engine", () => {
     assert.equal(engineKey(before, []), before.sha256);
     assert.equal(engineKey(before, ["vue"]), before.sha256);
-    assert.equal(engineKey(before, ["ecma", "python"]), before.sha256);
+    assert.equal(engineKey(before, Object.keys(FAMILY_SOURCES)), before.sha256);
+    assert.notEqual(engineKey(before, ["ecma", "python"]), before.sha256);
     assert.equal(engineKey(before, ["python", "ecma"]), engineKey(before, ["ecma", "python"]));
     assert.notEqual(engineKey(before, ["python"]), before.sha256);
     assert.notEqual(engineKey(before, ["python"]), engineKey(before, ["ecma"]));

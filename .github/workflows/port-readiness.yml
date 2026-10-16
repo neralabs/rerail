@@ -89,7 +89,8 @@ jobs:
       # One leg per gated tool-pack the plan selects, or one per shard of a tool-pack in plan.mjs's SHARDS: `shard`
       # (1 to `shards`) judges the rules whose sha256(id) mod shards is shard - 1, and the report job merges them
       # (docs/port-readiness.md, "Sharding"). A rule keys on the shared engine and its own language family's alone
-      # (conformance/port-readiness/engine.ts), so a change to one language's support judges only its legs cold.
+      # (conformance/port-readiness/engine.ts), so a change to one language's support judges only its legs cold, plus
+      # any leg holding a rule of no language family.
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.legs) }}
     steps:
