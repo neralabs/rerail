@@ -108,8 +108,6 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
-    /// The index of this matcher's historical SQL statement when one is compiled.
-    pub(super) statement: usize,
 }
 
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set

@@ -1541,6 +1541,51 @@ fn compile_clauses(clauses: Vec<Value>) -> CompiledCodeRuleDsl {
     .unwrap_or_else(|error| panic!("policy compiles: {}", error.reason))
 }
 
+#[test]
+fn sqlite_engine_runs_a_workspace_end_to_end() {
+    let clauses = vec![
+        clause("debugger", json!({ "kind": "debugger_statement" })),
+        json!({
+            "id": "secret",
+            "forbid": { "regex": { "source": "file.content", "pattern": "secret" } },
+            "violation": { "anchor": "witness.span", "code": "SECRET", "message": "secret" },
+        }),
+    ];
+    let compiled = compile_clauses(clauses.clone());
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .set_execution_engine("sqlite".to_owned())
+        .expect("SQLite is selected");
+    workspace
+        .add_code_rule(&compiled, None)
+        .expect("rule is added");
+    let profile: Value = serde_json::from_str(&workspace.memory_profile().unwrap()).unwrap();
+    assert_eq!(profile["executionEngine"], "sqlite");
+    let _slot = WORKSPACE_TEST_SLOT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let files = json!([{
+        "path": "src/a.ts",
+        "language": "typescript",
+        "source": "debugger; const value = 'secret';\n",
+    }]);
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": files.clone(), "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let output = task.compute().expect("SQLite workspace applies");
+    let evaluation =
+        serde_json::from_str::<Value>(&output).expect("result is JSON")["evaluation"].clone();
+    assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
+    assert_eq!(
+        evaluation["violations"],
+        stateless(clauses, files)["violations"]
+    );
+}
+
 fn apply_clauses(clauses: Vec<Value>, files: Value) -> Value {
     apply_revisions(clauses, vec![files])
         .pop()

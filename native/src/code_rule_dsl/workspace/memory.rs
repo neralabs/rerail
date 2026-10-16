@@ -181,6 +181,7 @@ pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
         .as_ref()
         .map_or(0, ResultPageIndex::estimated_bytes);
     json!({
+        "executionEngine": state.execution_engine.as_str(),
         "files": state.files.len(),
         "residentFileStates": state.files.len(),
         "witnesses": witness_count,

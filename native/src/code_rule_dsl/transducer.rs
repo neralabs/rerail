@@ -1,13 +1,9 @@
 use super::tape::TapeDoc;
-#[cfg(test)]
 use ast_grep_core::MatchStrictness;
-#[cfg(test)]
 use ast_grep_core::matcher::{Pattern, PatternNode};
-#[cfg(test)]
 use regex::Regex;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(test)]
 use std::ops::Range;
 
 pub(super) mod sql_backend;
@@ -23,44 +19,26 @@ mod jit;
 #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
 mod metal_backend;
 
-#[cfg(test)]
 const STOP: u8 = 0x00;
-#[cfg(test)]
 const KIND: u8 = 0x01;
-#[cfg(test)]
 const FIELD: u8 = 0x02;
-#[cfg(test)]
 const FLAGS: u8 = 0x03;
-#[cfg(test)]
 const TEXT: u8 = 0x04;
-#[cfg(test)]
 const SIZE: u8 = 0x05;
-#[cfg(test)]
 const CHILD: u8 = 0x10;
-#[cfg(test)]
 const NEXT: u8 = 0x11;
-#[cfg(test)]
 const PARENT: u8 = 0x12;
-#[cfg(test)]
 const DESCEND: u8 = 0x13;
-#[cfg(test)]
 const CAPTURE: u8 = 0x20;
-#[cfg(test)]
 const FORK: u8 = 0x30;
-#[cfg(test)]
 const GOTO: u8 = 0x31;
-#[cfg(test)]
 const EMIT: u8 = 0x40;
 
-#[cfg(test)]
 const NAMED: u8 = 1;
-#[cfg(test)]
 const SIZE_LONG: u8 = 0x80;
-#[cfg(test)]
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
 /// A `TEXT` test.
-#[cfg(test)]
 #[derive(Clone)]
 pub(super) enum TextPredicate {
     Equal(u16),
@@ -68,7 +46,6 @@ pub(super) enum TextPredicate {
     Regex { source: u16, compiled: Regex },
 }
 
-#[cfg(test)]
 impl TextPredicate {
     fn string_index(&self) -> u16 {
         match self {
@@ -78,7 +55,6 @@ impl TextPredicate {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone)]
 pub(super) struct Program {
     words: Vec<u32>,
@@ -88,7 +64,6 @@ pub(super) struct Program {
     longs: Vec<u64>,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Capture {
     pub(super) label: u16,
@@ -96,7 +71,6 @@ pub(super) struct Capture {
     pub(super) span: Range<usize>,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Output {
     pub(super) start: u32,
@@ -104,7 +78,6 @@ pub(super) struct Output {
     pub(super) captures: Vec<Capture>,
 }
 
-#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Error {
     InvalidOpcode(usize),
@@ -121,7 +94,6 @@ pub(super) enum Error {
     BackendFailure,
 }
 
-#[cfg(test)]
 #[derive(Clone)]
 struct Path {
     pc: u16,
@@ -131,17 +103,14 @@ struct Path {
     steps: usize,
 }
 
-#[cfg(test)]
 fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
-#[cfg(test)]
 pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
-#[cfg(test)]
 impl Program {
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.

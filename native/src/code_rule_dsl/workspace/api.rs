@@ -3,7 +3,7 @@
 
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
-use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
+use super::evaluate::{Job, JobContext, evaluate_file, run_jobs, sql_plans};
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
@@ -18,13 +18,14 @@ use super::results::{
     ResultText, profile_result, replace_global_changes, serialize_result, serialize_result_page,
 };
 use super::storage::{attach_storage, unix_seconds};
-use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
+use super::{CandidateSets, ExecutionEngine, FILE_WORK_BUDGET, WorkspaceState, check_closed};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
 use crate::code_rule_dsl::placement::parse_placement;
+use crate::code_rule_dsl::query;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, model::Query, profile};
 use crate::content_store::WorkspaceCompletion;
@@ -70,6 +71,28 @@ impl CodeRuleDslWorkspace {
             scopes: Mutex::new(Vec::new()),
             closed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Selects the file-local execution engine. This must be called before evaluation starts.
+    #[napi]
+    pub fn set_execution_engine(&self, engine: String) -> Result<()> {
+        let engine = match engine.as_str() {
+            "matcher" => ExecutionEngine::Matcher,
+            "sqlite" => ExecutionEngine::Sqlite,
+            _ => return Err(invalid("execution engine must equal matcher or sqlite")),
+        };
+        let mut state = self
+            .state
+            .try_lock()
+            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        if self.closed.load(Ordering::Acquire) || state.revision != 0 {
+            return Err(invalid(
+                "execution engine must be selected before workspace evaluation",
+            ));
+        }
+        state.execution_engine = engine;
+        state.sql_plans = None;
+        Ok(())
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
@@ -200,6 +223,7 @@ impl CodeRuleDslWorkspace {
         }
         CrossFileScheduler::register(&mut state, index, Arc::make_mut(&mut resident))?;
         state.code_rules.push(resident);
+        state.sql_plans = None;
         if let Err(error) = check_closed(&self.closed) {
             *self
                 .scopes
@@ -274,6 +298,7 @@ impl CodeRuleDslWorkspace {
             // Own staging inside this scope so every early return drops it before reclamation.
             let mut staged = staged;
             let budget = MatchBudget::until(&self.closed, INLINE_TIME_BUDGET);
+            let sql = sql_plans(&mut state);
             let WorkspaceState {
                 code_rules,
                 grammars,
@@ -284,6 +309,7 @@ impl CodeRuleDslWorkspace {
                 code_rules,
                 grammars,
                 &self.closed,
+                sql.as_deref(),
                 &budget,
                 &mut None,
             )?;
@@ -476,6 +502,7 @@ impl CodeRuleDslWorkspace {
                 .release_memory()
                 .map_err(|error| invalid(error.to_string()))?;
         }
+        query::release_connections();
         release_allocator_memory();
         Ok(true)
     }
@@ -532,6 +559,7 @@ fn clear_if_unlocked(mutex: &Mutex<WorkspaceState>) {
         if let Some(storage) = storage {
             let _ = storage.store.release_memory();
         }
+        query::release_connections();
         release_allocator_memory();
     };
     match mutex.try_lock() {
@@ -763,11 +791,13 @@ impl WorkspaceApplyTask {
             }
         }
         let code_rules = state.code_rules.clone();
+        let sql = sql_plans(&mut state);
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
         let context = JobContext {
             code_rules: &code_rules,
+            sql: sql.as_deref(),
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),

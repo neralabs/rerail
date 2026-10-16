@@ -24,6 +24,7 @@ mod storage;
 
 use super::json::invalid;
 use super::model::{CompiledClause, CompiledCodeRule, Evaluation, FileInput};
+use super::query;
 use super::scope::ScopeTable;
 use super::tape;
 use super::violations::Witness;
@@ -168,9 +169,28 @@ impl std::ops::DerefMut for Witnesses {
     }
 }
 
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum ExecutionEngine {
+    #[default]
+    Matcher,
+    Sqlite,
+}
+
+impl ExecutionEngine {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Matcher => "matcher",
+            Self::Sqlite => "sqlite",
+        }
+    }
+}
+
 #[derive(Default)]
 struct WorkspaceState {
     code_rules: Vec<Arc<CompiledCodeRule>>,
+    execution_engine: ExecutionEngine,
+    /// Compiled SQLite statements for the registered rules, built on first evaluation.
+    sql_plans: Option<Arc<query::SqlPlans>>,
     candidate_sets: CandidateSets,
     globals: BTreeMap<usize, Vec<CompiledClause>>,
     global_results: BTreeMap<usize, Evaluation>,

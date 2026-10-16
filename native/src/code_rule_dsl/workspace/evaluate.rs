@@ -6,7 +6,8 @@ use super::documents;
 use super::persisted::{candidate_catalog, restore_persisted_file, result_context};
 use super::storage::StorageContext;
 use super::{
-    ClauseId, FileState, LocalFailure, REUSE_LOCAL_RESULTS, check_closed, file_work_budget,
+    ClauseId, ExecutionEngine, FileState, LocalFailure, REUSE_LOCAL_RESULTS, WorkspaceState,
+    check_closed, file_work_budget,
 };
 #[cfg(test)]
 use super::{TEST_STORAGE_PREFETCH_FAILURE, pass_deadline_at_test_phase, pause_at_test_phase};
@@ -70,6 +71,7 @@ pub(super) struct Job {
 #[derive(Clone, Copy)]
 pub(super) struct JobContext<'a> {
     pub(super) code_rules: &'a [Arc<CompiledCodeRule>],
+    pub(super) sql: Option<&'a query::SqlPlans>,
     pub(super) storage: Option<&'a StorageContext>,
     pub(super) closed: &'a Arc<AtomicBool>,
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
@@ -179,6 +181,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 context.code_rules,
                 grammars,
                 closed,
+                context.sql,
                 &budget,
                 &mut restored,
             )?;
@@ -214,6 +217,17 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     })
 }
 
+/// The registered rules' SQLite plans, built once when that engine is selected.
+pub(super) fn sql_plans(state: &mut WorkspaceState) -> Option<Arc<query::SqlPlans>> {
+    if state.execution_engine != ExecutionEngine::Sqlite {
+        return None;
+    }
+    let code_rules = &state.code_rules;
+    Some(Arc::clone(state.sql_plans.get_or_insert_with(|| {
+        Arc::new(query::SqlPlans::compile(code_rules))
+    })))
+}
+
 /// Evaluates `file`'s candidates. `restored` receives the document its AST clauses were read on,
 /// for the job's summary pass to read rather than restore the tape again.
 pub(super) fn evaluate_file(
@@ -221,6 +235,7 @@ pub(super) fn evaluate_file(
     code_rules: &[Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
+    sql: Option<&query::SqlPlans>,
     budget: &MatchBudget,
     restored: &mut Option<tape::TapeDoc>,
 ) -> Result<Metrics> {
@@ -273,79 +288,83 @@ pub(super) fn evaluate_file(
     #[cfg(feature = "code-rule-profile")]
     let regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
     let regex_started = Instant::now();
-    for &id in &file.candidates.regex {
-        let code_rule = &code_rules[id.0];
-        let clause = &code_rule.clauses[id.1];
-        let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
-            unreachable!()
-        };
-        let witnesses = file.witnesses.entry(id).or_default();
-        witnesses.clear();
-        let limits = &code_rule.capabilities.limits;
-        if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
-            file.failures
-                .insert(id, ("budget-exceeded", "file input budget exceeded"));
-            continue;
-        }
-        if file.failures.contains_key(&id) {
-            continue;
-        }
-        let haystack: &str = match source {
-            RegexSource::Content => &file.input.source,
-            RegexSource::Path => &file.input.path,
-        };
-        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-        let span = |start, end| match source {
-            RegexSource::Content => lines
-                .as_ref()
-                .expect("eligible content has line table")
-                .span(start, end),
-            RegexSource::Path => path_lines.span(start, end),
-        };
-        let (matches, complete) =
-            query::regex_matches(regex, haystack, limits.max_witnesses.saturating_add(1));
-        let plain =
-            regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
-        let mut stopped = false;
-        for range in matches {
-            if witnesses.len() >= limits.max_witnesses {
+    if sql.is_none() {
+        for &id in &file.candidates.regex {
+            let code_rule = &code_rules[id.0];
+            let clause = &code_rule.clauses[id.1];
+            let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
+                unreachable!()
+            };
+            let witnesses = file.witnesses.entry(id).or_default();
+            witnesses.clear();
+            let limits = &code_rule.capabilities.limits;
+            if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
+                file.failures
+                    .insert(id, ("budget-exceeded", "file input budget exceeded"));
+                continue;
+            }
+            if file.failures.contains_key(&id) {
+                continue;
+            }
+            let haystack: &str = match source {
+                RegexSource::Content => &file.input.source,
+                RegexSource::Path => &file.input.path,
+            };
+            let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
+            let span = |start, end| match source {
+                RegexSource::Content => lines
+                    .as_ref()
+                    .expect("eligible content has line table")
+                    .span(start, end),
+                RegexSource::Path => path_lines.span(start, end),
+            };
+            let (matches, complete) =
+                query::regex_matches(regex, haystack, limits.max_witnesses.saturating_add(1));
+            let plain =
+                regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
+            let mut stopped = false;
+            for range in matches {
+                if witnesses.len() >= limits.max_witnesses {
+                    file.failures
+                        .insert(id, ("budget-exceeded", "file match budget exceeded"));
+                    stopped = true;
+                    break;
+                }
+                let found = regex
+                    .captures_at(haystack, range.start)
+                    .expect("a regex match has captures");
+                assert_eq!(found.get(0).expect("whole match").range(), range);
+                if plain {
+                    witnesses.push(Witness {
+                        path: file.input.path.clone(),
+                        span: span(range.start, range.end),
+                        captures: Captures::default(),
+                        message: None,
+                        fix: None,
+                    });
+                } else {
+                    witnesses.push(violations::regex_witness(
+                        &file.input.path,
+                        regex,
+                        &found,
+                        Some(&clause.violation),
+                        span,
+                    ));
+                }
+                // A decision is answered by its first witness.
+                if clause.decision {
+                    stopped = true;
+                    break;
+                }
+            }
+            if !stopped && !complete {
                 file.failures
                     .insert(id, ("budget-exceeded", "file match budget exceeded"));
-                stopped = true;
-                break;
             }
-            let found = regex
-                .captures_at(haystack, range.start)
-                .expect("a regex match has captures");
-            assert_eq!(found.get(0).expect("whole match").range(), range);
-            if plain {
-                witnesses.push(Witness {
-                    path: file.input.path.clone(),
-                    span: span(range.start, range.end),
-                    captures: Captures::default(),
-                    message: None,
-                    fix: None,
-                });
-            } else {
-                witnesses.push(violations::regex_witness(
-                    &file.input.path,
-                    regex,
-                    &found,
-                    Some(&clause.violation),
-                    span,
-                ));
-            }
-            // A decision is answered by its first witness.
-            if clause.decision {
-                stopped = true;
-                break;
-            }
+            metrics.witnesses += witnesses.len();
         }
-        if !stopped && !complete {
-            file.failures
-                .insert(id, ("budget-exceeded", "file match budget exceeded"));
-        }
-        metrics.witnesses += witnesses.len();
+    } else if let Some(sql) = sql {
+        evaluate_regex_statements(file, code_rules, &lines, &mut metrics, sql)?;
     }
     #[cfg(feature = "code-rule-profile")]
     drop(regex_timer);
@@ -365,7 +384,8 @@ pub(super) fn evaluate_file(
     if !file.candidates.ast.is_empty() && !file.selector_skipped {
         metrics.restored_tapes += usize::from(file.tape.is_some());
         if any_eligible {
-            *restored = evaluate_ast_file(file, code_rules, grammars, closed, lines, &mut metrics)?;
+            *restored =
+                evaluate_ast_file(file, code_rules, grammars, closed, lines, &mut metrics, sql)?;
         }
     }
     for witness in file.witnesses.values_mut().flatten() {
@@ -379,6 +399,119 @@ pub(super) fn evaluate_file(
     Ok(metrics)
 }
 
+/// Runs every regex candidate through the restored SQLite text terminal.
+fn evaluate_regex_statements(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    lines: &Option<Arc<LineTable>>,
+    metrics: &mut Metrics,
+    sql: &query::SqlPlans,
+) -> Result<()> {
+    let failed = sql
+        .with_file(
+            crate::code_rule_dsl::transducer::sql_backend::BatchFile::text_shared(
+                Arc::clone(&file.input.source),
+                Arc::from(file.input.path.as_str()),
+                Arc::from(file.input.language.as_str()),
+                None,
+            ),
+            |batch| {
+                for &id in &file.candidates.regex {
+                    let code_rule = &code_rules[id.0];
+                    let clause = &code_rule.clauses[id.1];
+                    let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
+                        unreachable!()
+                    };
+                    let witnesses = file.witnesses.entry(id).or_default();
+                    witnesses.clear();
+                    let limits = &code_rule.capabilities.limits;
+                    if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
+                        file.failures
+                            .insert(id, ("budget-exceeded", "file input budget exceeded"));
+                        continue;
+                    }
+                    if file.failures.contains_key(&id) {
+                        continue;
+                    }
+                    let haystack: &str = match source {
+                        RegexSource::Content => &file.input.source,
+                        RegexSource::Path => &file.input.path,
+                    };
+                    let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
+                    let span = |start, end| match source {
+                        RegexSource::Content => lines
+                            .as_ref()
+                            .expect("eligible content has line table")
+                            .span(start, end),
+                        RegexSource::Path => path_lines.span(start, end),
+                    };
+                    let Some(terminal) = sql.regex_terminal(id.0, id.1) else {
+                        file.failures
+                            .insert(id, ("adapter-error", "query statement is unavailable"));
+                        continue;
+                    };
+                    let rows = match batch.text_rows(terminal) {
+                        Ok(rows) => rows,
+                        Err(_) => {
+                            file.failures
+                                .insert(id, ("adapter-error", "query statement failed"));
+                            continue;
+                        }
+                    };
+                    let plain = regex.capture_names().flatten().next().is_none()
+                        && clause.violation.fix.is_none();
+                    for (span_row, complete) in rows {
+                        let Some((start, end)) = span_row else {
+                            if !complete {
+                                file.failures
+                                    .insert(id, ("budget-exceeded", "file match budget exceeded"));
+                            }
+                            continue;
+                        };
+                        if witnesses.len() >= limits.max_witnesses {
+                            file.failures
+                                .insert(id, ("budget-exceeded", "file match budget exceeded"));
+                            break;
+                        }
+                        let found = regex
+                            .captures_at(haystack, start)
+                            .expect("terminal match has captures");
+                        assert_eq!(found.get(0).expect("whole match").range(), start..end);
+                        if plain {
+                            witnesses.push(Witness {
+                                path: file.input.path.clone(),
+                                span: span(start, end),
+                                captures: Captures::default(),
+                                message: None,
+                                fix: None,
+                            });
+                        } else {
+                            witnesses.push(violations::regex_witness(
+                                &file.input.path,
+                                regex,
+                                &found,
+                                Some(&clause.violation),
+                                span,
+                            ));
+                        }
+                        if clause.decision {
+                            break;
+                        }
+                    }
+                    metrics.witnesses += witnesses.len();
+                }
+            },
+        )
+        .is_err();
+    if failed {
+        for &id in &file.candidates.regex {
+            file.failures
+                .insert(id, ("adapter-error", "query engine unavailable"));
+        }
+    }
+    Ok(())
+}
+
 /// The document the clauses were read on, `None` where none was restored.
 fn evaluate_ast_file(
     file: &mut FileState,
@@ -387,6 +520,7 @@ fn evaluate_ast_file(
     closed: &AtomicBool,
     lines: Option<Arc<LineTable>>,
     metrics: &mut Metrics,
+    sql: Option<&query::SqlPlans>,
 ) -> Result<Option<tape::TapeDoc>> {
     let language = file_language(&file.input).expect("AST candidate has a supported language");
     let lines = lines.expect("eligible AST file has a line index");
@@ -574,17 +708,34 @@ fn evaluate_ast_file(
         )
         .path(&file.input.path);
         let match_started = Instant::now();
-        evaluate_clauses(
-            file,
-            code_rules,
-            &grammars,
-            root.root().get_doc(),
-            &errors,
-            &lines,
-            metrics,
-            &mut util_work,
-            &selected_roots_by_slot(&selections, &index),
-        )?;
+        let selected = selected_roots_by_slot(&selections, &index);
+        if let Some(sql) = sql {
+            evaluate_statements(
+                file,
+                code_rules,
+                sql,
+                &grammars,
+                root.root().get_doc(),
+                &errors,
+                &lines,
+                metrics,
+                &mut util_work,
+                &selected,
+                max_nodes,
+            )?;
+        } else {
+            evaluate_clauses(
+                file,
+                code_rules,
+                &grammars,
+                root.root().get_doc(),
+                &errors,
+                &lines,
+                metrics,
+                &mut util_work,
+                &selected,
+            )?;
+        }
         let tables = scopes.tables();
         if !tables.is_empty() {
             file.scopes = Some((file.source_revision, tables));
@@ -730,6 +881,186 @@ fn selected_roots_by_slot(
             ),
         })
         .collect()
+}
+
+/// Runs every candidate AST clause's SQLite statement over one restored document.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_statements(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    plans: &query::SqlPlans,
+    grammars: &[&GrammarMatcher],
+    doc: &tape::TapeDoc,
+    errors: &SyntaxErrors,
+    lines: &Arc<LineTable>,
+    metrics: &mut Metrics,
+    util_work: &mut [usize],
+    roots: &[Option<Arc<[u32]>>],
+    node_limit: usize,
+) -> Result<()> {
+    let batch_file = crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
+        doc.clone(),
+        Arc::from(file.input.path.as_str()),
+        Arc::from(file.input.language.as_str()),
+        None,
+    )
+    .bounded(node_limit);
+    let outcome = plans.with_file(batch_file, |batch| -> Result<()> {
+        let view = batch.view();
+        let target = view.file(0).expect("the batch's one file");
+        for slot in 0..file.candidates.ast.len() {
+            let id = file.candidates.ast[slot];
+            if file.failures.contains_key(&id) || matcher_budget_exhausted() {
+                continue;
+            }
+            let code_rule = &code_rules[id.0];
+            let grammar = grammars[slot];
+            let Some(plan) = plans.plan(id.0, id.1, grammar.language) else {
+                file.failures
+                    .insert(id, ("adapter-error", "query statement is unavailable"));
+                continue;
+            };
+            let violation = &code_rule.clauses[id.1].violation;
+            let decision = code_rule.clauses[id.1].decision;
+            let each = violation.each.as_deref();
+            let limit_failure = |error: rusqlite::Error| {
+                let message = error.to_string();
+                match [
+                    UtilLimit::Depth,
+                    UtilLimit::Work,
+                    UtilLimit::Scope,
+                    UtilLimit::Value,
+                ]
+                .into_iter()
+                .find(|limit| message.contains(limit.message()))
+                {
+                    Some(limit) => ("budget-exceeded", limit.message()),
+                    None => ("adapter-error", "query statement failed"),
+                }
+            };
+            let limits = &code_rule.capabilities.limits;
+            let result = {
+                let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
+                batch.run_while(
+                    plan,
+                    0,
+                    roots[slot].clone(),
+                    grammar,
+                    &mut util_work[slot],
+                    |node, first, work| {
+                        if node as usize + 1 > limits.max_visited_nodes {
+                            return Ok(false);
+                        }
+                        metrics.ast_matcher_calls += 1;
+                        let matches = match each {
+                            Some(name) => {
+                                let room = if violation.suppress.is_some() {
+                                    usize::MAX
+                                } else {
+                                    (limits.max_witnesses + 1)
+                                        .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len))
+                                };
+                                batch.enumerate(plan, 0, node, first, grammar, work, name, room)?
+                            }
+                            None => vec![first],
+                        };
+                        for env in matches {
+                            let mut matched = ast_grep_core::NodeMatch::new(
+                                target.node(node),
+                                env.to_meta(target),
+                            );
+                            if let Some(transform) = &grammar.transform {
+                                crate::code_rule_dsl::matcher::begin_clause(grammar, *work);
+                                if transform.apply(matched.get_env_mut()).is_err() {
+                                    *work = crate::code_rule_dsl::matcher::end_clause().0;
+                                    file.failures
+                                        .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
+                                    return Ok(false);
+                                }
+                                *work = crate::code_rule_dsl::matcher::end_clause().0;
+                            }
+                            if errors.overlaps(&matched.get_node().range()) {
+                                continue;
+                            }
+                            let room = (limits.max_witnesses + 1)
+                                .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len));
+                            let found = if each.is_some() {
+                                witnesses_from_match(
+                                    &file.input,
+                                    &matched,
+                                    grammar.language,
+                                    violation,
+                                    room,
+                                    matcher_budget_exhausted,
+                                    |start, end| lines.span(start, end),
+                                )
+                            } else {
+                                witness_from_match(
+                                    &file.input,
+                                    &matched,
+                                    grammar.language,
+                                    Some(violation),
+                                    |start, end| lines.span(start, end),
+                                )
+                                .map(|witness| vec![witness])
+                            };
+                            let found = match found {
+                                Ok(found) => found,
+                                Err(WitnessError::TransformLimit) => {
+                                    file.failures
+                                        .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
+                                    return Ok(false);
+                                }
+                            };
+                            for witness in found {
+                                if violations::suppresses(
+                                    Some(violation),
+                                    matched.get_node(),
+                                    &witness,
+                                ) {
+                                    continue;
+                                }
+                                let witnesses =
+                                    file.witnesses.get_mut(&id).expect("eligible clause");
+                                if witnesses.len() >= limits.max_witnesses {
+                                    file.failures.insert(
+                                        id,
+                                        ("budget-exceeded", "file witness budget exceeded"),
+                                    );
+                                    return Ok(false);
+                                }
+                                witnesses.push(witness);
+                                metrics.witnesses += 1;
+                                if decision {
+                                    return Ok(false);
+                                }
+                            }
+                        }
+                        Ok(true)
+                    },
+                )
+            };
+            match result {
+                Ok(()) => {}
+                Err(_) if matcher_budget_observed() => continue,
+                Err(error) => {
+                    file.failures.insert(id, limit_failure(error));
+                }
+            }
+        }
+        Ok(())
+    });
+    match outcome {
+        Ok(result) => result,
+        Err(_) => {
+            for &id in &file.candidates.ast {
+                file.failures
+                    .entry(id)
+                    .or_insert(("adapter-error", "query engine unavailable"));
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Runs every candidate AST clause (`matcher::run_clause`) over one restored document and records

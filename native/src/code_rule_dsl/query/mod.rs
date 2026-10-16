@@ -497,69 +497,6 @@ impl SqlPlans {
     }
 }
 
-/// A code_rule's compiled statements, one per grammar matcher (`GrammarMatcher::statement` indexes
-/// them): what stateless evaluation runs. The code_rule compiler builds them once, as it clauses that
-/// every AST rule lowers. The workspace compiles its code_rule set into one catalog instead
-/// (`SqlPlans`), so that a file's batch shares terminals across code_rules.
-#[derive(Default)]
-pub(in crate::code_rule_dsl) struct CodeRuleStatements(Vec<MatcherStatement>);
-
-impl CodeRuleStatements {
-    /// Compiles `matcher`'s statement (`each`: its clause enumerates a capture) and returns its
-    /// index, or what does not lower.
-    pub(in crate::code_rule_dsl) fn compile(
-        &mut self,
-        matcher: &crate::code_rule_dsl::matcher::GrammarMatcher,
-        each: bool,
-    ) -> Result<usize, &'static str> {
-        let mut builder = CatalogBuilder::default();
-        let plan =
-            compile_clause(matcher, &mut builder, each).map_err(|unsupported| unsupported.0)?;
-        let (terminals, catalog) = builder.finish();
-        self.0.push(MatcherStatement {
-            terminals: Arc::new(terminals),
-            catalog: Arc::new(catalog),
-            plan,
-            each,
-        });
-        Ok(self.0.len() - 1)
-    }
-
-    /// `matcher`'s statement, compiled for `each`.
-    pub(in crate::code_rule_dsl) fn of(
-        &self,
-        matcher: &crate::code_rule_dsl::matcher::GrammarMatcher,
-        each: bool,
-    ) -> Option<&MatcherStatement> {
-        self.0
-            .get(matcher.statement)
-            .filter(|statement| statement.each == each)
-    }
-}
-
-/// One grammar matcher's statement on its own.
-pub(super) struct MatcherStatement {
-    terminals: Arc<Vec<Terminal>>,
-    catalog: Arc<Catalog>,
-    plan: ClausePlan,
-    /// The clause enumerates a capture (`compile_clause`).
-    each: bool,
-}
-
-impl MatcherStatement {
-    /// Runs `visit` with a one-file batch of `file` and this statement (see `with_file`).
-    pub(super) fn with_batch<T>(
-        &self,
-        file: BatchFile,
-        visit: impl FnOnce(&QueryBatch<'_>, &ClausePlan) -> T,
-    ) -> rusqlite::Result<T> {
-        let statements = self.plan.statements().len();
-        with_file(&self.terminals, &self.catalog, statements, file, |batch| {
-            visit(batch, &self.plan)
-        })
-    }
-}
-
 /// Statements a connection caches at least.
 const MIN_CACHED_STATEMENTS: usize = 128;
 
@@ -647,29 +584,6 @@ fn with_file<T>(
         .connection
         .progress_handler(0, None::<fn() -> bool>)?;
     Ok(result)
-}
-
-/// Runs one file-only regex statement without parsing the file.
-pub(crate) fn regex_rows(
-    regex: regex::Regex,
-    source: TextSource,
-    limit: usize,
-    text: Arc<String>,
-    path: Arc<str>,
-    language: Arc<str>,
-) -> rusqlite::Result<TextRows> {
-    let connection = QueryConnection::open()?;
-    let batch = connection.register(
-        Arc::new(vec![Terminal::Text(regex, source, limit.saturating_add(1))]),
-        vec![BatchFile::text_shared(text, path, language, None)],
-        Arc::new(Catalog {
-            terms: Vec::new(),
-            ops: Vec::new(),
-        }),
-    );
-    let rows = batch.text_rows(0);
-    drop(batch);
-    rows
 }
 
 /// A regex clause's matches in `haystack`, in order, at most `limit`; and whether the scan finished.

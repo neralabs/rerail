@@ -123,6 +123,8 @@ export interface NativeCodeRuleDslWorkspace {
    * at the entry's mode (`null` is off there); omitted, the code rule runs wherever its scope matches at its own mode.
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
+  /** Selects file-local execution before the first apply. */
+  setExecutionEngine(engine: "matcher" | "sqlite"): void;
   acceptsPath(path: string): boolean;
   tryApply(requestJson: string): string | null;
   applyAsync(requestJson: string): Promise<string>;

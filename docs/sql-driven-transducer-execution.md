@@ -1,6 +1,16 @@
 # SQL-driven transducer execution
 
-Status: the `rerail_matches` virtual table has been deleted, with `transducer/sql_backend.rs` and its terminals; code-rule evaluation runs no SQL. Regex clauses are scanned natively (`query::regex_matches`) and AST rules are matched by the grammar matcher. The terminal virtual table, SQL-as-outer-rule-engine and execution-phase sections below are history; the transducer `Program` interpreter is exercised by tests and the benchmark backends only.
+Status: Rerail includes the restored SQLite rule engine. The matcher remains the default engine. Set `RERAIL_CODE_RULE_ENGINE=sqlite` to select SQLite for workspace regex and AST clauses.
+
+## Run Rerail with SQLite
+
+Set the environment variable before you start Rerail:
+
+```sh
+RERAIL_CODE_RULE_ENGINE=sqlite rerail
+```
+
+The workspace memory profile reports `"executionEngine":"sqlite"` when the selection is active. An unsupported SQL clause reports an `adapter-error`. Rerail does not retry the clause with the matcher.
 
 ## Current file filter
 
