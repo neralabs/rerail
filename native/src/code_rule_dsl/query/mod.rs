@@ -75,6 +75,8 @@ type FactKey = (usize, i64, u32, i64);
 pub(super) struct BatchState {
     catalog: Arc<Catalog>,
     envs: EnvArena,
+    statement_executions: std::sync::atomic::AtomicUsize,
+    rows: std::sync::atomic::AtomicUsize,
     /// Recursive utility verdicts are pure for a fixed node, environment and recursion depth.
     /// The cached cost is replayed so `maxVisitedNodes` remains observable.
     util_memo: std::sync::Mutex<foldhash::HashMap<UtilityMemoKey, UtilityMemoValue>>,
@@ -161,6 +163,8 @@ impl QueryConnection {
         let state = Arc::new(BatchState {
             catalog,
             envs: EnvArena::default(),
+            statement_executions: std::sync::atomic::AtomicUsize::new(0),
+            rows: std::sync::atomic::AtomicUsize::new(0),
             util_memo: std::sync::Mutex::default(),
             roots: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Vec::new()),
@@ -195,10 +199,32 @@ pub(super) struct QueryBatch<'a> {
     state: Arc<BatchState>,
 }
 
+pub(super) struct QueryCounters {
+    pub(super) statements: usize,
+    pub(super) rows: usize,
+    pub(super) terminal_executions: usize,
+    pub(super) virtual_table_filters: usize,
+}
+
 impl QueryBatch<'_> {
     #[cfg(test)]
     pub(super) fn token(&self) -> i64 {
         self.token
+    }
+
+    pub(super) fn execution_counters(&self) -> QueryCounters {
+        use std::sync::atomic::Ordering;
+        let (terminal_executions, virtual_table_filters) = self
+            .owner
+            .registry
+            .query_execution_counters(self.token)
+            .unwrap_or_default();
+        QueryCounters {
+            statements: self.state.statement_executions.load(Ordering::Relaxed),
+            rows: self.state.rows.load(Ordering::Relaxed),
+            terminal_executions,
+            virtual_table_filters,
+        }
     }
 
     #[cfg(test)]
@@ -356,9 +382,14 @@ impl QueryBatch<'_> {
         parameters: impl rusqlite::Params,
         mut visit: impl FnMut(u32, Arc<Env>) -> rusqlite::Result<bool>,
     ) -> rusqlite::Result<()> {
+        use std::sync::atomic::Ordering;
+        self.state
+            .statement_executions
+            .fetch_add(1, Ordering::Relaxed);
         let mut statement = self.owner.connection.prepare_cached(sql)?;
         let mut rows = statement.query(parameters)?;
         while let Some(row) = rows.next()? {
+            self.state.rows.fetch_add(1, Ordering::Relaxed);
             #[cfg(test)]
             ROWS_STEPPED.with(|stepped| stepped.set(stepped.get() + 1));
             let Some(env) = row.get::<_, Option<i64>>(1)? else {
@@ -382,6 +413,10 @@ impl QueryBatch<'_> {
     /// The ordered rows of a text terminal, followed by its completion row. A text statement
     /// never touches `rerail_nodes`, so a text-only batch remains untaped.
     pub(super) fn text_rows(&self, terminal: usize, file: usize) -> rusqlite::Result<TextRows> {
+        use std::sync::atomic::Ordering;
+        self.state
+            .statement_executions
+            .fetch_add(1, Ordering::Relaxed);
         let mut statement = self.owner.connection.prepare_cached(
             "SELECT start_byte, end_byte, complete FROM rerail_matches \
              WHERE batch = ?1 AND program_index = ?2 AND file_index = ?3 \
@@ -390,6 +425,7 @@ impl QueryBatch<'_> {
         let mut rows = statement.query((self.token, terminal as i64, file as i64))?;
         let mut found = Vec::new();
         while let Some(row) = rows.next()? {
+            self.state.rows.fetch_add(1, Ordering::Relaxed);
             let complete = row.get::<_, i64>(2)? != 0;
             let span = match (row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?) {
                 (Some(start), Some(end)) => Some((start as usize, end as usize)),

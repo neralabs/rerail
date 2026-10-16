@@ -19,6 +19,10 @@ Each file retains its own deadline, completion state, scope cache, and witness l
 Clause statements still run once for each file-clause pair.
 Clause-major statement execution remains the next execution-shape change.
 
+Profile output now reports SQLite batches, registered files, statement executions, result rows,
+terminal executions, and virtual-table filters. These counters measure the remaining file-clause
+statement shape without retaining raw benchmark output.
+
 ## Evidence
 
 The complete data-layer run took 1,404.7 seconds inside `applyAsync`.

@@ -737,6 +737,11 @@ fn text_terminal_executes_once_for_every_file_in_a_batch() {
     assert_eq!(batch.text_rows(0, 0).unwrap(), vec![(Some((0, 6)), true)]);
     assert_eq!(batch.text_rows(0, 1).unwrap(), vec![(Some((4, 10)), true)]);
     assert_eq!(batch.counters().terminal_executions, [1]);
+    let counters = batch.execution_counters();
+    assert_eq!(counters.statements, 2);
+    assert_eq!(counters.rows, 2);
+    assert_eq!(counters.terminal_executions, 1);
+    assert_eq!(counters.virtual_table_filters, 2);
 }
 
 /// A text-only file has no tree: every node walk over it, the kind index's included, is empty.

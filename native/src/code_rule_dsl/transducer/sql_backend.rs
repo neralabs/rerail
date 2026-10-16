@@ -878,6 +878,22 @@ impl MatchRegistry {
             .map(|batch| batch.executions.load(Ordering::Relaxed))
     }
 
+    pub(in crate::code_rule_dsl) fn query_execution_counters(
+        &self,
+        token: i64,
+    ) -> Option<(usize, usize)> {
+        self.batch(token).map(|batch| {
+            (
+                batch
+                    .cells
+                    .iter()
+                    .map(|cell| cell.executions.load(Ordering::Relaxed))
+                    .sum(),
+                batch.filters.load(Ordering::Relaxed),
+            )
+        })
+    }
+
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn counters(&self, token: i64) -> Option<BatchCounters> {
         self.batch(token).map(|batch| BatchCounters {

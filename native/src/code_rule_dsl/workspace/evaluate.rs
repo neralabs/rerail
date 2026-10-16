@@ -107,6 +107,15 @@ struct PendingSqlJob {
     error: Option<napi::Error>,
 }
 
+fn record_query_counters(metrics: &mut Metrics, counters: query::QueryCounters, files: usize) {
+    metrics.sqlite_batches += 1;
+    metrics.sqlite_files += files;
+    metrics.sqlite_statements += counters.statements;
+    metrics.sqlite_rows += counters.rows;
+    metrics.sqlite_terminal_executions += counters.terminal_executions;
+    metrics.sqlite_virtual_table_filters += counters.virtual_table_filters;
+}
+
 /// Restores what the store holds for each job and evaluates the rest: serially for a few files,
 /// on the worker pool for more.
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
@@ -382,6 +391,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                     job.metrics.regex_nanoseconds += regex_started.elapsed().as_nanos() as u64;
                     job.file.transient_failure = job.deadline.observed();
                 }
+                let counters = batch.execution_counters();
+                record_query_counters(
+                    &mut pending[batch_jobs[0]].metrics,
+                    counters,
+                    batch_jobs.len(),
+                );
             });
             if outcome.is_err() {
                 for job_index in batch_jobs {
@@ -461,6 +476,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                     }
                     job.file.transient_failure = job.deadline.observed();
                 }
+                let counters = batch.execution_counters();
+                record_query_counters(
+                    &mut pending[batch_jobs[0]].metrics,
+                    counters,
+                    batch_jobs.len(),
+                );
             });
             if outcome.is_err() {
                 for job_index in batch_jobs {

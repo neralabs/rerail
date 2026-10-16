@@ -690,6 +690,12 @@ pub(super) struct Metrics {
     pub(super) ast_parse_nanoseconds: u64,
     pub(super) ast_match_nanoseconds: u64,
     pub(super) ast_matcher_calls: usize,
+    pub(super) sqlite_batches: usize,
+    pub(super) sqlite_files: usize,
+    pub(super) sqlite_statements: usize,
+    pub(super) sqlite_rows: usize,
+    pub(super) sqlite_terminal_executions: usize,
+    pub(super) sqlite_virtual_table_filters: usize,
     pub(super) storage_retries: usize,
     pub(super) storage_retry_wait_nanoseconds: u64,
     pub(super) storage_transaction_nanoseconds: u64,
@@ -725,6 +731,12 @@ impl Metrics {
         self.ast_parse_nanoseconds += other.ast_parse_nanoseconds;
         self.ast_match_nanoseconds += other.ast_match_nanoseconds;
         self.ast_matcher_calls += other.ast_matcher_calls;
+        self.sqlite_batches += other.sqlite_batches;
+        self.sqlite_files += other.sqlite_files;
+        self.sqlite_statements += other.sqlite_statements;
+        self.sqlite_rows += other.sqlite_rows;
+        self.sqlite_terminal_executions += other.sqlite_terminal_executions;
+        self.sqlite_virtual_table_filters += other.sqlite_virtual_table_filters;
         self.storage_retries += other.storage_retries;
         self.storage_retry_wait_nanoseconds += other.storage_retry_wait_nanoseconds;
         self.storage_transaction_nanoseconds += other.storage_transaction_nanoseconds;
