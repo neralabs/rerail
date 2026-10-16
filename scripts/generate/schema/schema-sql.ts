@@ -28,6 +28,7 @@ import {
   auditRuleSets,
   auditRuleSetUses,
   auditViolations,
+  auditViolationsStaging,
   ruleViolationRollup,
 } from "../../../src/engine/index.js";
 
@@ -48,6 +49,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   audits: audits,
   auditResultPages: auditResultPages,
   auditViolations,
+  auditViolationsStaging,
   ruleViolationRollup,
   auditRuleSets,
   auditRuleSetRules,

@@ -113,13 +113,13 @@ declare module "*/ui/state.js" {
   /** A cursor-paged list as the page holds it. */
   export interface PagedList<Row> { key: string | null; owner: string | null; rows: Row[]; total: number; next: string | null; pages: number }
   export function pagedList<Row = never>(key?: string | null, owner?: string | null): PagedList<Row>;
-  export interface SessionDetail { head: object | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
+  export interface SessionDetail { head: object | null; gaps: object | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
   export type Violation = { id: string; auditId: string; ruleId: string; sessionId: string; mode?: string; at: number; host?: string | null };
   export const data: {
     rules: Map<string, unknown>;
     findings: PagedList<Violation>;
     ruleFindings: PagedList<Violation>;
-    sessions: PagedList<{ sessionId: string; startedAt: number; violationCount: number }>;
+    sessions: PagedList<{ sessionId: string; startedAt: number; violationCount: number; eventCount?: number; [k: string]: unknown }>;
     sessionFindings: PagedList<Violation>;
     activity: Record<string, unknown>;
     activityAll: Record<string, unknown>;
@@ -131,6 +131,8 @@ declare module "*/ui/state.js" {
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     sessionDetail: Map<string, SessionDetail>;
+    missing: boolean;
+    disconnected: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };

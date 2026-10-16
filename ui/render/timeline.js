@@ -1,7 +1,7 @@
 import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js";
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
-import { ui, titleOf } from "../state.js";
+import { ui, titleOf, packRuleOf } from "../state.js";
 import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
 
 const EF = () => (ui.showAll ? ui.evFilter : "corrections");
@@ -150,10 +150,12 @@ function whereText(f) {
 
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
-  setText(node.querySelector("b"), titleOf(c.rule));
-  setText(node.querySelector(".mono"), c.rule.rule.id);
+  // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
+  setText(node.querySelector("b"), c.rule === null ? `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)` : titleOf(c.rule));
+  setText(node.querySelector(".mono"), f.ruleId);
   setText(node.querySelector(".badge"), violationOutcome(f) === "logged" ? "Logged" : "Steered");
-  setAttr(node.querySelector("[data-act=detail]"), "data-i", c.rule.rule.id);
+  setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
+  setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
   setText(node.querySelector("dd.where code"), where);

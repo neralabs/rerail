@@ -211,6 +211,22 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
   });
 
+  it("counts a session's gaps over its whole transcript, however many events follow them", async () => {
+    const dropped = { id: "gap-1", count: 7, kinds: { call: 7 }, firstEventId: null, lastEventId: null, firstDroppedAt: 1, lastDroppedAt: 2 };
+    sessionStore.recordDroppedEvents(SESSION, dropped);
+    sessionStore.recordDroppedEvents(SESSION, { ...dropped, id: "gap-2", count: 2 });
+    sessionStore.recordDiscoveryPending(SESSION, "turn");
+    sessionStore.recordCodeRulesPending(SESSION, "call");
+    sessionStore.recordCodeRulesPending(SESSION, "result");
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
+    for (let index = 0; index < 600; index += 1) {
+      sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
+    }
+
+    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
+      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2 });
+  });
+
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
     sessionStore.openSession({ ...SESSION, sessionId: "session-old" }, 500);
     sessionStore.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);

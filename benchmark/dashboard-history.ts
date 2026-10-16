@@ -11,13 +11,13 @@ import { getRequestListener } from "@hono/node-server";
 import type Database from "better-sqlite3";
 import { Hono } from "hono";
 import { createRerailApi, DatabaseApiStores, operations } from "../src/api/index.js";
-import { openRerailDatabase } from "../src/engine/index.js";
+import { openRerailDatabase, SqliteAuditStore, type CodeRuleViolation } from "../src/engine/index.js";
 
 const DAY = 86_400_000;
 const REPOSITORY = "remote:github.com/example/benchmark";
-const USAGE = "usage: dashboard-history [--audits N] [--rules N] [--backlog N] [--sessions N] [--tabs N] [--seconds N] [--seed N]";
+const USAGE = "usage: dashboard-history [--audits N] [--rules N] [--backlog N] [--chunks N] [--sessions N] [--tabs N] [--seconds N] [--seed N]";
 
-interface Options { audits: number; rules: number; backlog: number; sessions: number; tabs: number; seconds: number; seed: number }
+interface Options { audits: number; rules: number; backlog: number; chunks: number; sessions: number; tabs: number; seconds: number; seed: number }
 
 function options(): Options {
   const { values } = parseArgs({
@@ -25,6 +25,7 @@ function options(): Options {
       audits: { type: "string", default: "4000" },
       rules: { type: "string", default: "166" },
       backlog: { type: "string", default: "700" },
+      chunks: { type: "string", default: "20" },
       sessions: { type: "string", default: "7" },
       tabs: { type: "string", default: "2" },
       seconds: { type: "string", default: "10" },
@@ -37,7 +38,7 @@ function options(): Options {
     return value;
   };
   return {
-    audits: number("audits"), rules: number("rules"), backlog: number("backlog"), sessions: number("sessions"),
+    audits: number("audits"), rules: number("rules"), backlog: number("backlog"), chunks: Math.max(1, number("chunks")), sessions: number("sessions"),
     tabs: number("tabs"), seconds: number("seconds"), seed: number("seed"),
   };
 }
@@ -187,21 +188,32 @@ async function main(): Promise<void> {
     }
     console.log(`  ${"one full poll after a commit".padEnd(28)}${ms(median(polls))}`);
 
-    console.log(`\nwriting one repository audit of ${settings.backlog} violations`);
-    const audit = writer.prepare(
-      "INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json, "
-        + "rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json) "
-        + "SELECT 'benchmark-write', session_id, workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json, "
-        + "rule_provenance_json, paths_json, ?, NULL, 'running', '[]', '[]' FROM audits WHERE scope = 'repository' LIMIT 1",
-    );
-    const backlogOf = writer.prepare("SELECT violations_json FROM audits WHERE scope = 'repository' LIMIT 1").pluck();
-    const standing = backlogOf.get() as string;
-    let started = performance.now();
-    audit.run(now);
-    const inserted = performance.now() - started;
-    started = performance.now();
-    writer.prepare("UPDATE audits SET violations_json = ?, status = 'completed' WHERE audit_id = 'benchmark-write'").run(standing);
-    console.log(`  insert ${ms(inserted)}, record its ${settings.backlog} violations ${ms(performance.now() - started)}`);
+    // A repository scan records its cumulative violations once per chunk (`progress`), then finishes; each write
+    // runs the history triggers inside the write transaction hooks wait on.
+    const chunks = settings.chunks;
+    console.log(`\nrecording a repository audit of ${settings.backlog} violations over ${chunks} progress writes, then finish`);
+    const standing = JSON.parse(writer.prepare("SELECT violations_json FROM audits WHERE scope = 'repository' LIMIT 1").pluck().get() as string) as CodeRuleViolation[];
+    const recorder = new SqliteAuditStore(path);
+    const writes: number[] = [];
+    try {
+      const auditId = recorder.start({
+        sessionId: "benchmark-session-0", workspaceRoot: "/benchmark/checkout", scope: "repository", mode: "log", revision: 1,
+        catalogRevision: "catalog", ruleRevisions: [], paths: [],
+      });
+      for (let chunk = 1; chunk <= chunks; chunk += 1) {
+        const violations = standing.slice(0, Math.ceil((standing.length * chunk) / chunks));
+        const started = performance.now();
+        recorder.progress(auditId, { violations, failures: [] });
+        writes.push(performance.now() - started);
+      }
+      const started = performance.now();
+      recorder.finish(auditId, { status: "completed", violations: standing, failures: [] });
+      writes.push(performance.now() - started);
+    } finally {
+      recorder.close();
+    }
+    const slowest = writes.indexOf(Math.max(...writes));
+    console.log(`  total ${ms(writes.reduce((sum, value) => sum + value, 0))}, slowest write ${ms(writes[slowest]!)} (${slowest === chunks ? "finish" : `progress ${slowest + 1} of ${chunks}`})`);
 
     // Each tab polls back to back (the worst case of the dashboard's 5 s interval with slow polls) while a session
     // commits every 250 ms, and a status-line-like client reads /healthz every 100 ms; the status line gives up after 2 s.

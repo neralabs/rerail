@@ -532,7 +532,9 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
     OR (${auditViolations.startedAt} = ${after[0]} AND (${auditViolations.auditId} < ${after[1]}
       OR (${auditViolations.auditId} = ${after[1]} AND ${auditViolations.ordinal} > ${after[2]})))
   )`;
-  const rows = database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null }>(sql`
+  // The page and its total from one snapshot, so a commit between them cannot make them disagree.
+  const { rows, total } = database.transaction(() => ({
+    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null }>(sql`
     SELECT
       json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
@@ -547,8 +549,9 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
     JOIN ${audits} ON ${audits.auditId} = page.audit_id
     LEFT JOIN ${sessions} ON ${sessions.sessionId} = page.session_id
     ORDER BY page.started_at DESC, page.audit_id DESC, page.ordinal
-  `);
-  const total = database.select({ total: count() }).from(auditViolations).where(matching).get()?.total ?? 0;
+  `),
+    total: database.select({ total: count() }).from(auditViolations).where(matching).get()?.total ?? 0,
+  }));
   const shown = rows.slice(0, limit);
   const last = shown.at(-1);
   return {

@@ -11,7 +11,6 @@
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
 import { sql } from "drizzle-orm";
-import { AUDIT_HISTORY_BACKFILL_STATEMENTS } from "./audit-history.js";
 import type { RerailDatabase } from "./database.js";
 import { schemaMigrations } from "./schema.js";
 
@@ -80,14 +79,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   },
   {
     // The derived audit history the dashboard reads (`audit-history.ts`), filled from the audits a file already
-    // holds. Steps run before the DDL, so the tables are written out here as the DDL creates them; the triggers
-    // that keep them current come with the DDL right after. No floor: an older build never reads these tables,
-    // and its writes to `audits` reach them through the triggers.
+    // holds. Steps run before the DDL, so the tables and the backfill are written out here, frozen as this step
+    // introduced them; the triggers that keep the tables current come with the DDL right after. No floor: an older
+    // build never reads these tables, and its writes to `audits` reach them through the triggers.
     id: "audit-history-derived-tables",
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
       for (const statement of AUDIT_HISTORY_TABLES) database.run(sql.raw(statement));
-      for (const statement of AUDIT_HISTORY_BACKFILL_STATEMENTS) database.run(sql.raw(statement));
+      for (const statement of AUDIT_HISTORY_BACKFILL) database.run(sql.raw(statement));
     },
   },
 ];
@@ -108,6 +107,48 @@ const AUDIT_HISTORY_TABLES: readonly string[] = [
   "CREATE TABLE IF NOT EXISTS `audit_rule_set_uses` (\n\t`audit_id` text PRIMARY KEY NOT NULL,\n\t`session_id` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`rule_set_id` integer NOT NULL\n)",
   "CREATE INDEX IF NOT EXISTS `audit_rule_set_uses_session_started` ON `audit_rule_set_uses` (`session_id`,`started_at`,`rule_set_id`)",
   "CREATE INDEX IF NOT EXISTS `audit_rule_set_uses_started` ON `audit_rule_set_uses` (`started_at`,`rule_set_id`)",
+  "CREATE TABLE IF NOT EXISTS `audit_violations_staging` (\n\t`audit_id` text NOT NULL,\n\t`ordinal` integer NOT NULL,\n\t`session_id` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`rule_id` text,\n\t`violation_key` text NOT NULL,\n\t`logged` integer NOT NULL,\n\tPRIMARY KEY(`audit_id`, `ordinal`)\n)",
+];
+
+/**
+ * The audits a file holds, replayed into those tables as the triggers would have built them: one row per distinct
+ * (rule, violation key) in each audit at its first copy, `logged` when any copy was in Log mode; each key's latest
+ * sighting; each audit's rule set. The violation key is `audit-history.ts`'s `violationKeySql`.
+ */
+const AUDIT_HISTORY_BACKFILL: readonly string[] = [
+  `INSERT INTO audit_violations (audit_id, ordinal, session_id, started_at, rule_id, violation_key, logged)
+    SELECT entry.audit_id, entry.ordinal, entry.session_id, entry.started_at, entry.rule_id, entry.violation_key, entry.logged
+    FROM (
+      SELECT
+        audit.audit_id AS audit_id,
+        audit.session_id AS session_id,
+        audit.started_at AS started_at,
+        violation.key AS ordinal,
+        json_extract(violation.value, '$.ruleId') AS rule_id,
+        coalesce(json_extract(violation.value, '$.clauseId'), '') || char(31) || coalesce(json_extract(violation.value, '$.path'), '')
+          || char(31) || coalesce(json_extract(violation.value, '$.span'), '') || char(31) || coalesce(json_extract(violation.value, '$.code'), '')
+          AS violation_key,
+        row_number() OVER copies AS copy,
+        max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
+      FROM audits audit, json_each(audit.violations_json) violation
+      WINDOW copies AS (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'),
+        coalesce(json_extract(violation.value, '$.clauseId'), '') || char(31) || coalesce(json_extract(violation.value, '$.path'), '')
+          || char(31) || coalesce(json_extract(violation.value, '$.span'), '') || char(31) || coalesce(json_extract(violation.value, '$.code'), '')
+        ORDER BY violation.key ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+    ) entry
+    WHERE entry.copy = 1`,
+  `INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at)
+    SELECT session_id, rule_id, violation_key, max(started_at), max(CASE WHEN logged = 1 THEN started_at END)
+    FROM audit_violations WHERE rule_id IS NOT NULL
+    GROUP BY session_id, rule_id, violation_key`,
+  "INSERT INTO audit_rule_sets (rule_revisions_json) SELECT DISTINCT rule_revisions_json FROM audits",
+  `INSERT INTO audit_rule_set_rules (rule_set_id, rule_id)
+    SELECT DISTINCT rule_set.rule_set_id, json_extract(revision.value, '$.ruleId')
+    FROM audit_rule_sets rule_set, json_each(rule_set.rule_revisions_json) revision
+    WHERE json_extract(revision.value, '$.ruleId') IS NOT NULL`,
+  `INSERT INTO audit_rule_set_uses (audit_id, session_id, started_at, rule_set_id)
+    SELECT audit.audit_id, audit.session_id, audit.started_at, rule_set.rule_set_id
+    FROM audits audit JOIN audit_rule_sets rule_set ON rule_set.rule_revisions_json = audit.rule_revisions_json`,
 ];
 
 /** The schema version `migrations` leave a file at: the baseline, or the highest floor a step raises it to. */

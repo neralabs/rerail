@@ -418,6 +418,8 @@ export const auditViolations = sqliteTable(
     index("audit_violations_session_started").on(table.sessionId, table.startedAt),
     index("audit_violations_started").on(table.startedAt),
     index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
+    // An append looks up the audit's own rows by (rule, key).
+    index("audit_violations_audit_key").on(table.auditId, table.ruleId, table.violationKey),
     // The rollup's maxima: a key's latest sighting, and its latest in Log mode, each one index probe.
     index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
     index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
@@ -474,8 +476,27 @@ export const auditRuleSetUses = sqliteTable(
   ],
 );
 
+/**
+ * Scratch rows for one update of an audit's violations: the update trigger computes the audit's `audit_violations`
+ * rows here, then changes only the rows that differ, so a running scan's cumulative `progress` writes cost their new
+ * violations rather than all of them. Empty outside that trigger.
+ */
+export const auditViolationsStaging = sqliteTable(
+  "audit_violations_staging",
+  {
+    auditId: text("audit_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleId: text("rule_id"),
+    violationKey: text("violation_key").notNull(),
+    logged: integer("logged", { mode: "boolean" }).notNull(),
+  },
+  table => [primaryKey({ columns: [table.auditId, table.ordinal] })],
+);
+
 /** The derived audit history keyed by session: the triggers on `audits` clear it along with the audits it came from. */
-export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, ruleViolationRollup, auditRuleSetUses] as const;
+export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, auditViolationsStaging, ruleViolationRollup, auditRuleSetUses] as const;
 
 /**
  * How many failures an audit had beyond those `audits.failures_json` lists, which holds at most 20 per-file failures

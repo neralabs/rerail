@@ -130,7 +130,8 @@ const revisions = (next: () => number) => RULES.filter(() => next() < 0.6).map(r
 
 /**
  * Audits written every way history gets written: this build's store (start, progress, finish, paged results,
- * interruption), plain SQL the way an older Rerail sharing the file writes, and audits re-dated after the fact.
+ * interruption, a scan's cumulative progress), plain SQL the way an older Rerail sharing the file writes, and audits
+ * re-dated after the fact.
  */
 function writeHistory(path: string, client: Database.Database, seed: number): void {
   const next = random(seed);
@@ -138,7 +139,7 @@ function writeHistory(path: string, client: Database.Database, seed: number): vo
   try {
     for (let index = 0; index < 60; index += 1) {
       const sessionId = SESSIONS[Math.floor(next() * SESSIONS.length)]![0];
-      const way = Math.floor(next() * 4);
+      const way = Math.floor(next() * 5);
       if (way === 0) {
         client.prepare(`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision,
           rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
@@ -157,6 +158,14 @@ function writeHistory(path: string, client: Database.Database, seed: number): vo
         store.appendResultPage(auditId, 0, { violations: violations(next), failures: [] });
         store.appendResultPage(auditId, 1, { violations: violations(next), failures: [] });
         store.finishResultPages(auditId, "completed");
+      } else if (way === 3) {
+        // A scan: each progress write repeats everything so far and adds more, copies of earlier entries included.
+        let soFar: CodeRuleViolation[] = [];
+        for (let chunk = 0; chunk < 4; chunk += 1) {
+          soFar = [...soFar, ...violations(next)];
+          store.progress(auditId, { violations: soFar });
+        }
+        store.finish(auditId, { status: "completed", violations: soFar, failures: [] });
       } else {
         // Left running: its progress so far is history too.
         store.progress(auditId, { violations: violations(next) });
@@ -205,13 +214,14 @@ function openSessions(path: string): void {
 }
 
 describe("derived audit history", () => {
-  it.each([1, 2, 3])("answers activity and history as reading every audit would (seed %i)", async (seed) => {
+  it.each([1, 2, 3, 4, 5, 6])("answers activity and history as reading every audit would (seed %i)", async (seed) => {
     const path = await temporaryDatabase();
     const database = openRerailDatabase(path);
     try {
       openSessions(path);
       writeHistory(path, database.$client, seed);
       expectMatchesOracle(path, database.$client);
+      expect(database.$client.prepare("SELECT count(*) AS n FROM audit_violations_staging").get()).toEqual({ n: 0 });
 
       // `rerail reset` deletes one repository's audits; what was derived from them goes too.
       resetRepositoryHistory(path, REPOSITORY_A);
@@ -220,6 +230,35 @@ describe("derived audit history", () => {
         expect(database.$client.prepare(`SELECT count(*) AS n FROM ${table} WHERE session_id IN ('s1', 's2')`).get(), table).toEqual({ n: 0 });
       }
     } finally {
+      database.$client.close();
+    }
+  });
+
+  // A violation reported twice in one audit, steered then logged, is logged: the copy kept is the first, but every copy's mode counts.
+  it.each(["in one write", "appended by a later progress write"])("counts a violation as logged when a later copy in the same audit was logged (%s)", async (how) => {
+    const path = await temporaryDatabase();
+    const database = openRerailDatabase(path);
+    const store = new SqliteAuditStore(path);
+    try {
+      openSessions(path);
+      const auditId = store.start({
+        sessionId: "s1", workspaceRoot: "/w", scope: "repository", mode: "steer", revision: 1, catalogRevision: null,
+        ruleRevisions: [{ ruleId: "rule-a", revision: 1 }], paths: [],
+      });
+      const copy = (mode: "steer" | "log", id: string) => ({
+        id, ruleId: "rule-a", clauseId: "clause", code: "even", mode, message: "m", path: "src/a.ts", captures: {}, variables: {},
+      }) as CodeRuleViolation;
+      if (how === "in one write") store.finish(auditId, { status: "completed", violations: [copy("steer", "first"), copy("log", "second")], failures: [] });
+      else {
+        store.progress(auditId, { violations: [copy("steer", "first")] });
+        store.progress(auditId, { violations: [copy("steer", "first"), copy("log", "second")] });
+      }
+      expect(store.ruleActivity(0).get("rule-a")).toMatchObject({ distinctViolations: 1, loggedViolations: 1 });
+      expect(store.ruleActivity(0)).toEqual(oracleActivity(database.$client, 0));
+      // The first copy is the one history shows.
+      expect(store.listViolationHistory({ since: 0 }).violations.map(entry => entry.violation.id)).toEqual(["first"]);
+    } finally {
+      store.close();
       database.$client.close();
     }
   });

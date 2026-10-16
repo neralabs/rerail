@@ -52,6 +52,13 @@ export interface SessionEventQuery {
   limit?: number;
 }
 
+/** What a session's whole transcript says it missed (`SqliteSessionReader.gaps`). */
+export interface SessionGaps {
+  droppedEvents: number;
+  uncheckedBoundaries: number;
+  codeRulesPendingBoundaries: number;
+}
+
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
   since?: number;
@@ -386,6 +393,25 @@ export class SqliteSessionReader {
     });
   }
 
+  /**
+   * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
+   * never delivered (`events-dropped` counts), and boundaries that answered before the shell-write check finished or
+   * before code rules were running. Indexed by session and kind.
+   */
+  gaps(sessionId: string): SessionGaps {
+    const database = this.#database.open();
+    if (database === undefined) return { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    const row = database.all<SessionGaps>(sql`
+      SELECT
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
+        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries
+      FROM ${events}
+      WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending')
+    `)[0];
+    return row ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+  }
+
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
     const database = this.#database.open();
     if (database === undefined) return [];
@@ -434,28 +460,32 @@ export class SqliteSessionReader {
     const continuing = after === undefined
       ? undefined
       : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
-    const rows = database
-      .select({
-        sessionId: sessions.sessionId,
-        host: sessions.host,
-        cwd: sessions.cwd,
-        repositoryId: sessions.repositoryId,
-        startedAt: sessions.startedAt,
-        endedAt: sessions.endedAt,
-        // Written out: Drizzle renders a single-table select's columns unqualified, which would correlate nothing.
-        eventCount: sql<number>`(SELECT count(*) FROM events WHERE events.session_id = sessions.session_id)`,
-        violationCount: sql<number>`(SELECT count(*) FROM audit_violations WHERE audit_violations.session_id = sessions.session_id)`,
-      })
-      .from(sessions)
-      .where(and(matching, continuing))
-      .orderBy(desc(sessions.startedAt), asc(sessions.sessionId))
-      .limit(query.limit + 1)
-      .all();
+    // The page and its total from one snapshot, so a commit between them cannot make them disagree.
+    const { rows, total } = database.transaction(() => ({
+      rows: database
+        .select({
+          sessionId: sessions.sessionId,
+          host: sessions.host,
+          cwd: sessions.cwd,
+          repositoryId: sessions.repositoryId,
+          startedAt: sessions.startedAt,
+          endedAt: sessions.endedAt,
+          // Written out: Drizzle renders a single-table select's columns unqualified, which would correlate nothing.
+          eventCount: sql<number>`(SELECT count(*) FROM events WHERE events.session_id = sessions.session_id)`,
+          violationCount: sql<number>`(SELECT count(*) FROM audit_violations WHERE audit_violations.session_id = sessions.session_id)`,
+        })
+        .from(sessions)
+        .where(and(matching, continuing))
+        .orderBy(desc(sessions.startedAt), asc(sessions.sessionId))
+        .limit(query.limit + 1)
+        .all(),
+      total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
+    }));
     const page = rows.slice(0, query.limit);
     const last = page.at(-1);
     return {
       sessions: page,
-      total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
+      total,
       nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
     };
   }

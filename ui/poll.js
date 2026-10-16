@@ -361,26 +361,49 @@ async function sessionLoad(detail, load) {
   try { return await detail.loading; } finally { detail.loading = null; }
 }
 
+/** Writes a session's fresh head over its row in the loaded list, so a row past the first page stays current too. */
+function patchSessionRow(head) {
+  const rows = data.sessions.rows;
+  if (!rows.some(s => s.sessionId === head.sessionId)) return;
+  data.sessions = { ...data.sessions, rows: rows.map(s => (s.sessionId === head.sessionId ? { ...s, ...head } : s)) };
+}
+
+/** Forgets a session the daemon no longer has; the view then falls back to another, as for a session never selected. */
+function dropSession(id) {
+  data.sessionDetail.delete(id);
+  data.sessions = { ...data.sessions, rows: data.sessions.rows.filter(s => s.sessionId !== id) };
+  if (data.sessionFindings.owner === id) data.sessionFindings = pagedList();
+  if (ui.selectedSession === id) ui.selectedSession = null;
+}
+
 /**
- * One session's head and the newest page of its transcript; later calls append the events recorded since. The
- * head is fetched before any events: a missing session must fail with its 404 rather than look like an empty
- * transcript; it is refetched while the session is not in the loaded list, so a deep-linked session still shows
- * current. Older events come with Load earlier (`loadEarlier`); `earlier` says some may be left.
+ * One session's head and the newest page of its transcript; later calls refresh the head (it is one row, and the
+ * list may hold an old copy of it) and append the events recorded since. The head is fetched before any events: a
+ * session missing on its first load fails with its 404 rather than looking like an empty transcript, while one that
+ * disappears later (a reset) is dropped. Older events come with Load earlier (`loadEarlier`); `earlier` says some
+ * may be left. `gaps` is what the whole transcript says it missed, from the daemon.
  */
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { head: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
+    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
   return sessionLoad(detail, async () => {
-    let changed = false;
-    if (!detail.loaded || !data.sessions.rows.some(s => s.sessionId === id)) {
-      const { body } = await get(`/api/sessions/${encodeURIComponent(id)}`);
-      const was = detail.head;
-      detail.head = body.session;
-      changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt;
+    let body;
+    try {
+      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
+    } catch (error) {
+      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
+      dropSession(id);
+      return true;
     }
+    const was = detail.head, wasGaps = detail.gaps;
+    detail.head = body.session;
+    detail.gaps = body.gaps;
+    patchSessionRow(body.session);
+    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
+      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
     const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
     if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
     detail.loaded = true;
@@ -444,8 +467,9 @@ export function ensureTitle(session) {
   const tried = titleTried.get(id);
   if (tried !== undefined && (session.endedAt !== null || session.eventCount <= tried)) return;
   titleTried.set(id, session.eventCount);
-  const cached = data.sessionDetail.get(id)?.events;
-  if (cached?.length) { data.titles.set(id, titleFromEvents(cached)); return; }
+  // Only a transcript loaded from its start holds the first prompts; a newer page would name a later one.
+  const detail = data.sessionDetail.get(id);
+  if (detail?.loaded && !detail.earlier && detail.events.length) { data.titles.set(id, titleFromEvents(detail.events)); return; }
   if (!titleQueue.includes(id)) titleQueue.push(id);
   pumpTitles();
 }
@@ -514,8 +538,9 @@ async function poll() {
     onChange(results.some(Boolean));
   } catch (error) {
     if (started !== generation) return;
-    // A repository or checkout the daemon does not know is an answer, not a lost connection.
-    data.missing = /answered 404$/u.test(error.message);
+    // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
+    // answering 404, not some other read (a session that went away is handled where it is read).
+    data.missing = /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing;
     data.loaded = data.missing;
     backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);

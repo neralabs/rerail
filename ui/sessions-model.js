@@ -167,17 +167,17 @@ export function loadedFrom(sessionId) {
   return Math.max(events, violations);
 }
 
-/** The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules. */
+/**
+ * The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules. A violation
+ * whose rule is no longer in the repository keeps its card, with `rule: null`, so the timeline still shows it.
+ */
 export function sessionCorrections(sessionId) {
   const slot = data.sessionFindings;
   if (slot.owner !== sessionId) return [];
   const from = loadedFrom(sessionId);
-  const out = [];
-  for (const f of slot.rows) {
-    const stored = data.rules.get(f.ruleId);
-    if (stored && f.at >= from) out.push({ key: `${f.auditId}:${f.id}`, finding: f, rule: stored });
-  }
-  return out;
+  return slot.rows
+    .filter(f => f.at >= from)
+    .map(f => ({ key: `${f.auditId}:${f.id}`, finding: f, rule: data.rules.get(f.ruleId) ?? null }));
 }
 
 /** Every violation logged in the session, once the first page of them is in; `null` before. */
@@ -229,23 +229,17 @@ export function lastEventAt(s) {
   return last ? last.observedAt : s.endedAt ?? s.startedAt;
 }
 
-/** Session events its host never delivered, from the `events-dropped` gaps it recorded, when its transcript is loaded. */
-export function droppedEvents(s) {
-  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
-  return events.reduce((total, e) => total + (e.kind === "events-dropped" ? Number(e.payload?.count ?? 0) : 0), 0);
-}
+/** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
+const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
 
-/** Boundaries that answered before the session's shell-write check finished, when its transcript is loaded. */
-export function uncheckedBoundaries(s) {
-  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
-  return events.filter(e => e.kind === "source-discovery-pending").length;
-}
+/** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
+export const droppedEvents = s => gapsOf(s).droppedEvents;
 
-/** Boundaries that answered before the session's code-rule evaluator had opened, when its transcript is loaded. */
-export function codeRulesPendingBoundaries(s) {
-  const events = data.sessionDetail.get(s.sessionId)?.events ?? [];
-  return events.filter(e => e.kind === "code-rules-pending").length;
-}
+/** Boundaries that answered before the session's shell-write check finished. */
+export const uncheckedBoundaries = s => gapsOf(s).uncheckedBoundaries;
+
+/** Boundaries that answered before the session's code-rule evaluator had opened. */
+export const codeRulesPendingBoundaries = s => gapsOf(s).codeRulesPendingBoundaries;
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */

@@ -3,7 +3,7 @@ import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refres
 import { sessionCorrections } from "../../ui/sessions-model.js";
 import { data, pagedList, setScope, ui, type Violation } from "../../ui/state.js";
 
-/** How the test daemon answers one GET: the body, or a promise of it to answer later. */
+/** How the test daemon answers one GET: the body, a `Response` (another status), or a promise of either. */
 type Answer = (url: URL) => unknown;
 
 let requested: URL[] = [];
@@ -21,7 +21,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", async (input: URL) => {
     const url = new URL(input);
     requested.push(url);
-    return new Response(JSON.stringify(await answer(url)), { status: 200 });
+    const answered = await answer(url);
+    return answered instanceof Response ? answered : new Response(JSON.stringify(answered), { status: 200 });
   });
   setScope({ repository: "A" });
   data.repository = { setUp: true, repositoryKey: "A" };
@@ -137,7 +138,7 @@ describe("the selected session's violations", () => {
       const sessionId = url.searchParams.get("sessionId")!;
       return sessionId === "s1" && held !== null ? held : { violations: [violation(1, sessionId)], total: 1, nextCursor: null };
     };
-    data.sessionDetail.set("s1", { head: null, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
+    data.sessionDetail.set("s1", { head: null, gaps: null, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
     await loadSessionFindings("s1");
     expect(sessionCorrections("s1")).toHaveLength(1);
 
@@ -208,5 +209,47 @@ describe("a session's transcript", () => {
     // A poll appends what the session records next.
     await loadSession("s1");
     expect(eventQueries().at(-1)).toBe("?after=1010");
+  });
+});
+
+describe("the selected session", () => {
+  beforeEach(() => { ui.view = "sessions"; });
+
+  it("refreshes its row in the list every poll, even on a page past the first", async () => {
+    // s1 came in on a later page: the first-page refresh never rewrites it, its head does.
+    data.sessions = { ...pagedList("/api/sessions?limit=50&repository=A"), rows: [{ ...session, eventCount: 5 }], total: 60, next: "c1", pages: 2 };
+    let eventCount = 5;
+    answer = url => (url.pathname === "/api/sessions/s1" ? { session: { ...session, eventCount } } : emptyDaemon(url));
+    ui.selectedSession = "s1";
+    await refresh();
+    eventCount = 9;
+    await refresh();
+
+    expect(data.sessions.rows).toEqual([expect.objectContaining({ sessionId: "s1", eventCount: 9 })]);
+  });
+
+  it("drops the selection when the session goes away, instead of reading as an unknown repository", async () => {
+    let gone = false;
+    answer = url => (url.pathname === "/api/sessions/s1" && gone
+      ? new Response(JSON.stringify({ error: "session-not-found" }), { status: 404 })
+      : emptyDaemon(url));
+    ui.selectedSession = "s1";
+    await refresh();
+    expect(data.sessionDetail.get("s1")?.loaded).toBe(true);
+
+    gone = true;
+    await refresh();
+
+    expect(data.missing).toBe(false);
+    expect(data.disconnected).toBe(false);
+    expect(ui.selectedSession).toBeNull();
+    expect(data.sessionDetail.has("s1")).toBe(false);
+  });
+
+  it("keeps a violation whose rule is no longer in the repository", async () => {
+    data.sessionDetail.set("s1", { head: null, gaps: null, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
+    data.sessionFindings = { ...pagedList<Violation>("k", "s1"), rows: [violation(1), { ...violation(2), ruleId: "removed" }], total: 2, pages: 1 };
+
+    expect(sessionCorrections("s1").map(c => [c.finding.ruleId, c.rule === null])).toEqual([["r", false], ["removed", true]]);
   });
 });

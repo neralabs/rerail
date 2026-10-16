@@ -326,7 +326,7 @@ export const operations: readonly Operation[] = [
       rules: z.record(z.string(), ruleActivitySchema),
       sessions: z.object({
         started: z.number().int().nonnegative().describe("Sessions that started at or after `since`."),
-        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation logged at or after `since`."),
+        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation reported at or after `since`, in any mode."),
       }),
     }),
     handler: (stores, input) => {
@@ -534,13 +534,19 @@ export const operations: readonly Operation[] = [
     id: "sessions_get",
     method: "GET",
     path: "/api/sessions/{sessionId}",
-    summary: "Fetch one session with rule coverage, steering handoffs and compact audit status.",
+    summary: "Fetch one session with rule coverage, steering handoffs, compact audit status, and what its transcript says it missed.",
     params: sessionId,
-    output: sessionResponseSchema,
+    output: sessionResponseSchema.extend({
+      gaps: z.object({
+        droppedEvents: z.number().int().nonnegative().describe("Events the coding agent never delivered, from its `events-dropped` records."),
+        uncheckedBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's shell-write check finished."),
+        codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
+      }).describe("Over the whole transcript, however much of it a reader has loaded."),
+    }),
     handler: (stores, input) => {
       const response = sessionResponse(stores, input.sessionId);
       if (response === null) throw new ApiError(404, "session-not-found", `session ${input.sessionId} does not exist`);
-      return response;
+      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
     },
   }),
   defineOperation({

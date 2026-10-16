@@ -95,7 +95,8 @@ function updateListItem(node, item) {
   setAttr(state, "title", st ? "Last event" : "Ended");
   setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
   setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c"), n = s.violationCount;
+  // The selected session's own violations are read every poll; other rows keep the count their page came with.
+  const c = node.querySelector(".c"), n = (s.sessionId === ui.selectedSession ? sessionViolationTotal(s.sessionId) : null) ?? s.violationCount;
   setClass(c, "zero", n === 0);
   setText(c.firstChild, fmt(n));
   setText(c.lastChild, plural(n, "violation"));
