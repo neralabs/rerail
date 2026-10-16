@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-node-protocol",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "eslint-plugin-n 18.4.1 n/prefer-node-protocol (default options): a string literal whose value names a module of the plugin's NodeBuiltinModules table (lib/unsupported-features/node-builtins.js) that the table also lists as `node:<name>`, as the only argument of a non-optional `require(\u2026)`, the first of `process.getBuiltinModule(\u2026)`/`globalThis.process.getBuiltinModule(\u2026)`, the source of an import/export declaration or of `import(\u2026)`. Upstream reads names only, no scope. As upstream, the file's configured Node range (the nearest package.json's `engines.node`, else its `devEngines.runtime` entry named node, else >=16.0.0) must be a subset of ^12.20.0 || >=14.13.1 for imports and of ^14.18.0 || >=16.0.0 for require (that range lies inside the first); process.getBuiltinModule is checked whatever the range. Not ported: the `version` option and the `n`/`node` settings that override the range.",
   "scope": {
