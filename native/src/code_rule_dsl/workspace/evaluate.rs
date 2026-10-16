@@ -555,8 +555,13 @@ fn evaluate_ast_file(
     // over a program the file does not embed has nothing to read: it answers.
     let mut settled = placed.iter().map(Option::is_none).collect::<Vec<_>>();
     let nodes = doc.transducer_len();
-    // A clause crossing between the documents (`embedded`, `host`) reads around every one's errors.
-    let file_errors = SyntaxErrors::of_file(&doc);
+    // A clause crossing between the documents (`embedded`, `host`) reads around every one's errors;
+    // they are gathered only where some clause crosses.
+    let file_errors = if placed.iter().flatten().any(|(_, grammar)| grammar.crosses) {
+        SyntaxErrors::of_file(&doc)
+    } else {
+        SyntaxErrors::from_ranges(Vec::new())
+    };
     for (index, document) in documents.into_iter().enumerate() {
         let slots = placed
             .iter()
@@ -796,8 +801,9 @@ fn evaluate_document(
     Ok(())
 }
 
-/// Parses `file`'s source and keeps its tape for this source revision. `Ok(Err(failure))` where the
-/// parse ran out of time or the tape could not be encoded.
+/// Parses `file`'s source and keeps its documents (its tape and the ones it derives) for this
+/// source revision. `Ok(Err(failure))` where the parse ran out of time or a tape could not be
+/// encoded.
 pub(super) fn encode_tape(
     file: &mut FileState,
     language: GrammarDialect,
@@ -816,20 +822,26 @@ pub(super) fn encode_tape(
         #[cfg(feature = "code-rule-profile")]
         let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
         let parse_started = Instant::now();
-        let tree = parse_tree(file.input.source.as_bytes());
+        let parsed = parse_tree(file.input.source.as_bytes());
         #[cfg(feature = "code-rule-profile")]
         drop(parse_timer);
         metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
+        // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
+        let tree = match parsed {
+            Ok(tree) => tree,
+            Err(error) => return Ok(Err((FILE_BUDGET_EXCEEDED, error.message()))),
+        };
         #[cfg(test)]
         pause_at_test_phase("native-tree", &file.input.source);
         #[cfg(feature = "code-rule-profile")]
         let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-        Some(tape::TapeImage::encode_blade(
-            &tree,
-            grammar,
-            &file.input.source,
-            &interrupted,
-        ))
+        match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, &interrupted) {
+            Ok(image) => Some(Ok(image)),
+            Err(tape::TemplateError::Parser(error)) => {
+                return Ok(Err((FILE_BUDGET_EXCEEDED, error.message())));
+            }
+            Err(tape::TemplateError::Encode(error)) => Some(Err(error)),
+        }
     } else {
         #[cfg(feature = "code-rule-profile")]
         let _native_owner = profile::NativeOwner::start();
@@ -1034,7 +1046,7 @@ fn evaluate_clauses(
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
                             let errors = if grammar.crosses { file_errors } else { errors };
-                            if errors.overlaps(&place.node(matched.get_node())) {
+                            if errors.meets(&place.place(matched.get_node())) {
                                 return Ok(true);
                             }
                             let matched_node = matched.get_node();

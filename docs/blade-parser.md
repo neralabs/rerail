@@ -324,15 +324,16 @@ built; its peak is 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
   A Blade clause names the template's kinds only: the compiled view is a PHP document of its own,
   which a clause reads with `ast.embedded: compiled-view` and a template rule reaches with
   `embedded`.
-- **Tapes** (format 6). `TapeImage::encode_blade` parses with `tree::parse_tree`, reads the
+- **Tapes** (format 7). `TapeImage::encode_blade` parses with `tree::parse_tree`, reads the
   template as Blade does (`View::read`), and encodes the tree in preorder (`encode_blade_tree`)
   with the template's syntax errors as Blade reads them as `ERROR` leaves where they lie, as
   tree-sitter's tapes hold theirs: Forte's, except in arguments Forte read after a line break,
-  which Blade reads as text: there they are that text's, as a template of its own. The tape then
-  keeps the view as a guest document (`tape::GuestImage`): its PHP text, the segments mapping it
-  to the template's bytes, its own PHP tape, and the template's errors it reads through
-  (`host_errors`). Both documents keep tree-sitter's invariants.
-  `TapeImage::parse` picks tree-sitter or Forte by dialect for every caller.
+  which Blade reads as text: there they are that text's, as a template of its own. The view is
+  a document derived from the template's (`tape::DerivedImage`, a generated one): its PHP text,
+  the source map to the template's bytes, its own PHP tape, and the template's errors it reads
+  through (`host_errors`). The template's tape holds its own tree alone; the store keeps the
+  view's tape as a row of its own (`file_documents`). Both documents keep tree-sitter's
+  invariants. `TapeImage::parse` picks tree-sitter or Forte by dialect for every caller.
 - **Registry.** `languages/blade.json` names `"parser": "forte"`, `"grammar": "native:forte"`
   (`native:` is a grammar Rerail implements, which has no tree-sitter language);
   `code-rule-dsl/capabilities.json` names `forte@1.1.0`. Tag 8 stays Blade's.

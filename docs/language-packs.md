@@ -167,7 +167,8 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 
 `parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
 (`via`); a supported entry may embed only supported languages. An embedding's `Embedder` builds at most one program
-per file and `via`, which the file's tape keeps as a guest document beside its own tree (`tape::GuestImage`). Changes
+per file and `via`, a document derived from the file's own (`tape::DerivedImage`), with a tape of its own that the
+store keeps as a row of its own beside the file's (`file_documents`). Changes
 stay additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing
 a field, or changing what a value means, needs `rerail.language/v2`.
 
@@ -217,8 +218,8 @@ package and never in the product:
 Embedding has a test-only counterpart in the engine: the test-only HTML grammar embeds TypeScript, TSX and JavaScript
 through `Via::TestScript` (`language::test_embeds`, `native/src/code_rule_dsl/embed/test_script.rs`), whose program is
 an HTML file's scripts and then its `on*` handlers. Its tests (`embed/tests.rs`) run the tape's embedder loop, the
-persisted guest documents and their dialects, and scope and usage over a program whose text maps to the file out of
-order.
+derived documents persisted apart from the file's tape and their dialects, and scope and usage over a program whose
+text maps to the file out of order.
 The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 
 ## Adding a language
@@ -254,12 +255,16 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
    text to the host's bytes, copied or written over them and in any order, and the host's syntax errors it reads
    through), and one `mod` and one `pub(crate) use` line in `embed.rs`. `build` returns one program or none, so a file
    holds at most one program per `via`. Nothing else in the engine changes:
-   - The tape keeps the program as a guest document (`tape::GuestImage`): its text, segments and its own tape, in its
-     own grammar's codes, checked as every tape is.
+   - The program is a document derived from the file's (`tape::DerivedImage`): its text, source map, host errors and
+     its own tape, in its own grammar's codes, checked as every tape is. The store keeps that tape as a row of its
+     own, related to the file's tape by `file_documents` ([store](content-addressed-workspace-store.md)).
    - A clause reads it with `ast.embedded: <via>` and a host rule reaches it with `embedded`; a program node reaches
      the host with `host` (`matcher::embedded`). Its witnesses, captures and fixes are placed at the file bytes they
      stand for: every document is an `origin::Origin` into the one it was read from, and `origin::InFile` places
-     its nodes and ranges in the file (a fix only over bytes it copies). Nothing else maps a position.
+     its nodes and ranges in the file (a fix only over bytes it copies). Nothing else maps a position. A node
+     stands for the file ranges of its pieces (`embed::segments::FileRanges`), apart where the program is written
+     out of file order and joined only over white space; a single span reports the range it starts in, and
+     positions are half-open (a boundary belongs to the range starting there).
    - Each document has its own syntax errors as ranges of the file (`soundness::SyntaxErrors::of_doc`): a program
      whose `host_errors` are empty is complete whatever the host's errors.
    - Calls read the program whose dialect's calls join the graph (`calls::calls_document`).

@@ -3,26 +3,40 @@
 //! characters of the literal it decodes. Each such document is an `Origin` into the document it was
 //! read from, and `InFile` places a document's nodes and ranges in its file.
 //!
+//! A node of a program written out of file order may stand for several file ranges: `place` keeps
+//! them apart (`FileRanges`), and what reads the bytes a node stands for (syntax errors, a
+//! suppression's cover, `host`, `embedded`) reads every one. What reports one span (a witness, a
+//! capture, an export) reports the primary range, where the node starts (`FileRanges::primary`),
+//! never a range widened over bytes it does not stand for. Positions are half-open
+//! (`embed::segments::holds`).
+//!
 //! Every position a rule reports or carries across documents goes through here: witnesses,
 //! captures, fixes, captures exported out of a parsed tree or an embedded program, syntax errors,
 //! suppression covers, and the lines a transform counts. No caller maps a byte range itself.
 
+use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Span, Terminators};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{Doc, Node};
+use std::borrow::Cow;
 use std::ops::Range;
 use std::rc::Rc;
 
 /// How one document's bytes map into the document it was read from (its outer document).
 pub(crate) trait Origin {
-    /// The outer bytes the node `id`, spanning `range` here, stands for. A node's bytes hold its
-    /// descendants', so a rule may prune a subtree by its root's.
-    fn of_node(&self, id: usize, range: Range<usize>) -> Option<Range<usize>>;
-    /// The outer bytes `range` here stands for: a regex group's, or a capture's a nested document
+    /// The outer ranges the node `id`, spanning `range` here, stands for. A node's ranges hold its
+    /// descendants'.
+    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges>;
+    /// The outer ranges `range` here stands for: a regex group's, or a capture's a nested document
     /// exported here.
-    fn of_range(&self, range: Range<usize>) -> Option<Range<usize>>;
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges>;
+    /// The least outer range holding every range `of_node` gives for the node. The node's ranges
+    /// lie in an interval exactly when this range does, so placing the node inside a node of the
+    /// outer document, or pruning a search by it, reads this; nothing reads it as the bytes the
+    /// node stands for.
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>>;
     /// The outer bytes `range` copies byte for byte, where it does: what a fix may rewrite.
     fn copied(&self, range: Range<usize>) -> Option<Range<usize>>;
     /// Whether some byte of `range` is copied from the outer document (the rest is what the
@@ -36,10 +50,13 @@ pub(crate) trait Origin {
 pub(crate) struct Same;
 
 impl Origin for Same {
-    fn of_node(&self, _: usize, range: Range<usize>) -> Option<Range<usize>> {
-        Some(range)
+    fn of_node(&self, _: usize, range: Range<usize>) -> Option<FileRanges> {
+        Some(FileRanges::one(range))
     }
-    fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(FileRanges::one(range))
+    }
+    fn bounds(&self, _: usize, range: Range<usize>) -> Option<Range<usize>> {
         Some(range)
     }
     fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
@@ -111,18 +128,28 @@ impl<'t> InFile<'t> {
         }
     }
 
-    /// The file bytes a node of the document stands for.
-    pub(crate) fn node<D: Doc>(&self, node: &Node<'_, D>) -> Range<usize> {
+    /// The file ranges a node of the document stands for.
+    pub(crate) fn place<D: Doc>(&self, node: &Node<'_, D>) -> FileRanges {
         self.origin
             .of_node(node.node_id(), node.range())
             .expect("a document's node lies in its file")
     }
 
-    /// The file bytes a range of the document stands for.
-    pub(crate) fn range(&self, range: Range<usize>) -> Range<usize> {
+    /// The span a node reports: its primary file range (`FileRanges::primary`).
+    pub(crate) fn node<D: Doc>(&self, node: &Node<'_, D>) -> Range<usize> {
+        self.place(node).primary()
+    }
+
+    /// The file ranges a range of the document stands for.
+    pub(crate) fn places(&self, range: Range<usize>) -> FileRanges {
         self.origin
             .of_range(range)
             .expect("a document's range lies in its file")
+    }
+
+    /// The span a range of the document reports: its primary file range.
+    pub(crate) fn range(&self, range: Range<usize>) -> Range<usize> {
+        self.places(range).primary()
     }
 
     /// The file bytes a range of the document copies, where it does.
@@ -136,16 +163,42 @@ impl<'t> InFile<'t> {
     }
 
     /// Whether a node's text is the file bytes it stands for, ASCII letters in any case: a copied
-    /// node's is, and so is one written over the same text (Blade's `@isset(` `isset(`).
+    /// node's is, and so is one written over the same text (Blade's `@isset(` `isset(`). A node
+    /// standing for several file ranges is not.
     pub(crate) fn spells<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        self.source
-            .get(self.node(node))
+        self.place(node)
+            .single()
+            .and_then(|range| self.source.get(range))
             .is_some_and(|file| file.eq_ignore_ascii_case(&node.text()))
     }
 
-    /// The file's text a node of the document stands for.
-    pub(crate) fn text<D: Doc>(&self, node: &Node<'_, D>) -> &'t str {
-        self.source.get(self.node(node)).unwrap_or_default()
+    /// The file's text a node of the document stands for, where it stands for one range; else the
+    /// node's own text (a program's), never the file's bytes between its ranges.
+    pub(crate) fn text<D: Doc>(&self, node: &Node<'t, D>) -> Cow<'t, str> {
+        match self
+            .place(node)
+            .single()
+            .and_then(|range| self.source.get(range))
+        {
+            Some(text) => Cow::Borrowed(text),
+            None => node.text(),
+        }
+    }
+
+    /// The text of a range of the document, as `text` reads a node's: the file's where it stands
+    /// for one range, else `own`.
+    pub(crate) fn range_text<'a>(&self, range: Range<usize>, own: &'a str) -> Cow<'a, str>
+    where
+        't: 'a,
+    {
+        match self
+            .places(range)
+            .single()
+            .and_then(|range| self.source.get(range))
+        {
+            Some(text) => Cow::Borrowed(text),
+            None => Cow::Borrowed(own),
+        }
     }
 
     /// The diagnostic span of file bytes `range`.

@@ -15,15 +15,15 @@ use std::ops::Range;
 use std::sync::Arc;
 use tree_sitter::Node as TsNode;
 
-/// The tape of the HTML file `source`, persisted and restored: the file's tree and the program its
-/// scripts and handlers make.
+/// The documents of the HTML file `source`, persisted as the store keeps them and restored: the
+/// file's tree and the program its scripts and handlers make.
 pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
     let grammar = Grammar::new(GrammarDialect::Html).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
-        .expect("encodes");
-    let image =
-        TapeImage::from_bytes(&image.to_bytes().expect("persists"), &grammar).expect("reads back");
+        .expect("encodes")
+        .round_trip(&grammar)
+        .expect("persists and reads back");
     AstGrep::doc(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
             .expect("restores"),

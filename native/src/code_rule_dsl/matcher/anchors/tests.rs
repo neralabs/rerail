@@ -148,7 +148,7 @@ fn compare_matchers(
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert_eq!(native.root().dfs().count(), image.node_count());
+    assert_eq!(native.root().dfs().count(), image.primary.node_count());
     for &(rule, matcher) in matchers {
         let plan = AnchorPlan::compile(matcher);
         let expected = actual(&native, matcher);
@@ -159,7 +159,7 @@ fn compare_matchers(
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,
-            image.node_count(),
+            image.primary.node_count(),
             "charge anonymous nodes too"
         );
         assert_eq!(tape_visited, native_visited);
@@ -604,7 +604,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     )
     .unwrap();
     let plan = AnchorPlan::compile(&matcher);
-    assert!(image.node_count() > 2);
+    assert!(image.primary.node_count() > 2);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     for budget in [0, 1, 2] {
@@ -689,13 +689,13 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let plan = AnchorPlan::compile(&matcher);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert!(image.node_count() > 1024);
+    assert!(image.primary.node_count() > 1024);
     println!(
         "DEEP_CHAIN nodes={} max_visits=[0,1,7,513,{}]",
-        image.node_count(),
-        image.node_count() - 1
+        image.primary.node_count(),
+        image.primary.node_count() - 1
     );
-    for max_nodes in [0, 1, 7, 513, image.node_count() - 1] {
+    for max_nodes in [0, 1, 7, 513, image.primary.node_count() - 1] {
         let (found, roots, visited, complete, all) =
             selected(&native, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
@@ -710,10 +710,10 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let (found, _, visited, complete, all) =
         selected(&native, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.node_count());
+    assert_eq!(visited, image.primary.node_count());
     let (found, _, visited, complete, all) = selected(&tape, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.node_count());
+    assert_eq!(visited, image.primary.node_count());
 }
 
 fn sibling_matcher(rule: Value, language: GrammarDialect) -> AstMatcher {

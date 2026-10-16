@@ -15,6 +15,7 @@ pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
 
+use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Position;
@@ -334,13 +335,20 @@ pub(crate) struct SubTree {
 /// A parsed tree's bytes are the literal's decoded text: a node stands for the source bytes of its
 /// characters (`HostMap`), in the document the literal was parsed from.
 impl crate::code_rule_dsl::origin::Origin for SubTree {
-    fn of_node(&self, id: usize, _: Range<usize>) -> Option<Range<usize>> {
+    /// A literal's characters stand in source order, so a node stands for one source range.
+    fn of_node(&self, id: usize, _: Range<usize>) -> Option<FileRanges> {
         let rec = self.nodes.get(self.index_of(id)?)?;
-        Some(self.map_range(rec.start as usize..rec.end as usize))
+        Some(FileRanges::one(
+            self.map_range(rec.start as usize..rec.end as usize),
+        ))
     }
 
-    fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
-        Some(self.map_range(self.decoded(range)?))
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(FileRanges::one(self.map_range(self.decoded(range)?)))
+    }
+
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+        Some(self.of_node(id, range)?.primary())
     }
 
     /// Only an exact literal's bytes are copied: elsewhere decoding rewrote them.
@@ -904,7 +912,8 @@ mod tests {
             chars[1].node_id(),
             chars[1].range(),
         )
-        .expect("mapped");
+        .expect("mapped")
+        .primary();
         assert_eq!(&source[host], "\\x62");
         assert_eq!(
             tree.value(chars[2].node_id()),

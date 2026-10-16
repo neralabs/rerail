@@ -25,9 +25,10 @@
 //!   template's bytes, so the template's syntax errors are its; a Vue program is built from what
 //!   the component's recovered tree holds, so the component's errors are not.
 //!
-//! The tape keeps each guest beside the host's records (`tape::GuestImage`): its text, segments,
-//! host errors and its own tape. A rule reads a guest through `ast.embedded` (the clause runs on
-//! it) or the `embedded` relation (from a host node); a guest node reads the host through `host`.
+//! Each guest is a document derived from the host's (`tape::DerivedImage`): its text, segments,
+//! host errors and a tape of its own, which the store keeps as a row of its own beside the host's
+//! (`file_documents`). A rule reads a guest through `ast.embedded` (the clause runs on it) or the
+//! `embedded` relation (from a host node); a guest node reads the host through `host`.
 
 mod compiled_view;
 mod script_block;

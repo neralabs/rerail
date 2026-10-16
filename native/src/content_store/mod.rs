@@ -255,7 +255,7 @@ impl From<std::io::Error> for StoreError {
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
@@ -263,7 +263,8 @@ pub struct TapeId(i64);
 /// A stored tape whose search index is not built yet, with what building it reads.
 pub(crate) struct UnindexedTape {
     pub tape: TapeId,
-    /// The workspace's grammar id (`workspace::grammar_id`).
+    /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
+    /// `workspace::document_grammar_id`).
     pub grammar: i64,
     pub source: Vec<u8>,
     /// The decoded tape image.
@@ -365,6 +366,44 @@ pub struct TapePayload<'a> {
     pub grammar_version: i64,
     pub tape_format_version: i64,
     pub bytes: &'a [u8],
+    /// The documents derived from this tape's (`file_documents`), in ordinal order from 1: each
+    /// is stored as a source and a tape of its own, with this tape's grammar version and format,
+    /// in the transaction that stores this tape. Empty for a single-language file.
+    pub documents: &'a [DocumentPayload<'a>],
+}
+
+/// A document derived from a file's primary one, published with the primary's tape.
+#[derive(Clone, Copy, Debug)]
+pub struct DocumentPayload<'a> {
+    /// The document it was derived from: 0 the primary, `i` the `i`-th derived one.
+    pub parent_ordinal: i64,
+    /// What the document is to the file (`tape::DocumentRole::code`); never 0, the primary's.
+    pub role_id: i64,
+    /// The embedding that built it (`tape::via_code`).
+    pub via_id: i64,
+    /// Its text, stored as an ordinary source.
+    pub source: &'a [u8],
+    /// Its tape's grammar id: unique to derived documents (`workspace::document_grammar_id`).
+    pub grammar_id: i64,
+    pub tape: &'a [u8],
+    pub source_map: &'a [u8],
+    pub host_errors: &'a [u8],
+}
+
+/// A `file_documents` row: a document derived from a stored primary tape. `source` and
+/// `grammar_id` are its tape row's, `None` where that row is missing: the document is then not
+/// stored, and the file is not either.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredDocument {
+    pub ordinal: i64,
+    pub parent_ordinal: i64,
+    pub role_id: i64,
+    pub via_id: i64,
+    pub tape: TapeId,
+    pub source: Option<SourceId>,
+    pub grammar_id: Option<i64>,
+    pub source_map: Vec<u8>,
+    pub host_errors: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

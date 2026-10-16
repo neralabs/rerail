@@ -3133,3 +3133,218 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     assert!(!skipped(&narrowed, "lambda.py"));
     narrowed.close();
 }
+
+/// A code rule `id` whose clauses read the documents Vue and Blade files derive
+/// (`ast.embedded`), and a Python file's own tree.
+fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
+    let clause = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "violation": { "anchor": "witness.span", "code": "DERIVED", "message": id },
+            "forbid": { "ast": ast }
+        })
+    };
+    CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [
+                clause("vue-script", json!({ "language": "vue", "embedded": "script-block",
+                    "rule": { "kind": "lexical_declaration" } })),
+                clause("blade-view", json!({ "language": "blade", "embedded": "compiled-view",
+                    "rule": { "kind": "binary_expression" } })),
+                clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
+            ],
+        })
+        .to_string(),
+        "json".into(),
+        include_str!("../capabilities.json").into(),
+    )
+    .unwrap()
+}
+
+/// Vue and Blade files whose derived documents hold witnesses, others whose do not, and a
+/// single-language file.
+fn derived_document_files() -> Value {
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    json!([
+        file(
+            "src/Counter.vue",
+            "vue",
+            "<script setup>\nconst count = ref(0)\nconst double = count.value * 2\n</script>\n\
+             <template>\n  <p>{{ double }}</p>\n</template>\n",
+        ),
+        file(
+            "src/Plain.vue",
+            "vue",
+            "<script setup>\nload()\n</script>\n<template>\n  <p>{{ title }}</p>\n</template>\n",
+        ),
+        file(
+            "views/sum.blade.php",
+            "blade",
+            "<h1>{{ $title }}</h1>\n@if ($count > 0)\n  <p>{{ $a + $b }}</p>\n@endif\n",
+        ),
+        file("views/plain.blade.php", "blade", "<p>{{ $name }}</p>\n"),
+        file("probe.py", "python", "print(1)\n"),
+    ])
+}
+
+/// The stored tape of `path` in `workspace`'s overlay.
+fn overlay_tape(
+    store: &ContentStore,
+    workspace: &CodeRuleDslWorkspace,
+    path: &str,
+) -> crate::content_store::TapeId {
+    let workspace_id = workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .unwrap()
+        .workspace_id;
+    store
+        .overlay_file(workspace_id, path)
+        .unwrap()
+        .unwrap()
+        .tape
+        .unwrap()
+}
+
+/// Vue and Blade files published to the store and evaluated again from it: each file's tape and
+/// the documents it derives (`file_documents`) restore, and an `ast.embedded` clause finds the
+/// witnesses a fresh parse finds. A single-language file has no `file_documents` row, and a
+/// clause over a derived document is narrowed by that document's own selector index.
+#[test]
+fn derived_documents_restored_from_the_store_evaluate_as_a_fresh_parse() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-documents");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = derived_document_files();
+    let first = stored_workspace(
+        &store,
+        "/derived-first",
+        &derived_documents_code_rule("derived-first"),
+    );
+    apply_json(&first, 1, files.clone());
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let tape = overlay_tape(&store, &first, path);
+        let rows = store.file_documents_bulk(&[tape]).unwrap();
+        let [row] = &rows[&tape][..] else {
+            panic!("{path} derives one document: {rows:?}");
+        };
+        assert_eq!((row.ordinal, row.parent_ordinal), (1, 0), "{path}");
+        assert_eq!(row.role_id, tape::DocumentRole::Generated.code(), "{path}");
+        assert!(
+            row.source.is_some(),
+            "{path}: the derived tape is a row of its own"
+        );
+    }
+    let python = overlay_tape(&store, &first, "probe.py");
+    assert!(
+        store.file_documents_bulk(&[python]).unwrap().is_empty(),
+        "a single-language file has no document rows"
+    );
+    first.close();
+    super::storage::index_stored_tapes(
+        &store,
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut None,
+    );
+
+    // A new catalog reuses no result: its clauses run over the stored documents.
+    let code_rule = derived_documents_code_rule("derived-second");
+    let restored = stored_workspace(&store, "/derived-second", &code_rule);
+    let applied = apply_json(&restored, 1, files.clone());
+    let mut unstored = CodeRuleDslWorkspace::new();
+    unstored.add_code_rule(&code_rule, None).unwrap();
+    let fresh = apply_json(&unstored, 1, files);
+    unstored.close();
+    for key in ["violations", "failures"] {
+        assert_eq!(
+            applied["evaluation"][key], fresh["evaluation"][key],
+            "{key}"
+        );
+    }
+    let witnesses = located(&applied["evaluation"]["violations"]);
+    for (path, clause) in [
+        ("src/Counter.vue", "vue-script"),
+        ("views/sum.blade.php", "blade-view"),
+    ] {
+        assert!(
+            witnesses
+                .iter()
+                .any(|(at, id, _)| at == path && id == clause),
+            "{path}: {witnesses:?}"
+        );
+    }
+    let state = restored.state.lock().unwrap();
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let file = &state.files[path];
+        assert!(
+            !file.selector_skipped && (file.tape_cache_hit || file.tape_decompressed),
+            "{path} read its stored documents"
+        );
+    }
+    // A derived document with no witness root, by its own index, is not decoded at all.
+    for path in ["src/Plain.vue", "views/plain.blade.php"] {
+        assert!(state.files[path].selector_skipped, "{path}");
+    }
+    drop(state);
+    restored.close();
+}
+
+/// A stored primary tape whose derived document's tape is gone is not stored: the file is parsed
+/// again, never restored without the document it derives.
+#[test]
+fn a_stored_tape_missing_a_derived_tape_is_parsed_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-missing");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = json!([{ "path": "src/Counter.vue", "language": "vue", "source":
+        "<script setup>\nconst count = ref(0)\n</script>\n<template>\n  <p>{{ count }}</p>\n</template>\n" }]);
+    let first = stored_workspace(
+        &store,
+        "/derived-missing-first",
+        &derived_documents_code_rule("derived-missing-first"),
+    );
+    let expected = located(&apply_json(&first, 1, files.clone())["evaluation"]["violations"]);
+    assert_eq!(expected.len(), 1, "{expected:?}");
+    let tape = overlay_tape(&store, &first, "src/Counter.vue");
+    first.close();
+    {
+        // The store's own foreign keys refuse this: a raw connection stands for lost rows.
+        let connection = rusqlite::Connection::open(directory.store()).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .unwrap();
+        let deleted = connection
+            .execute(
+                "DELETE FROM tape_objects WHERE tape_id IN (SELECT document_tape_id FROM file_documents)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+    }
+    let [document] = &store.file_documents_bulk(&[tape]).unwrap()[&tape][..] else {
+        panic!("the row outlives its tape");
+    };
+    assert_eq!(document.source, None);
+
+    let restored = stored_workspace(
+        &store,
+        "/derived-missing-second",
+        &derived_documents_code_rule("derived-missing-second"),
+    );
+    let applied = apply_json(&restored, 1, files);
+    assert_eq!(located(&applied["evaluation"]["violations"]), expected);
+    {
+        let state = restored.state.lock().unwrap();
+        let file = &state.files["src/Counter.vue"];
+        assert!(
+            !file.tape_cache_hit && !file.tape_decompressed,
+            "the file was parsed, not restored in part"
+        );
+    }
+    restored.close();
+}

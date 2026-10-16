@@ -470,7 +470,8 @@ mod tests {
                             child.node_id(),
                             child.range(),
                         )
-                        .expect("range");
+                        .expect("range")
+                        .primary();
                         let message = match tree.value(child.node_id()) {
                             Some(Value::Str(message)) => message.clone(),
                             other => format!("{other:?}"),

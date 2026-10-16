@@ -212,3 +212,44 @@ fn a_define_holds_a_programs_parse_utility() {
         ["/* eslint-disable no-console */"]
     );
 }
+
+/// Zero-width positions are owned half-open: a point at the boundary of two siblings is the one
+/// starting there, never the one ending there; the file's end is the last node's.
+#[test]
+fn a_zero_width_point_belongs_to_the_node_starting_there() {
+    use ast_grep_language::LanguageExt;
+    let source = "a(b);c(d);";
+    let root = crate::code_rule_dsl::language::GrammarDialect::TypeScript.ast_grep(source);
+    let text = |at: usize| super::innermost(root.root(), &(at..at)).text().into_owned();
+    // `a(b);` ends where `c(d);` starts.
+    assert_eq!(text(5), "c");
+    assert_eq!(text(0), "a");
+    // The file's end belongs to the last statement's last token.
+    assert_eq!(text(source.len()), ";");
+    // A range of width is held by the innermost node holding it whole.
+    assert_eq!(super::innermost(root.root(), &(2..3)).text(), "b");
+}
+
+/// A program node standing for file ranges apart (a component's script and the template after it)
+/// reports the range it starts in, never a span widened over the closing tag between them.
+#[test]
+fn a_node_standing_for_ranges_apart_reports_where_it_starts() {
+    let source = "<script>\nlet a = 1\n</script>\n<template><p>{{ a }}</p></template>\n";
+    let document = clause_document(json!({
+        "id": "c",
+        "forbid": { "ast": { "language": "vue", "embedded": "script-block",
+            "rule": { "kind": "program" } } },
+        "violation": violation(),
+    }));
+    let compiled = compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "vue", "C.vue", source);
+    assert_eq!(
+        matched_texts(&result, source),
+        ["<script>\nlet a = 1\n"],
+        "{result}"
+    );
+}

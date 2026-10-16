@@ -2,13 +2,14 @@
 //! `require_each` and `budget` over the rows every file of the relation's domain produced.
 
 use super::output::{failure, violation_from_witness, violation_id};
-use crate::code_rule_dsl::matcher::exported_span;
+use crate::code_rule_dsl::matcher::{exported_span, exported_text};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, FileInput, Projection,
     ProjectionSource, Query, ViolationSpec,
 };
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::query::crossfile::{self, Relation, Requirement};
+use crate::code_rule_dsl::tape::tape_doc;
 use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
@@ -87,25 +88,33 @@ pub(super) fn project<D: Doc>(
         .iter()
         .map(|Projection { field, source }| {
             let value = match source {
+                // A capture's text is the file's where it stands for one file range, else its own
+                // (an embedded program's), never the file's bytes between its ranges.
                 ProjectionSource::Capture(capture) => {
-                    let range = env
+                    let text = env
                         .get_match(capture)
-                        .map(|node| place.node(node))
+                        .map(|node| place.text(node).into_owned())
                         .or_else(|| {
                             let nodes = env.get_multiple_matches(capture);
                             let (first, last) = (nodes.first()?, nodes.last()?);
-                            Some(place.node(first).start..place.node(last).end)
+                            let range = first.range().start..last.range().end;
+                            let own = tape_doc(first).map_or_else(
+                                || first.text(),
+                                |doc| doc.get_source()[range.clone()].into(),
+                            );
+                            Some(place.range_text(range, &own).into_owned())
                         })
-                        .or_else(|| exported_span(env, capture).map(|range| place.range(range)))
                         .or_else(|| {
-                            groups
-                                .iter()
-                                .find(|(name, _, _)| name == capture)
-                                .map(|(_, _, range)| place.range(range.clone()))
+                            let range = exported_span(env, capture)?;
+                            let own = exported_text(env, capture)?;
+                            Some(place.range_text(range, &own).into_owned())
+                        })
+                        .or_else(|| {
+                            let (_, own, range) =
+                                groups.iter().find(|(name, _, _)| name == capture)?;
+                            Some(place.range_text(range.clone(), own).into_owned())
                         });
-                    range
-                        .and_then(|range| place.source().get(range))
-                        .map_or(Value::Null, |text| Value::String(text.to_owned()))
+                    text.map_or(Value::Null, Value::String)
                 }
                 ProjectionSource::Path => Value::String(file.path.clone()),
                 ProjectionSource::Directory => Value::String(directory.to_owned()),

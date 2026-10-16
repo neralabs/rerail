@@ -53,6 +53,7 @@
 //! Forte leaves unpaired (in an attribute's value) is not read: the view reads no half of a
 //! structure.
 
+use crate::code_rule_dsl::blade::forte::ParseError;
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
 use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -282,15 +283,22 @@ pub(crate) struct Read {
     pub(crate) view: Option<View>,
 }
 
+/// Why a template could not be read (`View::read`).
+#[derive(Debug)]
+pub(crate) enum ReadError {
+    /// The budget interrupted it (polled before each sub-template is parsed, `Emitter::template`).
+    Interrupted,
+    /// Forte stopped at a limit on a template the template holds: nothing about its syntax.
+    Parser(ParseError),
+}
+
 impl View {
-    /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds. `Err`
-    /// where `budget` interrupted it (polled before each sub-template is parsed,
-    /// `Emitter::template`).
+    /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds.
     pub(crate) fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
-    ) -> Result<Read, String> {
+    ) -> Result<Read, ReadError> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
@@ -303,12 +311,16 @@ impl View {
             depth: 0,
             budget,
             interrupted: false,
+            failed: None,
             strays: Vec::new(),
             reporting: true,
         };
         emitter.body(tree.root());
+        if let Some(error) = emitter.failed {
+            return Err(ReadError::Parser(error));
+        }
         if emitter.interrupted {
-            return Err("tape operation interrupted".into());
+            return Err(ReadError::Interrupted);
         }
         let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
         if emitter.segments.is_empty() {
@@ -400,6 +412,8 @@ struct Emitter<'t> {
     /// more is read.
     budget: &'t dyn Fn() -> bool,
     interrupted: bool,
+    /// Forte stopped at a limit on a sub-template; once set, nothing more is read.
+    failed: Option<ParseError>,
     /// The `stray_arguments` read as the template, each with that template's syntax errors.
     strays: Vec<(Range<usize>, Vec<Range<usize>>)>,
     /// Whether the tree being read reports its syntax errors: the template's, and a stray
@@ -792,7 +806,7 @@ impl<'t> Emitter<'t> {
     /// `None` where it was not parsed. Past `TEMPLATE_DEPTH` nested sub-templates, the range is
     /// read as text.
     fn sub_template(&mut self, range: Range<usize>) -> Option<Vec<Range<usize>>> {
-        if range.is_empty() || self.interrupted {
+        if range.is_empty() || self.interrupted || self.failed.is_some() {
             return None;
         }
         if (self.budget)() {
@@ -803,7 +817,13 @@ impl<'t> Emitter<'t> {
             self.loose(range);
             return None;
         }
-        let tree = parse_tree(&self.template.as_bytes()[range.clone()]);
+        let tree = match parse_tree(&self.template.as_bytes()[range.clone()]) {
+            Ok(tree) => tree,
+            Err(error) => {
+                self.failed = Some(error);
+                return None;
+            }
+        };
         let origin = std::mem::replace(&mut self.origin, range.start);
         self.depth += 1;
         self.body(tree.root());

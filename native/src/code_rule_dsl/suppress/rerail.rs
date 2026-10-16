@@ -21,6 +21,7 @@
 //! each embedded program's, whose covers are the file bytes the covered nodes stand for. Only the
 //! file's own tree's comments may cover the whole file.
 
+use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
 use ast_grep_core::{AstGrep, Doc, Node};
@@ -78,14 +79,15 @@ impl RerailIgnores {
             }
             let first = *first.get_or_insert_with(|| first_code(root, source));
             let covered = if range.end <= first {
-                Some(0..usize::MAX)
+                Some(FileRanges::one(0..usize::MAX))
             } else {
                 covered(&comment, source, file)
             };
-            if let Some(range) = covered {
+            // A covered node of a program standing for several file ranges covers each.
+            for range in covered.iter().flat_map(FileRanges::iter) {
                 covers.push(Cover {
-                    range,
-                    rules: rules.into_iter().map(str::to_owned).collect(),
+                    range: range.clone(),
+                    rules: rules.iter().copied().map(str::to_owned).collect(),
                 });
             }
         }
@@ -212,7 +214,7 @@ fn is_code<D: Doc>(node: &Node<'_, D>, source: &str) -> bool {
 /// The file range a directive comment past its tree's first code covers; the tree's nodes and
 /// lines are placed in `file` (an embedded program's comment on a line of its own is one in the
 /// file, whatever its embedder wrote before it).
-fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Option<Range<usize>> {
+fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Option<FileRanges> {
     let start = file.node(comment).start;
     let lines = file.lines();
     let line = lines.line(start);
@@ -229,7 +231,7 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
                     .then(|| node.children().find(|child| is_code(child, source)))
                     .flatten()
                     .filter(|child| child.range().start == node.range().start);
-                return Some(file.node(&first.unwrap_or(node)));
+                return Some(file.place(&first.unwrap_or(node)));
             }
             next = node.next();
         }
@@ -261,11 +263,12 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
             break;
         }
         if !separated {
-            return Some(at);
+            return Some(file.place(&node));
         }
+        // The elements on the comment's line, from the one holding its first code byte.
         let end = *end.get_or_insert(at.end);
         if at.start <= code {
-            return Some(at.start..end);
+            return Some(FileRanges::one(at.start..end));
         }
     }
     // Otherwise the smallest construct holding the line's code: the comment sits inside it.
@@ -273,9 +276,8 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
     while let Some(node) = ancestor {
         let parent = node.parent();
         parent.as_ref()?;
-        let at = file.node(&node);
-        if at.start <= code {
-            return Some(at);
+        if file.node(&node).start <= code {
+            return Some(file.place(&node));
         }
         ancestor = parent;
     }

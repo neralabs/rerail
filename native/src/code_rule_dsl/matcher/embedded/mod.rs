@@ -10,6 +10,7 @@
 use super::AstMatcher;
 use super::each::{self, HostRanges};
 use super::exported::{export, exported_span, exported_text, is_span_variable};
+use crate::code_rule_dsl::embed::segments::holds;
 use crate::code_rule_dsl::language::{GrammarDialect, Via};
 use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
@@ -36,7 +37,7 @@ type Exports = [(String, String, Range<usize>)];
 /// The host a program's `host` rule runs against: of the innermost `embedded` being matched over
 /// that program, which runs a host rule on the host's node spanning a file range.
 struct Hook {
-    run: *const (dyn Fn(&AstMatcher, &Exports, Range<usize>) -> bool + 'static),
+    run: *const (dyn Fn(&AstMatcher, &Exports, &Range<usize>) -> bool + 'static),
     /// The program document the `embedded` reads (`TapeDoc::same`).
     program: TapeDoc,
 }
@@ -51,16 +52,16 @@ struct Hosted;
 
 impl Hosted {
     fn enter<'f>(
-        run: &'f (dyn Fn(&AstMatcher, &Exports, Range<usize>) -> bool + 'f),
+        run: &'f (dyn Fn(&AstMatcher, &Exports, &Range<usize>) -> bool + 'f),
         program: TapeDoc,
     ) -> Self {
         // SAFETY: the pointer is read only while this guard lives, and the guard is dropped before
         // `run`, which the caller declares first; the lifetime is erased only to store it.
-        let run: *const (dyn Fn(&AstMatcher, &Exports, Range<usize>) -> bool + 'f) = run;
+        let run: *const (dyn Fn(&AstMatcher, &Exports, &Range<usize>) -> bool + 'f) = run;
         let run = unsafe {
             std::mem::transmute::<
-                *const (dyn Fn(&AstMatcher, &Exports, Range<usize>) -> bool + 'f),
-                *const (dyn Fn(&AstMatcher, &Exports, Range<usize>) -> bool + 'static),
+                *const (dyn Fn(&AstMatcher, &Exports, &Range<usize>) -> bool + 'f),
+                *const (dyn Fn(&AstMatcher, &Exports, &Range<usize>) -> bool + 'static),
             >(run)
         };
         HOOKS.with_borrow_mut(|hooks| hooks.push(Hook { run, program }));
@@ -74,15 +75,15 @@ impl Drop for Hosted {
     }
 }
 
-/// The innermost node under `root` whose range holds `at` (a node of width preferred to an empty
-/// one at the same place).
+/// The innermost node under `root` holding a program node, whose ranges lie in `at` (`Origin::
+/// bounds`: a node's range, an interval, holds them all exactly when it holds that), by the
+/// half-open rule (`segments::holds`: a zero-width range at a boundary is the node's starting
+/// there; the file's end, the node's ending there).
 fn innermost<'r, D: Doc>(root: Node<'r, D>, at: &Range<usize>) -> Node<'r, D> {
+    let end = root.range().end;
     let mut node = root;
     loop {
-        let inner = node.children().find(|child| {
-            let range = child.range();
-            range.start <= at.start && at.end <= range.end && (at.is_empty() || !range.is_empty())
-        });
+        let inner = node.children().find(|child| holds(&child.range(), at, end));
         match inner {
             Some(child) => node = child,
             None => return node,
@@ -105,15 +106,16 @@ fn program_exports<D: Doc>(
         if is_span_variable(&name) {
             continue;
         }
+        // A capture is one span to the host: where it starts in the file (`FileRanges::primary`).
         if let Some(found) = env.get_match(&name)
             && let Some(range) = program.of_node(found.node_id(), found.range())
         {
-            exports.push((name.clone(), found.text().into_owned(), range));
+            exports.push((name.clone(), found.text().into_owned(), range.primary()));
         } else if let (Some(text), Some(span)) =
             (exported_text(env, &name), exported_span(env, &name))
             && let Some(range) = program.of_range(span)
         {
-            exports.push((name.clone(), text, range));
+            exports.push((name.clone(), text, range.primary()));
         }
     }
     exports
@@ -137,29 +139,32 @@ impl EmbeddedTest {
         // rule's captures.
         let before = env.as_ref().clone();
         let host_root = node.root().root();
-        let run = |rule: &AstMatcher, exports: &Exports, at: Range<usize>| {
+        let run = |rule: &AstMatcher, exports: &Exports, at: &Range<usize>| {
             let mut host = Cow::Borrowed(&before);
             for (name, text, range) in exports {
                 export(&mut host, name, text, range.clone());
             }
-            let target = innermost(host_root.clone(), &at);
+            let target = innermost(host_root.clone(), at);
             each::suspended(|| rule.match_node_with_env(target, &mut host).is_some())
         };
         let _hosted = Hosted::enter(&run, guest.doc.clone());
         // `violation.each` reads the program's bindings at the file bytes they stand for, as the
         // host's environment receives them, and passes over a candidate binding one it reported.
         let _hosts = each::active().then(|| HostRanges::enter(Arc::new(guest.doc.clone())));
-        // The program's nodes standing for bytes within the node's, in preorder: a node's bytes
-        // hold its descendants', so a subtree whose bytes miss the node's is passed over.
+        // The program's nodes whose file ranges lie in the node's, in preorder, positions half-open
+        // (`segments::holds`). The node's range is an interval, so it holds them exactly when it
+        // holds their bounds (`Origin::bounds`); a node's ranges hold its descendants', so a
+        // subtree whose bounds miss the node's, even at a boundary, is passed over.
+        let end = host_root.range().end;
         let mut stack = vec![program.root()];
         while let Some(candidate) = stack.pop() {
-            let Some(at) = guest.doc.of_node(candidate.node_id(), candidate.range()) else {
+            let Some(at) = guest.doc.bounds(candidate.node_id(), candidate.range()) else {
                 continue;
             };
             if at.start > span.end || span.start > at.end {
                 continue;
             }
-            if span.start <= at.start && at.end <= span.end {
+            if holds(&span, &at, end) {
                 let mut inner = Cow::Owned(MetaVarEnv::new());
                 if rule
                     .match_node_with_env(candidate.clone(), &mut inner)
@@ -194,7 +199,7 @@ pub(super) fn document_host<D: Doc>(
     env: &MetaVarEnv<'_, D>,
 ) -> Option<bool> {
     let doc = tape_doc(node).filter(|doc| doc.is_guest())?;
-    let at = doc.of_node(node.node_id(), node.range())?;
+    let at = doc.bounds(node.node_id(), node.range())?;
     let exports = program_exports(env, doc);
     let hooked = HOOKS.with_borrow(|hooks| {
         hooks
@@ -206,7 +211,7 @@ pub(super) fn document_host<D: Doc>(
     if let Some(run) = hooked {
         // SAFETY: `Hosted` keeps the closure alive while it is on the stack (see `Hosted::enter`).
         let run = unsafe { &*run };
-        return Some(run(rule, &exports, at));
+        return Some(run(rule, &exports, &at));
     }
     let host = AstGrep::doc(doc.host()?.clone());
     let target = innermost(host.root(), &at);
