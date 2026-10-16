@@ -214,7 +214,7 @@ policy("no-head-element", "a <head> opening element, unless the file's path cont
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
     message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-head-element`,
   },
-// The rule gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
+// The port readiness gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
 ]);
 
 policy("no-sync-scripts", "a <script> opening element with a src attribute and neither async nor defer.", [
@@ -623,7 +623,7 @@ policy(
       message: LOCATION_MESSAGE,
     },
   ],
-  // The rule gates lint in eslint-config-next's environment, whose browser globals let upstream report the 29 findings
+  // The port readiness gates lint in eslint-config-next's environment, whose browser globals let upstream report the 29 findings
   // this port reproduces.
 );
 

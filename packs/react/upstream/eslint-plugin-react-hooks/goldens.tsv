@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run gates -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
 react-hooks-exhaustive-deps
 	rerail:excalidraw
 		excalidraw-app/App.tsx	721103a71d9f227f0dd089b7acfd5b6b75861006236059790bbdc96c44368a2b

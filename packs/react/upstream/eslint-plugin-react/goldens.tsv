@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run gates -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
 react-button-has-type
 	rerail:excalidraw
 		excalidraw-app/components/TopErrorBoundary.tsx	6e8696189449799e34388aebe206417774d107523dc3bf45a211ecf767ce6a36

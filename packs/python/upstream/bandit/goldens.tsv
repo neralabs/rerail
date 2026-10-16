@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run gates -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
 bandit-b105-hardcoded-password-string
 	iterative-dvc-0.91.2-0.91.3
 		dvc/remote/gdrive.py	d93c04ca269c2b23afe07d79bfee2e3db45fed293bea5ffe347023e0dfc30c70

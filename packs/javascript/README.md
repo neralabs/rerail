@@ -17,7 +17,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
 | `upstream/generate.mjs` | ESLint's recorder |
 | `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
-| `upstream/<tool>/gates.yaml`, `gates.json`, `gates-corpus.json`, `goldens.tsv` | The rule gates' manifest for the tool and its recordings ([docs/rule-gates.md](../../docs/rule-gates.md)) |
+| `upstream/<tool>/gates.yaml`, `gates.json`, `gates-corpus.json`, `goldens.tsv` | The port readiness gates' manifest for the tool and its recordings ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 

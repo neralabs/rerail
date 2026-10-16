@@ -4,7 +4,7 @@ Upstream: [facebook/react](https://github.com/facebook/react/tree/1ddff43c41147b
 
 The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under react's license. Every other file under `upstream/eslint-plugin-react-hooks/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
-Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`. A `derived` row is a case's `code` that the rule gates' recorder (`npm run gates:record`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case; it is named by the sha256 of its code.
+Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`. A `derived` row is a case's `code` that the port readiness gates' recorder (`npm run port-readiness:record`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case; it is named by the sha256 of its code.
 
 | File | Upstream path | Copy |
 |---|---|---|
@@ -462,7 +462,7 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/fa4449ccccf7.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
 
 > `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
-> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/rule-gates.md). It
+> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md). It
 > carries excerpts of this upstream's tests (`packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js`: the
 > `code` of each RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; the
 > LICENSE beside this file is this upstream's own, at the pinned commit.

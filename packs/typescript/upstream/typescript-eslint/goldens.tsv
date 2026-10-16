@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run gates -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
 typescript-eslint-adjacent-overload-signatures
 	rerail:vscode
 		src/vs/base/parts/sandbox/node/electronTypes.ts	a17117f98416c88d50e0e480f7613b2bf9c68180722f3b8c46ec07e9e3762bf4

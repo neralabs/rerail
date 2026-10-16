@@ -11,7 +11,7 @@ it writes by running ESLint.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written by
 `upstream/generate.mjs`: cases with a custom parser or type information, and performance stress cases over 64 KiB, are
-left out, and identical code in the same language is written once. The rule gates' recorder (`npm run gates:record`)
+left out, and identical code in the same language is written once. The port readiness gates' recorder (`npm run port-readiness:record`)
 reuses those files and writes every other case the gates read, the same verbatim `code`, as
 `upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording, `upstream/eslint/gates.json`, also holds the
 `code` of every RuleTester case of ESLint's rule tests, verbatim, as the words `not-overfit` reads.
@@ -10380,7 +10380,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/yoda/146.js` | `tests/lib/rules/yoda.js` | derived |
 
 > `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
-> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/rule-gates.md). It
+> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md). It
 > carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each RuleTester case),
 > redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is this
 > upstream's own, at the pinned commit.

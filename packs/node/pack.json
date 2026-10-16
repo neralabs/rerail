@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "No rules yet: its 24 eslint-plugin-n ports are candidates until they pass the rule gates.",
+  "covers": "No rules yet: its 24 eslint-plugin-n ports are candidates until they pass the port readiness gates.",
   "reason": "matches Node.js",
   "match": {
     "any": [

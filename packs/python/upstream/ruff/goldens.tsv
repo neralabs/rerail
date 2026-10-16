@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run gates -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
 ruff-b030-except-with-non-exception-classes
 	conan-io-conan-2.0.14-2.0.15
 		conan/api/subapi/config.py	f6a3eb5663b46afc4450057277846876ca7bf13f4de0af6c54b485c371d3f513
