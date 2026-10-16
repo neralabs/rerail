@@ -8,7 +8,7 @@
 //! `<script setup>` before the one of `<script>` (`ts`: TypeScript, `tsx`: TSX, none, `js` or
 //! `jsx`: JavaScript; a file without a script: JavaScript; any other `lang`, such as `coffee`: no
 //! program), and parsed with tree-sitter; each of its nodes maps back to the `.vue` bytes it came
-//! from (`View::span`). Script content and template expressions are copied byte for byte, so their
+//! from (`embed::segments::SegmentMap::file_ranges`). Script content and template expressions are copied byte for byte, so their
 //! nodes map exactly onto the file. The syntax around them is synthetic, each token anchored to
 //! the Vue construct it stands for. The two scripts share the program's module scope, as
 //! vue-eslint-parser 10.4.1 reads them (it parses their bodies as one program for ESLint), not as
@@ -25,8 +25,8 @@
 //! | a dynamic argument `v-x:[A]`, `:[A]`, `@[A]`, `#[A]` | `(A);` before the directive's own statement | the `[A]` |
 //! | `@x="E"`, `v-on:x` whose value is a member expression or a function (compiler-core's `isMemberExpression`, `isFnExpression`) | `(E);` | the directive attribute |
 //! | `@x="S"` whose value is anything else: inline statements | `(() => { S });` | the directive attribute |
-//! | `v-if="C"`, then sibling `v-else-if="C2"` and `v-else` elements (only whitespace and comments between) | `if (C) { E1 } else if (C2) { E2 } else { E3 }` | the `if` statement: the first element's start to the last one's end; each block: its element; each condition's parentheses: its directive |
-//! | `v-for="ALIAS in SRC"` (or `of`) on element E | `(SRC), (ALIAS) => { E };` | the statement, sequence, `(SRC)` and arrow: the element E; the alias's parentheses: empty, at E's start and after the alias |
+//! | `v-if="C"`, then sibling `v-else-if="C2"` and `v-else` elements (only whitespace and comments between) | `if (C) { E1 } else if (C2) { E2 } else { E3 }` | each branch's `if`, `else if`, `else` and block: its element (so the statement stands for its branches' elements, not what lies between them); each condition's parentheses: its directive |
+//! | `v-for="ALIAS in SRC"` (or `of`) on element E | `(SRC), (ALIAS) => { E };` | the statement, sequence, `(SRC)` and arrow: the element E; the alias's parentheses: empty, at E's start and after the alias (so the parameters stand for the alias alone) |
 //! | `v-slot="P"`, `v-slot:name="P"`, `#name="P"`, Vue 2's `slot-scope="P"` and `scope="P"` on element E | `(P) => { children of E };` | the statement and arrow: the element E |
 //! | a component tag (`<MyComp>`, `<Foo.Bar>`) | `Tag;`, `Foo.Bar;` (the tag name copied: tree-sitter-vue ends `tag_name` at a `.` and reads the rest as `.` shorthands, which the view reads as the tag, as vue-eslint-parser does) | the tag name |
 //! | text, static attributes, comments, `v-pre` elements | nothing | |
@@ -169,19 +169,51 @@ impl View {
         &self.segments
     }
 
-    /// The `.vue` bytes a node of the program stands for: its leaves' (`tape::node_hulls`).
+    /// A node's extent in the program: from the first of its leaves standing for file bytes to
+    /// the last; a node none of whose leaves does, from its first leaf to its last
+    /// (`tape::node_extents`).
     #[cfg(test)]
-    pub(crate) fn span(&self, node: Node<'_>) -> Range<usize> {
-        let mut cursor = node.walk();
-        let children = node.children(&mut cursor).collect::<Vec<_>>();
-        if children.is_empty() {
-            return self.segments.host_span(node.byte_range());
+    fn extent(&self, node: Node<'_>) -> Range<usize> {
+        let mut leaves = Vec::new();
+        let mut stack = vec![node];
+        while let Some(at) = stack.pop() {
+            if at.child_count() == 0 {
+                leaves.push(at.byte_range());
+            }
+            let mut cursor = at.walk();
+            let children = at.children(&mut cursor).collect::<Vec<_>>();
+            stack.extend(children.into_iter().rev());
         }
-        children
-            .into_iter()
-            .map(|child| self.span(child))
-            .reduce(|hull, span| hull.start.min(span.start)..hull.end.max(span.end))
-            .expect("a node with children")
+        let mut standing = leaves
+            .iter()
+            .filter(|leaf| self.segments.stands_for((*leaf).clone()));
+        match (standing.next(), standing.next_back()) {
+            (Some(first), Some(last)) => first.start..last.end,
+            (Some(only), None) => only.clone(),
+            _ => leaves[0].start..leaves[leaves.len() - 1].end,
+        }
+    }
+
+    /// The ranges of `source`, the `.vue` file, a node of the program stands for, in file order,
+    /// as its tape's document places them (`tape::TapeDoc`'s `Origin`).
+    #[cfg(test)]
+    pub(crate) fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
+        self.segments
+            .file_ranges(self.extent(node))
+            .bridged(source)
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// The bytes of `source` a node of the program reports: its primary range
+    /// (`FileRanges::primary`).
+    #[cfg(test)]
+    pub(crate) fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
+        self.segments
+            .file_ranges(self.extent(node))
+            .bridged(source)
+            .primary()
     }
 
     /// The file ranges the program copies byte for byte, in program order.
@@ -943,12 +975,15 @@ mod tests {
             // The only placeholders are empty alias slots' parameters, which the tape leaves out.
             if view.segments().omitted(node.byte_range()) {
                 assert_eq!(&text[node.byte_range()], "_", "placeholder in {text:?}");
-                assert!(view.span(node).is_empty(), "placeholder in {text:?}");
+                assert!(
+                    view.span(node, source).is_empty(),
+                    "placeholder in {text:?}"
+                );
                 continue;
             }
             if identifiers && node.kind().ends_with("identifier") {
                 assert_eq!(
-                    &source[view.span(node)],
+                    &source[view.span(node, source)],
                     &text[node.byte_range()],
                     "identifier in {text:?}"
                 );
@@ -956,7 +991,7 @@ mod tests {
             if node.kind() != "expression_statement" {
                 continue;
             }
-            statements.push(view.span(node));
+            statements.push(view.span(node, source));
             let mut cursor = node.walk();
             let kids: Vec<_> = node.named_children(&mut cursor).collect();
             if let [sequence] = kids.as_slice()
@@ -972,7 +1007,7 @@ mod tests {
                     ["parenthesized_expression", "arrow_function"],
                     "{text:?}"
                 );
-                loops.push(view.span(node));
+                loops.push(view.span(node, source));
             }
         }
         let mut expected_loops = Vec::new();
@@ -1000,13 +1035,13 @@ mod tests {
     }
 
     /// The spans of the program's nodes of `kind`, in document order.
-    fn spans(view: &View, kind: &str) -> Vec<Range<usize>> {
+    fn spans(view: &View, source: &str, kind: &str) -> Vec<Range<usize>> {
         let mut nodes = Vec::new();
         named(view.root(), &mut nodes);
         nodes
             .into_iter()
             .filter(|node| node.kind() == kind)
-            .map(|node| view.span(node))
+            .map(|node| view.span(node, source))
             .collect()
     }
 
@@ -1022,9 +1057,12 @@ mod tests {
         let view = view(source);
         assert_eq!(view.text(), "{ (message); }");
         assert_eq!(view.dialect(), GrammarDialect::JavaScript);
-        assert_eq!(spans(&view, "statement_block"), vec![0..source.len()]);
         assert_eq!(
-            spans(&view, "expression_statement"),
+            spans(&view, source, "statement_block"),
+            vec![0..source.len()]
+        );
+        assert_eq!(
+            spans(&view, source, "expression_statement"),
             [find(source, "{{ message }}")]
         );
     }
@@ -1036,7 +1074,7 @@ mod tests {
         let view = view(source);
         assert_eq!(view.text(), "{ (x); (go); (() => { n++ }); ({ a: b }); }");
         assert_eq!(
-            spans(&view, "arrow_function"),
+            spans(&view, source, "arrow_function"),
             [find(source, r#"@input="n++""#)]
         );
     }
@@ -1060,7 +1098,7 @@ mod tests {
         let source = r#"<template><a :href class="c" :aria-label class :class></a></template>"#;
         let view = checked(source, false);
         assert_eq!(view.text(), "{ (href); (ariaLabel); }");
-        let synthetic = spans(&view, "identifier")[1].clone();
+        let synthetic = spans(&view, source, "identifier")[1].clone();
         assert_eq!(&source[synthetic], "aria-label");
     }
 
@@ -1084,24 +1122,35 @@ mod tests {
         let source = "<template>\n  <p v-if=\"a\">1</p>\n  <!-- c -->\n  <p v-else-if=\"b\">2</p>\n  <p v-else>3</p>\n  <p v-else>4</p>\n</template>";
         let view = view(source);
         assert_eq!(view.text(), "{ if (a) { } else if (b) { } else { } }");
-        let first = find(source, "<p v-if");
+        let first = find(source, "<p v-if=\"a\">1</p>");
+        let second = find(source, "<p v-else-if=\"b\">2</p>");
         let last = find(source, "<p v-else>3</p>");
+        // Each statement stands for its branches' elements and the white space between them, not
+        // the comment between two, and reports where it starts.
+        let mut statements = Vec::new();
+        named(view.root(), &mut statements);
+        let ifs = statements
+            .into_iter()
+            .filter(|node| node.kind() == "if_statement")
+            .map(|node| view.ranges(node, source))
+            .collect::<Vec<_>>();
+        let chain = second.start..last.end;
+        assert_eq!(ifs.len(), 2);
+        assert_eq!(ifs[0], [first.clone(), chain.clone()]);
+        assert_eq!(ifs[1].as_slice(), std::slice::from_ref(&chain));
         assert_eq!(
-            spans(&view, "if_statement"),
-            [
-                first.start..last.end,
-                find(source, "<p v-else-if").start..last.end
-            ]
+            spans(&view, source, "if_statement"),
+            [first, second.start..last.end]
         );
         assert_eq!(
-            spans(&view, "parenthesized_expression"),
+            spans(&view, source, "parenthesized_expression"),
             [
                 find(source, r#"v-if="a""#),
                 find(source, r#"v-else-if="b""#)
             ]
         );
         assert_eq!(
-            spans(&view, "statement_block")[1..],
+            spans(&view, source, "statement_block")[1..],
             [
                 find(source, "<p v-if=\"a\">1</p>"),
                 find(source, "<p v-else-if=\"b\">2</p>"),
@@ -1132,24 +1181,20 @@ mod tests {
             "{ (items), (item) => { (item); }; (items), (item, index) => { (index); (item); }; \
              (rows), ({ id, name }) => { (id); (name); }; (object), (value, key) => { }; }"
         );
-        // The parentheses stand for no bytes, the opening one at the element's start: the arrow
-        // holds the element whole, its parameters run from the element's start to the alias's
-        // end, and the aliases are copied.
+        // The parentheses stand for no bytes (the opening one written at the element's start):
+        // the arrow holds the element whole, its parameters stand for the aliases they copy.
         let element = find(
             source,
             r#"<li v-for="(item, index) of items" :key="index">{{ item }}</li>"#,
         );
-        assert_eq!(spans(&view, "arrow_function")[1], element);
-        let alias = find(source, "(item, index)");
+        assert_eq!(spans(&view, source, "arrow_function")[1], element);
         assert_eq!(
-            spans(&view, "formal_parameters")[1],
-            element.start..alias.end
+            spans(&view, source, "formal_parameters")[1],
+            find(source, "item, index")
         );
-        let element = find(source, r#"<li v-for="value, key in object">"#);
-        let alias = find(source, "value, key");
         assert_eq!(
-            spans(&view, "formal_parameters")[3],
-            element.start..alias.end
+            spans(&view, source, "formal_parameters")[3],
+            find(source, "value, key")
         );
         assert!(
             view.copied()
@@ -1250,7 +1295,7 @@ mod tests {
         );
         let element = find(source, "<li v-for");
         assert_eq!(
-            spans(&view, "if_statement"),
+            spans(&view, source, "if_statement"),
             vec![element.start..source.len() - "</template>".len()]
         );
     }
@@ -1278,11 +1323,11 @@ mod tests {
         assert_eq!(view.text(), "{ Comp; ({ item }) => { (item); }; }");
         let element = find(source, r#"<Comp v-slot="{ item }">{{ item }}</Comp>"#);
         assert_eq!(
-            spans(&view, "arrow_function"),
+            spans(&view, source, "arrow_function"),
             std::slice::from_ref(&element)
         );
         assert_eq!(
-            spans(&view, "expression_statement"),
+            spans(&view, source, "expression_statement"),
             [find(source, "Comp"), element, find(source, "{{ item }}")]
         );
     }
@@ -1293,7 +1338,7 @@ mod tests {
         let view = view(source);
         assert_eq!(view.text(), "{ Table; (r) => { (r); }; }");
         assert_eq!(
-            spans(&view, "arrow_function"),
+            spans(&view, source, "arrow_function"),
             [find(source, r#"<template #row="r">{{ r }}</template>"#)]
         );
     }
@@ -1303,7 +1348,7 @@ mod tests {
         let source = r#"<template><a :[k]="v"></a><Comp><template #[name]="p">{{ p }}</template></Comp></template>"#;
         let view = view(source);
         assert_eq!(view.text(), "{ (k); (v); Comp; (name); (p) => { (p); }; }");
-        let statements = spans(&view, "expression_statement");
+        let statements = spans(&view, source, "expression_statement");
         assert_eq!(statements[0], find(source, "[k]"));
         assert_eq!(statements[1], find(source, r#":[k]="v""#));
         assert_eq!(statements[3], find(source, "[name]"));
@@ -1321,7 +1366,7 @@ mod tests {
             "{ ElTable.TableColumn; (c); a.b.c; Foo; (v); }"
         );
         assert_eq!(
-            spans(&view, "member_expression"),
+            spans(&view, source, "member_expression"),
             [
                 find(source, "ElTable.TableColumn"),
                 find(source, "a.b.c"),
@@ -1357,14 +1402,14 @@ mod tests {
         );
         // The closing `;` ends the last statement where it has none, at its last byte.
         assert_eq!(
-            spans(&view, "empty_statement"),
+            spans(&view, source, "empty_statement"),
             [
                 find(source, "<script>"),
                 find(source, "<script setup lang=\"ts\">")
             ]
         );
         assert_eq!(
-            spans(&view, "lexical_declaration"),
+            spans(&view, source, "lexical_declaration"),
             [
                 find(source, "const a = 1"),
                 find(source, "const b: number = 2")
@@ -1459,5 +1504,40 @@ mod tests {
         );
         assert!(files.len() > 700, "{} files", files.len());
         assert!(broken.len() * 50 <= files.len(), "{broken:#?}");
+    }
+
+    /// A node of the program stands for the file bytes of its pieces, never a range widened over
+    /// bytes it does not stand for: a written token's anchor holds the copied text beside it, and
+    /// the program's root, over a script and the template after it, stands for both apart, not
+    /// the closing tag between them.
+    #[test]
+    fn nodes_stand_for_their_pieces_and_nothing_between() {
+        let source =
+            r#"<template><li v-for="item in items" :title="item">{{ item }}</li></template>"#;
+        let built = view(source);
+        let mut nodes = Vec::new();
+        named(built.root(), &mut nodes);
+        let ranges_of = |text: &str| {
+            let node = nodes
+                .iter()
+                .find(|node| &built.text()[node.byte_range()] == text)
+                .unwrap_or_else(|| panic!("no {text:?}"));
+            built.ranges(*node, source)
+        };
+        // `(item)` is written over the attribute, its `item` copied inside it.
+        assert_eq!(ranges_of("(item);"), [find(source, r#":title="item""#)]);
+        assert_eq!(
+            ranges_of("(items)"),
+            [find(
+                source,
+                r#"<li v-for="item in items" :title="item">{{ item }}</li>"#
+            )]
+        );
+        let source = "<script>\nlet a = 1\n</script>\n<template><p>{{ a }}</p></template>\n";
+        let view = view(source);
+        let script = find(source, "<script>\nlet a = 1\n");
+        let template = find(source, "<template><p>{{ a }}</p></template>");
+        assert_eq!(view.ranges(view.root(), source), [script.clone(), template]);
+        assert_eq!(view.span(view.root(), source), script);
     }
 }

@@ -1,13 +1,15 @@
 //! Source-revision-bound rec6 preorder tape and transient ast-grep document.
 //! No parser's tree survives encoding; restoration never invokes a parser. Every tape holds one
-//! grammar and passes the same checks. A tree's syntax errors are its ERROR and MISSING records:
-//! a Blade template's lexer errors are ERROR leaves, zero-width at their offset, and a template
-//! Forte does not parse is a `document` holding one ERROR. A file that embeds code (`embed`) keeps
-//! the tape of each program it embeds beside its own (`GuestImage`): a guest document over the
-//! program's text, with the segments that map it back to the file.
+//! source, one grammar and one tree, and passes the same checks. A tree's syntax errors are its
+//! ERROR and MISSING records: a Blade template's lexer errors are ERROR leaves, zero-width at their
+//! offset, and a template Forte does not parse is a `document` holding one ERROR. A file that
+//! embeds code (`embed`) is several documents (`FileImage`): its own tape, and beside it each
+//! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
+//! segments that map that text back to the document it was derived from. The store keeps each
+//! derived tape as a row of its own (`file_documents`); no tape holds another.
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::blade::view::View;
-use crate::code_rule_dsl::embed::segments::SegmentMap;
+use crate::code_rule_dsl::blade::view::{ReadError, View};
+use crate::code_rule_dsl::embed::segments::{FileRanges, SegmentMap};
 use crate::code_rule_dsl::embed::{Embedder, Program};
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
 use crate::code_rule_dsl::lines::LineTable;
@@ -22,11 +24,11 @@ use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode};
 
 const WIDTH: usize = 6;
-pub(super) const TAPE_FORMAT_VERSION: u32 = 6;
-const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE6";
+pub(super) const TAPE_FORMAT_VERSION: u32 = 7;
+const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE7";
 /// The image header: magic, language, reserved bytes, version, source length and digest, and
-/// twelve table lengths.
-const HEADER_BYTES: usize = 56 + 12 * 8;
+/// eleven table lengths.
+const HEADER_BYTES: usize = 56 + 11 * 8;
 const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
@@ -112,6 +114,22 @@ impl Grammar {
     }
 }
 
+/// Why a Blade template has no tape (`TapeImage::encode_template`).
+#[derive(Debug)]
+pub(crate) enum TemplateError {
+    /// Forte stopped at a limit (its nesting depth, its step budget) on the template or on a
+    /// template it holds: that says nothing about its syntax, and nothing was read.
+    Parser(crate::code_rule_dsl::blade::forte::ParseError),
+    /// Interrupted, or no tape could be encoded.
+    Encode(String),
+}
+
+impl From<String> for TemplateError {
+    fn from(error: String) -> Self {
+        Self::Encode(error)
+    }
+}
+
 /// Owns only compact structure and a binding to the exact source and grammar.
 #[derive(Clone)]
 pub(super) struct TapeImage {
@@ -128,30 +146,106 @@ pub(super) struct TapeImage {
     /// language catalog. The numeric kind remains the native `kind_id` for matcher parity.
     kind_aliases: Vec<(String, bool)>,
     kind_overrides: Vec<(u32, u16)>,
-    /// The programs the file embeds (`embed`), one per `via`, in registry order.
-    guests: Vec<GuestImage>,
     language: GrammarDialect,
     source_len: usize,
     source_digest: [u8; 32],
 }
 
-/// A program a file embeds (`embed`), a document of its own: the `via` that built it, its text
-/// and the tape of its tree over that text (in the program's dialect), the segments that map its
-/// text to the file's bytes, and the file's bytes it cannot be read through.
-#[derive(Clone)]
-pub(super) struct GuestImage {
-    via: Via,
-    text: Arc<String>,
-    segments: Arc<SegmentMap>,
-    host_errors: Arc<Vec<(u32, u32)>>,
-    tape: TapeImage,
+/// Which of a file's documents one is: the file's own tree, or one derived from another of them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DocumentRole {
+    /// The file's own tree, over the file's bytes.
+    Primary,
+    /// A program whose text is one contiguous, byte-exact slice of the document it was derived
+    /// from: its source map is one copied segment over the whole text.
+    Embedded,
+    /// Any other derived program, written as well as copied (Blade's compiled view, a Vue
+    /// component's script program).
+    Generated,
 }
 
-impl GuestImage {
-    /// The image of `program`, which `via` built from a file of `host`'s dialect over `source`.
+impl DocumentRole {
+    /// The role of a derived document of `text` that `source_map` maps to its parent.
+    fn derived(text: &str, source_map: &SegmentMap) -> Self {
+        if !text.is_empty()
+            && source_map.len() == 1
+            && source_map.copied_span(0..text.len()).is_some()
+        {
+            Self::Embedded
+        } else {
+            Self::Generated
+        }
+    }
+
+    /// Its persisted code (`file_documents.role_id`).
+    pub(super) fn code(self) -> i64 {
+        match self {
+            Self::Primary => 0,
+            Self::Embedded => 1,
+            Self::Generated => 2,
+        }
+    }
+
+    fn from_code(code: i64) -> Option<Self> {
+        match code {
+            0 => Some(Self::Primary),
+            1 => Some(Self::Embedded),
+            2 => Some(Self::Generated),
+            _ => None,
+        }
+    }
+}
+
+/// An embedding's persisted identity (`file_documents.via_id`): a nonnegative integer read from
+/// its registry name (`Via::id`), so it holds across builds that keep the name.
+pub(super) fn via_code(via: Via) -> i64 {
+    let digest = Sha256::digest(via.id().as_bytes());
+    i64::from_be_bytes(digest[..8].try_into().expect("digest width")) & i64::MAX
+}
+
+/// The embedding of `host`'s whose persisted identity is `code` (`via_code`).
+fn via_of_code(host: GrammarDialect, code: i64) -> Option<Via> {
+    host.embeds()
+        .iter()
+        .map(|&(via, _)| via)
+        .find(|&via| via_code(via) == code)
+}
+
+/// A file's documents as parsed: its own tree, and the ones derived from it.
+#[derive(Clone)]
+pub(super) struct FileImage {
+    pub(super) primary: TapeImage,
+    /// In ordinal order (`DerivedImage::parent` counts the primary as 0, the first of these as 1).
+    pub(super) derived: Vec<DerivedImage>,
+}
+
+/// A document derived from another of the file's: its own text, grammar and tape, and how it maps
+/// to the document it was derived from.
+#[derive(Clone)]
+pub(super) struct DerivedImage {
+    /// `Embedded` or `Generated`, never `Primary`.
+    pub(super) role: DocumentRole,
+    /// The embedding that built it.
+    pub(super) via: Via,
+    /// The document it was derived from: 0 the primary, `i` the `i`-th derived one. Embedders run
+    /// on the primary only; the field makes nesting representable.
+    pub(super) parent: u32,
+    pub(super) text: Arc<String>,
+    /// Where its text stands in its parent's (`embed::segments`).
+    pub(super) source_map: Arc<SegmentMap>,
+    /// The parent's bytes it cannot be read through (`embed::Program::host_errors`).
+    pub(super) host_errors: Arc<Vec<(u32, u32)>>,
+    /// Its tree over `text`, in its own dialect.
+    pub(super) tape: TapeImage,
+}
+
+impl DerivedImage {
+    /// The image of `program`, which `via` built from document `parent` of `host`'s dialect over
+    /// `source`.
     fn encode(
         via: Via,
         program: Program,
+        parent: u32,
         host: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
@@ -181,7 +275,9 @@ impl GuestImage {
             budget,
         )?;
         Ok(Self {
+            role: DocumentRole::derived(&program.text, &program.segments),
             via,
+            parent,
             host_errors: Arc::new(
                 program
                     .host_errors
@@ -190,34 +286,223 @@ impl GuestImage {
                     .collect(),
             ),
             text: Arc::new(program.text),
-            segments: Arc::new(program.segments),
+            source_map: Arc::new(program.segments),
             tape,
         })
     }
+
+    /// The dialect of its tree.
+    pub(super) fn dialect(&self) -> GrammarDialect {
+        self.tape.language
+    }
+
+    /// Its source map's persisted form (`SegmentMap::write`).
+    /// The program ranges its tape leaves out (`SegmentMap::omissions`), as little-endian `u32`
+    /// pairs: with its text, all its tape depends on.
+    pub(super) fn omission_bytes(&self) -> Vec<u8> {
+        self.source_map
+            .omissions()
+            .flat_map(|range| [range.start as u32, range.end as u32])
+            .flat_map(u32::to_le_bytes)
+            .collect()
+    }
+
+    pub(super) fn source_map_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(
+            SegmentMap::persisted_len(self.source_map.len()).unwrap_or_default(),
+        );
+        self.source_map.write(&mut bytes);
+        bytes
+    }
+
+    /// Its host errors' persisted form: each range's start and end, little-endian `u32`s.
+    pub(super) fn host_error_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.host_errors.len() * 8);
+        for &(start, end) in self.host_errors.iter() {
+            bytes.extend_from_slice(&start.to_le_bytes());
+            bytes.extend_from_slice(&end.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn estimated_bytes(&self) -> usize {
+        self.text.capacity()
+            + self.source_map.estimated_bytes()
+            + self.host_errors.capacity() * std::mem::size_of::<(u32, u32)>()
+            + self.tape.estimated_bytes()
+    }
 }
 
-/// A `via`'s index among the distinct ones `host` embeds through, as an image records it.
-fn via_index(host: GrammarDialect, via: Via) -> Option<u8> {
-    let mut vias = host
-        .embeds()
-        .iter()
-        .map(|&(via, _)| via)
-        .collect::<Vec<_>>();
-    vias.dedup();
-    vias.iter()
-        .position(|&known| known == via)
-        .and_then(|index| u8::try_from(index).ok())
+/// A derived document as the store keeps it (its `file_documents` row, text and tape), before
+/// `FileImage::read` checks it.
+pub(super) struct StoredDerived<'a> {
+    pub(super) ordinal: i64,
+    pub(super) parent: i64,
+    pub(super) role: i64,
+    pub(super) via: i64,
+    pub(super) text: &'a [u8],
+    pub(super) source_map: &'a [u8],
+    pub(super) host_errors: &'a [u8],
+    pub(super) tape: &'a [u8],
 }
 
-/// The `via` an image records by its index (`via_index`).
-fn via_at(host: GrammarDialect, index: u8) -> Option<Via> {
-    let mut vias = host
-        .embeds()
-        .iter()
-        .map(|&(via, _)| via)
-        .collect::<Vec<_>>();
-    vias.dedup();
-    vias.get(usize::from(index)).copied()
+impl FileImage {
+    /// The documents of a file that derives none.
+    pub(super) fn single(primary: TapeImage) -> Self {
+        Self {
+            primary,
+            derived: Vec::new(),
+        }
+    }
+
+    /// The documents the store keeps for a file: its tape `primary` in `grammar`'s dialect and
+    /// the documents derived from it, in ordinal order from 1. Each derived document is checked
+    /// as a tape of its own, and against the document it was derived from: an embedding that
+    /// document's dialect has, a tape of that embedding's dialect over its text, a source map and
+    /// host errors within both texts, and the role its map gives it.
+    pub(super) fn read(
+        primary: &[u8],
+        grammar: &Arc<Grammar>,
+        derived: &[StoredDerived<'_>],
+    ) -> Result<Self, String> {
+        let mut image = Self {
+            primary: TapeImage::from_bytes(primary, grammar)?,
+            derived: Vec::with_capacity(derived.len()),
+        };
+        for (index, stored) in derived.iter().enumerate() {
+            if usize::try_from(stored.ordinal).ok() != Some(index + 1) {
+                return Err("a file's derived documents are not numbered from 1".into());
+            }
+            let parent = u32::try_from(stored.parent)
+                .ok()
+                .filter(|&parent| (parent as usize) <= index)
+                .ok_or("a derived document's parent is not an earlier document of its file")?;
+            let (parent_dialect, parent_len) = match parent {
+                0 => (image.primary.language, image.primary.source_len),
+                parent => {
+                    let document = &image.derived[parent as usize - 1];
+                    (document.tape.language, document.text.len())
+                }
+            };
+            let via = via_of_code(parent_dialect, stored.via).ok_or("unsupported embedding")?;
+            let text = std::str::from_utf8(stored.text)
+                .map_err(|_| "derived document text is not UTF-8")?
+                .to_owned();
+            let dialect = stored
+                .tape
+                .get(8)
+                .and_then(|&tag| super::language::from_tape_tag(tag))
+                .ok_or("unsupported derived document language")?;
+            if !parent_dialect.embeds().contains(&(via, dialect)) {
+                return Err("a derived document's dialect is not one its parent embeds".into());
+            }
+            let tape = TapeImage::from_bytes(stored.tape, &Grammar::embedded(dialect)?)?;
+            if tape.source_len != text.len() {
+                return Err("a derived document's tape is not of its text".into());
+            }
+            let source_map = SegmentMap::read(stored.source_map, text.len(), parent_len)?;
+            if !stored.host_errors.len().is_multiple_of(8) {
+                return Err("truncated derived document host errors".into());
+            }
+            let host_errors = stored
+                .host_errors
+                .chunks_exact(8)
+                .map(|pair| {
+                    (
+                        u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),
+                        u32::from_le_bytes(pair[4..].try_into().expect("u32 width")),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if host_errors.windows(2).any(|pair| pair[0] > pair[1])
+                || host_errors
+                    .iter()
+                    .any(|&(start, end)| start > end || end as usize > parent_len)
+            {
+                return Err("noncanonical derived document host errors".into());
+            }
+            let role = DocumentRole::from_code(stored.role)
+                .filter(|&role| role == DocumentRole::derived(&text, &source_map))
+                .ok_or("a derived document's role is not its source map's")?;
+            image.derived.push(DerivedImage {
+                role,
+                via,
+                parent,
+                text: Arc::new(text),
+                source_map: Arc::new(source_map),
+                host_errors: Arc::new(host_errors),
+                tape,
+            });
+        }
+        Ok(image)
+    }
+
+    /// Every document's image written as the store keeps it and read back (`read`).
+    #[cfg(test)]
+    pub(super) fn round_trip(&self, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        let primary = self.primary.to_bytes()?;
+        let parts = self
+            .derived
+            .iter()
+            .map(|document| {
+                Ok((
+                    document.tape.to_bytes()?,
+                    document.source_map_bytes(),
+                    document.host_error_bytes(),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let stored = self
+            .derived
+            .iter()
+            .zip(&parts)
+            .enumerate()
+            .map(
+                |(index, (document, (tape, source_map, host_errors)))| StoredDerived {
+                    ordinal: index as i64 + 1,
+                    parent: i64::from(document.parent),
+                    role: document.role.code(),
+                    via: via_code(document.via),
+                    text: document.text.as_bytes(),
+                    source_map,
+                    host_errors,
+                    tape,
+                },
+            )
+            .collect::<Vec<_>>();
+        Self::read(&primary, grammar, &stored)
+    }
+
+    pub(super) fn estimated_bytes(&self) -> usize {
+        self.primary.estimated_bytes()
+            + self
+                .derived
+                .iter()
+                .map(DerivedImage::estimated_bytes)
+                .sum::<usize>()
+            + self.derived.capacity() * std::mem::size_of::<DerivedImage>()
+    }
+}
+
+/// What tests restore (`TapeDoc::restore`): a file's documents, or a lone tape, the documents of
+/// a file that derives none.
+#[cfg(test)]
+pub(super) trait Documents {
+    fn file_image(&self) -> Cow<'_, FileImage>;
+}
+
+#[cfg(test)]
+impl Documents for FileImage {
+    fn file_image(&self) -> Cow<'_, FileImage> {
+        Cow::Borrowed(self)
+    }
+}
+
+#[cfg(test)]
+impl Documents for TapeImage {
+    fn file_image(&self) -> Cow<'_, FileImage> {
+        Cow::Owned(FileImage::single(self.clone()))
+    }
 }
 
 #[derive(Clone)]
@@ -698,7 +983,6 @@ impl TapeImage {
             u64::try_from(self.kind_aliases.len()).map_err(|_| "kind alias count overflow")?,
             u64::try_from(alias_bytes).map_err(|_| "kind alias length overflow")?,
             u64::try_from(self.kind_overrides.len()).map_err(|_| "kind override count overflow")?,
-            u64::try_from(self.guests.len()).map_err(|_| "embedded program count overflow")?,
         ];
         let payload = self
             .rec
@@ -756,26 +1040,6 @@ impl TapeImage {
             bytes.extend_from_slice(&index.to_le_bytes());
             bytes.extend_from_slice(&alias.to_le_bytes());
         }
-        // Each guest: its `via`'s index, then its text, segments, host errors and tape, each
-        // after its length.
-        for guest in &self.guests {
-            if !guest.tape.guests.is_empty() {
-                return Err("an embedded program embeds no program".into());
-            }
-            bytes.push(via_index(self.language, guest.via).ok_or("unsupported embedding")?);
-            bytes.extend_from_slice(&(guest.text.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(guest.text.as_bytes());
-            bytes.extend_from_slice(&(guest.segments.len() as u64).to_le_bytes());
-            guest.segments.write(&mut bytes);
-            bytes.extend_from_slice(&(guest.host_errors.len() as u64).to_le_bytes());
-            for &(start, end) in guest.host_errors.iter() {
-                bytes.extend_from_slice(&start.to_le_bytes());
-                bytes.extend_from_slice(&end.to_le_bytes());
-            }
-            let tape = guest.tape.to_bytes()?;
-            bytes.extend_from_slice(&(tape.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(&tape);
-        }
         Ok(bytes)
     }
 
@@ -808,7 +1072,6 @@ impl TapeImage {
         let alias_count = reader.length()?;
         let alias_bytes = reader.length()?;
         let override_count = reader.length()?;
-        let guest_count = reader.length()?;
         let rec = reader.take(rec_len)?.to_vec();
         let spans = reader.take(spans_len)?.to_vec();
         let checkpoints = reader.take(checkpoints_len)?.to_vec();
@@ -866,62 +1129,6 @@ impl TapeImage {
                 u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width")),
             ));
         }
-        // Every guest takes at least its `via` byte and four lengths.
-        if guest_count
-            .checked_mul(33)
-            .is_none_or(|minimum| minimum > bytes.len() - reader.offset)
-        {
-            return Err("invalid embedded program count".into());
-        }
-        let mut guests = Vec::with_capacity(guest_count);
-        for _ in 0..guest_count {
-            let via = via_at(language, reader.u8()?).ok_or("unsupported embedding")?;
-            if guests.iter().any(|guest: &GuestImage| guest.via == via) {
-                return Err("an embedding repeats".into());
-            }
-            let text_len = reader.length()?;
-            let text = std::str::from_utf8(reader.take(text_len)?)
-                .map_err(|_| "embedded program text is not UTF-8")?
-                .to_owned();
-            let segment_count = reader.length()?;
-            let segments = SegmentMap::read(
-                reader.take(
-                    SegmentMap::persisted_len(segment_count)
-                        .ok_or("embedded program segment count overflow")?,
-                )?,
-                text.len(),
-                source_len,
-            )?;
-            let error_count = reader.length()?;
-            let host_errors = reader.pairs(error_count)?;
-            if host_errors.windows(2).any(|pair| pair[0] > pair[1])
-                || host_errors
-                    .iter()
-                    .any(|&(start, end)| start > end || end as usize > source_len)
-            {
-                return Err("noncanonical embedded program host errors".into());
-            }
-            let tape_len = reader.length()?;
-            let tape = reader.take(tape_len)?;
-            let dialect = tape
-                .get(8)
-                .and_then(|&tag| super::language::from_tape_tag(tag))
-                .ok_or("unsupported embedded program language")?;
-            if !language.embeds().contains(&(via, dialect)) {
-                return Err("an embedded program's dialect is not one its host embeds".into());
-            }
-            let tape = Self::from_bytes(tape, &Grammar::embedded(dialect)?)?;
-            if !tape.guests.is_empty() || tape.source_len != text.len() {
-                return Err("an embedded program's tape is not of its text".into());
-            }
-            guests.push(GuestImage {
-                via,
-                text: Arc::new(text),
-                segments: Arc::new(segments),
-                host_errors: Arc::new(host_errors),
-                tape,
-            });
-        }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
@@ -945,23 +1152,28 @@ impl TapeImage {
             missing,
             kind_aliases,
             kind_overrides,
-            guests,
             language,
             source_len,
             source_digest,
         })
     }
 
-    /// Parses `source` as `grammar`'s dialect and encodes its tape: with tree-sitter (a PHP file's
-    /// view, `php_view`, against `source`), or a Blade template with Rerail's port of Forte
-    /// (`encode_template`). `None` where tree-sitter gave up (`budget` interrupted it).
+    /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
+    /// file's view, `php_view`, against `source`), or a Blade template with Rerail's port of Forte
+    /// (`encode_template`). `None` where the parser stopped before it read the file: tree-sitter
+    /// gave up (`budget` interrupted it), or Forte reached a limit.
     pub(super) fn parse(
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
-    ) -> Option<Result<Self, String>> {
+    ) -> Option<Result<FileImage, String>> {
         if grammar.lang == GrammarDialect::Blade {
-            return Some(Self::encode_template(grammar, source, budget));
+            return match Self::encode_template(grammar, source, budget) {
+                Ok(image) => Some(Ok(image)),
+                // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
+                Err(TemplateError::Parser(_)) => None,
+                Err(TemplateError::Encode(error)) => Some(Err(error)),
+            };
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -985,16 +1197,18 @@ impl TapeImage {
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 
-    /// The tape of a tree-sitter tree of `source`, with the programs its embedders build from
-    /// the tree: at most one per `via`. (Blade's compiled view is built from its Forte tree:
-    /// `encode_blade`.)
+    /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
+    /// build from the tree, each one per `via`. (Blade's compiled view is built from its Forte
+    /// tree: `encode_blade`.)
     pub(super) fn encode(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
-        let mut image = Self::encode_tree_image(root, grammar, source, None, budget)?;
+    ) -> Result<FileImage, String> {
+        let mut image = FileImage::single(Self::encode_tree_image(
+            root, grammar, source, None, budget,
+        )?);
         let embeds = grammar.lang.embeds();
         for (index, &(via, _)) in embeds.iter().enumerate() {
             if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
@@ -1002,7 +1216,9 @@ impl TapeImage {
             }
             crate::code_rule_dsl::language::with_embedder!(via, E => {
                 if let Some(program) = <E as Embedder>::build(root, source) {
-                    image.guests.push(GuestImage::encode(via, program, grammar, source, budget)?);
+                    image
+                        .derived
+                        .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
                 }
             });
         }
@@ -1038,41 +1254,48 @@ impl TapeImage {
         Self::finish(nodes, grammar, source, budget)
     }
 
-    /// The tape of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
+    /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
     pub(super) fn encode_template(
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
+    ) -> Result<FileImage, TemplateError> {
         checked(budget)?;
-        Self::encode_blade(&parse_tree(source.as_bytes()), grammar, source, budget)
+        let tree = parse_tree(source.as_bytes()).map_err(TemplateError::Parser)?;
+        Self::encode_blade(&tree, grammar, source, budget)
     }
 
-    /// The tape of a Blade template from its Forte tree (`tree::parse_tree`): the template's
-    /// tree, its syntax errors as ERROR leaves, and its embedded PHP (`blade::view`, the
-    /// `compiled-view` embedding) as its guest.
+    /// The documents of a Blade template from its Forte tree (`tree::parse_tree`): the
+    /// template's tree, its syntax errors as ERROR leaves, and the document its embedded PHP
+    /// derives (`blade::view`, the `compiled-view` embedding).
     pub(super) fn encode_blade(
         tree: &BladeTree,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
+    ) -> Result<FileImage, TemplateError> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Blade {
-            return Err("only a Blade template is encoded from a Forte tree".into());
+            return Err("only a Blade template is encoded from a Forte tree"
+                .to_owned()
+                .into());
         }
         if source.len() > u32::MAX as usize {
-            return Err("source exceeds tape range".into());
+            return Err("source exceeds tape range".to_owned().into());
         }
         // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
-        let read = View::read(tree, source, budget)?;
+        let read = View::read(tree, source, budget).map_err(|error| match error {
+            ReadError::Parser(error) => TemplateError::Parser(error),
+            ReadError::Interrupted => TemplateError::Encode("tape operation interrupted".into()),
+        })?;
         let mut nodes = Vec::<Pending>::new();
         encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-        let mut image = Self::finish(nodes, grammar, source, budget)?;
+        let mut image = FileImage::single(Self::finish(nodes, grammar, source, budget)?);
         if let Some(view) = read.view {
-            image.guests.push(GuestImage::encode(
+            image.derived.push(DerivedImage::encode(
                 Via::CompiledView,
                 view.into_program(),
+                0,
                 grammar,
                 source,
                 budget,
@@ -1188,7 +1411,6 @@ impl TapeImage {
             missing,
             kind_aliases,
             kind_overrides,
-            guests: Vec::new(),
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
@@ -1214,16 +1436,6 @@ impl TapeImage {
                 .map(|(name, _)| name.capacity())
                 .sum::<usize>()
             + self.kind_overrides.capacity() * std::mem::size_of::<(u32, u16)>()
-            + self
-                .guests
-                .iter()
-                .map(|guest| {
-                    guest.text.capacity()
-                        + guest.segments.estimated_bytes()
-                        + guest.host_errors.capacity() * std::mem::size_of::<(u32, u32)>()
-                        + guest.tape.estimated_bytes()
-                })
-                .sum::<usize>()
             + std::mem::size_of::<Self>()
     }
 }
@@ -1281,28 +1493,44 @@ struct HostLink {
     segments: Arc<SegmentMap>,
     host_errors: Arc<Vec<(u32, u32)>>,
     host: TapeDoc,
-    /// Each node's file bytes (`node_hulls`), by preorder index.
-    hulls: Vec<(u32, u32)>,
+    /// Each node's extent in the program (`node_extents`), by preorder index.
+    extents: Vec<(u32, u32)>,
 }
 
-/// The file bytes each node of a guest's records stands for: a leaf's, the bytes its text stands
-/// for (`SegmentMap::host_span`); any other node's, the least range holding its leaves' (the
-/// white space between a node's tokens, which the program may copy, is none of its own).
-fn node_hulls(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
-    let mut hulls = vec![(u32::MAX, 0); nodes.len()];
+/// The program bytes each node of a guest's records stands for: from the first of its leaves that
+/// stands for file bytes to the last (`SegmentMap::stands_for`); a node none of whose leaves does,
+/// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
+/// white space after its last statement, and a statement ending in a `;` its embedder wrote over
+/// no bytes holds the white space before it, which stands for nothing of the node's.
+fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
+    const NONE_YET: (u32, u32) = (u32::MAX, 0);
+    let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
+        *into = (into.0.min(start), into.1.max(end));
+    };
+    // Per node: the extent of its leaves standing for bytes, and of all its leaves.
+    let mut standing = vec![NONE_YET; nodes.len()];
+    let mut all = vec![NONE_YET; nodes.len()];
     for index in (0..nodes.len()).rev() {
         let rec = &nodes[index];
         if rec.children == 0 {
-            let span = segments.host_span(rec.start as usize..rec.end as usize);
-            hulls[index] = (span.start as u32, span.end as u32);
+            all[index] = (rec.start, rec.end);
+            if segments.stands_for(rec.start as usize..rec.end as usize) {
+                standing[index] = (rec.start, rec.end);
+            }
         }
         if rec.parent != NONE {
-            let (start, end) = hulls[index];
-            let parent = &mut hulls[rec.parent as usize];
-            *parent = (parent.0.min(start), parent.1.max(end));
+            let (leaves, standing_leaves) = (all[index], standing[index]);
+            join(&mut all[rec.parent as usize], leaves);
+            if standing_leaves != NONE_YET {
+                join(&mut standing[rec.parent as usize], standing_leaves);
+            }
         }
     }
-    hulls
+    standing
+        .into_iter()
+        .zip(all)
+        .map(|(standing, all)| if standing == NONE_YET { all } else { standing })
+        .collect()
 }
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
@@ -1326,17 +1554,23 @@ impl Points {
 }
 
 impl TapeDoc {
-    /// The document `image` encodes over `source`, with the guests it embeds.
+    /// The documents `image` encodes over `source`: the file's own, with the guests derived from
+    /// it.
     pub(super) fn restore_with_lines(
         source: Arc<String>,
         grammar: Arc<Grammar>,
-        image: &TapeImage,
+        image: &FileImage,
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let mut host = Self::restore_tree(source, grammar, image, lines, budget)?;
-        if image.guests.is_empty() {
+        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, budget)?;
+        if image.derived.is_empty() {
             return Ok(host);
+        }
+        // A guest reads the file's own document as its host; a document derived from a guest
+        // has no runtime home, so its file is parsed again rather than read in part.
+        if image.derived.iter().any(|document| document.parent != 0) {
+            return Err("a document derived from a derived document is not restored".into());
         }
         let mut failure = None;
         let guests = Arc::new_cyclic(|guests: &Weak<Vec<Guest>>| {
@@ -1344,8 +1578,8 @@ impl TapeDoc {
                 guests: Guests::Linked(guests.clone()),
                 ..host.clone()
             };
-            let mut restored = Vec::with_capacity(image.guests.len());
-            for guest in &image.guests {
+            let mut restored = Vec::with_capacity(image.derived.len());
+            for guest in &image.derived {
                 match Self::restore_guest(&linked, guest, budget) {
                     Ok(doc) => restored.push(Guest {
                         via: guest.via,
@@ -1366,26 +1600,26 @@ impl TapeDoc {
         Ok(host)
     }
 
-    /// The guest document `guest` encodes, embedded in `host`.
+    /// The guest document `guest` encodes, derived from `host`.
     fn restore_guest(
         host: &Self,
-        guest: &GuestImage,
+        guest: &DerivedImage,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         let grammar = Grammar::embedded(guest.tape.language)?;
         // Positions read through the segments slice both texts: a map that does not fit them is
         // refused here, so the tape is encoded again, never read wrong.
-        guest.segments.check(&guest.text, &host.source)?;
+        guest.source_map.check(&guest.text, &host.source)?;
         let lines = Arc::new(LineTable::new(&guest.text, Terminators::of(grammar.lang)));
         let mut doc =
             Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
         checked(budget)?;
         doc.host = Some(Arc::new(HostLink {
             via: guest.via,
-            segments: Arc::clone(&guest.segments),
+            segments: Arc::clone(&guest.source_map),
             host_errors: Arc::clone(&guest.host_errors),
             host: host.clone(),
-            hulls: node_hulls(&doc.data, &guest.segments),
+            extents: node_extents(&doc.data, &guest.source_map),
         }));
         Ok(doc)
     }
@@ -1703,15 +1937,17 @@ impl TapeDoc {
             .map_or(self.grammar.lang, |link| link.host.grammar.lang)
     }
 
+    /// The documents `image` encodes over `source`, with a fresh line table: a file's documents,
+    /// or a lone tape (a file that derives none).
     #[cfg(test)]
     pub(super) fn restore(
         source: Arc<String>,
         grammar: Arc<Grammar>,
-        image: &TapeImage,
+        image: &impl Documents,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
-        Self::restore_with_lines(source, grammar, image, lines, budget)
+        Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
     }
 
     /// The source's line table, shared with the evaluator that restored this document.
@@ -2061,24 +2297,37 @@ impl Doc for TapeDoc {
     }
 }
 
-/// A host's bytes are the file's; a guest's program text stands for the file bytes its segments
-/// map it to, and a guest node for the least range holding its leaves' (`node_hulls`: the white
-/// space between a node's tokens, which the program may copy, is none of its own).
+/// A host's bytes are the file's; a guest's program text stands for the file ranges its segments
+/// map it to (`SegmentMap::file_ranges`), and a guest node for those of its extent, from its first
+/// leaf standing for file bytes to its last (`node_extents`), white space between its ranges
+/// included, as a tree's node holds the white space between its tokens (`FileRanges::bridged`).
 impl crate::code_rule_dsl::origin::Origin for TapeDoc {
-    fn of_node(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
         Some(match &self.host {
-            None => range,
+            None => FileRanges::one(range),
             Some(link) => {
-                let (start, end) = *link.hulls.get(id)?;
-                start as usize..end as usize
+                let (start, end) = *link.extents.get(id)?;
+                link.segments
+                    .file_ranges(start as usize..end as usize)
+                    .bridged(&link.host.source)
             }
         })
     }
 
-    fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(match &self.host {
+            None => FileRanges::one(range),
+            Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),
+        })
+    }
+
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
         Some(match &self.host {
             None => range,
-            Some(link) => link.segments.host_span(range),
+            Some(link) => {
+                let (start, end) = *link.extents.get(id)?;
+                link.segments.bounds(start as usize..end as usize)
+            }
         })
     }
 

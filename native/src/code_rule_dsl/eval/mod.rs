@@ -351,9 +351,10 @@ fn stateless_calls(
         // A file that embeds code reads its calls from its tape's embedded program
         // (`calls::calls_document`).
         let (summary, _) = if !language.embeds().is_empty() {
-            let (doc, _) = query::file_tape(language, file)?;
             let bytes = file.source.len();
-            match calls::calls_document(doc, language) {
+            // A file the parser stopped on (`file_tape`) has no program to read calls from.
+            let doc = query::file_tape(language, file)?.map(|(doc, _)| doc);
+            match doc.and_then(|doc| calls::calls_document(doc, language)) {
                 Some((doc, dialect)) => {
                     let has_errors =
                         !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&doc).is_empty();

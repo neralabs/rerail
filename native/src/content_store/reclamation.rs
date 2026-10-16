@@ -193,6 +193,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=t.tape_id) \
+             AND NOT EXISTS (SELECT 1 FROM file_documents d WHERE d.document_tape_id=t.tape_id) \
              ORDER BY t.tape_id LIMIT ?3)",
             params![current_generation, OBJECT_TAPE, limit],
         )?;

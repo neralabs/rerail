@@ -177,7 +177,7 @@ fn a_token_the_program_writes_is_rewritten() {
             (
                 InFile::tape(doc.root().get_doc())
                     .text(&statement)
-                    .to_owned(),
+                    .into_owned(),
                 super::rewritten(&statement),
             )
         })

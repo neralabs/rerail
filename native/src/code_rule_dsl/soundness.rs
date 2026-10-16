@@ -1,3 +1,4 @@
+use super::embed::segments::FileRanges;
 use super::lines::LineTable;
 use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_rule};
 use super::origin::Origin;
@@ -312,10 +313,13 @@ pub(super) enum SyntaxReading {
 /// A document's error regions as ranges of the file, unmerged: its ERROR and MISSING nodes', and
 /// the file bytes a guest cannot be read through.
 fn file_ranges(doc: &TapeDoc) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = doc
-        .syntax_error_nodes()
-        .filter_map(|(index, range)| Origin::of_node(doc, index, range))
-        .collect::<Vec<_>>();
+    // An error node of a program standing for several file ranges is an error in each.
+    let mut ranges = Vec::new();
+    for (index, range) in doc.syntax_error_nodes() {
+        if let Some(placed) = Origin::of_node(doc, index, range) {
+            ranges.extend(placed.iter().cloned());
+        }
+    }
     ranges.extend(doc.host_errors());
     ranges
 }
@@ -385,6 +389,11 @@ impl SyntaxErrors {
 
     pub(super) fn is_empty(&self) -> bool {
         self.regions.is_empty()
+    }
+
+    /// Whether any of the file ranges a node stands for meets a region (`overlaps`).
+    pub(super) fn meets(&self, ranges: &FileRanges) -> bool {
+        ranges.iter().any(|range| self.overlaps(range))
     }
 
     /// Whether `range` meets any region; a zero-width MISSING point meets a range that touches it.

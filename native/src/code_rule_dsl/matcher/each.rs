@@ -85,11 +85,12 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
             let Some((innermost, outer)) = hosts.split_last() else {
                 return Some(node.range());
             };
-            let range = innermost.of_node(node.node_id(), node.range())?;
+            // A binding is one range: where it starts in the file (`FileRanges::primary`).
+            let range = innermost.of_node(node.node_id(), node.range())?.primary();
             outer
                 .iter()
                 .rev()
-                .try_fold(range, |range, host| host.of_range(range))
+                .try_fold(range, |range, host| Some(host.of_range(range)?.primary()))
         }),
         None => {
             let range = exported_span(env, name)?;
@@ -97,7 +98,7 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
                 hosts
                     .iter()
                     .rev()
-                    .try_fold(range, |range, host| host.of_range(range))
+                    .try_fold(range, |range, host| Some(host.of_range(range)?.primary()))
             })
         }
     }
@@ -190,6 +191,7 @@ impl Drop for Enumeration {
 mod tests {
     use super::{HostRanges, binding_range};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
+    use crate::code_rule_dsl::embed::segments::FileRanges;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::origin::Origin;
     use crate::code_rule_dsl::test_support::*;
@@ -361,14 +363,17 @@ mod tests {
         // Inside a sub-tree, a node reads through the sub-tree's coordinates, innermost first.
         struct Shift(usize);
         impl Origin for Shift {
-            fn of_node(&self, _: usize, _: Range<usize>) -> Option<Range<usize>> {
+            fn of_node(&self, _: usize, _: Range<usize>) -> Option<FileRanges> {
+                Some(FileRanges::one(10 + self.0..11 + self.0))
+            }
+            fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+                Some(FileRanges::one(range.start + self.0..range.end + self.0))
+            }
+            fn bounds(&self, _: usize, _: Range<usize>) -> Option<Range<usize>> {
                 Some(10 + self.0..11 + self.0)
             }
-            fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
-                Some(range.start + self.0..range.end + self.0)
-            }
             fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
-                self.of_range(range)
+                Some(range.start + self.0..range.end + self.0)
             }
         }
         let shift = |by: usize| -> Arc<dyn Origin> { Arc::new(Shift(by)) };

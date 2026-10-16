@@ -455,7 +455,10 @@ impl<'a> Leaf<'a> {
                     return Ok(FileStep::Skipped);
                 }
                 let language = file_language(file).expect("a matcher's file has a dialect");
-                let (host, lines) = file_tape(language, file)?;
+                let Some((host, lines)) = file_tape(language, file)? else {
+                    *util_limit = Some((file.path.clone(), UtilLimit::Parse));
+                    return Ok(FileStep::Failed(None));
+                };
                 // The document the clause reads (`embed`): the file's own tree, or the program it
                 // embeds; a file without the program the clause reads holds no witness of it.
                 let guests = host.guests();
@@ -710,17 +713,19 @@ enum FileOutcome {
     Limit(UtilLimit),
 }
 
-/// A file's tape, as the workspace stores it, and its line table.
+/// A file's tape, as the workspace stores it, and its line table; `None` where the parser stopped
+/// at a limit before it read the file (Forte's nesting depth or step budget).
 pub(super) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
-) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let image = tape::TapeImage::parse(&tape_grammar, &file.source, &never)
-        .ok_or_else(|| invalid("file could not be parsed"))?
-        .map_err(invalid)?;
+    let Some(image) = tape::TapeImage::parse(&tape_grammar, &file.source, &never) else {
+        return Ok(None);
+    };
+    let image = image.map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     #[cfg(test)]
     crate::code_rule_dsl::matcher::note_line_table_construction();
@@ -732,7 +737,7 @@ pub(super) fn file_tape(
         &never,
     )
     .map_err(invalid)?;
-    Ok((doc, lines))
+    Ok(Some((doc, lines)))
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -784,7 +789,7 @@ fn evaluate_file_clause(
                         }
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
-                    if errors.overlaps(&place.node(matched.get_node())) {
+                    if errors.meets(&place.place(matched.get_node())) {
                         return Ok(true);
                     }
                     let matched_node = matched.get_node();

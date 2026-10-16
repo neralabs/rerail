@@ -275,7 +275,9 @@ struct FileState {
     input: FileInput,
     source_digest: [u8; 32],
     source_revision: u32,
-    tape: Option<(u32, tape::TapeImage)>,
+    /// The documents of this source revision (`tape::FileImage`): its own tape, and the ones it
+    /// derives.
+    tape: Option<(u32, tape::FileImage)>,
     /// The scope tables `resolves` built for this source revision (one per grammar and annotation
     /// reading), reused by later evaluations.
     scopes: Option<(u32, Vec<Arc<ScopeTable>>)>,

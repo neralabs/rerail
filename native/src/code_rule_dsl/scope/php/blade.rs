@@ -18,7 +18,7 @@ impl Visitor<'_, '_> {
         let Some(file) = crate::code_rule_dsl::origin::InFile::of(node) else {
             return state;
         };
-        let Some(marker) = crate::code_rule_dsl::blade::marker(file.text(node)) else {
+        let Some(marker) = crate::code_rule_dsl::blade::marker(&file.text(node)) else {
             return state;
         };
         if marker.reads_all {

@@ -162,9 +162,9 @@ fn persisted_tree_parity(source: &str, language: GrammarDialect) -> Result<usize
     let grammar = Grammar::new(language).map_err(|error| error.to_string())?;
     let native = StrDoc::new(source, language);
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)?;
-    let bytes = image.to_bytes()?;
-    let decoded = TapeImage::from_bytes(&bytes, &grammar)?;
-    if decoded.to_bytes()? != bytes {
+    let bytes = image.primary.to_bytes()?;
+    let decoded = image.round_trip(&grammar)?;
+    if decoded.primary.to_bytes()? != bytes {
         return Err("serialized tape did not round-trip canonically".into());
     }
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false)?;
@@ -373,14 +373,16 @@ fn view_records(
 /// built from it (`blade_tree_parity`).
 fn blade_tape_parity(source: &str) -> Result<(usize, usize), String> {
     let grammar = Grammar::new(GrammarDialect::Blade).map_err(|error| error.to_string())?;
-    let image = TapeImage::encode_template(&grammar, source, &|| false)?;
-    let bytes = image.to_bytes()?;
-    let decoded = TapeImage::from_bytes(&bytes, &grammar)?;
-    if decoded.to_bytes()? != bytes {
+    let image = TapeImage::encode_template(&grammar, source, &|| false)
+        .map_err(|error| format!("{error:?}"))?;
+    let bytes = image.primary.to_bytes()?;
+    let decoded = image.round_trip(&grammar)?;
+    if decoded.primary.to_bytes()? != bytes {
         return Err("serialized tape did not round-trip canonically".into());
     }
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false)?;
-    blade_tree_parity(&parse_tree(source.as_bytes()), source, &tape)
+    let tree = parse_tree(source.as_bytes()).map_err(|error| format!("{error:?}"))?;
+    blade_tree_parity(&tree, source, &tape)
 }
 
 /// The records of a template's Forte tree, its syntax errors ERROR leaves where the tape places
@@ -465,7 +467,7 @@ fn blade_tree_parity(
     source: &str,
     tape: &TapeDoc,
 ) -> Result<(usize, usize), String> {
-    let read = View::read(tree, source, &|| false)?;
+    let read = View::read(tree, source, &|| false).map_err(|error| format!("{error:?}"))?;
     let mut placed = read
         .syntax_errors
         .iter()
@@ -730,9 +732,9 @@ fn persisted_go_structural_captures_match_native() {
         let native = StrDoc::new(source, GrammarDialect::Go);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        let bytes = image.to_bytes().unwrap();
-        let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
-        assert_eq!(bytes, decoded.to_bytes().unwrap());
+        let bytes = image.primary.to_bytes().unwrap();
+        let decoded = image.round_trip(&grammar).unwrap();
+        assert_eq!(bytes, decoded.primary.to_bytes().unwrap());
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar, &decoded, &|| false).unwrap();
         let pattern = Pattern::try_new("$F($$$ARGS)", GrammarDialect::Go).unwrap();
         assert_eq!(
@@ -754,7 +756,7 @@ fn persisted_php_structural_captures_match_native() {
         let native = StrDoc::new(source, GrammarDialect::Php);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        let decoded = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
+        let decoded = image.round_trip(&grammar).unwrap();
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar.clone(), &decoded, &|| {
             false
         })
@@ -792,9 +794,9 @@ fn persisted_blade_structural_captures_match_native() {
         .collect();
     let mut matched = 0;
     for &source in BLADE_RISKY_FIXTURES {
-        let native = BladeLang.doc(source.as_bytes());
+        let native = BladeLang.doc(source.as_bytes()).expect("Forte parses it");
         let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
-        let decoded = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
+        let decoded = image.round_trip(&grammar).unwrap();
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar.clone(), &decoded, &|| {
             false
         })
@@ -1017,7 +1019,14 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         source_bytes += source.len();
         let t = Instant::now();
         let native = match language {
-            GrammarDialect::Blade => Native::Blade(BladeLang.doc(source.as_bytes())),
+            GrammarDialect::Blade => match BladeLang.doc(source.as_bytes()) {
+                Ok(doc) => Native::Blade(doc),
+                // Forte stopped at a limit: no tree to compare, as the workspace reads none.
+                Err(error) => {
+                    failures.push(json!({"path":path_name,"error":format!("{error:?}")}));
+                    continue;
+                }
+            },
             // The tree the workspace tapes: the family's parse input (a PHP file's view), whose
             // nodes read the source.
             _ => Native::TreeSitter({
@@ -1042,7 +1051,8 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             Native::TreeSitter(doc) => {
                 TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false)
             }
-            Native::Blade(_) => TapeImage::encode_template(&grammar, &source, &|| false),
+            Native::Blade(_) => TapeImage::encode_template(&grammar, &source, &|| false)
+                .map_err(|error| format!("{error:?}")),
         };
         let image = match encoded {
             Ok(image) => image,
@@ -1054,11 +1064,11 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         let file_encode_ms = t.elapsed().as_secs_f64() * 1000.0;
         encode_ms += file_encode_ms;
         let t = Instant::now();
-        let persisted = image.to_bytes().unwrap();
-        let decoded = TapeImage::from_bytes(&persisted, &grammar).unwrap();
+        let persisted = image.primary.to_bytes().unwrap();
+        let decoded = image.round_trip(&grammar).unwrap();
         let file_serialize_ms = t.elapsed().as_secs_f64() * 1000.0;
         serialize_ms += file_serialize_ms;
-        if decoded.to_bytes().unwrap() != persisted {
+        if decoded.primary.to_bytes().unwrap() != persisted {
             failures.push(json!({"path":path_name,"error":"nonCanonicalTape"}));
         }
         let t = Instant::now();

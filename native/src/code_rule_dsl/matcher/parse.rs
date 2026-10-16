@@ -147,13 +147,13 @@ pub(super) fn host_exports<D: Doc>(
         }
         if let Some(found) = env.get_match(&name) {
             if let Some(range) = tree.of_node(found.node_id(), found.range()) {
-                exports.push((name.clone(), found.text().into_owned(), range));
+                exports.push((name.clone(), found.text().into_owned(), range.primary()));
             }
         } else if let (Some(text), Some(span)) =
             (exported_text(env, &name), exported_span(env, &name))
             && let Some(range) = tree.of_range(span)
         {
-            exports.push((name.clone(), text, range));
+            exports.push((name.clone(), text, range.primary()));
         }
     }
     exports
@@ -219,13 +219,13 @@ impl ParseTest {
             if let Some(found) = inner.get_match(name)
                 && let Some(range) = tree.of_node(found.node_id(), found.range())
             {
-                export(env, name, &found.text(), range);
+                export(env, name, &found.text(), range.primary());
             } else if let (Some(text), Some(span)) =
                 (exported_text(&inner, name), exported_span(&inner, name))
             {
                 // A capture a nested parse exported: its span is in this tree's range space.
                 if let Some(range) = tree.of_range(span) {
-                    export(env, name, &text, range);
+                    export(env, name, &text, range.primary());
                 }
             }
         }

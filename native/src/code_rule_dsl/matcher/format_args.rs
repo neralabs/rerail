@@ -302,7 +302,7 @@ impl FormatArgs {
                     if let Some(capture) = inner.get_match(name)
                         && let Some(range) = tree.of_node(capture.node_id(), capture.range())
                     {
-                        export(&mut env_after, name, &capture.text(), range);
+                        export(&mut env_after, name, &capture.text(), range.primary());
                     }
                 }
             }
