@@ -804,6 +804,52 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
+  it("fails a repository audit when a file's source was released by a busy store: that is no file read in part", async () => {
+    const { recorder, audits } = recordingAudits();
+    const real = native.loadNativeBinding();
+    const released = {
+      ruleId: "test:needle", clauseId: "needle", code: "source-incomplete", path: "api/a.py",
+      message: "source released while the content store was busy and no longer available",
+    };
+    class Workspace {
+      constructor() {
+        const inner = new real.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "resultPageAsync")
+              return async (cursor: number, bytes: number) => {
+                const page = JSON.parse(await target.resultPageAsync(cursor, bytes)) as { failures: unknown[] };
+                return JSON.stringify({ ...page, failures: [...page.failures, released] });
+              };
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const binding = vi
+      .spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "safe()\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("released-source");
+      const [auditId] = await enforcer.audit("released-source", { scope: "repository", mode: "log" });
+      expect(audits.get(auditId!)?.result).toMatchObject({
+        status: "failed",
+        failures: [expect.objectContaining({ path: "api/a.py", code: "source-incomplete", message: released.message })],
+      });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
   it("lists a guardrail that stopped the scan after more read failures than the list holds", async () => {
     const { recorder, audits } = recordingAudits();
     const real = native.loadNativeBinding();

@@ -1608,7 +1608,8 @@ fn a_store_that_stays_busy_does_not_keep_every_unpublished_source_resident() {
 
 /// A package marker that changes a freed file's module needs its source, which nothing can supply
 /// (the worktree has no such file): the apply still succeeds, and the audit lists the file's
-/// clauses as incomplete instead of the busy store failing the apply.
+/// clauses as incomplete instead of the busy store failing the apply. That is no syntax gap: the
+/// file is no blind file, so its failures stay listed and fail the audit.
 #[test]
 fn a_freed_file_nothing_can_reread_is_reported_incomplete_not_failed_by_a_package_marker() {
     let _slot = test_slot();
@@ -1651,6 +1652,7 @@ fn a_freed_file_nothing_can_reread_is_reported_incomplete_not_failed_by_a_packag
             .is_empty(),
         "the dropped answer is not reported: {response}"
     );
+    assert_eq!(response["blindFiles"], json!([]), "{response}");
     workspace.close();
 }
 

@@ -320,12 +320,14 @@ fn reporting_ast_candidates<'a>(
 
 /// A file no clause read: every clause with a result on it (`candidates`, or a clause a pass
 /// before a consumer pass narrowed them ran) failed for a reason of the whole file, its work
-/// (`budget-exceeded` or `file-budget-exceeded`, reason `budget`) or its syntax
-/// (`source-incomplete`, reason `syntax`, which wins where both occur), with the message of a
-/// failure of that reason. Classified by failure code alone, never message text. `folded` names
-/// each clause (`[ruleId, clauseId]`) whose failure the row stands for: only those are folded
-/// into it, so a cross-file query's failure on the file stays listed. `None` for a file any
-/// clause read, or with no clause at all.
+/// (`budget-exceeded` or `file-budget-exceeded`, reason `budget`) or its syntax (reason `syntax`,
+/// which wins where both occur), with the message of a failure of that reason. Its syntax is a
+/// `source-incomplete` failure for the file's syntax errors or a parse that did not read it
+/// (`UNREAD`); any other `source-incomplete` (a source a busy store released) is no blind file, so
+/// that failure stays listed and fails the audit. `folded` names each clause (`[ruleId,
+/// clauseId]`) whose failure the row stands for: only those are folded into it, so a cross-file
+/// query's failure on the file stays listed. `None` for a file any clause read, or with no clause
+/// at all.
 fn blind_file(state: &WorkspaceState, file: &FileState) -> Option<Value> {
     let clauses = file
         .candidates
@@ -338,9 +340,11 @@ fn blind_file(state: &WorkspaceState, file: &FileState) -> Option<Value> {
     let (mut budget, mut syntax) = (None, None);
     for id in &clauses {
         let (code, message) = file.failures.get(id)?;
-        let first = match *code {
-            "budget-exceeded" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED => &mut budget,
-            "source-incomplete" => &mut syntax,
+        let first = match (*code, *message) {
+            ("budget-exceeded" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED, _) => {
+                &mut budget
+            }
+            ("source-incomplete", "file has syntax errors" | UNREAD) => &mut syntax,
             _ => return None,
         };
         first.get_or_insert(*message);
