@@ -4,6 +4,7 @@ mod differential;
 mod hard_cases;
 mod nodes;
 mod probe;
+mod setops;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use serde_json::{Value, json};

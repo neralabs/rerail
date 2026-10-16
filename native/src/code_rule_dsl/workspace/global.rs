@@ -164,11 +164,16 @@ fn evaluate_relations(
                 clause,
                 (subject, relation_rows(state, subject_id, subject)),
                 (evidence, &relation_rows(state, evidence_id, evidence)),
+                crate::code_rule_dsl::eval::Engine::Native,
             )
         }
-        (ClauseKind::Budget { query, .. }, &[id]) => {
-            evidence::budget(code_rule, clause, query, relation_rows(state, id, query))
-        }
+        (ClauseKind::Budget { query, .. }, &[id]) => evidence::budget(
+            code_rule,
+            clause,
+            query,
+            relation_rows(state, id, query),
+            crate::code_rule_dsl::eval::Engine::Native,
+        ),
         _ => unreachable!("relation plans are compiled for require_each and budget"),
     }
 }
