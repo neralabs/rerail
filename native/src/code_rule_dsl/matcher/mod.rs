@@ -53,12 +53,12 @@ pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 pub(crate) use parse::{HostTest, ParseTest};
 use regex::Regex;
-pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
+pub(super) use relation::{FieldRelation, Related, StopBy, may_bind, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+pub(super) use resolve::{FileScopeSlot, ParkedScopes, Resolves, Unresolved};
 pub(crate) use resolve::{
     calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives, file_lines,
     file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs, file_phpstan,
@@ -419,11 +419,41 @@ impl AstMatcher {
     }
 }
 
+/// One leaf's verdict at `node` with the bindings `env`, read three-valued outside any clause:
+/// `Ok(Some(true))`, `Ok(Some(false))`, or `Ok(None)` where it is unknown. The SQL engine's
+/// input-set terminals evaluate their leaves (`value`, `compare`, `layout`) through it, key by
+/// key, with the file's scopes installed, so they run exactly the matcher's code. The utility
+/// budget is lifted while it runs; a limit the leaf hit anyway is returned.
+pub(super) fn leaf_verdict<'tree, D: Doc>(
+    leaf: &AstMatcher,
+    node: Node<'tree, D>,
+    env: &MetaVarEnv<'tree, D>,
+) -> std::result::Result<Option<bool>, UtilLimit> {
+    let three = THREE_VALUED.replace(true);
+    let unknown = UNKNOWN.replace(false);
+    let steps = UTIL_STEPS_LEFT.replace(usize::MAX);
+    let exceeded = UTIL_EXCEEDED.replace(None);
+    let mut trial = Cow::Borrowed(env);
+    let matched = leaf.match_node_with_env(node, &mut trial).is_some();
+    let verdict = if matched {
+        Some(true)
+    } else if UNKNOWN.get() {
+        None
+    } else {
+        Some(false)
+    };
+    let limit = UTIL_EXCEEDED.replace(exceeded);
+    UTIL_STEPS_LEFT.set(steps);
+    UNKNOWN.set(unknown);
+    THREE_VALUED.set(three);
+    limit.map_or(Ok(verdict), Err)
+}
+
 impl AstMatcher {
     /// Whether matching never adds a binding: terms that only read the node or the bindings so
     /// far, and composites and relations of them. A pattern, a utility and a constrained rule may
     /// bind, so they count as binding.
-    fn binds_nothing(&self) -> bool {
+    pub(super) fn binds_nothing(&self) -> bool {
         match self {
             Self::Semantic(semantic) => semantic.binds_nothing(),
             Self::Kind(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,

@@ -1007,6 +1007,22 @@ impl FileScopeSlot {
                 .unwrap_or_default()
         })
     }
+
+    /// A slot for a file's scopes set aside earlier (`park`): the tables, values and lines it
+    /// built so far are read again rather than rebuilt.
+    pub(crate) fn resume(parked: ParkedScopes) -> Self {
+        let previous = FILE_SCOPES.replace(Some(parked.0));
+        Self { previous }
+    }
+
+    /// Sets this file's scopes aside, with all they built, and restores the slot's predecessor:
+    /// the SQL engine evaluates a file's terminal keys statement by statement and keeps each
+    /// file's state for the whole batch.
+    pub(crate) fn park(mut self) -> Option<ParkedScopes> {
+        let current = FILE_SCOPES.replace(self.previous.take());
+        std::mem::forget(self);
+        current.map(ParkedScopes)
+    }
 }
 
 impl Drop for FileScopeSlot {
@@ -1014,6 +1030,9 @@ impl Drop for FileScopeSlot {
         FILE_SCOPES.set(self.previous.take());
     }
 }
+
+/// A file's scopes between two evaluations of the same batch (`FileScopeSlot::park`).
+pub(crate) struct ParkedScopes(FileScopes);
 
 /// The module path of the file being matched, if the host or its name gives one.
 pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
