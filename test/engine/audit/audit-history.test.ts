@@ -8,7 +8,7 @@ import type { CodeRuleViolation } from "../../../src/engine/code-rule/code-rule.
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
-import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
+import { SqliteSessionStore } from "../../../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 

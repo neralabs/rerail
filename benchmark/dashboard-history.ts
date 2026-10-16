@@ -10,9 +10,7 @@ import { parseArgs } from "node:util";
 import { getRequestListener } from "@hono/node-server";
 import type Database from "better-sqlite3";
 import { Hono } from "hono";
-import { createRerailApi } from "../src/api/http.js";
-import { operations } from "../src/api/operations.js";
-import { DatabaseApiStores } from "../src/api/stores.js";
+import { createRerailApi, DatabaseApiStores, operations } from "../src/api/index.js";
 import { openRerailDatabase } from "../src/engine/index.js";
 
 const DAY = 86_400_000;
