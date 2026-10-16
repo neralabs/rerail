@@ -16,6 +16,10 @@ concurrency:
 # Real-session jobs call hosted models with repository secrets. GitHub withholds secrets from fork and
 # Dependabot pull requests, so those jobs run on pushes and same-repository pull requests only; there a
 # missing secret or variable is a configuration error and fails the job.
+#
+# The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
+# changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
+# release-packs.yml validates and packs every pack on it, and main runs everything once it is merged.
 
 jobs:
   licenses:
@@ -110,7 +114,7 @@ jobs:
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.rust != 'false'
+    if: needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -166,6 +170,7 @@ jobs:
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
     name: Build
+    if: github.head_ref != 'changeset-release/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -334,7 +339,8 @@ jobs:
         github.event_name != 'pull_request' ||
         (
           github.event.pull_request.head.repo.full_name == github.repository &&
-          github.actor != 'dependabot[bot]'
+          github.actor != 'dependabot[bot]' &&
+          github.head_ref != 'changeset-release/main'
         )
       }}
     runs-on: ubuntu-24.04
@@ -400,7 +406,8 @@ jobs:
         github.event_name != 'pull_request' ||
         (
           github.event.pull_request.head.repo.full_name == github.repository &&
-          github.actor != 'dependabot[bot]'
+          github.actor != 'dependabot[bot]' &&
+          github.head_ref != 'changeset-release/main'
         )
       }}
     runs-on: macos-15
