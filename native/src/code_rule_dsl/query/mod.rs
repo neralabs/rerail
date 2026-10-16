@@ -713,10 +713,9 @@ fn with_files<T>(
     }
     let connection = &*connection;
     let deadline = crate::code_rule_dsl::budget::current_deadline();
-    connection.connection.progress_handler(
-        4096,
-        Some(crate::code_rule_dsl::budget::matcher_budget_exhausted),
-    )?;
+    // A multi-file statement changes the installed file budget as it advances. A SQLite progress
+    // interruption would abort the other files. Terminals, walks, facts, and matcher callbacks
+    // poll the active file deadline directly.
     let batch = connection.register_with_deadline(
         Arc::clone(terminals),
         files,
