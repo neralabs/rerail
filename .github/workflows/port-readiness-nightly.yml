@@ -21,6 +21,8 @@ jobs:
   # As in ci.yml: dist/ and the release native engine, reused from main's build when its inputs are unchanged.
   build:
     name: Build
+    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -100,6 +102,8 @@ jobs:
   record-check:
     name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: build
+    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     # attestations: read is for the fetch, which checks each recording's attestation (recording/fetch.ts).
@@ -179,6 +183,8 @@ jobs:
   gates:
     name: Port readiness, uncached
     needs: build
+    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
     # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
     # job reads the recordings' attestations.
     permissions:
