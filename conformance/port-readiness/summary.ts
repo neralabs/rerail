@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { renderComment } from "./comment.js";
+import { notJudgedNote, renderComment } from "./comment.js";
 import type { CommandRunner } from "./process.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
@@ -33,6 +33,8 @@ export interface Summary {
   engineGaps: { pack: string; rule: string; detail: string }[];
   ungated: UngatedResult;
   missingReports: string[];
+  /** Gated tool-packs the plan left out: nothing they read changed against the base, so main's verdict stands. */
+  notJudged: string[];
   candidateFunnel: Record<string, Record<string, number>>;
   candidateRows: (BlockingRow & { toolPack: string })[];
   /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
@@ -51,10 +53,37 @@ export function readReports(directory: string): GatesReport[] {
     .filter((report) => report.format === REPORT_FORMAT);
 }
 
-/** Merge tool-pack reports with the not-gated and pending checks. */
-export function summarize(reports: GatesReport[], ungated: UngatedResult, gated: { pack: string; tool: string }[]): Summary {
+/**
+ * `--planned`'s value: a JSON array of `<pack>/<tool>` strings, the tool-packs CI's plan judged
+ * (conformance/port-readiness/plan.mjs).
+ */
+export function parsePlanned(text: string): { pack: string; tool: string }[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    value = undefined;
+  }
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && /^[^/]+\/[^/]+$/u.test(entry))) {
+    throw new Error(`--planned takes a JSON array of "<pack>/<tool>" strings (got ${JSON.stringify(text)})`);
+  }
+  return (value as string[]).map((entry) => {
+    const [pack, tool] = entry.split("/") as [string, string];
+    return { pack, tool };
+  });
+}
+
+/**
+ * Merge tool-pack reports with the not-gated and pending checks. `planned` is what CI's plan judged (every gated
+ * tool-pack unless a pull request's plan left some out): each needs a report, and the gated tool-packs outside it are
+ * listed as not judged, which blocks nothing.
+ */
+export function summarize(reports: GatesReport[], ungated: UngatedResult, gated: { pack: string; tool: string }[], planned = gated): Summary {
   const have = new Set(reports.map((report) => report.toolPack));
-  const missingReports = gated.map(({ pack, tool }) => `${pack}/${tool}`).filter((toolPack) => !have.has(toolPack));
+  const gatedNames = gated.map(({ pack, tool }) => `${pack}/${tool}`);
+  const plannedNames = new Set(planned.map(({ pack, tool }) => `${pack}/${tool}`));
+  const missingReports = gatedNames.filter((toolPack) => plannedNames.has(toolPack) && !have.has(toolPack));
+  const notJudged = gatedNames.filter((toolPack) => !plannedNames.has(toolPack));
   const blocking: BlockingRow[] = [];
   const seenUnmapped = new Set<string>();
   for (const report of reports) {
@@ -73,6 +102,10 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     }
   }
   for (const toolPack of missingReports) blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "report", why: "the gated tool-pack has no report in the directory" });
+  // The plan finds tool-packs as gatedToolPacks does, so one it planned that is not gated is a bug in the plan.
+  for (const toolPack of [...plannedNames].filter((name) => !gatedNames.includes(name))) {
+    blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "plan", why: "planned, but not a gated tool-pack (no gates.yaml): the plan is wrong" });
+  }
   for (const check of ungated.checks.filter((item) => !item.ok)) blocking.push({ pack: check.id.split(":")[1] ?? "", rule: "-", stoppedAt: "Not gated / pending", check: check.id.split(":")[0]!, why: check.detail });
 
   const engineGaps = reports.flatMap((report) => report.rules
@@ -104,6 +137,7 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     engineGaps,
     ungated,
     missingReports,
+    notJudged,
     candidateFunnel,
     candidateRows,
     promotable,
@@ -129,11 +163,13 @@ function table(header: string[], rows: string[][], limit = TABLE_ROWS): string[]
 
 /** The summary as Markdown, under GitHub's step-summary limit. */
 export function renderSummary(summary: Summary): string {
+  const notJudged = notJudgedNote(summary);
   const lines = [
     "# Port readiness",
     "",
-    `**${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.promotable.length} candidate(s) ready to promote (${summary.candidates.pass} of ${summary.candidates.rules} pass every gate).**`,
+    `**${notJudged === undefined ? "" : `In ${notJudged.scope}: `}${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.promotable.length} candidate(s) ready to promote (${summary.candidates.pass} of ${summary.candidates.rules} pass every gate).**`,
     "",
+    ...(notJudged === undefined ? [] : [notJudged.line, ""]),
     "## Blocking failures",
     "",
     ...(summary.blocking.length === 0 ? ["None."] : table(["Pack", "Rule", "Stopped at", "Check", "Why"], summary.blocking.map((row) => [row.pack, row.rule, row.stoppedAt, row.check, row.why]))),
@@ -198,14 +234,16 @@ export function renderSummary(summary: Summary): string {
 }
 
 /**
- * `gates summary <dir> [--base <sha>]`: write summary.{md,json} and the pull request comment (comment.md), append the
- * summary to the step summary, return whether it passed. The comment names the commit in PORT_READINESS_COMMIT and links
- * the run in PORT_READINESS_RUN_URL when CI sets them.
+ * `gates summary <dir> [--base <sha>] [--planned <json>]`: write summary.{md,json} and the pull request comment
+ * (comment.md), append the summary to the step summary, return whether it passed. Without `planned`, every gated
+ * tool-pack needs a report. The comment names the commit in PORT_READINESS_COMMIT and links the run in
+ * PORT_READINESS_RUN_URL when CI sets them.
  */
-export async function writeSummary(root: string, directory: string, base: string | undefined, runner: CommandRunner): Promise<Summary> {
+export async function writeSummary(root: string, directory: string, base: string | undefined, runner: CommandRunner, planned?: { pack: string; tool: string }[]): Promise<Summary> {
   if (!existsSync(directory)) throw new Error(`${directory} does not exist`);
   const ungated = await ungatedChecks(root, { ...(base === undefined ? {} : { base }), runner });
-  const summary = summarize(readReports(directory), ungated, gatedToolPacks(root));
+  const gated = gatedToolPacks(root);
+  const summary = summarize(readReports(directory), ungated, gated, planned ?? gated);
   const markdown = renderSummary(summary);
   await writeFile(join(directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   await writeFile(join(directory, "summary.md"), markdown);

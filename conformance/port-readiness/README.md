@@ -64,6 +64,8 @@ npm run port-readiness -- --write                        # also write this run's
 npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/6   # one shard: rules with sha256(id) mod 6 = 1
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
+npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
+node conformance/port-readiness/plan.mjs [--diff <from> <to>]   # CI's legs: every one, or the ones a diff selects
 ```
 
 Exit 1 when a shipped rule fails (or the summary has a blocking failure), 2 on an exception. The run needs the built

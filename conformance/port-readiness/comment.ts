@@ -36,6 +36,19 @@ export interface CommentContext {
   runUrl?: string;
 }
 
+/**
+ * When the plan left tool-packs out, what the counts cover (`the 2 of 9 tool-packs judged`: the planned ones, with a
+ * report or missing one) and the line naming the rest; undefined when every gated tool-pack was judged.
+ */
+export function notJudgedNote(summary: Summary): { scope: string; line: string } | undefined {
+  if (summary.notJudged.length === 0) return undefined;
+  const judged = summary.toolPacks.length + summary.missingReports.length;
+  return {
+    scope: `the ${judged} of ${judged + summary.notJudged.length} tool-packs judged`,
+    line: `Not judged on this change: ${summary.notJudged.join(", ")} (nothing they read changed against the base, so main's verdict stands).`,
+  };
+}
+
 /** Rows of `rows` grouped by first failing gate, in the order the gates run, each group a table. */
 function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): string[] {
   const groups = new Map<string, (BlockingRow & { toolPack: string })[]>();
@@ -56,7 +69,8 @@ function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): st
 function render(summary: Summary, context: CommentContext, rowLimit: number, blockerLimit: number, promoteLimit = 30): string {
   const blocking = summary.blocking.length;
   const ready = summary.promotable.length;
-  const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}`;
+  const notJudged = notJudgedNote(summary);
+  const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}${notJudged === undefined ? "" : ` · in ${notJudged.scope}`}`;
   const commit = context.commit === undefined || context.commit === "" ? "" : ` at \`${context.commit.slice(0, 10)}\``;
   const run = context.runUrl === undefined || context.runUrl === "" ? "" : ` · [job summary and reports](${context.runUrl})`;
   const candidatesByPack = new Map<string, (BlockingRow & { toolPack: string })[]>();
@@ -69,6 +83,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     "",
     `Shipped rules (\`rules/\`) must pass every gate; candidates (\`candidates/\`) are only reported${commit}${run}.`,
     "",
+    ...(notJudged === undefined ? [] : [notJudged.line, ""]),
     ...table(
       ["Tool-pack", "Shipped rules passing", "Candidates ready to promote"],
       [

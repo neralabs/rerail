@@ -17,13 +17,13 @@ import { fetchToolPackRecordings } from "./recording/fetch.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";
-import { writeSummary } from "./summary.js";
+import { parsePlanned, writeSummary } from "./summary.js";
 
 const USAGE = `usage:
   npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--write] [--out dir]
   npm run port-readiness -- fetch [--pack <id>] [--tool <tool>] [--cache dir]
   npm run port-readiness -- merge <dir> [--write]
-  npm run port-readiness -- summary <dir> [--base <sha>]
+  npm run port-readiness -- summary <dir> [--base <sha>] [--planned <JSON array of "<pack>/<tool>">]
 `;
 
 const DEFAULT_OUT = join(PACKAGE_ROOT, ".rerail", "reports", "port-readiness");
@@ -134,8 +134,10 @@ async function merge(args: string[]): Promise<number> {
 async function summary(args: string[]): Promise<number> {
   const [directory, ...rest] = args;
   if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
-  const flags = parse(rest, ["--base"], []);
-  const result = await writeSummary(PACKAGE_ROOT, resolve(directory), typeof flags["--base"] === "string" ? flags["--base"] : undefined, new ProcessCommandRunner());
+  const flags = parse(rest, ["--base", "--planned"], []);
+  // --planned: the tool-packs CI's plan judged; without it every gated tool-pack needs a report. Bad JSON exits 2.
+  const planned = typeof flags["--planned"] === "string" ? parsePlanned(flags["--planned"]) : undefined;
+  const result = await writeSummary(PACKAGE_ROOT, resolve(directory), typeof flags["--base"] === "string" ? flags["--base"] : undefined, new ProcessCommandRunner(), planned);
   console.log(`${result.shipped.pass}/${result.shipped.rules} shipped rules pass; ${result.blocking.length} blocking failure(s); wrote summary.md and summary.json to ${resolve(directory)}`);
   return result.pass ? 0 : 1;
 }

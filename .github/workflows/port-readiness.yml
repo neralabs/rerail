@@ -1,10 +1,16 @@
 name: Port readiness
 
 # The port readiness gates (docs/port-readiness.md): every rule a pack ships must pass them; candidates run through them and are
-# only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine), and by
-# port-readiness-nightly.yml, which judges every rule again and refreshes the result cache. The gates read each pack's
-# recordings (packs/<id>/upstream/<tool>/gates*.json), so no upstream linter runs here; only the pinned real-code
-# corpora and upstream's pinned test files are fetched, and they are cached by their pins.
+# only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine) when a pull request
+# or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
+# the result cache. The gates read each pack's recordings (packs/<id>/upstream/<tool>/gates*.json), so no upstream
+# linter runs here; only the pinned real-code corpora and upstream's pinned test files are fetched, and they are cached
+# by their pins.
+#
+# The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
+# (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
+# code, the package files or the workflows; a tool-pack it leaves out keeps main's verdict. Pushes to main and the
+# nightly judge every tool-pack.
 #
 # Every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request, so
 # main never reads one: a push to main reads only what main's own pushes saved, and the nightly judges every rule
@@ -22,13 +28,54 @@ on:
         description: Judge every rule again instead of reusing the results of unchanged rules; the fresh results are saved.
         type: boolean
         default: false
+      select:
+        description: Judge only the tool-packs of the packs the change touches (pull requests). False judges every tool-pack (pushes to main, the nightly).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  # The gates' legs, as JSON for their matrix. A pull request's checkout is its merge commit, whose first parent is the
+  # base tip, so depth 2 holds both sides of the diff; anything else plans every leg.
+  plan:
+    name: Plan the port readiness legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      legs: ${{ steps.plan.outputs.legs }}
+      tool-packs: ${{ steps.plan.outputs.tool-packs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # plan.mjs imports only node: builtins, so no npm ci.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - id: plan
+        name: Plan the legs
+        env:
+          SELECT: ${{ inputs.select }}
+        run: |
+          if [ "$SELECT" = "true" ] && git rev-parse -q --verify 'HEAD^2' > /dev/null; then
+            node conformance/port-readiness/plan.mjs --diff 'HEAD^1' HEAD
+          else
+            node conformance/port-readiness/plan.mjs
+          fi
+
   gates:
     name: Port readiness (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    needs: plan
+    if: needs.plan.outputs.legs != '[]'
     runs-on: ubuntu-24.04
     # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
     # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
@@ -39,83 +86,12 @@ jobs:
       attestations: read
     strategy:
       fail-fast: false
+      # One leg per gated tool-pack the plan selects, or one per shard of a tool-pack in plan.mjs's SHARDS: `shard`
+      # (1 to `shards`) judges the rules whose sha256(id) mod shards is shard - 1, and the report job merges them
+      # (docs/port-readiness.md, "Sharding"). A rule keys on the shared engine and its own language family's alone
+      # (conformance/port-readiness/engine.ts), so a change to one language's support judges only its legs cold.
       matrix:
-        # One leg per gated tool-pack: a pack's upstream tool with packs/<pack>/upstream/<tool>/gates.yaml. A tool-pack
-        # too slow for one leg runs in `shards` legs, one per `shard` (1 to shards), each judging the rules whose
-        # sha256(id) mod shards is shard - 1; the report job merges them (docs/port-readiness.md, "Sharding").
-        # A rule keys on the shared engine and its own language family's alone (conformance/port-readiness/engine.ts), so a
-        # change to one language's support judges only that language's legs cold. Ruff (31 min cold) and
-        # javascript/eslint (over an hour cold) are sharded to keep even those runs short.
-        include:
-          - pack: python
-            tool: ruff
-            shard: 1
-            shards: 2
-          - pack: python
-            tool: ruff
-            shard: 2
-            shards: 2
-          - pack: python
-            tool: bandit
-          - pack: react
-            tool: eslint-plugin-react
-          - pack: react
-            tool: eslint-plugin-react-hooks
-          - pack: javascript
-            tool: eslint
-            shard: 1
-            shards: 4
-          - pack: javascript
-            tool: eslint
-            shard: 2
-            shards: 4
-          - pack: javascript
-            tool: eslint
-            shard: 3
-            shards: 4
-          - pack: javascript
-            tool: eslint
-            shard: 4
-            shards: 4
-          - pack: javascript
-            tool: eslint-plugin-unicorn
-          # 47 rules on vscode's 10,176 files: one leg would run about two hours.
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 1
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 2
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 3
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 4
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 5
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 6
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 7
-            shards: 8
-          - pack: typescript
-            tool: typescript-eslint
-            shard: 8
-            shards: 8
-          - pack: typescript
-            tool: eslint-plugin-vitest
-          - pack: next
-            tool: eslint-plugin-next
+        include: ${{ fromJSON(needs.plan.outputs.legs) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -220,7 +196,7 @@ jobs:
 
   report:
     name: Port readiness report
-    needs: gates
+    needs: [plan, gates]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -238,7 +214,9 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
+      # No leg ran when the plan selected none (or failed), so there is nothing to download.
       - name: Download the reports
+        if: needs.gates.result != 'skipped'
         uses: actions/download-artifact@v8
         with:
           pattern: port-readiness-*
@@ -260,21 +238,28 @@ jobs:
         name: Summarize, and check the packs without an upstream adapter
         env:
           BASE: ${{ inputs.base }}
+          # The tool-packs the plan judged; the rest are listed as not judged. Without a plan the summary expects every
+          # gated tool-pack's report, so a failed plan fails closed.
+          PLANNED: ${{ needs.plan.result == 'success' && needs.plan.outputs.tool-packs || '' }}
           PORT_READINESS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           PORT_READINESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
           # A push that creates a branch has no previous head.
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
+          # No report was downloaded when no leg ran.
+          mkdir -p "$RUNNER_TEMP/gates"
           # A sharded tool-pack's legs each wrote shard-<i>of<n>/<pack>--<tool>.json: merge them into its report first.
           # Shards that are missing or disagree leave the tool-pack without a report, which the summary fails.
           npm run port-readiness -- merge "$RUNNER_TEMP/gates"
           if [ "$?" = 2 ]; then echo "::error::A sharded tool-pack's shards are missing or disagree (gates merge says which); it has no report."; fi
-          npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"}
+          npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"} ${PLANNED:+--planned "$PLANNED"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       # One results comment per run: the earlier ones are minimized as outdated (collapsed, still there to compare), and
-      # the new one goes last. Fork pull requests get a read-only token, so they read the job summary instead.
+      # the new one goes last. Fork pull requests get a read-only token, so they read the job summary instead. A pull
+      # request that judged no tool-pack gets a new comment only when a not-gated check fails, but its earlier comments
+      # are still collapsed, so an earlier push's verdict does not read as this run's.
       - name: Post the results on the pull request
         if: >-
           ${{
@@ -288,15 +273,12 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          POST: ${{ needs.plan.outputs.legs != '[]' || steps.summary.outputs.status != '0' }}
         run: |
           set -euo pipefail
           marker='<!-- rerail-port-readiness -->'
           # Comments posted while this was called the rule gates carry the old marker; collapse those too.
           legacy='<!-- rerail-rule-gates -->'
-          body="$RUNNER_TEMP/gates/comment.md"
-          if [ ! -s "$body" ]; then
-            printf '%s\n## Port readiness: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
-          fi
           gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\") | select((.body | startswith(\"$marker\")) or (.body | startswith(\"$legacy\"))) | .node_id" |
             while read -r id; do
@@ -304,7 +286,13 @@ jobs:
                 -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
                 > /dev/null || echo "::warning::could not collapse the earlier port readiness gates comment $id"
             done
-          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
+          if [ "$POST" = "true" ]; then
+            body="$RUNNER_TEMP/gates/comment.md"
+            if [ ! -s "$body" ]; then
+              printf '%s\n## Port readiness: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+            fi
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
+          fi
 
       - name: Upload the summary
         if: always()
@@ -318,11 +306,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The gate jobs are skipped, not failed, when the plan selected no leg.
       - name: Fail when anything blocking failed
-        if: steps.summary.outputs.status != '0' || needs.gates.result != 'success'
+        if: >-
+          steps.summary.outputs.status != '0' || needs.plan.result != 'success' ||
+          (needs.gates.result != 'success' && needs.gates.result != 'skipped')
         env:
           STATUS: ${{ steps.summary.outputs.status }}
+          PLAN: ${{ needs.plan.result }}
           GATES: ${{ needs.gates.result }}
         run: |
-          echo "::error::Port readiness failed (summary exit ${STATUS}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
+          echo "::error::Port readiness failed (summary exit ${STATUS}, plan ${PLAN}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
           exit 1

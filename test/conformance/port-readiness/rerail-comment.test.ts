@@ -14,6 +14,7 @@ function summary(candidates: number, blocking: number): Summary {
     engineGaps: [],
     ungated: { checks: [], notGated: [{ pack: "complexity", rules: 3 }], pending: [{ toolPack: "javascript/eslint", reason: "pending" }] },
     missingReports: [],
+    notJudged: [],
     candidateFunnel: { "python/ruff": { [gates[0]!]: 1, [gates[1]!]: 2, [gates[2]!]: candidates - 4, "passes every gate": 1 } },
     candidateRows: Array.from({ length: candidates }, (_, index) => ({
       toolPack: "python/ruff",
@@ -53,4 +54,11 @@ test("candidates that pass every gate are called out, outside any collapsed sect
   const section = text.slice(text.indexOf("### Ready to promote"), text.indexOf("### Candidates"));
   assert.match(section, /`ruff-candidate-0-with-a-long-descriptive-name` \| X100 \| on/u);
   assert.doesNotMatch(section, /<details>/u);
+});
+
+test("a pull request that judged only some tool-packs says which it left out, and what the counts cover", () => {
+  const text = renderComment({ ...summary(10, 0), notJudged: ["python/bandit", "javascript/eslint"] });
+  assert.match(text, /^## Port readiness: ✅ every shipped rule passes · 🟢 1 candidate ready to promote · in the 1 of 3 tool-packs judged$/mu);
+  assert.match(text, /^Not judged on this change: python\/bandit, javascript\/eslint \(nothing they read changed against the base, so main's verdict stands\)\.$/mu);
+  assert.doesNotMatch(renderComment(summary(10, 0)), /judged/u);
 });

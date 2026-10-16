@@ -11,7 +11,7 @@ import { sparseDirectoryPattern } from "../../../conformance/port-readiness/reco
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
-import { summarize } from "../../../conformance/port-readiness/summary.js";
+import { parsePlanned, renderSummary, summarize } from "../../../conformance/port-readiness/summary.js";
 import { ungatedChecks } from "../../../conformance/port-readiness/ungated.js";
 
 const temporary: string[] = [];
@@ -101,7 +101,44 @@ describe("location-based blocking", () => {
     const summary = summarize([report([rule("a", "shipped", { loads: "schema" }), rule("b", "candidate"), rule("c", "candidate", { loads: "json" })])], noUngated, [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }]);
     assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.check]), [["python/bandit", "a", "schema"], ["python/ruff", "(every rule)", "report"]]);
     assert.deepEqual(summary.promotable.map(({ toolPack, rule }) => ({ toolPack, rule })), [{ toolPack: "python/bandit", rule: "b" }]);
+    assert.deepEqual(summary.notJudged, []);
     assert.equal(summary.pass, false);
+  });
+
+  const gated = [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }];
+
+  it("a tool-pack the plan left out is listed as not judged and blocks nothing", () => {
+    const summary = summarize([report([rule("a", "shipped")])], noUngated, gated, [{ pack: "python", tool: "bandit" }]);
+    assert.deepEqual(summary.missingReports, []);
+    assert.deepEqual(summary.notJudged, ["python/ruff"]);
+    assert.deepEqual(summary.blocking, []);
+    assert.equal(summary.pass, true);
+    const markdown = renderSummary(summary);
+    assert.match(markdown, /^\*\*In the 1 of 2 tool-packs judged: 1 of 1 shipped rules pass;/mu);
+    assert.match(markdown, /^Not judged on this change: python\/ruff \(nothing they read changed against the base, so main's verdict stands\)\.$/mu);
+    assert.doesNotMatch(renderSummary(summarize([report([rule("a", "shipped")])], noUngated, [gated[0]!])), /judged/u);
+  });
+
+  it("a planned tool-pack with no report blocks", () => {
+    const summary = summarize([], noUngated, gated, [{ pack: "python", tool: "ruff" }]);
+    assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.check]), [["python/ruff", "(every rule)", "report"]]);
+    assert.deepEqual(summary.notJudged, ["python/bandit"]);
+    assert.equal(summary.pass, false);
+  });
+
+  it("a planned tool-pack that is not gated blocks: the plan is wrong", () => {
+    const summary = summarize([report([rule("a", "shipped")])], noUngated, gated, [...gated.slice(0, 1), { pack: "python", tool: "flake8" }]);
+    assert.deepEqual(summary.blocking.map((row) => [row.pack, row.check]), [["python/flake8", "plan"]]);
+    assert.deepEqual(summary.notJudged, ["python/ruff"]);
+    assert.equal(summary.pass, false);
+  });
+
+  it("--planned takes a JSON array of <pack>/<tool> strings", () => {
+    assert.deepEqual(parsePlanned('["python/ruff","react/eslint-plugin-react"]'), [{ pack: "python", tool: "ruff" }, { pack: "react", tool: "eslint-plugin-react" }]);
+    assert.deepEqual(parsePlanned("[]"), []);
+    for (const bad of ["", "python/ruff", '"python/ruff"', "{}", '["python"]', '["python/ruff/x"]', "[1]"]) {
+      assert.throws(() => parsePlanned(bad), /--planned takes a JSON array of "<pack>\/<tool>" strings/u, bad);
+    }
   });
 
   it("a candidate a failing tool-pack check blocks is not ready to promote, and says why", () => {

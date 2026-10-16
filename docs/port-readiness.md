@@ -62,9 +62,10 @@ From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `c
 A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is gated when it has
 `packs/<id>/upstream/<tool>/gates.yaml`.
 
-- **Gated:** `python/ruff` (in 2 shards, see "Sharding" below), `python/bandit`, `javascript/eslint` (in 4 shards),
-  `javascript/eslint-plugin-unicorn`, `react/eslint-plugin-react`, `react/eslint-plugin-react-hooks`,
-  `typescript/typescript-eslint` (in 8 shards), `typescript/eslint-plugin-vitest`, `next/eslint-plugin-next`.
+- **Gated:** `python/ruff`, `python/bandit`, `javascript/eslint`, `javascript/eslint-plugin-unicorn`,
+  `react/eslint-plugin-react`, `react/eslint-plugin-react-hooks`, `typescript/typescript-eslint`,
+  `typescript/eslint-plugin-vitest`, `next/eslint-plugin-next`. The slowest run in shards: `SHARDS` in
+  `conformance/port-readiness/plan.mjs` says which and how many (see "Sharding" below).
 - **Pending:** none. A tool-pack listed in `conformance/port-readiness/pending.json` is still validated in
   nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
 - **Not gated:** packs with no upstream adapter (complexity ships rules; node, php, blade, sql and vue ship only
@@ -103,7 +104,7 @@ file nobody listed. That last one is the direction the list fails in: a missing 
 everything, never a stale verdict. A rule whose document names no language, or one the language registry does not
 know, keys on the whole engine for the same reason.
 
-A Python-only engine change therefore judges the Python legs cold and leaves the other 17 reading main's results. The
+A Python-only engine change therefore judges the Python legs cold and leaves every other leg reading main's results. The
 cost is the mirror image: a file listed as one family's that another family in fact reads would leave that family's
 verdicts stale until the nightly's uncached run. `test/conformance/port-readiness/engine.test.ts` fails when a listed path
 matches no engine source, so the list cannot rot silently.
@@ -126,7 +127,11 @@ On a pull request, CI posts the results as a comment: each tool-pack's shipped a
 rule that blocks and why, the candidates **ready to promote** (they pass every gate: the signal to move them into
 `rules/`, with the `on` that upstream-status sets), and the other candidates grouped by the gate they stop at, collapsed. A new run collapses
 the earlier comments as outdated, so the pull request keeps its history. The comment stays under GitHub's size limit by
-shortening long lists; the job summary and the uploaded reports have everything. The job summary reads top to bottom:
+shortening long lists; the job summary and the uploaded reports have everything. When the pull request judged only some
+tool-packs, the comment and the job summary say how many of them the counts cover, and a line names the rest: "Not
+judged on this change", with main's verdict standing for them. A pull request that judged none gets no new comment
+unless a not-gated check fails, but its earlier comments are still collapsed as outdated. The job summary reads top to
+bottom:
 
 1. The headline: shipped rules passing, blocking failures, candidates passing every gate.
 2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why, and each listed
@@ -271,13 +276,25 @@ which the gates have no verdict and draw no conclusion.
 ## CI
 
 `ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
-`conformance/`, the engine, the root package files or the workflows: one job per gated tool-pack, then a report job
-that writes the summary and fails when anything blocking failed.
+`conformance/`, the engine, the root package files or the workflows: a plan job, one job per leg it plans, then a
+report job that writes the summary and fails when anything blocking failed.
+
+The plan (`conformance/port-readiness/plan.mjs`) gives each gated tool-pack one leg, or one per shard. A pull request
+judges only the tool-packs of the packs it touches: a change under `packs/<pack>/` plans that pack's tool-packs, while
+a change to the engine, the gate code, the root package files or the workflows still plans every leg, and files only
+the report job reads (`summary.ts`, `comment.ts`, the not-gated and pending lists) plan none. A tool-pack left out keeps
+main's verdict. Pushes to main and the nightly judge every leg.
+
+```sh
+node conformance/port-readiness/plan.mjs                                                  # every leg
+node conformance/port-readiness/plan.mjs --diff "$(git merge-base origin/main HEAD)" HEAD  # the legs this branch plans
+```
 
 ### Sharding
 
-A tool-pack too slow for one 60-minute job runs in several, each judging a share of its rules. The matrix gives such a
-tool-pack's legs `shard` (1 to `shards`) and `shards`; each runs
+A tool-pack too slow for one 60-minute job runs in several, each judging a share of its rules. `SHARDS` in
+`conformance/port-readiness/plan.mjs` is the only place the counts live; the plan gives such a tool-pack's legs `shard`
+(1 to `shards`) and `shards`, and each runs
 
 ```sh
 npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/6   # rules whose sha256(id) mod 6 is 1

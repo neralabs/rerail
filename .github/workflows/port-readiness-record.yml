@@ -161,8 +161,8 @@ jobs:
         env:
           WANT_PACK: ${{ inputs.pack }}
           WANT_TOOL: ${{ inputs.tool }}
-          # Every gated tool-pack: port-readiness.yml's matrix without its shards, since recording a tool-pack is one run of
-          # the live adapter.
+          # Every gated tool-pack, as conformance/port-readiness/plan.mjs finds them but without its shards, since
+          # recording a tool-pack is one run of the live adapter; plan.test.ts fails when the two lists differ.
           TOOL_PACKS: |
             [
               {"pack": "python", "tool": "ruff"},
