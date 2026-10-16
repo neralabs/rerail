@@ -262,12 +262,13 @@ impl Manifest {
     }
 
     /// The host's `package` fact: `{ folder, type, bin?, nodeVersion?, dependencies?,
-    /// jsxImportSource?, serverGraph? }`, as `to_wire` writes it; `serverGraph` is the file's own
-    /// membership.
+    /// jsxImportSource?, serverGraph? }`, as `to_wire` writes it; `nodeVersion` must be a valid
+    /// npm range, as the on-disk reader keeps only one (`configured_node_version`); `serverGraph`
+    /// is the file's own membership.
     pub(crate) fn from_wire(value: &Value, at: &str) -> Result<Self> {
         let malformed = || {
             invalid(format!(
-                "{at}/package must be {{ \"folder\": string, \"type\": \"module\" | \"commonjs\" | \"unset\", \"bin\"?: [string], \"nodeVersion\"?: string, \"dependencies\"?: [string], \"jsxImportSource\"?: string, \"serverGraph\"?: boolean }}"
+                "{at}/package must be {{ \"folder\": string, \"type\": \"module\" | \"commonjs\" | \"unset\", \"bin\"?: [string], \"nodeVersion\"?: string (a valid npm range), \"dependencies\"?: [string], \"jsxImportSource\"?: string, \"serverGraph\"?: boolean }}"
             ))
         };
         let object = value.as_object().ok_or_else(malformed)?;
@@ -297,7 +298,9 @@ impl Manifest {
         };
         let node_version = match object.get("nodeVersion") {
             None => None,
-            Some(Value::String(version)) => Some(version.clone()),
+            Some(Value::String(version)) if Range::parse(version).is_some() => {
+                Some(version.clone())
+            }
             Some(_) => return Err(malformed()),
         };
         let jsx_import_source = match object.get("jsxImportSource") {

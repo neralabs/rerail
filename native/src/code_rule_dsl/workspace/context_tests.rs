@@ -1087,6 +1087,54 @@ fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
     );
 }
 
+/// An errored file reads the module system and JSX runtime its candidates' file gates ask for
+/// once, however many gated candidates the syntax errors leave incomplete.
+#[test]
+fn an_errored_file_derives_its_file_gate_facts_once_for_all_gated_candidates() {
+    use crate::code_rule_dsl::matcher::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS};
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    const CANDIDATES: usize = 4;
+    // Negated outward relations: unsound under syntax errors, so each admitted clause fails.
+    let clauses = (0..CANDIDATES)
+        .map(|index| {
+            json!({ "id": format!("gated-{index}"),
+                "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
+                "forbid": { "ast": { "language": "typescript",
+                    "when": { "sourceType": "commonjs" }, "file": { "jsxRuntime": ["unknown"] },
+                    "rule": { "kind": "identifier", "regex": format!("^x{index}$"),
+                        "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } } } })
+        })
+        .collect::<Vec<_>>();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&compile("gated", json!(clauses)), None)
+        .unwrap();
+    SOURCE_TYPE_DERIVATIONS.set(0);
+    JSX_RUNTIME_DERIVATIONS.set(0);
+    // A typeless package leaves the module system to the file's syntax.
+    let response = apply_json(
+        &workspace,
+        1,
+        json!([
+            { "path": "package.json", "language": "json", "source": r#"{ "name": "a" }"# },
+            { "path": "cjs.js", "language": "javascript",
+                "source": "require('x');\nfunction f() { x(; }\n" },
+        ]),
+    );
+    workspace.close();
+    let incomplete = response["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|failure| failure["code"] == "source-incomplete" && failure["path"] == "cjs.js")
+        .count();
+    assert_eq!(incomplete, CANDIDATES, "{response}");
+    assert_eq!(
+        (SOURCE_TYPE_DERIVATIONS.get(), JSX_RUNTIME_DERIVATIONS.get()),
+        (1, 1)
+    );
+}
+
 #[test]
 fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
     let _slot = WORKSPACE_TEST_SLOT.lock();

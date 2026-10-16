@@ -3731,6 +3731,41 @@ fn file_package_node_version_reads_eslint_plugin_ns_configured_range() {
     assert!(matched(subset_of(">=18"), &[("a.js", "")]).is_empty());
 }
 
+/// A host's `package` must send `nodeVersion` as a valid npm range: one that does not parse is
+/// malformed, not eslint-plugin-n's `>=16.0.0` default in disguise; a valid one is kept.
+#[test]
+fn a_host_package_node_version_must_be_a_valid_npm_range() {
+    let file = json!({ "package": { "nodeVersion": { "subsetOf": ">=18" } } });
+    let package =
+        |node_version: &str| json!({ "folder": "", "type": "unset", "nodeVersion": node_version });
+    assert_eq!(
+        matched_paths(file.clone(), &[("a.js", "", Some(package(">=20")))]),
+        ["a.js"]
+    );
+    assert_eq!(
+        matched_paths(file, &[("a.js", "", Some(package(">=16")))]),
+        Vec::<String>::new()
+    );
+    let rule = typescript(
+        json!({ "file": { "package": { "bin": false } }, "rule": { "kind": "program" } }),
+    );
+    let snapshot = json!({
+        "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
+        "files": [{ "language": "javascript", "path": "a.js", "source": "",
+            "package": package("^18.x.y") }],
+    });
+    let error = rule
+        .evaluate(snapshot.to_string(), "report".to_owned())
+        .expect_err("an invalid nodeVersion is malformed");
+    assert!(
+        error
+            .reason
+            .contains("\"nodeVersion\"?: string (a valid npm range)"),
+        "{}",
+        error.reason
+    );
+}
+
 /// An editor's edit of a `package.json` gives the files whose `package` the snapshot derived
 /// theirs again, as a fresh snapshot of the same final texts reads them: its `type`, engines,
 /// `bin` and dependencies alike, for the files below it only. A host's own `package` stays.

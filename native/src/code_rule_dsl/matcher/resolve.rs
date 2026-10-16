@@ -25,7 +25,7 @@ use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{Followed, Value};
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
@@ -856,6 +856,12 @@ thread_local! {
     pub(super) static CURRENT_CLAUSE: Cell<usize> = const { Cell::new(0) };
     #[cfg(test)]
     pub(crate) static TABLE_BUILDS: Cell<usize> = const { Cell::new(0) };
+    /// How many times a file's module system was read off its syntax (`syntax_source_type`).
+    #[cfg(test)]
+    pub(crate) static SOURCE_TYPE_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
+    /// How many times a file's JSX runtime was read (`jsx_runtime_of`).
+    #[cfg(test)]
+    pub(crate) static JSX_RUNTIME_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
     /// The tables whose string type definitions are being matched (`parse: annotation`): a parsed
     /// annotation's names are read in its file's table.
     static SUB_TABLES: RefCell<Vec<Arc<ScopeTable>>> = const { RefCell::new(Vec::new()) };
@@ -1064,6 +1070,8 @@ pub(super) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType 
 
 /// The module system Node gives a file its path and package leave to its syntax.
 fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
+    #[cfg(test)]
+    SOURCE_TYPE_DERIVATIONS.set(SOURCE_TYPE_DERIVATIONS.get() + 1);
     if has_module_syntax(root) {
         SourceType::Module
     } else {
@@ -1074,30 +1082,55 @@ fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
 /// The JSX runtime of a file whose tree is `root` and whose nearest manifest is `package`: the
 /// one its text names (`jsx_runtime_in_source`), else its manifest's; `Unknown` without either.
 fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&Manifest>) -> JsxRuntime {
+    #[cfg(test)]
+    JSX_RUNTIME_DERIVATIONS.set(JSX_RUNTIME_DERIVATIONS.get() + 1);
     jsx_runtime_in_source(root)
         .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, Manifest::jsx_runtime))
 }
 
-/// Whether `matcher`'s file gates (its `when.sourceType`, its `file.jsxRuntime`) admit `file`,
-/// whose tree is `root`, as `run_clause` reads them. A file they exclude matches nothing, so its
-/// syntax errors cannot leave the clause's result incomplete. Needs no file evaluation.
-pub(crate) fn file_gates_admit<D: Doc>(
-    matcher: &GrammarMatcher,
-    file: &FileInput,
-    root: &Node<'_, D>,
-) -> bool {
-    let runtimes = matcher
-        .file
-        .as_ref()
-        .and_then(|condition| condition.jsx_runtime.as_ref());
-    let source_type = matcher.source_types.as_ref().map(|_| {
-        SourceType::of_file(&file.language, &file.path, file.package_type())
-            .unwrap_or_else(|| syntax_source_type(root))
-    });
-    matcher.may_apply_to(source_type)
-        && runtimes.is_none_or(|runtimes| {
-            runtimes.contains(&jsx_runtime_of(root, file.package.as_deref()))
-        })
+/// The facts of `file`, whose tree is `root`, that queries' file gates read (its module system,
+/// its JSX runtime), each derived at most once, when a gate first reads it. Needs no file
+/// evaluation.
+pub(crate) struct FileGates<'a, 'r, D: Doc> {
+    file: &'a FileInput,
+    root: Node<'r, D>,
+    source_type: OnceCell<SourceType>,
+    jsx_runtime: OnceCell<JsxRuntime>,
+}
+
+impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
+    pub(crate) fn new(file: &'a FileInput, root: Node<'r, D>) -> Self {
+        Self {
+            file,
+            root,
+            source_type: OnceCell::new(),
+            jsx_runtime: OnceCell::new(),
+        }
+    }
+
+    /// Whether `matcher`'s file gates (its `when.sourceType`, its `file.jsxRuntime`) admit the
+    /// file, as `run_clause` reads them. A file they exclude matches nothing, so its syntax errors
+    /// cannot leave the clause's result incomplete.
+    pub(crate) fn admit(&self, matcher: &GrammarMatcher) -> bool {
+        let file = self.file;
+        let source_type = matcher.source_types.as_ref().map(|_| {
+            *self.source_type.get_or_init(|| {
+                SourceType::of_file(&file.language, &file.path, file.package_type())
+                    .unwrap_or_else(|| syntax_source_type(&self.root))
+            })
+        });
+        matcher.may_apply_to(source_type)
+            && matcher
+                .file
+                .as_ref()
+                .and_then(|condition| condition.jsx_runtime.as_ref())
+                .is_none_or(|runtimes| {
+                    runtimes.contains(
+                        self.jsx_runtime
+                            .get_or_init(|| jsx_runtime_of(&self.root, file.package.as_deref())),
+                    )
+                })
+    }
 }
 
 /// The module system `decide_file_source_type` gave the file being matched.

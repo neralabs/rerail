@@ -174,10 +174,10 @@ export interface NativeRepositoryIndexOptions {
  * An ECMA file's `package`: what the engine reads of its nearest `package.json`. `folder` is the manifest's directory
  * below the workspace root (`""` at the root); `type` is `unset` for a manifest without a valid one; `bin` holds the
  * `bin` targets relative to `folder`; `nodeVersion` the configured Node range (`engines.node`, else
- * `devEngines.runtime`'s `node` entry); `dependencies` every dependency name of any kind; `jsxImportSource` the
- * `compilerOptions.jsxImportSource` of the `tsconfig.json` (else `jsconfig.json`) beside it. `serverGraph`, which a
- * host sends only where a code rule reads it and the manifest names `next`, is whether the file is in its Next app's
- * server module graph (`serverGraphAsync` below).
+ * `devEngines.runtime`'s `node` entry), a valid npm range (a `package` with any other is malformed); `dependencies`
+ * every dependency name of any kind; `jsxImportSource` the `compilerOptions.jsxImportSource` of the `tsconfig.json`
+ * (else `jsconfig.json`) beside it. `serverGraph`, which a host sends only where a code rule reads it and the manifest
+ * names `next`, is whether the file is in its Next app's server module graph (`serverGraphAsync` below).
  */
 export interface NativePackageFacts {
   folder: string;

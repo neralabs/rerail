@@ -3,8 +3,8 @@ use crate::code_rule_dsl::json::meta_name;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
-    file_gates_admit, is_span_variable,
+    FileGates, FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
+    is_span_variable,
 };
 use crate::code_rule_dsl::model::{
     CodeRuleScope, FileInput, Limits, Metrics, Query, RegexSource, Snapshot, ViolationSpec,
@@ -464,7 +464,7 @@ impl<'a> Leaf<'a> {
                     };
                     // A file the query's file gates exclude matches nothing, errors or not, as
                     // `run_clause` reads it without them.
-                    if !file_gates_admit(grammar, file, &target.root()) {
+                    if !FileGates::new(file, target.root()).admit(grammar) {
                         return Ok(FileStep::Read {
                             witnesses,
                             partial: None,

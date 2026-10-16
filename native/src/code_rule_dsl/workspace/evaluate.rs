@@ -22,7 +22,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit, file_gates_admit,
+    FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -546,12 +546,14 @@ fn evaluate_ast_file(
                 file.syntax = Some(message);
             }
             SyntaxReading::Partial(message) => {
+                // The gates' file facts are read once for the file, whichever candidate reads them.
+                let gates = FileGates::new(&file.input, root.root());
                 for &id in &file.candidates.ast {
                     let grammar = candidate_grammar(&code_rules[id.0], id.1, &file.input);
                     // A file the query's file gates exclude matches nothing, errors or not.
                     if !file.failures.contains_key(&id)
                         && errors.incomplete(grammar)
-                        && file_gates_admit(grammar, &file.input, &root.root())
+                        && gates.admit(grammar)
                     {
                         file.failures
                             .insert(id, ("source-incomplete", "file has syntax errors"));

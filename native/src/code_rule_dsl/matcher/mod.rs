@@ -56,15 +56,15 @@ use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
-#[cfg(test)]
-pub(super) use resolve::TABLE_BUILDS;
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
-    calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives, file_gates_admit,
+    FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
     file_phpstan, file_psalm, file_rerail_ignores, file_source_type, file_sqlfluff,
     file_vue_directives, table_reading,
 };
+pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+#[cfg(test)]
+pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
