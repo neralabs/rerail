@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { withRecordingRow } from "../../../conformance/recorders/gates/record.js";
+import { withRecordingRow } from "../../../conformance/recorders/port-readiness/record.js";
 
 const TABLE = [
   "| File | Upstream | Copy |",

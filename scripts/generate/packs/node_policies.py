@@ -16,7 +16,7 @@ Data read from the pinned tools (through `node`):
 
 Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
 - packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
-  eslint-plugin-n is gated (NER-1898); a port that passes the rule gates joins SHIPPED and is written to
+  eslint-plugin-n is gated (NER-1898); a port that passes the port readiness gates joins SHIPPED and is written to
   packs/node/rules/<id>.json instead, shipped, its candidates/rules copy removed;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
@@ -49,7 +49,7 @@ PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 # set-up's `oxlintRuleOfPort` maps it).
 OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
                      "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
-# The ports that passed the rule gates (none until NER-1898), written to packs/node/rules/; every other port is written
+# The ports that passed the port readiness gates (none until NER-1898), written to packs/node/rules/; every other port is written
 # to packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
 SHIPPED = set()
 

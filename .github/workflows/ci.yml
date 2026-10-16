@@ -83,7 +83,7 @@ jobs:
       pull-requests: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
-      gates: ${{ steps.filter.outputs.gates }}
+      port-readiness: ${{ steps.filter.outputs.port-readiness }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -106,7 +106,7 @@ jobs:
               - '.gitattributes'
               - '.github/actions/lfs/**'
             # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
-            gates:
+            port-readiness:
               - 'packs/**'
               - 'conformance/**'
               - 'native/**'
@@ -118,7 +118,7 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
-              - '.github/workflows/rule-gates.yml'
+              - '.github/workflows/port-readiness.yml'
               - '.github/actions/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
@@ -253,19 +253,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Every rule a pack ships must pass the rule gates; candidates are only reported (docs/rule-gates.md). Pushes to main
+  # Every rule a pack ships must pass the port readiness gates; candidates are only reported (docs/port-readiness.md). Pushes to main
   # run them always (the filter step is skipped and the output is empty).
-  rule-gates:
-    name: Source pack validation
+  port-readiness:
+    name: Port readiness
     needs: [changes, build]
-    if: needs.changes.outputs.gates != 'false'
+    if: needs.changes.outputs.port-readiness != 'false'
     # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
     permissions:
       contents: read
       issues: write
       pull-requests: write
       attestations: read
-    uses: ./.github/workflows/rule-gates.yml
+    uses: ./.github/workflows/port-readiness.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}
 

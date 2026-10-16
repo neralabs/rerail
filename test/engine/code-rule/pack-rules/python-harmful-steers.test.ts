@@ -32,7 +32,7 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  // The three ports fail the rule gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
+  // The three ports fail the port readiness gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
   // fails compact), so they are candidates until they pass.
   const document = loadBundledRules([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
   if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);

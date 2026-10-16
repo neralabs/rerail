@@ -130,7 +130,7 @@ to 6 over one pack and returns each check's failures and each rule's status (`ok
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
-The contract is the floor every pack meets. A ported rule must also pass the [rule gates](rule-gates.md) to ship:
+The contract is the floor every pack meets. A ported rule must also pass the [port readiness gates](port-readiness.md) to ship:
 they compare it with its upstream on start and end positions, on real code, and for overfitting and size; they block
 CI for shipped rules and only report candidates.
 
