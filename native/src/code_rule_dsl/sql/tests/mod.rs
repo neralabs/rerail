@@ -1,8 +1,10 @@
 //! Differential tests of the SQL engine against the native matcher, the parity oracle.
 
+mod census;
 mod differential;
 mod hard_cases;
 mod nodes;
+mod recursion;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use serde_json::{Value, json};

@@ -257,12 +257,14 @@ fn every_out_of_scope_operator_is_refused_by_name() {
         json!({ "rule": { "kind": "call_expression", "resolves": { "global": true } } }),
         "resolves",
     );
+    // A recursion that reads its own answer at the node it started at (its parent's children
+    // include it) loops: the matcher recurses until its depth limit.
     refused(
         json!({
             "rule": { "matches": "deep" },
-            "utils": { "deep": { "any": [{ "kind": "identifier" }, { "has": { "matches": "deep" } }] } },
+            "utils": { "deep": { "any": [{ "kind": "number" }, { "inside": { "has": { "matches": "deep" } } }] } },
         }),
-        "recursive utility",
+        "recursion whose reads loop back",
     );
     // The matcher leaks `ofRule`'s bindings from a candidate whose position fails to the later
     // candidates of the walk: refused, not approximated.
